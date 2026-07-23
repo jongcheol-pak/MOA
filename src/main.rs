@@ -5,7 +5,8 @@ mod app;
 
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, MB_ICONERROR, MB_OK, MSG, MessageBoxW, TranslateMessage,
+    DispatchMessageW, GetMessageW, MB_ICONERROR, MB_OK, MSG, MessageBoxW, TranslateAcceleratorW,
+    TranslateMessage,
 };
 use windows::core::w;
 
@@ -29,15 +30,18 @@ fn run() -> windows::core::Result<()> {
     // 안전성: COM은 이 스레드에서 1회 초기화, 인자는 정적 상수 — 실패는 .ok()?로 전파
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
 
-    let _window = app::window::MainWindow::create()?;
+    let window = app::window::MainWindow::create()?;
 
     // 안전성: 표준 Win32 메시지 루프 — msg는 스택 소유, 종료 후 COM 해제 순서 보장
     unsafe {
         let mut msg = MSG::default();
         // GetMessageW는 오류 시 -1을 반환하므로 bool 변환 대신 양수 판정 (공식 문서 명시 함정)
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+            // 단축키(Ctrl+\ 등) 우선 처리 — 소비되면 일반 디스패치 생략
+            if TranslateAcceleratorW(window.hwnd, window.haccel, &msg) == 0 {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
         }
         CoUninitialize();
     }

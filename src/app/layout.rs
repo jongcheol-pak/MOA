@@ -2,9 +2,6 @@
 //!
 //! 내부 노드 = 분할 방향+비율, 리프 = 패널 (plan D3 — VS Code 방식 트리).
 //! 화면 배치는 `compute_rects`가 영역을 리프별 사각형과 스플리터 목록으로 계산한다.
-// T3(레이아웃 렌더링)에서 소비 — 사용 시점에 expect가 자동 해제 경고를 낸다
-// (테스트 빌드는 테스트가 이미 소비하므로 non-test에만 적용)
-#![cfg_attr(not(test), expect(dead_code))]
 
 /// 패널 최소 폭/높이(px, 96DPI 기준). 이보다 작아지는 분할은 거부한다 (plan T2 Edge)
 pub const MIN_PANE_SIZE: i32 = 120;
@@ -52,6 +49,8 @@ pub struct SplitterRect {
     pub dir: SplitDir,
     /// 이 스플리터가 조절하는 Split 노드의 식별 경로 (루트부터의 first/second 선택 비트열)
     pub node_path: NodePath,
+    /// 해당 Split 노드가 차지하는 전체 영역 — 드래그 시 비율 = (커서 - 시작) / 축 길이
+    pub node_area: Rect,
 }
 
 /// 루트→노드 경로 (비트열: 0=first, 1=second). 트리 수정 없이 노드를 안정 지칭한다
@@ -113,6 +112,8 @@ impl LayoutTree {
     }
 
     /// 모든 패널 id (좌→우, 상→하 순)
+    // T6(탭)·part2 T4(세션 직렬화)에서 소비 예정 — 사용 시점에 expect가 자동 해제 경고를 낸다
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn panel_ids(&self) -> Vec<PanelId> {
         fn walk(n: &Node, out: &mut Vec<PanelId>) {
             match n {
@@ -264,6 +265,7 @@ impl LayoutTree {
                         rect: sp,
                         dir: *dir,
                         node_path: path,
+                        node_area: area,
                     });
                     walk(first, a, path.child(false), out);
                     walk(second, b, path.child(true), out);
