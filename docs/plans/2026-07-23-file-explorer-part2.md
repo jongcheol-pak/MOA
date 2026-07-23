@@ -47,6 +47,7 @@
 - FR-13 숨김·시스템 파일 표시 토글 (Could — v1 이후 여유 시)
 - FR-14 분할 프리셋 버튼 (Could — v1 이후 여유 시)
 - 트리→목록 외 역방향 동기화(목록 이동 시 트리 자동 펼침·선택)는 v1 단방향으로 한정 (D14) — 필요 체감 시 후속
+- T2 리뷰 MINOR m1: `shell_menu::items_menu`의 `pidls[0]`이 "items 비지 않음" 암묵 계약 의존 — doc 주석/debug_assert 명시 검토 (현재 도달 불가 경로)
 
 ## Investigation Log
 - part1과 공통 (동일 세션 작성): 빈 프로젝트 확인·Rust 1.95 stable msvc 실측·vault 미설정·PRD/AGENTS.md 승인 — 상세는 part1 Investigation Log 참조
@@ -141,13 +142,13 @@
     - (i) "동기화 범위?" → D14 / "트리 폭?" → Design(고정 200px, 조절은 v2)
   - **Depends on**: - (part1 완료 전제)
 
-- [ ] T2. 셸 컨텍스트 메뉴 (FR-8)
+- [x] T2. 셸 컨텍스트 메뉴 (FR-8)
   - **Type**: C
   - **Design**: ① 배치: `src/fs/shell_menu.rs` ② 신규 심볼: `show_context_menu(hwnd, paths: &[PathBuf], pt)` — `SHParseDisplayName`→부모 `IShellFolder`→`GetUIObjectOf(IContextMenu)`→`QueryContextMenu`→`TrackPopupMenuEx`→`InvokeCommand` 절차 + `IContextMenu2/3` 소유자 메시지(WM_INITMENUPOPUP 등) 포워딩 책임. unsafe는 이 모듈에 격리 ③ 의존: FileList의 `NM_RCLICK`/`WM_CONTEXTMENU`에서 선택 항목 경로들로 호출 ④ 비추상화: 메뉴 항목 필터링·커스텀 항목 추가 없음(셸 그대로).
   - **Acceptance**: Given 파일 다중 선택, When 우클릭, Then Windows 표준 컨텍스트 메뉴가 표시되고 복사·삭제·속성·보내기(서브메뉴)가 실제 동작 — HUMAN-VERIFY. 항목 0개 선택 우클릭은 폴더 배경 메뉴(새로 만들기 포함) 표시.
   - **Files**:
     - 주: `src/fs/shell_menu.rs`
-    - 동반: `src/panel/file_list.rs`(우클릭 배선), `src/fs/mod.rs`
+    - 동반: `src/panel/file_list.rs`(선택 항목 조회), `src/fs/mod.rs`, `src/panel/panel.rs`(WM_CONTEXTMENU·메뉴 메시지 포워딩 배선 — 리스트뷰 알림이 부모 패널 창에 도착하므로 구현 중 추가), `Cargo.toml`(windows crate `Win32_UI_Shell_Common` feature — ITEMIDLIST 정의, 신규 의존성 아님)
   - **Edge Cases**:
     - 메뉴 표시 중 대상 파일 삭제됨 → InvokeCommand 실패 무해 처리(셸 오류 UI 위임)
     - 서브메뉴(보내기 등) → IContextMenu2/3 메시지 포워딩으로 동작 보장

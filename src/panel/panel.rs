@@ -6,6 +6,7 @@
 //! 탐색은 pending-커밋 모델이다: 열거가 성공했을 때만 경로·히스토리를 커밋한다.
 //! 실패(삭제·권한)하면 오류 문구만 표시하고 현 위치(주소창·히스토리)는 유지된다 (T5 Edge).
 use crate::fs::enumerate::{EnumOutcome, EnumResult, WM_APP_ENUM_DONE, spawn_enumerate};
+use crate::fs::shell_menu;
 use crate::panel::address_bar::{
     AddressBar, ID_NAV_BACK, ID_NAV_FORWARD, ID_NAV_UP, STRIP_HEIGHT, WM_APP_ADDRESS_ENTER,
     normalize_input,
@@ -25,10 +26,11 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, IDC_ARROW,
-    LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWNORMAL, SetWindowLongPtrW,
-    SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_CREATE, WM_NCDESTROY,
-    WM_NOTIFY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetWindowLongPtrW,
+    IDC_ARROW, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWNORMAL, SetWindowLongPtrW,
+    SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE,
+    WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NCDESTROY, WM_NOTIFY, WM_SIZE,
+    WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -403,6 +405,39 @@ fn loword(v: usize) -> u32 {
     (v & 0xffff) as u32
 }
 
+/// WM_CONTEXTMENU 대상이 파일 목록이면 (현재 폴더, 선택 경로들, 화면 좌표)를 수집한다.
+/// RefCell 차용은 이 함수 안에서 끝난다 — 호출부는 차용 없이 모달 메뉴를 연다
+fn collect_context_menu_request(
+    hwnd: HWND,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<(PathBuf, Vec<PathBuf>, i32, i32)> {
+    let state = state_of(hwnd)?;
+    if wparam.0 as isize != state.file_list.hwnd().0 as isize {
+        return None;
+    }
+    let folder = state.tabs.active().committed.clone();
+    let items: Vec<PathBuf> = state
+        .file_list
+        .selected_indices()
+        .into_iter()
+        .filter_map(|i| state.file_list.entry_at(i))
+        .map(|e| folder.join(e.name_string()))
+        .collect();
+    // lparam은 화면 좌표. 키보드(메뉴 키) 호출은 -1,-1 → 커서 위치로 대체
+    let x = (lparam.0 & 0xffff) as u16 as i16 as i32;
+    let y = ((lparam.0 >> 16) & 0xffff) as u16 as i16 as i32;
+    if x == -1 && y == -1 {
+        let mut pt = windows::Win32::Foundation::POINT::default();
+        // 안전성: pt는 스택 소유
+        unsafe {
+            let _ = GetCursorPos(&mut pt);
+        }
+        return Some((folder, items, pt.x, pt.y));
+    }
+    Some((folder, items, x, y))
+}
+
 /// 패널 프로시저 — 상태 수명·목록/주소창 알림·네비게이션 명령 배선.
 /// 목록을 바꾼 분기는 RefCell 차용을 닫은 뒤 apply_item_count로 카운트를 반영한다
 unsafe extern "system" fn panel_proc(
@@ -552,6 +587,27 @@ unsafe extern "system" fn panel_proc(
                 apply_item_count(list, count);
             }
             result
+        }
+        WM_CONTEXTMENU => {
+            // 파일 목록 우클릭/메뉴 키 → 셸 컨텍스트 메뉴 (FR-8).
+            // 대상 수집은 차용 안에서, 모달 메뉴 표시는 차용 해제 후
+            // (TrackPopupMenuEx 모달 루프 중 도착하는 메시지가 상태에 접근할 수 있게)
+            match collect_context_menu_request(hwnd, wparam, lparam) {
+                Some((folder, items, x, y)) => {
+                    shell_menu::show_context_menu(hwnd, &folder, &items, x, y);
+                    LRESULT(0)
+                }
+                // 대상이 파일 목록이 아니면 기본 처리 (부모로 전파)
+                None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+            }
+        }
+        WM_INITMENUPOPUP | WM_DRAWITEM | WM_MEASUREITEM | WM_MENUCHAR => {
+            // 셸 메뉴 모달 중이면 IContextMenu2/3로 포워딩 — 서브메뉴(보내기 등) 채움 (T2 Edge)
+            match shell_menu::forward_menu_msg(msg, wparam, lparam) {
+                Some(result) => result,
+                // 안전성: 기본 처리 위임
+                None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+            }
         }
         WM_NCDESTROY => {
             // 안전성: WM_CREATE에서 넣은 포인터를 정확히 한 번 회수

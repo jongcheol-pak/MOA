@@ -6,9 +6,9 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Controls::{
     LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCFMT_LEFT, LVCFMT_RIGHT, LVCOLUMNW, LVIF_IMAGE, LVIF_TEXT,
-    LVM_INSERTCOLUMNW, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMCOUNT,
-    LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHAREIMAGELISTS,
-    LVS_SHOWSELALWAYS, LVSIL_SMALL, NMLVDISPINFOW, WC_LISTVIEWW,
+    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST,
+    LVM_SETITEMCOUNT, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA,
+    LVS_REPORT, LVS_SHAREIMAGELISTS, LVS_SHOWSELALWAYS, LVSIL_SMALL, NMLVDISPINFOW, WC_LISTVIEWW,
 };
 use windows::Win32::UI::Shell::StrCmpLogicalW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -163,6 +163,28 @@ impl FileList {
 
     pub fn entry_at(&self, index: usize) -> Option<&FileEntry> {
         self.entries.get(index)
+    }
+
+    /// 선택된 항목 인덱스 목록 — 컨텍스트 메뉴 대상 수집용 (FR-8)
+    pub fn selected_indices(&self) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut current: isize = -1;
+        loop {
+            // 안전성: 유효한 리스트뷰 핸들에 표준 선택 순회 메시지
+            let next = unsafe {
+                SendMessageW(
+                    self.hwnd,
+                    LVM_GETNEXTITEM,
+                    Some(WPARAM(current as usize)),
+                    Some(LPARAM(LVNI_SELECTED as isize)),
+                )
+            };
+            if next.0 < 0 {
+                return out;
+            }
+            current = next.0;
+            out.push(next.0 as usize);
+        }
     }
 
     /// 열 클릭 → 같은 열이면 방향 토글, 다른 열이면 해당 열 오름차순

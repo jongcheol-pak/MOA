@@ -18,6 +18,8 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Controls",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    # ITEMIDLIST(PIDL) 정의 — 셸 컨텍스트 메뉴(IContextMenu)가 요구
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
