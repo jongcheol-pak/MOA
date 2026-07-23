@@ -2,6 +2,8 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod fs;
+mod panel;
 
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::WindowsAndMessaging::{

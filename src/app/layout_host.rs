@@ -5,19 +5,14 @@
 use crate::app::layout::{
     ComputedLayout, LayoutError, LayoutTree, NodePath, PanelId, Rect, SplitDir,
 };
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use crate::panel::panel as panel_win;
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BeginDeferWindowPos, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-    DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect, IDC_ARROW, IDC_SIZENS,
-    IDC_SIZEWE, LoadCursorW, RegisterClassExW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
-    WINDOW_EX_STYLE, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    BeginDeferWindowPos, DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect,
+    IDC_SIZENS, IDC_SIZEWE, LoadCursorW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
 };
-use windows::core::{PCWSTR, Result, w};
-
-const PANE_CLASS: PCWSTR = w!("FileExplorerPane");
+use windows::core::Result;
 
 /// 스플리터 드래그 진행 상태
 struct DragState {
@@ -40,9 +35,8 @@ pub struct LayoutHost {
 impl LayoutHost {
     /// 첫 패널 1개로 시작
     pub fn new(parent: HWND) -> Result<LayoutHost> {
-        register_pane_class()?;
         let (tree, first) = LayoutTree::new();
-        let hwnd = create_pane(parent)?;
+        let hwnd = panel_win::create(parent)?;
         let mut host = LayoutHost {
             tree,
             panes: vec![(first, hwnd)],
@@ -66,7 +60,7 @@ impl LayoutHost {
         let area = client_rect(parent);
         match self.tree.split(self.active, dir, area) {
             Ok(new_id) => {
-                let hwnd = create_pane(parent)?;
+                let hwnd = panel_win::create(parent)?;
                 self.panes.push((new_id, hwnd));
                 self.active = new_id;
                 self.relayout(parent);
@@ -246,56 +240,4 @@ fn client_rect(hwnd: HWND) -> Rect {
         w: rc.right - rc.left,
         h: rc.bottom - rc.top,
     }
-}
-
-/// 패널 자리표시 자식 창 클래스 등록 (1회 — 중복 등록은 무해하게 무시)
-fn register_pane_class() -> Result<()> {
-    // 안전성: 클래스 등록 실패(중복 포함)는 치명 아님 — 첫 등록만 유효
-    unsafe {
-        let instance = GetModuleHandleW(None)?;
-        let wc = WNDCLASSEXW {
-            cbSize: size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(pane_proc),
-            hInstance: instance.into(),
-            hCursor: LoadCursorW(None, IDC_ARROW)?,
-            hbrBackground: HBRUSH((COLOR_BTNFACE.0 + 1) as isize as *mut core::ffi::c_void),
-            lpszClassName: PANE_CLASS,
-            ..Default::default()
-        };
-        let _ = RegisterClassExW(&wc);
-    }
-    Ok(())
-}
-
-fn create_pane(parent: HWND) -> Result<HWND> {
-    // 안전성: 부모 창에 귀속되는 자식 창 생성 — 부모 파괴 시 함께 파괴됨
-    unsafe {
-        let instance = GetModuleHandleW(None)?;
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            PANE_CLASS,
-            None,
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            0,
-            0,
-            Some(parent),
-            None,
-            Some(instance.into()),
-            None,
-        )
-    }
-}
-
-/// 자리표시 패널 프로시저 — T4에서 파일 목록 등 실제 내용으로 대체된다
-unsafe extern "system" fn pane_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    // 안전성: 기본 처리 위임뿐
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
