@@ -3,6 +3,12 @@
 **PRD**: docs/prd.md
 **이전 plan**: docs/plans/2026-07-23-file-explorer-part1.md
 
+## 이전 part 핸드오프
+- 함정: windows-rs 0.62는 `Error::from_win32`→`from_thread` 개명, `SHELLEXECUTEINFOW`는 `Win32_System_Registry` feature 필요(주석 있음), 리스트 카운트는 반드시 RefCell 차용 해제 후 `file_list::apply_item_count`로만 (재진입 표시 누락 — panel.rs 계약 주석 참조).
+- 기각된 접근: FileList 내부에서 LVM_SETITEMCOUNT 직접 호출(차용 중 재진입 별칭) — free fn 분리로 확정, 되돌리지 말 것.
+- 검증 지름길: `cargo build && cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check` 체인. 미소비 심볼은 `#[cfg_attr(not(test), expect(dead_code))]` 자기 정리 패턴 — `tabs.rs::len`이 T4(세션) 소비 대기 중(사용 시 expect 제거 필요).
+- 상태 접근: 창 상태는 `state_of()`(try_borrow_mut) 경유만 — 패널·메인 창 RefCell은 별개라 SendMessage 동기 질의 안전 (window.rs send_to 참조).
+
 ## 요구 이해
 - **원문 요청**: "파일 탐색기를 구현하려고 하는데 이미지처럼 멀티로 탭을 분할해서 표시하는 기능을 중점으로 개발하려고 하는데 계획을 세워줘. 메모리, 성능에 좋은 개발 언어도 같이. Windows 11 이상에서만 사용할 예정"
 - **이해한 요구**: part1에서 완성한 코어(분할·탭·목록·네비게이션) 위에, 셸 컨텍스트 메뉴(Must FR-8)·폴더 트리·변경 감시·세션 복원(Should)·성능 실측(NFR-1~3)을 얹어 PRD v1을 완성한다.

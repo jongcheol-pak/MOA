@@ -272,6 +272,8 @@
 - 수동 검증: task별 Acceptance의 HUMAN-VERIFY 항목 — 빌드 통과와 구분해 "사용자 확인 필요"로 보고 (CLAUDE.md 검증 원칙)
 
 ## Phase Ledger
+- Phase F 통과 (HEAD 48ef535) — F-2 전체 테스트 35/35, F-7 plan-completion-reviewer OK (0/0/0)
+- Phase G 통과 (part1 몫 Must 100% — FR-1~7·FR-12 부분·NFR-4~6, F-7 대조 재사용. 전체 v1 판정은 part2 Phase G)
 
 ## Retry Ledger
 
@@ -284,7 +286,9 @@
   - T5 참고: navigate로 실폴더 이동 시 clear() 직후 apply_item_count(hwnd, 0) 필요 (quality 리뷰 follow-up).
 
 ## Next Steps
-- part1 완료 후 → 남은 분할 plan: docs/plans/2026-07-23-file-explorer-part2.md — pjc:implement-task로 별도 실행
+- 권장 다음 액션: 남은 분할 plan 실행 — docs/plans/2026-07-23-file-explorer-part2.md를 pjc:implement-task로 (T1 트리부터)
+- 사용자 HUMAN-VERIFY: `cargo run`으로 창·분할 드래그·탭·탐색·아이콘 표시 확인
+- Suggested skills: pjc:implement-task (part2), 공식 /code-review
 
 ## Open Questions
 - [x] Q1: 개발 언어/스택? → Rust(windows-rs) 확정 (2026-07-23)
