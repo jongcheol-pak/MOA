@@ -51,9 +51,15 @@ impl DirWatcher {
         tx: Sender<()>,
         notify: Option<windows::Win32::Foundation::HWND>,
     ) -> DirWatcher {
-        // 안전성: 이벤트 생성 실패는 극히 예외적 — 실패 시 무효 핸들로 두면
-        // 스레드가 대기 오류로 즉시 종료해 "감시 없이 동작"으로 저하된다
-        let stop_event = unsafe { CreateEventW(None, true, false, None) }.unwrap_or_default();
+        // 안전성: 정지 신호용 이벤트 생성 — 실패(극히 예외적)하면 정지 수단이 없으므로
+        // 스레드를 아예 시작하지 않고 "감시 없이 동작"으로 저하한다
+        let Ok(stop_event) = (unsafe { CreateEventW(None, true, false, None) }) else {
+            return DirWatcher {
+                path,
+                stop_event: HANDLE::default(),
+                thread: None,
+            };
+        };
         let stop = HandleSend(stop_event.0 as isize);
         let hwnd = HandleSend(notify.map_or(0, |h| h.0 as isize));
         let watch_path = path.clone();
@@ -84,12 +90,28 @@ impl Drop for DirWatcher {
         unsafe {
             let _ = SetEvent(self.stop_event);
         }
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-        // 안전성: 스레드 종료 후이므로 이벤트 핸들을 참조하는 곳이 없다
-        unsafe {
-            let _ = CloseHandle(self.stop_event);
+        match self.thread.take() {
+            Some(t) => {
+                // UI 스레드에서 직접 join하지 않는다 — 워커가 CreateFileW(응답 없는
+                // 네트워크 경로) 안에 있으면 정지 신호를 못 듣고 OS 타임아웃까지
+                // 잡혀 있어 UI가 함께 멎는다. 회수 전용 스레드가 종료를 기다린 뒤
+                // 이벤트 핸들을 닫는다 (핸들은 워커 종료 후에만 닫힘 보장)
+                let stop = HandleSend(self.stop_event.0 as isize);
+                std::thread::spawn(move || {
+                    let _ = t.join();
+                    // 안전성: 워커 종료 후 — 이 핸들을 참조하는 곳이 없다
+                    unsafe {
+                        let _ = CloseHandle(HANDLE(stop.0 as *mut core::ffi::c_void));
+                    }
+                });
+            }
+            None => {
+                // 스레드가 없으면(start의 이벤트 생성 실패) 무효 핸들 — 닫기 무해 실패
+                // 안전성: 무효(0) 핸들 close는 오류만 반환
+                unsafe {
+                    let _ = CloseHandle(self.stop_event);
+                }
+            }
         }
     }
 }
@@ -209,8 +231,8 @@ fn watch_loop(path: &Path, stop: HANDLE, tx: Sender<()>, notify: HandleSend) {
     }
 
     // 안전성: 이 스레드만 쓰는 핸들 정리 — 잔여 발행을 취소하고 그 완료까지 기다린 뒤
-    // 닫는다. 대기 없이 반환하면 취소 중인 I/O가 스택 버퍼(buf)에 늦게 써서
-    // 해제 후 쓰기가 될 수 있다 (bwait=true가 취소 완료를 동기화)
+    // 닫는다. 대기 없이 반환하면 취소 중인 I/O가 buf(함수 종료 시 해제되는 힙 Vec)에
+    // 늦게 써서 해제 후 쓰기가 될 수 있다 (bwait=true가 취소 완료를 동기화)
     unsafe {
         let _ = CancelIo(dir);
         let mut bytes = 0u32;
