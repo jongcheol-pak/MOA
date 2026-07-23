@@ -54,6 +54,20 @@ impl TabsModel {
         }
     }
 
+    /// 세션 복원용 재구성 — 빈 목록이면 None, 활성 인덱스는 범위로 클램프
+    pub fn from_tabs(tabs: Vec<TabState>, active: usize) -> Option<TabsModel> {
+        if tabs.is_empty() {
+            return None;
+        }
+        let active = active.min(tabs.len() - 1);
+        Some(TabsModel { tabs, active })
+    }
+
+    /// 탭별 커밋 경로 (탭 순서 유지) — 세션 저장용
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.tabs.iter().map(|t| t.committed.clone()).collect()
+    }
+
     /// 탭 수 — 세션 저장(part2 T4)·테스트가 소비.
     /// is_empty는 제공하지 않음 — 탭은 항상 1개 이상(불변식)이라 항상 false로 오해만 낳는다
     #[expect(clippy::len_without_is_empty)]

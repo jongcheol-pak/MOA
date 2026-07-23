@@ -50,6 +50,18 @@ pub const WM_APP_TAB_CLOSE: u32 = WM_APP + 7;
 pub const WM_APP_TREE_TOGGLE: u32 = WM_APP + 8;
 /// 현재 폴더 재열거 — F5 (FR-12 잔여). WM_APP+9는 watcher::WM_APP_DIR_CHANGED가 사용
 pub const WM_APP_REFRESH: u32 = WM_APP + 10;
+/// 세션 수집/복원 (FR-11) — lparam은 같은 스레드 SendMessage로 전달되는
+/// `PanelSessionData` 포인터 (수집: *mut, 복원: *const). 게시(Post) 금지 — 동기 전용
+pub const WM_APP_SESSION_COLLECT: u32 = WM_APP + 11;
+pub const WM_APP_SESSION_RESTORE: u32 = WM_APP + 12;
+
+/// 세션 수집/복원 교환 데이터 — 메인 창(window.rs)과 패널 사이 계약
+#[derive(Default)]
+pub struct PanelSessionData {
+    /// 탭별 폴더 경로 (탭 순서)
+    pub tabs: Vec<PathBuf>,
+    pub active: usize,
+}
 
 /// 성공 시 히스토리에 반영할 동작 종류
 enum PendingKind {
@@ -266,6 +278,39 @@ impl PanelState {
         }
         let path = self.tabs.active().committed.clone();
         self.navigate(hwnd, path, PendingKind::Keep);
+    }
+
+    /// 세션 복원 (FR-11) — 탭 목록·활성 탭을 통째로 교체하고 활성 탭만 열거한다.
+    /// 저장된 경로가 사라졌으면 그 탭은 홈 폴더로 대체 — 탭 수 유지 (T4 Edge)
+    fn restore_session(&mut self, hwnd: HWND, data: &PanelSessionData) {
+        let tabs: Vec<TabState> = data
+            .tabs
+            .iter()
+            .map(|p| {
+                if p.is_dir() {
+                    TabState::new(p.clone())
+                } else {
+                    TabState::new(home_dir())
+                }
+            })
+            .collect();
+        let Some(model) = TabsModel::from_tabs(tabs, data.active) else {
+            return; // 빈 세션 — 초기 상태(홈 탭) 유지
+        };
+        // 표시 스트립 재구성 — 초기 홈 탭 제거 후 세션 탭 삽입
+        for i in (0..self.tabs.len()).rev() {
+            self.tab_strip.remove(i);
+        }
+        self.tabs = model;
+        for (i, path) in self.tabs.paths().iter().enumerate() {
+            self.tab_strip.insert(i, &tab_title(path));
+        }
+        let active = self.tabs.active_index();
+        self.tab_strip.set_selection(active);
+        let path = self.tabs.active().committed.clone();
+        self.address_bar.set_path(&path);
+        self.navigate(hwnd, path, PendingKind::Keep);
+        self.update_nav_state();
     }
 
     /// 실패 — 현 위치(활성 탭 committed·히스토리) 유지, 오류 문구 표시, 주소창 복원
@@ -589,6 +634,29 @@ unsafe extern "system" fn panel_proc(
             // 확장 실행은 차용 해제 후 — TVN_ITEMEXPANDING 동기 재진입 대비 (apply_expand 주석)
             if let Some((tree, items)) = expand {
                 apply_expand(tree, &items);
+            }
+            LRESULT(0)
+        }
+        WM_APP_SESSION_COLLECT => {
+            // 같은 스레드 SendMessage 전용 — lparam은 호출부 스택의 &mut PanelSessionData
+            if let Some(state) = state_of(hwnd) {
+                // 안전성: window.rs가 SendMessageW로 동기 전달한 포인터 (호출 동안 유효)
+                let data = unsafe { &mut *(lparam.0 as *mut PanelSessionData) };
+                data.tabs = state.tabs.paths();
+                data.active = state.tabs.active_index();
+            }
+            LRESULT(0)
+        }
+        WM_APP_SESSION_RESTORE => {
+            let mut apply: Option<(HWND, usize)> = None;
+            if let Some(mut state) = state_of(hwnd) {
+                // 안전성: window.rs가 SendMessageW로 동기 전달한 포인터 (호출 동안 유효)
+                let data = unsafe { &*(lparam.0 as *const PanelSessionData) };
+                state.restore_session(hwnd, data);
+                apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
+            }
+            if let Some((list, count)) = apply {
+                apply_item_count(list, count);
             }
             LRESULT(0)
         }

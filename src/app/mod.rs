@@ -2,4 +2,5 @@
 pub mod layout;
 pub mod layout_host;
 pub mod menu;
+pub mod settings;
 pub mod window;

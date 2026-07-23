@@ -3,7 +3,7 @@
 //! 스플리터는 별도 HWND가 아니라 부모 클라이언트 영역의 빈 틈을 히트테스트한다
 //! (plan T3 Design ④ — 창 수 절약).
 use crate::app::layout::{
-    ComputedLayout, LayoutError, LayoutTree, NodePath, PanelId, Rect, SplitDir,
+    ComputedLayout, LayoutError, LayoutTree, NodePath, PanelId, Rect, SplitDir, TreeShape,
 };
 use crate::panel::panel as panel_win;
 use windows::Win32::Foundation::HWND;
@@ -49,6 +49,51 @@ impl LayoutHost {
         };
         host.relayout(parent);
         Ok(host)
+    }
+
+    /// 세션의 분할 구조로 재구성해 시작 (FR-11 복원). 리프마다 패널 창을 만든다
+    pub fn from_shape(parent: HWND, shape: &TreeShape) -> Result<LayoutHost> {
+        let (tree, ids) = LayoutTree::from_shape(shape);
+        let mut panes = Vec::with_capacity(ids.len());
+        for id in &ids {
+            panes.push((*id, panel_win::create(parent)?));
+        }
+        let active = ids.first().copied().unwrap_or(PanelId(0));
+        let mut host = LayoutHost {
+            tree,
+            panes,
+            active,
+            drag: None,
+            layout_cache: ComputedLayout {
+                panes: Vec::new(),
+                splitters: Vec::new(),
+            },
+        };
+        host.relayout(parent);
+        Ok(host)
+    }
+
+    /// 세션 저장용 스냅숏 — (분할 구조, walk 순서의 패널 HWND 목록).
+    /// HWND 순서는 TreeShape 리프 순서와 1:1이다
+    pub fn session_snapshot(&self) -> (TreeShape, Vec<HWND>) {
+        let shape = self.tree.shape();
+        let hwnds = self
+            .tree
+            .panel_ids()
+            .iter()
+            .filter_map(|id| {
+                self.panes
+                    .iter()
+                    .find(|(pid, _)| pid == id)
+                    .map(|(_, h)| *h)
+            })
+            .collect();
+        (shape, hwnds)
+    }
+
+    /// walk 순서의 패널 HWND 목록 — 세션 복원 메시지 전달용 (session_snapshot과 동일 순서)
+    pub fn panel_hwnds(&self) -> Vec<HWND> {
+        self.session_snapshot().1
     }
 
     pub fn panel_count(&self) -> usize {

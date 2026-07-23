@@ -180,8 +180,8 @@
   - **Acceptance**: 단위테스트: Session 직렬화→역직렬화 왕복 동일성 + 손상 JSON 입력 시 기본값 반환. Given 분할·탭 구성 후 종료, When 재시작, Then 레이아웃·탭 경로·창 위치 복원 — HUMAN-VERIFY.
   - **Files**:
     - 주: `src/app/settings.rs`
-    - 동반: `src/app/window.rs`(저장/복원 훅), `src/app/mod.rs`
-    - 테스트: `src/app/settings.rs` `#[cfg(test)]`
+    - 동반: `src/app/window.rs`(저장/복원 훅), `src/app/mod.rs`, `src/app/layout.rs`(TreeShape 스냅숏/재구성 — 4-A 예고 "LayoutTree 사용"의 구체화), `src/app/layout_host.rs`(세션 스냅숏·세션 기반 생성), `src/panel/tabs.rs`(탭 수집/재구성 — 핸드오프 예고 "len 소비"), `src/panel/panel.rs`(세션 수집/복원 메시지 배선 — 구현 중 추가)
+    - 테스트: `src/app/settings.rs` `#[cfg(test)]` (+ layout.rs shape 왕복)
   - **Edge Cases**:
     - settings.json 없음(최초 실행)/손상/미래 version → 기본 레이아웃 폴백, 오류 무해 처리
     - 저장된 탭 경로가 삭제됨 → 해당 탭은 홈 폴더로 대체(탭 수 유지)

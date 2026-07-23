@@ -281,6 +281,91 @@ pub struct ComputedLayout {
     pub splitters: Vec<SplitterRect>,
 }
 
+/// 트리 구조 스냅숏 — 세션 저장/복원용 (id 없는 구조만, 리프는 panel_ids()와 동일 walk 순서)
+#[derive(Debug, Clone, PartialEq)]
+pub enum TreeShape {
+    Leaf,
+    Split {
+        dir: SplitDir,
+        ratio: f32,
+        first: Box<TreeShape>,
+        second: Box<TreeShape>,
+    },
+}
+
+impl TreeShape {
+    /// 리프 수 — 세션 panels 배열 길이 검증용
+    pub fn leaf_count(&self) -> usize {
+        match self {
+            TreeShape::Leaf => 1,
+            TreeShape::Split { first, second, .. } => first.leaf_count() + second.leaf_count(),
+        }
+    }
+}
+
+impl LayoutTree {
+    /// 현재 트리의 구조 스냅숏 (세션 저장)
+    pub fn shape(&self) -> TreeShape {
+        fn walk(n: &Node) -> TreeShape {
+            match n {
+                Node::Leaf(_) => TreeShape::Leaf,
+                Node::Split {
+                    dir,
+                    ratio,
+                    first,
+                    second,
+                } => TreeShape::Split {
+                    dir: *dir,
+                    ratio: *ratio,
+                    first: Box::new(walk(first)),
+                    second: Box::new(walk(second)),
+                },
+            }
+        }
+        walk(&self.root)
+    }
+
+    /// 스냅숏으로 트리 재구성 (세션 복원) — 리프마다 새 id를 walk 순서로 부여해 함께 반환
+    pub fn from_shape(shape: &TreeShape) -> (LayoutTree, Vec<PanelId>) {
+        fn build(s: &TreeShape, next: &mut u32, ids: &mut Vec<PanelId>) -> Node {
+            match s {
+                TreeShape::Leaf => {
+                    let id = PanelId(*next);
+                    *next += 1;
+                    ids.push(id);
+                    Node::Leaf(id)
+                }
+                TreeShape::Split {
+                    dir,
+                    ratio,
+                    first,
+                    second,
+                } => Node::Split {
+                    dir: *dir,
+                    // 저장값 오염 방어 — 재구성 시 항상 표시 가능한 범위로
+                    ratio: if ratio.is_finite() {
+                        ratio.clamp(0.05, 0.95)
+                    } else {
+                        0.5
+                    },
+                    first: Box::new(build(first, next, ids)),
+                    second: Box::new(build(second, next, ids)),
+                },
+            }
+        }
+        let mut next = 0;
+        let mut ids = Vec::new();
+        let root = build(shape, &mut next, &mut ids);
+        (
+            LayoutTree {
+                root,
+                next_id: next,
+            },
+            ids,
+        )
+    }
+}
+
 /// 영역을 방향·비율로 (first, 스플리터, second)로 나눈다
 fn split_rect(area: Rect, dir: SplitDir, ratio: f32) -> (Rect, Rect, Rect) {
     let clamp0 = |v: i32| v.max(0);
@@ -486,6 +571,47 @@ mod tests {
         for (_, r) in layout.panes {
             assert!(r.w >= 0 && r.h >= 0);
         }
+    }
+
+    #[test]
+    fn 구조_스냅숏_왕복은_배치가_동일하다() {
+        let (mut tree, first) = LayoutTree::new();
+        let right = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        tree.split(right, SplitDir::Vertical, AREA).unwrap();
+
+        let shape = tree.shape();
+        assert_eq!(shape.leaf_count(), 3);
+        let (rebuilt, ids) = LayoutTree::from_shape(&shape);
+        assert_eq!(ids.len(), 3);
+        assert_eq!(rebuilt.panel_ids(), ids);
+        // 구조가 같으면 사각형 배치도 동일 (id만 새로 부여)
+        let a: Vec<Rect> = tree
+            .compute_rects(AREA)
+            .panes
+            .iter()
+            .map(|(_, r)| *r)
+            .collect();
+        let b: Vec<Rect> = rebuilt
+            .compute_rects(AREA)
+            .panes
+            .iter()
+            .map(|(_, r)| *r)
+            .collect();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn 오염된_비율은_재구성_시_보정된다() {
+        let shape = TreeShape::Split {
+            dir: SplitDir::Horizontal,
+            ratio: f32::NAN,
+            first: Box::new(TreeShape::Leaf),
+            second: Box::new(TreeShape::Leaf),
+        };
+        let (tree, _) = LayoutTree::from_shape(&shape);
+        let layout = tree.compute_rects(AREA);
+        // NaN → 0.5 보정으로 두 패널 모두 표시 가능한 폭
+        assert!(layout.panes.iter().all(|(_, r)| r.w > 0));
     }
 
     #[test]

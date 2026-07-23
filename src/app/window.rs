@@ -5,21 +5,27 @@ use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH, IDM_SPLIT_H,
     IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
 };
+use crate::app::settings::{self, LayoutNode, PanelSession, Session, WindowState};
 use crate::panel::panel::{
-    WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_REFRESH, WM_APP_TAB_CLOSE,
-    WM_APP_TAB_NEW, WM_APP_TREE_TOGGLE,
+    PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_REFRESH,
+    WM_APP_SESSION_COLLECT, WM_APP_SESSION_RESTORE, WM_APP_TAB_CLOSE, WM_APP_TAB_NEW,
+    WM_APP_TREE_TOGGLE,
 };
 use std::cell::{RefCell, RefMut};
+use std::path::PathBuf;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH, ScreenToClient};
+use windows::Win32::Graphics::Gdi::{
+    COLOR_WINDOW, HBRUSH, MONITOR_DEFAULTTONULL, MonitorFromRect, ScreenToClient,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, GWLP_USERDATA,
-    GetCursorPos, GetWindowLongPtrW, HACCEL, HMENU, HTCLIENT, IDC_ARROW, LoadCursorW,
-    PostQuitMessage, RegisterClassExW, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_CAPTURECHANGED, WM_COMMAND, WM_DESTROY,
-    WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY,
-    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    GetCursorPos, GetWindowLongPtrW, GetWindowPlacement, HACCEL, HMENU, HTCLIENT, IDC_ARROW,
+    LoadCursorW, PostQuitMessage, RegisterClassExW, SW_SHOW, SW_SHOWMAXIMIZED, SWP_NOACTIVATE,
+    SWP_NOZORDER, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, WINDOW_EX_STYLE,
+    WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
+    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR,
+    WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -79,13 +85,26 @@ impl MainWindow {
 
             // 상태는 창 생성 후 부착 — 부착 전 도착하는 메시지는 null 가드로 기본 처리
             let menu = menu::attach_menu(hwnd)?;
-            let host = LayoutHost::new(hwnd)?;
+            // 세션이 있으면 분할 구조 복원, 없거나 손상이면 기본 1패널 (FR-11, T4 Edge)
+            let session = settings::load_session();
+            let host = match &session {
+                Some(s) => LayoutHost::from_shape(hwnd, &s.layout.to_shape())?,
+                None => LayoutHost::new(hwnd)?,
+            };
+            if let Some(s) = &session {
+                restore_panels(&host, s);
+            }
             menu::update_close_enabled(menu, host.panel_count());
             let state = Box::new(RefCell::new(AppState { host, menu }));
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
 
             let haccel = menu::create_accels()?;
-            let _ = ShowWindow(hwnd, SW_SHOW);
+            match &session {
+                Some(s) => apply_window_state(hwnd, &s.window),
+                None => {
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                }
+            }
 
             Ok(MainWindow { hwnd, haccel })
         }
@@ -169,15 +188,119 @@ fn post_to(hwnd: HWND, msg: u32) {
 
 /// 패널로 동기 질의 — 패널 상태 RefCell은 메인 창 것과 별개라 차용 충돌 없음
 fn send_to(hwnd: HWND, msg: u32) -> LRESULT {
-    // 안전성: 유효한 자식 창 핸들에 동기 메시지
+    send_ptr(hwnd, msg, 0)
+}
+
+/// 패널로 동기 질의 (lparam 포인터 전달) — 세션 수집/복원(PanelSessionData) 계약 전용.
+/// 반드시 SendMessage(동기)여야 한다 — 포인터가 호출 스택 소유라 Post는 금지
+fn send_ptr(hwnd: HWND, msg: u32, lparam: isize) -> LRESULT {
+    // 안전성: 유효한 자식 창 핸들에 동기 메시지 — lparam 포인터는 호출 동안 유효
     unsafe {
         windows::Win32::UI::WindowsAndMessaging::SendMessageW(
             hwnd,
             msg,
             Some(WPARAM(0)),
-            Some(LPARAM(0)),
+            Some(LPARAM(lparam)),
         )
     }
+}
+
+/// 세션의 패널별 탭을 각 패널에 복원 (walk 순서 1:1 — layout_host 계약)
+fn restore_panels(host: &LayoutHost, session: &Session) {
+    for (panel, ps) in host.panel_hwnds().iter().zip(&session.panels) {
+        let data = PanelSessionData {
+            tabs: ps.tabs.iter().map(PathBuf::from).collect(),
+            active: ps.active_tab,
+        };
+        send_ptr(
+            *panel,
+            WM_APP_SESSION_RESTORE,
+            &data as *const PanelSessionData as isize,
+        );
+    }
+}
+
+/// 저장된 창 위치·최대화 적용. 모니터 밖(분리된 모니터)이면 위치는 생략하고
+/// 기본 위치(주 모니터)로 표시만 한다 (T4 Edge)
+fn apply_window_state(hwnd: HWND, w: &WindowState) {
+    let rect = RECT {
+        left: w.x,
+        top: w.y,
+        right: w.x + w.w,
+        bottom: w.y + w.h,
+    };
+    // 안전성: rect는 스택 소유 — 어느 모니터에도 안 걸리면 널 핸들 반환
+    let on_screen = unsafe { !MonitorFromRect(&rect, MONITOR_DEFAULTTONULL).is_invalid() };
+    if on_screen {
+        let wp = WINDOWPLACEMENT {
+            length: size_of::<WINDOWPLACEMENT>() as u32,
+            showCmd: SW_SHOW.0 as u32,
+            rcNormalPosition: rect,
+            ..Default::default()
+        };
+        // 안전성: wp는 스택 소유, 유효한 창 핸들
+        unsafe {
+            let _ = SetWindowPlacement(hwnd, &wp);
+        }
+    }
+    // 안전성: 표시 상태 적용
+    unsafe {
+        let _ = ShowWindow(
+            hwnd,
+            if w.maximized {
+                SW_SHOWMAXIMIZED
+            } else {
+                SW_SHOW
+            },
+        );
+    }
+}
+
+/// WM_CLOSE — 현재 레이아웃·패널 탭·창 위치를 수집해 저장 (FR-11, D15: 종료 시 1회)
+fn save_current_session(hwnd: HWND) {
+    let Some(state) = state_of(hwnd) else {
+        return;
+    };
+    let (shape, hwnds) = state.host.session_snapshot();
+    let mut panels = Vec::with_capacity(hwnds.len());
+    for panel in hwnds {
+        let mut data = PanelSessionData::default();
+        // 패널 RefCell은 메인 창 것과 별개 — 동기 수집 안전 (send_to 주석 참조)
+        send_ptr(
+            panel,
+            WM_APP_SESSION_COLLECT,
+            &mut data as *mut PanelSessionData as isize,
+        );
+        panels.push(PanelSession {
+            tabs: data
+                .tabs
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            active_tab: data.active,
+        });
+    }
+    let mut wp = WINDOWPLACEMENT {
+        length: size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    // 안전성: wp는 스택 소유, 유효한 창 핸들 — 실패 시 기본값(0 크기)은 저장 검증에서 걸러짐
+    unsafe {
+        let _ = GetWindowPlacement(hwnd, &mut wp);
+    }
+    let rc = wp.rcNormalPosition;
+    settings::save_session(&Session {
+        version: settings::SESSION_VERSION,
+        window: WindowState {
+            x: rc.left,
+            y: rc.top,
+            w: rc.right - rc.left,
+            h: rc.bottom - rc.top,
+            maximized: wp.showCmd == SW_SHOWMAXIMIZED.0 as u32,
+        },
+        layout: LayoutNode::from_shape(&shape),
+        panels,
+    });
 }
 
 fn coords(lparam: LPARAM) -> (i32, i32) {
@@ -310,6 +433,11 @@ unsafe extern "system" fn wnd_proc(
             // 제안 사각형으로 이동 → WM_SIZE가 재배치를 수행 (NFR-4)
             move_to_suggested(hwnd, lparam);
             LRESULT(0)
+        }
+        WM_CLOSE => {
+            // 파괴 전에 세션 저장 — 이후 기본 처리(DestroyWindow)로 진행
+            save_current_session(hwnd);
+            def_proc(hwnd, msg, wparam, lparam)
         }
         WM_DESTROY => {
             detach_state(hwnd);
