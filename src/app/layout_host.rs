@@ -76,9 +76,17 @@ impl LayoutHost {
     /// 세션 저장용 스냅숏 — (분할 구조, walk 순서의 패널 HWND 목록).
     /// HWND 순서는 TreeShape 리프 순서와 1:1이다
     pub fn session_snapshot(&self) -> (TreeShape, Vec<HWND>) {
-        let shape = self.tree.shape();
-        let hwnds = self
-            .tree
+        (self.tree.shape(), self.ordered_hwnds())
+    }
+
+    /// walk 순서의 패널 HWND 목록 — 세션 복원 메시지 전달용 (session_snapshot과 동일 순서)
+    pub fn panel_hwnds(&self) -> Vec<HWND> {
+        self.ordered_hwnds()
+    }
+
+    /// panel_ids() walk 순서로 패널 HWND 정렬 (저장·복원 공용)
+    fn ordered_hwnds(&self) -> Vec<HWND> {
+        self.tree
             .panel_ids()
             .iter()
             .filter_map(|id| {
@@ -87,13 +95,7 @@ impl LayoutHost {
                     .find(|(pid, _)| pid == id)
                     .map(|(_, h)| *h)
             })
-            .collect();
-        (shape, hwnds)
-    }
-
-    /// walk 순서의 패널 HWND 목록 — 세션 복원 메시지 전달용 (session_snapshot과 동일 순서)
-    pub fn panel_hwnds(&self) -> Vec<HWND> {
-        self.session_snapshot().1
+            .collect()
     }
 
     pub fn panel_count(&self) -> usize {

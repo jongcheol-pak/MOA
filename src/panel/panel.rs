@@ -281,19 +281,11 @@ impl PanelState {
     }
 
     /// 세션 복원 (FR-11) — 탭 목록·활성 탭을 통째로 교체하고 활성 탭만 열거한다.
-    /// 저장된 경로가 사라졌으면 그 탭은 홈 폴더로 대체 — 탭 수 유지 (T4 Edge)
+    /// 저장 경로는 검사 없이 그대로 신뢰한다 — 시작 시 동기 존재 검사(is_dir)는
+    /// UI 스레드 블로킹(AGENTS 원칙) 위반이라 하지 않고, 사라진 경로는 열거 실패
+    /// 경로(fail_pending — 오류 문구·탭 유지)가 처리한다 (plan D18)
     fn restore_session(&mut self, hwnd: HWND, data: &PanelSessionData) {
-        let tabs: Vec<TabState> = data
-            .tabs
-            .iter()
-            .map(|p| {
-                if p.is_dir() {
-                    TabState::new(p.clone())
-                } else {
-                    TabState::new(home_dir())
-                }
-            })
-            .collect();
+        let tabs: Vec<TabState> = data.tabs.iter().map(|p| TabState::new(p.clone())).collect();
         let Some(model) = TabsModel::from_tabs(tabs, data.active) else {
             return; // 빈 세션 — 초기 상태(홈 탭) 유지
         };
