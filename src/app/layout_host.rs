@@ -11,8 +11,8 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     BeginDeferWindowPos, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-    DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect, HCURSOR, IDC_ARROW,
-    IDC_SIZENS, IDC_SIZEWE, LoadCursorW, RegisterClassExW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
+    DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect, IDC_ARROW, IDC_SIZENS,
+    IDC_SIZEWE, LoadCursorW, RegisterClassExW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
     WINDOW_EX_STYLE, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, Result, w};
@@ -112,27 +112,32 @@ impl LayoutHost {
     pub fn relayout(&mut self, parent: HWND) {
         let area = client_rect(parent);
         self.layout_cache = self.tree.compute_rects(area);
-        // 안전성: DeferWindowPos 일괄 배치 — 모든 핸들은 살아있는 자식 창
+        // 안전성: DeferWindowPos 일괄 배치 — 모든 핸들은 살아있는 자식 창.
+        // 실패 시 hdwp가 무효화될 수 있으므로(공식 문서) 배칭을 중단한다
         unsafe {
-            if let Ok(mut hdwp) = BeginDeferWindowPos(self.panes.len() as i32) {
-                for (id, hwnd) in &self.panes {
-                    if let Some((_, r)) = self.layout_cache.panes.iter().find(|(pid, _)| pid == id)
-                        && let Ok(next) = DeferWindowPos(
-                            hdwp,
-                            *hwnd,
-                            None,
-                            r.x,
-                            r.y,
-                            r.w.max(0),
-                            r.h.max(0),
-                            SWP_NOZORDER | SWP_NOACTIVATE,
-                        )
-                    {
-                        hdwp = next;
-                    }
+            let mut hdwp = match BeginDeferWindowPos(self.panes.len() as i32) {
+                Ok(h) => h,
+                Err(_) => return,
+            };
+            for (id, hwnd) in &self.panes {
+                let Some((_, r)) = self.layout_cache.panes.iter().find(|(pid, _)| pid == id) else {
+                    continue;
+                };
+                match DeferWindowPos(
+                    hdwp,
+                    *hwnd,
+                    None,
+                    r.x,
+                    r.y,
+                    r.w.max(0),
+                    r.h.max(0),
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                ) {
+                    Ok(next) => hdwp = next,
+                    Err(_) => return, // 무효 hdwp로 계속하지 않음 — 다음 relayout이 복구
                 }
-                let _ = EndDeferWindowPos(hdwp);
             }
+            let _ = EndDeferWindowPos(hdwp);
         }
     }
 
@@ -186,23 +191,18 @@ impl LayoutHost {
         }
     }
 
-    pub fn is_dragging(&self) -> bool {
-        self.drag.is_some()
-    }
-
-    /// 좌표가 스플리터 위면 해당 리사이즈 커서를 반환 (WM_SETCURSOR 배선)
-    pub fn cursor_at(&self, x: i32, y: i32) -> Option<HCURSOR> {
-        let sp = self
+    /// 좌표가 스플리터 위면 리사이즈 커서를 적용하고 true (WM_SETCURSOR 배선)
+    pub fn apply_splitter_cursor(&self, x: i32, y: i32) -> bool {
+        let Some(sp) = self
             .layout_cache
             .splitters
             .iter()
-            .find(|s| contains(s.rect, x, y))?;
-        let id = match sp.dir {
-            SplitDir::Horizontal => IDC_SIZEWE,
-            SplitDir::Vertical => IDC_SIZENS,
+            .find(|s| contains(s.rect, x, y))
+        else {
+            return false;
         };
-        // 안전성: 시스템 공유 커서 로드 — 해제 불필요
-        unsafe { LoadCursorW(None, id).ok() }
+        set_size_cursor(sp.dir);
+        true
     }
 
     /// 드래그 중이면 방향 커서 적용 (히트테스트 무관 — 캡처 중 커서 유지)
@@ -210,17 +210,22 @@ impl LayoutHost {
         let Some(drag) = &self.drag else {
             return false;
         };
-        let id = match drag.dir {
-            SplitDir::Horizontal => IDC_SIZEWE,
-            SplitDir::Vertical => IDC_SIZENS,
-        };
-        // 안전성: 시스템 공유 커서 — 실패 시 기본 커서 유지
-        unsafe {
-            if let Ok(cur) = LoadCursorW(None, id) {
-                SetCursor(Some(cur));
-            }
-        }
+        set_size_cursor(drag.dir);
         true
+    }
+}
+
+/// 분할 방향에 맞는 시스템 리사이즈 커서 적용
+fn set_size_cursor(dir: SplitDir) {
+    let id = match dir {
+        SplitDir::Horizontal => IDC_SIZEWE,
+        SplitDir::Vertical => IDC_SIZENS,
+    };
+    // 안전성: 시스템 공유 커서 로드·적용 — 실패 시 기본 커서 유지, 해제 불필요
+    unsafe {
+        if let Ok(cur) = LoadCursorW(None, id) {
+            SetCursor(Some(cur));
+        }
     }
 }
 

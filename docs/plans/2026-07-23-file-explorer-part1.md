@@ -189,7 +189,7 @@
   - **Acceptance**: Given 실행된 앱, When 메뉴/단축키로 좌우·상하 분할 반복 후 스플리터 드래그·패널 닫기, Then 패널들이 겹침·틈 없이 배치되고 드래그로 비율 변경, 마지막 패널 닫기 메뉴는 비활성 — 화면 동작은 HUMAN-VERIFY. 빌드·clippy 0은 기계 검증.
   - **Files**:
     - 주: `src/app/layout_host.rs`, `src/app/menu.rs`
-    - 동반: `src/app/window.rs`(WM_SIZE·WM_COMMAND·마우스 메시지 배선), `src/app/mod.rs`
+    - 동반: `src/app/window.rs`(WM_SIZE·WM_COMMAND·마우스 메시지 배선), `src/app/mod.rs`, `src/app/layout.rs`(SplitterRect.node_area 필드 확장 — 드래그 비율 계산용, 구현 중 자율 추가), `src/main.rs`(TranslateAcceleratorW 루프)
   - **Edge Cases**:
     - 창 최소화 → 0 크기 재배치 무해 통과 (T2 Edge와 연동)
     - 드래그 중 캡처 상실(Alt+Tab 등) → WM_CAPTURECHANGED에서 드래그 상태 정리
