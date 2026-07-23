@@ -1,0 +1,21 @@
+[package]
+name = "file_explorer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+# 경량 배포 목표(NFR-2) — 크기 최적화·심볼 제거
+opt-level = "s"
+lto = true
+strip = true
