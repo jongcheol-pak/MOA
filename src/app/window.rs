@@ -19,8 +19,10 @@ use windows::core::{PCWSTR, Result, w};
 const WINDOW_CLASS: PCWSTR = w!("FileExplorerMainWindow");
 
 /// 창별 상태 — GWLP_USERDATA에 `Box<RefCell<...>>`로 귀속.
-/// RefCell인 이유: 자식 창 생성/파괴(split·close) 중 WM_PARENTNOTIFY가 같은 스레드로
-/// 동기 재진입하는데, 그때 try_borrow_mut이 실패해 별칭 &mut이 구조적으로 만들어질 수 없다.
+/// RefCell인 이유: 자식 창 생성/파괴(split·close) 중 WM_PARENTNOTIFY 등이 같은 스레드로
+/// 동기 재진입할 수 있다. 현재는 각 핸들러의 조건 필터(예: WM_LBUTTONDOWN 서브타입만
+/// 상태 접근)가 1차로 별칭을 차단하며, RefCell의 try_borrow_mut은 그 필터가 변경·확장돼
+/// 재진입 경로에서 상태에 접근하게 되더라도 별칭 &mut이 만들어질 수 없게 하는 구조적 안전망이다.
 struct AppState {
     host: LayoutHost,
     menu: HMENU,
@@ -236,8 +238,9 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_PARENTNOTIFY => {
             // 자식 패널 클릭 → 활성 패널 갱신 (좌표는 부모 클라이언트 기준).
-            // WM_CREATE/WM_DESTROY 서브타입은 split/close 도중 동기 재진입이므로
-            // state_of의 try_borrow_mut이 None을 돌려 안전하게 무시된다.
+            // split/close 도중 동기 재진입하는 WM_CREATE/WM_DESTROY 서브타입은
+            // 아래 WM_LBUTTONDOWN 필터가 먼저 걸러 상태 접근 자체가 없다(1차 방어).
+            // 필터가 바뀌어도 state_of의 try_borrow_mut이 None을 돌려 별칭은 생기지 않는다(2차 방어).
             if loword(wparam.0) == WM_LBUTTONDOWN
                 && let Some(mut state) = state_of(hwnd)
             {
