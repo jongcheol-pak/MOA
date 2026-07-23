@@ -157,7 +157,7 @@
     - (i) "메뉴 구현 방식?" → D13 사전 결정
   - **Depends on**: -
 
-- [ ] T3. 변경 감시 자동 새로고침 + F5 (FR-10, FR-12 잔여)
+- [x] T3. 변경 감시 자동 새로고침 + F5 (FR-10, FR-12 잔여)
   - **Type**: C
   - **Design**: ① 배치: `src/fs/watcher.rs` ② 신규 심볼: `DirWatcher` — 감시 스레드 시작/중지(활성 탭 경로 변경 시 재시작), `ReadDirectoryChangesW` 수신→300ms 디바운스→`WM_APP_DIR_CHANGED` 통지 책임 ③ 의존: Panel이 활성 탭 경로로 소유·재시작, 통지 수신 시 기존 재열거 경로 호출. F5는 menu.rs 액셀러레이터→동일 재열거 ④ 비추상화: 변경 항목 단위 부분 갱신 없음(D16 — 전체 재열거).
   - **Acceptance**: 통합테스트(`tests/watcher.rs`): Given 임시 폴더 감시 시작, When 파일 생성/삭제, Then 디바운스 후 변경 통지 1회 수신 (HWND 비의존 — 채널 수신으로 검증). Given 실행 앱, When 표시 중 폴더에 외부에서 파일 추가·F5 입력, Then 목록 자동/수동 갱신 — HUMAN-VERIFY.
