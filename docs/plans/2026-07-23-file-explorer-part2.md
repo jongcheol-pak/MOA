@@ -197,7 +197,7 @@
     - (i) "스키마·저장 시점?" → D15 사전 결정
   - **Depends on**: - (레이아웃 직렬화는 part1 T2 산출 LayoutTree 사용)
 
-- [ ] T5. 성능 실측·튜닝 (NFR-1~3)
+- [x] T5. 성능 실측·튜닝 (NFR-1~3)
   - **Type**: C
   - **Design**: ① 배치: 측정·데이터 생성 스크립트는 시스템 스크래치 폴더(임시 파일 규칙 — 프로젝트 미오염). 코드 수정은 병목 발견 시 해당 모듈 국소 수정 ② 신규 심볼: 없음 예정(측정 결과에 따른 국소 수정만 — 새 구조 필요 시 돌발 결정으로 Halt) ③ 의존: release 빌드 대상 측정 ④ 비추상화: 벤치마크 프레임워크(criterion) 도입 없음.
   - **Acceptance**: `cargo build --release` 산출물로 — NFR-1: 프로세스 시작→창 표시 1초 미만, NFR-2: 패널 2개 유휴 WorkingSet 50MB 미만, NFR-3: 10만 파일 폴더 진입 시 UI 응답 유지(열거 중 입력 가능) — 각각 측정 수치를 완료 보고에 기록. 미달 시 수정→재측정 (동일 이슈 3회 실패 시 중단·보고).
@@ -237,7 +237,8 @@
 - T1 완료 (커밋 436026d): FolderTree(SysTreeView32) 지연 확장·패널별 토글·선택 시 활성 탭 이동. 확장은 TVN_ITEMEXPANDING 보류(반환 1) 후 워커 열거 완료 시 apply_expand(차용 해제 후) — apply_item_count와 동일 계약. 리뷰 spec/quality 모두 OK, 테스트 35/35.
 - T2 완료 (커밋 c1f3f58): shell_menu(IContextMenu 3단 + IContextMenu2/3 포워딩 thread_local). 배선은 NM_RCLICK 대신 WM_CONTEXTMENU 채택(키보드 메뉴 키 포함, 화면 좌표 직접 — Design 병기 문구 중 후자). Cargo.toml에 Win32_UI_Shell_Common feature 추가. 차용은 collect_context_menu_request 안에서 종료 후 모달 표시. 리뷰 OK(MINOR m1 → Deferred).
 - T3 완료 (커밋 7589ad8): DirWatcher(RDCW overlapped, 발행 상시 유지 불변식 + 조용 300ms 디바운스). 결정: lib 타깃 도입(bin+lib — tests/ 통합테스트의 기계적 전제, main.rs mod→use), Drop은 회수 스레드에 join 위임(리뷰 M1 — UI 무정지), 감시 실패는 무해 저하(F5만). expect(dead_code) 2건 제거(lib 전환으로 pub 도달성 변화). 테스트 arming 루프로 시동 레이스 흡수.
-- T4 완료 (커밋 아래 참조): settings.rs(D15 스키마 serde + parse 검증)·TreeShape 스냅숏/재구성·세션 메시지(COLLECT/RESTORE — 같은 스레드 SendMessage 포인터 계약)·WM_CLOSE 저장/시작 복원·창 배치(모니터 밖이면 기본 위치). 결정 D18: 삭제된 탭 경로는 홈 대체(원안) 대신 기존 열거 실패 경로 위임(리뷰 B1 — UI 스레드 is_dir 금지). panels↔layout 리프는 walk 순서 1:1 계약.
+- T4 완료 (커밋 c518047): settings.rs(D15 스키마 serde + parse 검증)·TreeShape 스냅숏/재구성·세션 메시지(COLLECT/RESTORE — 같은 스레드 SendMessage 포인터 계약)·WM_CLOSE 저장/시작 복원·창 배치(모니터 밖이면 기본 위치). 결정 D18: 삭제된 탭 경로는 홈 대체(원안) 대신 기존 열거 실패 경로 위임(리뷰 B1 — UI 스레드 is_dir 금지). panels↔layout 리프는 walk 순서 1:1 계약.
+- T5 완료: 성능 실측 (D17 스크립트 — 스크래치, APPDATA 리다이렉트로 사용자 설정 미오염, 측정 후 데이터 삭제). release 빌드 382KB. **NFR-1: 시작→창 표시 중앙값 209ms(3회: 729/195/209 — 콜드 포함 전부 <1s) PASS · NFR-2: 2패널 유휴 WorkingSet 중앙값 20.8MB(<50MB) PASS · NFR-3: 10만 파일 진입 중 WM_NULL probe 82회 timeout 0·최대 응답 221ms PASS.** 코드 수정 0 (튜닝 불필요 — part1 캐시·가상화 설계가 유효). 리뷰: 코드 diff 없음이라 V-5/V-6 비대상. 2패널 세션 복원 기동은 T4 복원 경로의 실동작 부수 증거.
 
 ## Next Steps
 - part1(docs/plans/2026-07-23-file-explorer-part1.md) 완료 후 이 plan을 pjc:implement-task로 실행
