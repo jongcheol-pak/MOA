@@ -154,7 +154,7 @@
 
 ## Tasks
 
-- [ ] T1. 프로젝트 셋업 — cargo init, 의존성, 매니페스트, 빈 메인 창
+- [x] T1. 프로젝트 셋업 — cargo init, 의존성, 매니페스트, 빈 메인 창
   - **Type**: C
   - **Design**: ① 배치: 루트 `Cargo.toml`·`build.rs`·`app.manifest`, `src/main.rs`, `src/app/window.rs` ② 신규 심볼: `main`(진입·COM 초기화 `CoInitializeEx`·메시지 루프), `app::window::MainWindow`(창 클래스 등록·생성·`WndProc` 디스패치 소유) ③ 의존: window → windows crate만, main → window ④ 비추상화: 범용 Win32 래퍼 라이브러리를 만들지 않음 — 이 앱에 필요한 함수만 감싼다. `#![windows_subsystem = "windows"]`로 콘솔 억제.
   - **Acceptance**: Given 빈 프로젝트, When `cargo build`·`cargo clippy --all-targets -- -D warnings` 실행, Then 경고·에러 0. When `cargo run`, Then 크기 조절 가능한 빈 창 표시(제목 "파일 탐색기") — 창 표시·DPI 선명도는 HUMAN-VERIFY. 매니페스트(PMv2 DPI·공용 컨트롤 v6·longPathAware)가 build.rs 링커 플래그로 임베드됨.
