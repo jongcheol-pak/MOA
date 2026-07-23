@@ -200,7 +200,7 @@
     - (i) "분할 명령 UI 위치?" → D10에서 결정(메뉴+단축키)
   - **Depends on**: T1, T2
 
-- [ ] T4. 파일 목록 패널 — 가상 리스트뷰·백그라운드 열거·정렬·아이콘 (FR-4·FR-5)
+- [x] T4. 파일 목록 패널 — 가상 리스트뷰·백그라운드 열거·정렬·아이콘 (FR-4·FR-5)
   - **Type**: D
   - **Design**: ① 배치: `src/panel/file_list.rs`(리스트뷰 래퍼), `src/fs/enumerate.rs`(워커 열거), `src/fs/icons.rs`(아이콘 캐시), `src/panel/panel.rs`(패널 컨테이너 골격) ② 신규 심볼: `FileList` — `SysListView32`(`LVS_OWNERDATA`) 생성, `LVN_GETDISPINFO`로 항목 공급, 열(이름/크기/종류/수정일)·헤더 클릭 정렬 상태 책임. `fs::enumerate::spawn_enumerate(path, generation, tx)` — 워커 스레드에서 `FindFirstFileExW`(대용량 힌트 플래그) 열거 후 채널+`WM_APP_ENUM_DONE` 통지. `fs::icons::IconCache` — 확장자→시스템 이미지 리스트 인덱스 캐시(D8). `panel::Panel` — 자식(주소창 영역은 T5에서 채움)+목록 배치 컨테이너 ③ 의존: Panel → FileList → fs::* ; LayoutHost(T3)가 Panel HWND를 배치 ④ 비추상화: 파일 시스템 추상 트레이트(백엔드 교체용) 안 만듦 — Win32 직접 호출만.
   - **Acceptance**: Given 폴더 경로가 지정된 패널, When 열거 완료, Then 이름/크기/종류/수정일이 표시되고 헤더 클릭으로 정렬 토글(이름은 StrCmpLogicalW·폴더 우선 — 정렬 비교 함수는 단위테스트) — 목록 표시는 HUMAN-VERIFY. Given 10만 파일 테스트 폴더, When 진입, Then UI 입력이 멈추지 않음(열거 중 "읽는 중…" 표시, NFR-3 체감 확인은 part2 T5에서 실측).
@@ -277,6 +277,9 @@
 - T1-T2 완료: 프로젝트 셋업(windows-rs 0.62.2·매니페스트 링커 임베드·빈 창) + 레이아웃 트리 모델(split/close/set_ratio/compute_rects, 테스트 11개). 빌드/clippy/fmt/test 전부 통과.
   - 결정: Error::from_win32는 0.62에서 from_thread로 개명됨(적용). GetMessageW는 `.0 > 0` 판정(-1 오류 함정). 미소비 모듈은 `#![cfg_attr(not(test), expect(dead_code))]` 자기 정리형 패턴 사용 — T3에서 소비 시 제거 필요.
   - NodePath = 루트→노드 비트열(0=first,1=second), 스플리터가 이 경로로 set_ratio 호출.
+- T3-T4 완료: 레이아웃 렌더링(스플리터 드래그·메뉴·단축키) + 파일 목록(가상 리스트뷰·워커 열거·정렬·아이콘). 테스트 20/20.
+  - 결정: 창 상태는 Box<RefCell<...>> in GWLP_USERDATA (재진입 별칭 안전망 — 1차 방어는 핸들러 필터). LVM_SETITEMCOUNT는 반드시 RefCell 차용 해제 후 apply_item_count로 (재진입 표시 누락 방지). exe/lnk/ico는 경로별 아이콘 캐시. Panel은 pub struct가 아니라 panel::create(parent)->HWND + 창 귀속 상태(관례 일치 — Design 표기와 다름, spec 리뷰 수용).
+  - T5 참고: navigate로 실폴더 이동 시 clear() 직후 apply_item_count(hwnd, 0) 필요 (quality 리뷰 follow-up).
 
 ## Next Steps
 - part1 완료 후 → 남은 분할 plan: docs/plans/2026-07-23-file-explorer-part2.md — pjc:implement-task로 별도 실행
