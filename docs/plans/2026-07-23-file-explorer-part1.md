@@ -219,13 +219,13 @@
     - (i) "정렬 규칙?" → D7 / "아이콘 전략?" → D8 / "스레딩?" → D5 — 모두 사전 결정됨
   - **Depends on**: T1, T3
 
-- [ ] T5. 네비게이션 — 주소창·히스토리·더블클릭 (FR-6·FR-7)
+- [x] T5. 네비게이션 — 주소창·히스토리·더블클릭 (FR-6·FR-7)
   - **Type**: D
   - **Design**: ① 배치: `src/panel/address_bar.rs`(Edit 컨트롤+[←][→][↑] 버튼), `src/panel/history.rs`(순수 로직), panel.rs에 통합 ② 신규 심볼: `AddressBar` — 경로 표시·Enter 입력 처리·버튼 상태(활성/비활성) 책임. `History` — Vec<PathBuf>+커서, push/back/forward/can_* (D9) ③ 의존: Panel이 AddressBar·History·FileList를 소유하고 "경로 이동" 흐름을 조율(navigate(path) 단일 진입점) ④ 비추상화: URL·셸 네임스페이스 파싱 안 함 — 파일시스템 경로 문자열만.
   - **Acceptance**: Given 히스토리 로직, When push/back/forward 시퀀스(분기 이동 포함), Then 커서·목록 상태가 기대값과 일치하는 단위테스트 통과. Given 실행 앱, When 주소창에 존재 경로 입력(Enter)·폴더 더블클릭·파일 더블클릭·Alt+←/→/↑, Then 각각 이동/진입/연결 프로그램 실행(`ShellExecuteExW`)/히스토리 이동 — HUMAN-VERIFY.
   - **Files**:
     - 주: `src/panel/address_bar.rs`, `src/panel/history.rs`
-    - 동반: `src/panel/panel.rs`(navigate 조율), `src/app/menu.rs`(Alt 단축키), `src/panel/mod.rs`
+    - 동반: `src/panel/panel.rs`(navigate 조율), `src/app/menu.rs`(Alt 단축키), `src/panel/mod.rs`, `src/app/window.rs`(Alt 액셀 → 활성 패널 라우팅), `src/app/layout_host.rs`(active_hwnd 신설), `src/panel/file_list.rs`(entry_at 소비), `Cargo.toml`(Win32_System_Registry — SHELLEXECUTEINFOW 구조체 요구) — 구현 중 자율 추가 기록 (spec 리뷰 MINOR 반영)
     - 테스트: `src/panel/history.rs` `#[cfg(test)]`
   - **Edge Cases**:
     - 존재하지 않는 경로 입력 → "경로를 찾을 수 없습니다" 문구 표시, 현 위치 유지
