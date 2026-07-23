@@ -183,7 +183,7 @@
     - (i) "비율 클램프 기준?" → Edge Cases에 명시(최소 120px)
   - **Depends on**: -
 
-- [ ] T3. 레이아웃 렌더링·스플리터·분할 명령 — FR-1·FR-2 완성
+- [x] T3. 레이아웃 렌더링·스플리터·분할 명령 — FR-1·FR-2 완성
   - **Type**: D
   - **Design**: ① 배치: `src/app/layout_host.rs`(트리↔HWND 배치), `src/app/menu.rs`(메뉴 바·액셀러레이터), window.rs에 배선 ② 신규 심볼: `LayoutHost` — LayoutTree의 compute_rects 결과로 패널 HWND들을 `DeferWindowPos` 일괄 배치, 스플리터 히트테스트·드래그(SetCapture, 커서 IDC_SIZEWE/NS), WM_SIZE 재배치 책임. `menu::build_menu`·`menu::accel_table` — 한국어 메뉴(보기: 좌우 분할/상하 분할/패널 닫기)와 단축키(D10) 정의 ③ 의존: LayoutHost → layout.rs(T2)·panel(T4 이후 실 패널, 그 전엔 자리표시 자식 창) — window.rs가 호출 ④ 비추상화: 스플리터를 별도 HWND로 만들지 않음(부모 히트테스트 방식 — 창 수 절약).
   - **Acceptance**: Given 실행된 앱, When 메뉴/단축키로 좌우·상하 분할 반복 후 스플리터 드래그·패널 닫기, Then 패널들이 겹침·틈 없이 배치되고 드래그로 비율 변경, 마지막 패널 닫기 메뉴는 비활성 — 화면 동작은 HUMAN-VERIFY. 빌드·clippy 0은 기계 검증.
