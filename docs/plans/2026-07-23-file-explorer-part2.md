@@ -230,6 +230,9 @@
 - 수동 검증: task별 HUMAN-VERIFY 항목 구분 보고 + T5 성능 수치 보고
 
 ## Phase Ledger
+- 전 task 완료 (T1~T5, 마지막 완료 커밋 0b23444)
+- Phase F 통과 (HEAD 452ebde) — F-7 Opus 검토 OK (BLOCKER/MAJOR/MINOR 0), F-2 전체 테스트 43+2 통과, F-6.5 문서 갱신 완료
+- Phase G 통과 (Must 100%) — G-1은 F-7 PRD 전수 대조 재사용: active Must 8/8 ✅·Should 4/4 ✅·NFR-1~3 실측 기록 충족·NFR-4~7 충족. ❌ 0건, 재루프 0회. HUMAN-VERIFY 잔여는 최종 보고 목록 참조
 
 ## Retry Ledger
 
@@ -241,8 +244,9 @@
 - T5 완료: 성능 실측 (D17 스크립트 — 스크래치, APPDATA 리다이렉트로 사용자 설정 미오염, 측정 후 데이터 삭제). release 빌드 382KB. **NFR-1: 시작→창 표시 중앙값 209ms(3회: 729/195/209 — 콜드 포함 전부 <1s) PASS · NFR-2: 2패널 유휴 WorkingSet 중앙값 20.8MB(<50MB) PASS · NFR-3: 10만 파일 진입 중 WM_NULL probe 82회 timeout 0·최대 응답 221ms PASS.** 코드 수정 0 (튜닝 불필요 — part1 캐시·가상화 설계가 유효). 리뷰: 코드 diff 없음이라 V-5/V-6 비대상. 2패널 세션 복원 기동은 T4 복원 경로의 실동작 부수 증거.
 
 ## Next Steps
-- part1(docs/plans/2026-07-23-file-explorer-part1.md) 완료 후 이 plan을 pjc:implement-task로 실행
-- 전체 완료 시 Phase G(PRD 재검증)는 이 part에서 수행 (active Must FR 100% — 두 part 합산 기준)
+- **v1 완성 (part1+part2, Phase F·G 통과)** — 다음 액션: HUMAN-VERIFY 항목 화면 확인(트리·셸 메뉴·자동 갱신·세션 복원) 후, 원하면 master 병합·태그(별도 승인 필요 — 자율 루프 권한 밖)
+- Suggested skills: 공식 /code-review (브랜치 전체 재검토 원할 시), pjc:plan-feature (FR-13·14 등 후속 기능 착수 시)
+- 작업 브랜치: task/part2-file-explorer (master 병합 전 상태)
 
 ## Open Questions
 - [x] Q1~Q5: part1과 공통 — 전부 해소됨 (part1 Open Questions 참조)
