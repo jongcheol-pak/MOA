@@ -43,6 +43,8 @@
 - **다음 분할 plan**: docs/plans/2026-07-23-file-explorer-part2.md — T1~T5 (트리·셸 메뉴·감시·세션·성능, 전체의 후반부, 미실행)
 - FR-13 숨김·시스템 파일 표시 토글 (Could — v1 이후 여유 시)
 - FR-14 분할 프리셋 버튼 (Could — v1 이후 여유 시)
+- exe/lnk 아이콘 비동기 프리페치 — part2 T5 성능 실측 미달 시 검토 (T4 quality 리뷰 M1 후속)
+- HWND 재사용 이론적 경합(워커 PostMessage 직전 패널 파괴+재사용) — 실용 위험 낮음, 수용 (T4 quality 리뷰 m1)
 
 ## Investigation Log
 - 위키 참조: 없음(vault 미설정·경로 부재) — 코드 1차 출처로 진행 (Test-Path 4개 후보 경로 모두 False, 2026-07-23)
