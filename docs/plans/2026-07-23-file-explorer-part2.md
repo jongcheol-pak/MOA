@@ -180,7 +180,7 @@
     - (i) "부분 갱신 vs 재열거?" → D16 / "디바운스 값?" → D16(300ms)
   - **Depends on**: -
 
-- [ ] T4. 세션 저장/복원 (FR-11)
+- [x] T4. 세션 저장/복원 (FR-11)
   - **Type**: C
   - **Design**: ① 배치: `src/app/settings.rs` ② 신규 심볼: `Session`(serde 구조체 — D15 스키마)·`save_session`/`load_session`(%APPDATA%\FileExplorer\settings.json, 디렉터리 없으면 생성) ③ 의존: MainWindow가 WM_CLOSE에서 수집·저장, 시작 시 로드해 LayoutTree·패널·탭 재구성(없거나 손상 시 기본 1패널 1탭 홈 폴더) ④ 비추상화: 설정 일반화(옵션 시스템) 없음 — 세션 필드만.
   - **Acceptance**: 단위테스트: Session 직렬화→역직렬화 왕복 동일성 + 손상 JSON 입력 시 기본값 반환. Given 분할·탭 구성 후 종료, When 재시작, Then 레이아웃·탭 경로·창 위치 복원 — HUMAN-VERIFY.
@@ -236,6 +236,8 @@
 ## Progress Log
 - T1 완료 (커밋 436026d): FolderTree(SysTreeView32) 지연 확장·패널별 토글·선택 시 활성 탭 이동. 확장은 TVN_ITEMEXPANDING 보류(반환 1) 후 워커 열거 완료 시 apply_expand(차용 해제 후) — apply_item_count와 동일 계약. 리뷰 spec/quality 모두 OK, 테스트 35/35.
 - T2 완료 (커밋 c1f3f58): shell_menu(IContextMenu 3단 + IContextMenu2/3 포워딩 thread_local). 배선은 NM_RCLICK 대신 WM_CONTEXTMENU 채택(키보드 메뉴 키 포함, 화면 좌표 직접 — Design 병기 문구 중 후자). Cargo.toml에 Win32_UI_Shell_Common feature 추가. 차용은 collect_context_menu_request 안에서 종료 후 모달 표시. 리뷰 OK(MINOR m1 → Deferred).
+- T3 완료 (커밋 7589ad8): DirWatcher(RDCW overlapped, 발행 상시 유지 불변식 + 조용 300ms 디바운스). 결정: lib 타깃 도입(bin+lib — tests/ 통합테스트의 기계적 전제, main.rs mod→use), Drop은 회수 스레드에 join 위임(리뷰 M1 — UI 무정지), 감시 실패는 무해 저하(F5만). expect(dead_code) 2건 제거(lib 전환으로 pub 도달성 변화). 테스트 arming 루프로 시동 레이스 흡수.
+- T4 완료 (커밋 아래 참조): settings.rs(D15 스키마 serde + parse 검증)·TreeShape 스냅숏/재구성·세션 메시지(COLLECT/RESTORE — 같은 스레드 SendMessage 포인터 계약)·WM_CLOSE 저장/시작 복원·창 배치(모니터 밖이면 기본 위치). 결정 D18: 삭제된 탭 경로는 홈 대체(원안) 대신 기존 열거 실패 경로 위임(리뷰 B1 — UI 스레드 is_dir 금지). panels↔layout 리프는 walk 순서 1:1 계약.
 
 ## Next Steps
 - part1(docs/plans/2026-07-23-file-explorer-part1.md) 완료 후 이 plan을 pjc:implement-task로 실행
