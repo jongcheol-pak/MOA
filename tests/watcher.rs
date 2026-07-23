@@ -16,6 +16,22 @@ fn 생성과_삭제가_디바운스된_통지로_수신된다() {
     let (tx, rx) = channel();
     let watcher = DirWatcher::start(dir.clone(), tx, None);
 
+    // 감시 시동 대기 — 첫 ReadDirectoryChangesW 발행 전의 변경은 OS가 추적하지 않으므로
+    // 통지가 올 때까지 마커 변경을 반복한다 (시동 레이스 흡수)
+    let mut armed = false;
+    for i in 0..20 {
+        std::fs::write(dir.join(format!("arm{i}.txt")), b"x").unwrap();
+        if rx.recv_timeout(Duration::from_millis(500)).is_ok() {
+            armed = true;
+            break;
+        }
+    }
+    assert!(armed, "감시가 시동되지 않았다 (시동 통지 없음)");
+    // 시동 중 쌓인 잔여 통지를 비워 이후 단정과 분리한다
+    while rx.try_recv().is_ok() {}
+    std::thread::sleep(Duration::from_millis(500));
+    while rx.try_recv().is_ok() {}
+
     // 연속 생성 — 디바운스 창(300ms) 안의 변경은 통지 1회로 묶인다
     for i in 0..3 {
         std::fs::write(dir.join(format!("f{i}.txt")), b"x").unwrap();
@@ -36,7 +52,7 @@ fn 생성과_삭제가_디바운스된_통지로_수신된다() {
         "삭제 변경 통지를 받지 못했다"
     );
 
-    // 정지 — Drop이 이벤트 신호 후 join (블록되면 테스트가 끝나지 않아 실패로 드러남)
+    // 정지 — Drop이 정지 신호 후 회수 스레드에 join을 위임한다 (UI 무정지 설계)
     drop(watcher);
     let _ = std::fs::remove_dir_all(&dir);
 }
