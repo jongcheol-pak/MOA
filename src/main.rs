@@ -16,6 +16,7 @@ fn main() {
             "프로그램을 시작할 수 없습니다.\n오류: {}",
             e.message()
         ));
+        // 안전성: 초기화 실패 알림용 모달 — 인자는 모두 정적/스택 값
         unsafe {
             MessageBoxW(None, &text, w!("파일 탐색기"), MB_OK | MB_ICONERROR);
         }
@@ -25,13 +26,16 @@ fn main() {
 
 fn run() -> windows::core::Result<()> {
     // 셸 COM(IContextMenu 등)을 쓰므로 STA로 초기화
+    // 안전성: COM은 이 스레드에서 1회 초기화, 인자는 정적 상수 — 실패는 .ok()?로 전파
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
 
     let _window = app::window::MainWindow::create()?;
 
+    // 안전성: 표준 Win32 메시지 루프 — msg는 스택 소유, 종료 후 COM 해제 순서 보장
     unsafe {
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).into() {
+        // GetMessageW는 오류 시 -1을 반환하므로 bool 변환 대신 양수 판정 (공식 문서 명시 함정)
+        while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
