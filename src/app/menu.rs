@@ -1,6 +1,8 @@
 //! 메뉴 바·액셀러레이터 — 분할 명령 (plan D10, 한국어 문구)
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    VK_F5, VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL,
     FSHIFT, FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
@@ -18,6 +20,7 @@ pub const IDM_NAV_UP: u32 = 106;
 pub const IDM_TAB_NEW: u32 = 107;
 pub const IDM_TAB_CLOSE: u32 = 108;
 pub const IDM_TREE_TOGGLE: u32 = 109;
+pub const IDM_REFRESH: u32 = 110;
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
@@ -49,6 +52,12 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
             MF_STRING,
             IDM_TREE_TOGGLE as usize,
             w!("폴더 트리(&T)"),
+        )?;
+        AppendMenuW(
+            view,
+            MF_STRING,
+            IDM_REFRESH as usize,
+            w!("새로 고침(&R)\tF5"),
         )?;
         AppendMenuW(bar, MF_POPUP, view.0 as usize, w!("보기(&V)"))?;
 
@@ -125,6 +134,11 @@ pub fn create_accels() -> Result<HACCEL> {
             fVirt: FVIRTKEY | FCONTROL,
             key: VK_T.0,
             cmd: IDM_TAB_NEW as u16,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY,
+            key: VK_F5.0,
+            cmd: IDM_REFRESH as u16,
         },
         ACCEL {
             fVirt: FVIRTKEY | FCONTROL,

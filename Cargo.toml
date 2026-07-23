@@ -9,11 +9,17 @@ serde_json = "1.0.151"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    # SECURITY_ATTRIBUTES 정의 — CreateFileW/CreateEventW(변경 감시)가 요구
+    "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    # OVERLAPPED·GetOverlappedResult — ReadDirectoryChangesW(변경 감시)가 요구
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     # Registry는 직접 사용 안 함 — SHELLEXECUTEINFOW(hkeyClass: HKEY) 구조체 정의가 요구 (없으면 E0432)
     "Win32_System_Registry",
+    # 이벤트·대기 (CreateEventW·WaitForMultipleObjects) — 변경 감시 정지 신호
+    "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_UI_Controls",
     "Win32_UI_Input_KeyboardAndMouse",

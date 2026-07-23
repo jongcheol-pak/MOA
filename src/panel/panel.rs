@@ -7,6 +7,7 @@
 //! 실패(삭제·권한)하면 오류 문구만 표시하고 현 위치(주소창·히스토리)는 유지된다 (T5 Edge).
 use crate::fs::enumerate::{EnumOutcome, EnumResult, WM_APP_ENUM_DONE, spawn_enumerate};
 use crate::fs::shell_menu;
+use crate::fs::watcher::{DirWatcher, WM_APP_DIR_CHANGED};
 use crate::panel::address_bar::{
     AddressBar, ID_NAV_BACK, ID_NAV_FORWARD, ID_NAV_UP, STRIP_HEIGHT, WM_APP_ADDRESS_ENTER,
     normalize_input,
@@ -47,6 +48,8 @@ pub const WM_APP_TAB_NEW: u32 = WM_APP + 6;
 pub const WM_APP_TAB_CLOSE: u32 = WM_APP + 7;
 /// 폴더 트리 표시/숨김 토글 (메뉴 "보기 > 폴더 트리" — 패널별, FR-9)
 pub const WM_APP_TREE_TOGGLE: u32 = WM_APP + 8;
+/// 현재 폴더 재열거 — F5 (FR-12 잔여). WM_APP+9는 watcher::WM_APP_DIR_CHANGED가 사용
+pub const WM_APP_REFRESH: u32 = WM_APP + 10;
 
 /// 성공 시 히스토리에 반영할 동작 종류
 enum PendingKind {
@@ -74,6 +77,10 @@ struct PanelState {
     generation: u64,
     tx: Sender<EnumResult>,
     rx: Receiver<EnumResult>,
+    /// 활성 탭 폴더 변경 감시 — 커밋 경로가 바뀔 때 재시작 (FR-10)
+    watcher: Option<DirWatcher>,
+    watch_tx: Sender<()>,
+    watch_rx: Receiver<()>,
 }
 
 impl PanelState {
@@ -182,7 +189,7 @@ impl PanelState {
     }
 
     /// 열거 완료 통지 처리 — 채널을 비우고 현재 세대 결과만 반영
-    fn on_enum_done(&mut self) {
+    fn on_enum_done(&mut self, hwnd: HWND) {
         let mut latest: Option<EnumResult> = None;
         while let Ok(r) = self.rx.try_recv() {
             if r.generation == self.generation {
@@ -234,6 +241,31 @@ impl PanelState {
             }
         }
         self.update_nav_state();
+        self.sync_watcher(hwnd);
+    }
+
+    /// 감시 대상을 활성 탭 커밋 경로에 맞춘다 — 다르면 이전 감시 정지 후 재시작.
+    /// 이전 워커는 Drop이 정지 신호·join으로 회수한다 (탭 고속 전환 누수 금지 — T3 Edge)
+    fn sync_watcher(&mut self, hwnd: HWND) {
+        let target = self.tabs.active().committed.clone();
+        if self
+            .watcher
+            .as_ref()
+            .is_some_and(|w| w.path() == target.as_path())
+        {
+            return;
+        }
+        self.watcher = None;
+        self.watcher = Some(DirWatcher::start(target, self.watch_tx.clone(), Some(hwnd)));
+    }
+
+    /// 현재 폴더 재열거 (F5·변경 감시 공용). 탐색 진행 중이면 생략 — pending 완료가 우선
+    fn refresh(&mut self, hwnd: HWND) {
+        if self.pending.is_some() {
+            return;
+        }
+        let path = self.tabs.active().committed.clone();
+        self.navigate(hwnd, path, PendingKind::Keep);
     }
 
     /// 실패 — 현 위치(활성 탭 committed·히스토리) 유지, 오류 문구 표시, 주소창 복원
@@ -544,7 +576,7 @@ unsafe extern "system" fn panel_proc(
             let mut apply: Option<(HWND, usize)> = None;
             let mut expand: Option<(HWND, Vec<isize>)> = None;
             if let Some(mut state) = state_of(hwnd) {
-                state.on_enum_done();
+                state.on_enum_done(hwnd);
                 let items = state.folder_tree.on_enum_done();
                 if !items.is_empty() {
                     expand = Some((state.folder_tree.hwnd(), items));
@@ -560,8 +592,21 @@ unsafe extern "system" fn panel_proc(
             }
             LRESULT(0)
         }
+        WM_APP_DIR_CHANGED => {
+            // 감시 스레드 통지 — 채널을 비우고 현재 폴더 재열거 (FR-10)
+            let mut apply: Option<(HWND, usize)> = None;
+            if let Some(mut state) = state_of(hwnd) {
+                while state.watch_rx.try_recv().is_ok() {}
+                state.refresh(hwnd);
+                apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
+            }
+            if let Some((list, count)) = apply {
+                apply_item_count(list, count);
+            }
+            LRESULT(0)
+        }
         WM_APP_ADDRESS_ENTER | WM_APP_NAV_BACK | WM_APP_NAV_FORWARD | WM_APP_NAV_UP
-        | WM_APP_TAB_NEW | WM_APP_TAB_CLOSE | WM_APP_TREE_TOGGLE => {
+        | WM_APP_TAB_NEW | WM_APP_TAB_CLOSE | WM_APP_TREE_TOGGLE | WM_APP_REFRESH => {
             let mut apply: Option<(HWND, usize)> = None;
             // TAB_CLOSE: 1=탭 제거됨, 0=마지막 탭(호출부가 패널 닫기로 연결)
             let mut result = LRESULT(0);
@@ -579,6 +624,7 @@ unsafe extern "system" fn panel_proc(
                         state.folder_tree.toggle();
                         state.relayout(hwnd);
                     }
+                    WM_APP_REFRESH => state.refresh(hwnd),
                     _ => {}
                 }
                 apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
@@ -634,6 +680,7 @@ fn init_state(hwnd: HWND) -> Result<()> {
     let folder_tree = FolderTree::create(hwnd)?;
     let status_label = create_status_label(hwnd)?;
     let (tx, rx) = channel();
+    let (watch_tx, watch_rx) = channel();
     let start = home_dir();
     address_bar.set_path(&start);
     tab_strip.insert(0, &tab_title(&start));
@@ -649,6 +696,10 @@ fn init_state(hwnd: HWND) -> Result<()> {
         generation: 0,
         tx,
         rx,
+        // 감시는 첫 열거 성공(커밋) 시 sync_watcher가 시작한다
+        watcher: None,
+        watch_tx,
+        watch_rx,
     };
     // 첫 화면 — 시작 경로는 이미 활성 탭 히스토리에 있으므로 Keep으로 열거만
     state.navigate(hwnd, start, PendingKind::Keep);

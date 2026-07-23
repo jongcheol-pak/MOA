@@ -54,8 +54,9 @@ impl TabsModel {
         }
     }
 
-    // part2 T4(세션 저장 — 탭 순회)에서 소비 예정. 테스트는 이미 사용
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// 탭 수 — 세션 저장(part2 T4)·테스트가 소비.
+    /// is_empty는 제공하지 않음 — 탭은 항상 1개 이상(불변식)이라 항상 false로 오해만 낳는다
+    #[expect(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.tabs.len()
     }

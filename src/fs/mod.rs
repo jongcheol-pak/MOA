@@ -2,3 +2,4 @@
 pub mod enumerate;
 pub mod icons;
 pub mod shell_menu;
+pub mod watcher;

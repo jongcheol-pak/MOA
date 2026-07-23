@@ -163,7 +163,7 @@
   - **Acceptance**: 통합테스트(`tests/watcher.rs`): Given 임시 폴더 감시 시작, When 파일 생성/삭제, Then 디바운스 후 변경 통지 1회 수신 (HWND 비의존 — 채널 수신으로 검증). Given 실행 앱, When 표시 중 폴더에 외부에서 파일 추가·F5 입력, Then 목록 자동/수동 갱신 — HUMAN-VERIFY.
   - **Files**:
     - 주: `src/fs/watcher.rs`
-    - 동반: `src/panel/panel.rs`(수명 관리·통지 배선), `src/app/menu.rs`(F5), `src/fs/mod.rs`
+    - 동반: `src/panel/panel.rs`(수명 관리·통지 배선), `src/app/menu.rs`(F5), `src/fs/mod.rs`, `src/app/window.rs`(F5 WM_COMMAND 배선 — 액셀러레이터는 메인 창 도착), `Cargo.toml`(windows feature: Security·System_IO·System_Threading — RDCW/이벤트, 신규 의존성 아님), `src/lib.rs`(신규)·`src/main.rs`(mod→use — tests/가 내부 모듈을 import하려면 lib 타깃 필요: plan 명시 통합테스트의 기계적 전제)
     - 테스트: `tests/watcher.rs`
   - **Edge Cases**:
     - 버퍼 오버플로 통지(대량 변경) → 전체 재열거 폴백
@@ -228,6 +228,8 @@
 ## Retry Ledger
 
 ## Progress Log
+- T1 완료 (커밋 436026d): FolderTree(SysTreeView32) 지연 확장·패널별 토글·선택 시 활성 탭 이동. 확장은 TVN_ITEMEXPANDING 보류(반환 1) 후 워커 열거 완료 시 apply_expand(차용 해제 후) — apply_item_count와 동일 계약. 리뷰 spec/quality 모두 OK, 테스트 35/35.
+- T2 완료 (커밋 c1f3f58): shell_menu(IContextMenu 3단 + IContextMenu2/3 포워딩 thread_local). 배선은 NM_RCLICK 대신 WM_CONTEXTMENU 채택(키보드 메뉴 키 포함, 화면 좌표 직접 — Design 병기 문구 중 후자). Cargo.toml에 Win32_UI_Shell_Common feature 추가. 차용은 collect_context_menu_request 안에서 종료 후 모달 표시. 리뷰 OK(MINOR m1 → Deferred).
 
 ## Next Steps
 - part1(docs/plans/2026-07-23-file-explorer-part1.md) 완료 후 이 plan을 pjc:implement-task로 실행

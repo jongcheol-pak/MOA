@@ -23,6 +23,12 @@ pub struct IconCache {
     dir_type: String,
 }
 
+impl Default for IconCache {
+    fn default() -> IconCache {
+        IconCache::new()
+    }
+}
+
 impl IconCache {
     pub fn new() -> IconCache {
         // 시스템 작은 아이콘 이미지 리스트 핸들 확보 (폴더 속성 기준 1회 조회)

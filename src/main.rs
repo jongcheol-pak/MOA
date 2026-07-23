@@ -1,10 +1,8 @@
-//! 진입점 — COM 초기화, 메인 창 생성, 메시지 루프
+//! 진입점 — COM 초기화, 메인 창 생성, 메시지 루프.
+//! 모듈 정의는 lib 타깃(lib.rs)에 있고 여기서는 사용만 한다 (tests/ 공유)
 #![windows_subsystem = "windows"]
 
-mod app;
-mod fs;
-mod panel;
-
+use file_explorer::app;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, MB_ICONERROR, MB_OK, MSG, MessageBoxW, TranslateAcceleratorW,

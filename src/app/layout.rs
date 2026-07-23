@@ -111,9 +111,7 @@ impl LayoutTree {
         count(&self.root)
     }
 
-    /// 모든 패널 id (좌→우, 상→하 순)
-    // T6(탭)·part2 T4(세션 직렬화)에서 소비 예정 — 사용 시점에 expect가 자동 해제 경고를 낸다
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// 모든 패널 id (좌→우, 상→하 순) — 세션 직렬화(part2 T4)가 소비
     pub fn panel_ids(&self) -> Vec<PanelId> {
         fn walk(n: &Node, out: &mut Vec<PanelId>) {
             match n {
