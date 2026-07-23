@@ -237,7 +237,7 @@
     - (i) "잘못된 경로 처리?" → Edge Cases 명시 / "히스토리 모델?" → D9
   - **Depends on**: T4
 
-- [ ] T6. 패널별 탭 (FR-3)
+- [x] T6. 패널별 탭 (FR-3)
   - **Type**: D
   - **Design**: ① 배치: `src/panel/tabs.rs`, panel.rs 통합 ② 신규 심볼: `TabStrip` — `WC_TABCONTROL` 래퍼(추가/닫기/전환 UI, 탭 제목=폴더명). `TabState` — path+History 묶음(활성 탭 전환 시 FileList 내용 교체) ③ 의존: Panel이 Vec<TabState>+TabStrip 소유. 히스토리는 TabState로 이관(T5의 History 재사용 — 신규 로직 아님) ④ 비추상화: 탭 드래그 재배열·패널 간 탭 이동은 만들지 않음(v2).
   - **Acceptance**: Given 실행 앱, When Ctrl+T(현재 경로 복제 새 탭)·탭 클릭 전환·Ctrl+W(탭 닫기), Then 탭별 경로·히스토리가 독립 유지되고 마지막 탭 닫기는 패널 닫기로 연결(마지막 패널의 마지막 탭이면 무시) — HUMAN-VERIFY. 탭 상태 전환 로직(활성 인덱스·닫기 규칙)은 단위테스트 통과.
