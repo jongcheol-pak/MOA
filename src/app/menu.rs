@@ -1,9 +1,10 @@
 //! 메뉴 바·액셀러레이터 — 분할 명령 (plan D10, 한국어 문구)
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_OEM_5, VK_W};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LEFT, VK_OEM_5, VK_RIGHT, VK_UP, VK_W};
 use windows::Win32::UI::WindowsAndMessaging::{
-    ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FCONTROL, FSHIFT,
-    FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_STRING, SetMenu,
+    ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL,
+    FSHIFT, FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_STRING,
+    SetMenu,
 };
 use windows::core::{Result, w};
 
@@ -11,6 +12,9 @@ use windows::core::{Result, w};
 pub const IDM_SPLIT_H: u32 = 101;
 pub const IDM_SPLIT_V: u32 = 102;
 pub const IDM_CLOSE_PANE: u32 = 103;
+pub const IDM_NAV_BACK: u32 = 104;
+pub const IDM_NAV_FORWARD: u32 = 105;
+pub const IDM_NAV_UP: u32 = 106;
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
@@ -37,6 +41,23 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
             w!("패널 닫기(&C)\tCtrl+Shift+W"),
         )?;
         AppendMenuW(bar, MF_POPUP, view.0 as usize, w!("보기(&V)"))?;
+
+        let go = CreateMenu()?;
+        AppendMenuW(go, MF_STRING, IDM_NAV_BACK as usize, w!("뒤로(&B)\tAlt+←"))?;
+        AppendMenuW(
+            go,
+            MF_STRING,
+            IDM_NAV_FORWARD as usize,
+            w!("앞으로(&F)\tAlt+→"),
+        )?;
+        AppendMenuW(
+            go,
+            MF_STRING,
+            IDM_NAV_UP as usize,
+            w!("상위 폴더(&U)\tAlt+↑"),
+        )?;
+        AppendMenuW(bar, MF_POPUP, go.0 as usize, w!("이동(&G)"))?;
+
         SetMenu(hwnd, Some(bar))?;
         Ok(bar)
     }
@@ -59,6 +80,21 @@ pub fn create_accels() -> Result<HACCEL> {
             fVirt: FVIRTKEY | FCONTROL | FSHIFT,
             key: VK_W.0,
             cmd: IDM_CLOSE_PANE as u16,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FALT,
+            key: VK_LEFT.0,
+            cmd: IDM_NAV_BACK as u16,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FALT,
+            key: VK_RIGHT.0,
+            cmd: IDM_NAV_FORWARD as u16,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FALT,
+            key: VK_UP.0,
+            cmd: IDM_NAV_UP as u16,
         },
     ];
     // 안전성: 배열은 호출 동안 유효하며 OS가 내부 복사본을 만든다

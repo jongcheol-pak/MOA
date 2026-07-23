@@ -161,8 +161,6 @@ impl FileList {
         self.entries.len()
     }
 
-    // T5(더블클릭 진입·실행)에서 소비 예정 — 사용 시점에 expect가 자동 해제 경고를 낸다
-    #[expect(dead_code)]
     pub fn entry_at(&self, index: usize) -> Option<&FileEntry> {
         self.entries.get(index)
     }

@@ -1,7 +1,10 @@
 //! 메인 창 — 클래스 등록·생성·윈도우 프로시저·명령 배선
 use crate::app::layout::SplitDir;
 use crate::app::layout_host::LayoutHost;
-use crate::app::menu::{self, IDM_CLOSE_PANE, IDM_SPLIT_H, IDM_SPLIT_V};
+use crate::app::menu::{
+    self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_SPLIT_H, IDM_SPLIT_V,
+};
+use crate::panel::panel::{WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP};
 use std::cell::{RefCell, RefMut};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH, ScreenToClient};
@@ -147,6 +150,19 @@ fn loword(v: usize) -> u32 {
     (v & 0xffff) as u32
 }
 
+/// 패널로 인자 없는 앱 메시지 게시
+fn post_to(hwnd: HWND, msg: u32) {
+    // 안전성: 비동기 게시 — 대상 창이 파괴됐으면 실패만 반환
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+            Some(hwnd),
+            msg,
+            WPARAM(0),
+            LPARAM(0),
+        );
+    }
+}
+
 fn coords(lparam: LPARAM) -> (i32, i32) {
     let x = (lparam.0 & 0xffff) as u16 as i16 as i32;
     let y = ((lparam.0 >> 16) & 0xffff) as u16 as i16 as i32;
@@ -180,6 +196,17 @@ unsafe extern "system" fn wnd_proc(
                     let _ = state.host.split_active(hwnd, SplitDir::Vertical);
                 }
                 IDM_CLOSE_PANE => state.host.close_active(hwnd),
+                // 전역 네비게이션 단축키 → 활성 패널로 게시 (Post — 차용 해제 후 처리됨)
+                id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP) => {
+                    if let Some(panel) = state.host.active_hwnd() {
+                        let nav_msg = match id {
+                            IDM_NAV_BACK => WM_APP_NAV_BACK,
+                            IDM_NAV_FORWARD => WM_APP_NAV_FORWARD,
+                            _ => WM_APP_NAV_UP,
+                        };
+                        post_to(panel, nav_msg);
+                    }
+                }
                 _ => return def_proc(hwnd, msg, wparam, lparam),
             }
             menu::update_close_enabled(state.menu, state.host.panel_count());

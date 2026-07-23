@@ -55,6 +55,14 @@ impl LayoutHost {
         self.tree.panel_count()
     }
 
+    /// 활성 패널의 창 핸들 — 전역 네비게이션 명령 라우팅용
+    pub fn active_hwnd(&self) -> Option<HWND> {
+        self.panes
+            .iter()
+            .find(|(id, _)| *id == self.active)
+            .map(|(_, h)| *h)
+    }
+
     /// 활성 패널을 지정 방향으로 분할한다. 최소 크기 미달이면 무시(상태 유지 — plan T3 Edge)
     pub fn split_active(&mut self, parent: HWND, dir: SplitDir) -> Result<()> {
         let area = client_rect(parent);
