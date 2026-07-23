@@ -401,6 +401,25 @@ mod tests {
     }
 
     #[test]
+    fn 리프를_닫으면_형제_분할_서브트리가_통째로_승격된다() {
+        // A | (B / C) 구조에서 A를 닫으면 (B / C) Split이 루트로 승격되어야 한다
+        let (mut tree, a) = LayoutTree::new();
+        let b = tree.split(a, SplitDir::Horizontal, AREA).unwrap();
+        let c = tree.split(b, SplitDir::Vertical, AREA).unwrap();
+        tree.close(a).unwrap();
+
+        assert_eq!(tree.panel_count(), 2);
+        assert_eq!(tree.panel_ids(), vec![b, c]);
+        let layout = tree.compute_rects(AREA);
+        let rb = layout.panes.iter().find(|(id, _)| *id == b).unwrap().1;
+        let rc = layout.panes.iter().find(|(id, _)| *id == c).unwrap().1;
+        // 승격된 상하 분할이 전체 영역을 나눠 가진다
+        assert_eq!(rb.w, AREA.w);
+        assert_eq!(rc.w, AREA.w);
+        assert_eq!(rb.h + SPLITTER_THICKNESS + rc.h, AREA.h);
+    }
+
+    #[test]
     fn 마지막_패널은_닫을_수_없다() {
         let (mut tree, first) = LayoutTree::new();
         assert_eq!(tree.close(first), Err(LayoutError::LastPanel));

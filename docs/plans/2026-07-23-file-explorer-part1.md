@@ -168,7 +168,7 @@
     - (ii-a) cargo init(프로젝트 구조 생성)·의존성 추가(windows, serde, serde_json)·git init → `## 사전 승인 항목`에 등록
   - **Depends on**: -
 
-- [ ] T2. 레이아웃 트리 모델 (순수 로직) — FR-1·FR-2의 두뇌
+- [x] T2. 레이아웃 트리 모델 (순수 로직) — FR-1·FR-2의 두뇌
   - **Type**: C
   - **Design**: ① 배치: `src/app/layout.rs` (HWND 비의존 순수 모듈 — D12) ② 신규 심볼: `LayoutTree` — split(리프를 지정 방향으로 분할해 새 리프 반환)/close(리프 제거·형제 승격)/set_ratio/compute_rects(영역 → 리프별 Rect + 스플리터 Rect 목록 계산) 책임. `PanelId`(리프 식별자) ③ 의존: windows crate 비의존(RECT 대신 자체 `Rect` 구조체) — T3가 참조 ④ 비추상화: 도킹/플로팅/탭화 등 범용 도킹 프레임워크로 일반화하지 않음. 패널 수 상한 없음(스플리터 최소 크기로 자연 제한).
   - **Acceptance**: Given 단일 리프, When 좌우 분할 → 상하 분할 → 닫기 시퀀스, Then 트리 구조·비율·compute_rects 결과가 기대값과 일치하는 단위테스트 전부 통과 (`cargo test`). 마지막 1개 리프 close는 Err 반환.
@@ -274,6 +274,9 @@
 ## Retry Ledger
 
 ## Progress Log
+- T1-T2 완료: 프로젝트 셋업(windows-rs 0.62.2·매니페스트 링커 임베드·빈 창) + 레이아웃 트리 모델(split/close/set_ratio/compute_rects, 테스트 11개). 빌드/clippy/fmt/test 전부 통과.
+  - 결정: Error::from_win32는 0.62에서 from_thread로 개명됨(적용). GetMessageW는 `.0 > 0` 판정(-1 오류 함정). 미소비 모듈은 `#![cfg_attr(not(test), expect(dead_code))]` 자기 정리형 패턴 사용 — T3에서 소비 시 제거 필요.
+  - NodePath = 루트→노드 비트열(0=first,1=second), 스플리터가 이 경로로 set_ratio 호출.
 
 ## Next Steps
 - part1 완료 후 → 남은 분할 plan: docs/plans/2026-07-23-file-explorer-part2.md — pjc:implement-task로 별도 실행
