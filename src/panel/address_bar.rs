@@ -71,17 +71,17 @@ impl AddressBar {
         })
     }
 
-    /// 스트립 재배치 — 버튼 3개 + 나머지 폭 Edit
-    pub fn layout(&self, w: i32) {
+    /// 스트립 재배치 — 세로 오프셋 y부터 버튼 3개 + 나머지 폭 Edit
+    pub fn layout_at(&self, y: i32, w: i32) {
         let mut x = GAP;
         for btn in [self.back_btn, self.forward_btn, self.up_btn] {
-            move_child(btn, x, GAP, BTN_W, STRIP_HEIGHT - GAP * 2);
+            move_child(btn, x, y + GAP, BTN_W, STRIP_HEIGHT - GAP * 2);
             x += BTN_W + GAP;
         }
         move_child(
             self.edit,
             x,
-            GAP + 1,
+            y + GAP + 1,
             (w - x - GAP).max(0),
             STRIP_HEIGHT - GAP * 2 - 2,
         );

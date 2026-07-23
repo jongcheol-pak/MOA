@@ -11,15 +11,16 @@ use crate::panel::address_bar::{
     normalize_input,
 };
 use crate::panel::file_list::{FileList, apply_item_count};
-use crate::panel::history::History;
+use crate::panel::tabs::{CloseOutcome, TAB_HEIGHT, TabState, TabStrip, TabsModel, tab_title};
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
     LVN_COLUMNCLICK, LVN_GETDISPINFOW, NM_DBLCLK, NMHDR, NMITEMACTIVATE, NMLVDISPINFOW,
+    TCN_SELCHANGE,
 };
 use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -38,6 +39,9 @@ const STATUS_HEIGHT: i32 = 24;
 pub const WM_APP_NAV_BACK: u32 = WM_APP + 3;
 pub const WM_APP_NAV_FORWARD: u32 = WM_APP + 4;
 pub const WM_APP_NAV_UP: u32 = WM_APP + 5;
+/// 탭 명령 (Ctrl+T / Ctrl+W). TAB_CLOSE는 SendMessage 반환값 1=처리, 0=마지막 탭(패널 닫기로 연결)
+pub const WM_APP_TAB_NEW: u32 = WM_APP + 6;
+pub const WM_APP_TAB_CLOSE: u32 = WM_APP + 7;
 
 /// 성공 시 히스토리에 반영할 동작 종류
 enum PendingKind {
@@ -51,15 +55,14 @@ enum PendingKind {
     Keep,
 }
 
-/// 패널 내부 상태
+/// 패널 내부 상태 — 경로·히스토리는 탭별(TabsModel)로 소유 (FR-3)
 struct PanelState {
+    tab_strip: TabStrip,
     address_bar: AddressBar,
     file_list: FileList,
     status_label: HWND,
-    history: History,
-    /// 커밋된(화면에 유효한) 경로
-    committed: PathBuf,
-    /// 진행 중 탐색 대상 (성공 시 커밋)
+    tabs: TabsModel,
+    /// 진행 중 탐색 대상 (성공 시 활성 탭에 커밋)
     pending: Option<(PathBuf, PendingKind)>,
     /// 열거 세대 — 낡은 결과 폐기 (plan D5)
     generation: u64,
@@ -78,19 +81,31 @@ impl PanelState {
     }
 
     fn nav_back(&mut self, hwnd: HWND) {
-        if let Some(target) = self.history.peek_back().map(|p| p.to_path_buf()) {
+        if let Some(target) = self
+            .tabs
+            .active()
+            .history
+            .peek_back()
+            .map(Path::to_path_buf)
+        {
             self.navigate(hwnd, target, PendingKind::Back);
         }
     }
 
     fn nav_forward(&mut self, hwnd: HWND) {
-        if let Some(target) = self.history.peek_forward().map(|p| p.to_path_buf()) {
+        if let Some(target) = self
+            .tabs
+            .active()
+            .history
+            .peek_forward()
+            .map(Path::to_path_buf)
+        {
             self.navigate(hwnd, target, PendingKind::Forward);
         }
     }
 
     fn nav_up(&mut self, hwnd: HWND) {
-        if let Some(parent) = self.committed.parent().map(|p| p.to_path_buf()) {
+        if let Some(parent) = self.tabs.active().committed.parent().map(Path::to_path_buf) {
             self.navigate(hwnd, parent, PendingKind::Push);
         }
         // 드라이브 루트(상위 없음)는 무시 — 버튼도 비활성 (D11)
@@ -99,8 +114,46 @@ impl PanelState {
     /// 주소창 Enter — 입력 정규화 후 이동
     fn nav_enter(&mut self, hwnd: HWND) {
         let input = self.address_bar.text();
-        if let Some(path) = normalize_input(&self.committed, &input) {
+        if let Some(path) = normalize_input(&self.tabs.active().committed, &input) {
             self.navigate(hwnd, path, PendingKind::Push);
+        }
+    }
+
+    /// 새 탭 — 현재 활성 탭의 경로 복제 (plan D4)
+    fn tab_new(&mut self, hwnd: HWND) {
+        let path = self.tabs.active().committed.clone();
+        let index = self.tabs.add(TabState::new(path.clone()));
+        self.tab_strip.insert(index, &tab_title(&path));
+        self.tab_strip.set_selection(index);
+        self.address_bar.set_path(&path);
+        self.navigate(hwnd, path, PendingKind::Keep);
+        self.update_nav_state();
+    }
+
+    /// 활성 탭 닫기 — 처리했으면 true, 마지막 탭이면 false (패널 닫기로 연결 — 호출부 몫)
+    fn tab_close(&mut self, hwnd: HWND) -> bool {
+        let old = self.tabs.active_index();
+        match self.tabs.close_active() {
+            CloseOutcome::Removed(new_active) => {
+                self.tab_strip.remove(old);
+                self.tab_strip.set_selection(new_active);
+                let path = self.tabs.active().committed.clone();
+                self.address_bar.set_path(&path);
+                self.navigate(hwnd, path, PendingKind::Keep);
+                self.update_nav_state();
+                true
+            }
+            CloseOutcome::LastTab => false,
+        }
+    }
+
+    /// 탭 전환 — 해당 탭의 커밋 경로를 다시 열거해 표시 (탭별 히스토리 유지)
+    fn tab_switch(&mut self, hwnd: HWND, index: usize) {
+        if self.tabs.switch(index) {
+            let path = self.tabs.active().committed.clone();
+            self.address_bar.set_path(&path);
+            self.navigate(hwnd, path, PendingKind::Keep);
+            self.update_nav_state();
         }
     }
 
@@ -114,7 +167,7 @@ impl PanelState {
         };
         let name = entry.name_string();
         let is_dir = entry.is_dir;
-        let full = self.committed.join(&name);
+        let full = self.tabs.active().committed.join(&name);
         if is_dir {
             self.navigate(hwnd, full, PendingKind::Push);
         } else {
@@ -139,25 +192,29 @@ impl PanelState {
         };
         match result.outcome {
             EnumOutcome::Ok(entries) => {
-                // 성공 — 경로·히스토리 커밋
+                // 성공 — 활성 탭에 경로·히스토리 커밋
+                let tab = self.tabs.active_mut();
                 match kind {
-                    PendingKind::Push => self.history.push(target.clone()),
+                    PendingKind::Push => tab.history.push(target.clone()),
                     PendingKind::Back => {
-                        let _ = self.history.back();
+                        let _ = tab.history.back();
                     }
                     PendingKind::Forward => {
-                        let _ = self.history.forward();
+                        let _ = tab.history.forward();
                     }
                     PendingKind::Keep => {}
                 }
-                self.committed = target;
-                self.address_bar.set_path(&self.committed);
+                tab.committed = target;
+                let committed = tab.committed.clone();
+                self.address_bar.set_path(&committed);
+                self.tab_strip
+                    .set_title(self.tabs.active_index(), &tab_title(&committed));
                 if entries.is_empty() {
                     show_status(self.status_label, "빈 폴더");
                 } else {
                     hide_status(self.status_label);
                 }
-                let dir = self.committed.to_string_lossy().into_owned();
+                let dir = committed.to_string_lossy().into_owned();
                 self.file_list.set_entries(dir, entries);
             }
             EnumOutcome::AccessDenied => {
@@ -173,22 +230,23 @@ impl PanelState {
         self.update_nav_state();
     }
 
-    /// 실패 — 현 위치(committed·히스토리) 유지, 오류 문구 표시, 주소창 복원
+    /// 실패 — 현 위치(활성 탭 committed·히스토리) 유지, 오류 문구 표시, 주소창 복원
     fn fail_pending(&mut self, message: &str) {
         self.file_list.clear();
         show_status(self.status_label, message);
-        self.address_bar.set_path(&self.committed);
+        self.address_bar.set_path(&self.tabs.active().committed);
     }
 
     fn update_nav_state(&self) {
+        let tab = self.tabs.active();
         self.address_bar.set_nav_state(
-            self.history.can_back(),
-            self.history.can_forward(),
-            self.committed.parent().is_some(),
+            tab.history.can_back(),
+            tab.history.can_forward(),
+            tab.committed.parent().is_some(),
         );
     }
 
-    /// 패널 영역 재배치 — 상단 주소창 스트립 + 상태 라벨 + 목록
+    /// 패널 영역 재배치 — 탭 스트립 + 주소창 스트립 + 상태 라벨 + 목록
     fn relayout(&mut self, hwnd: HWND) {
         let mut rc = windows::Win32::Foundation::RECT::default();
         // 안전성: 유효한 자기 창 핸들 조회
@@ -197,10 +255,11 @@ impl PanelState {
         }
         let w = rc.right - rc.left;
         let h = rc.bottom - rc.top;
-        self.address_bar.layout(w);
-        move_child(self.status_label, 0, STRIP_HEIGHT, w, STATUS_HEIGHT);
-        self.file_list
-            .resize(0, STRIP_HEIGHT, w, (h - STRIP_HEIGHT).max(0));
+        self.tab_strip.resize(0, 0, w, TAB_HEIGHT);
+        self.address_bar.layout_at(TAB_HEIGHT, w);
+        let top = TAB_HEIGHT + STRIP_HEIGHT;
+        move_child(self.status_label, 0, top, w, STATUS_HEIGHT);
+        self.file_list.resize(0, top, w, (h - top).max(0));
     }
 }
 
@@ -374,7 +433,13 @@ unsafe extern "system" fn panel_proc(
             if let Some(mut state) = state_of(hwnd) {
                 // 안전성: WM_NOTIFY의 lparam은 OS가 채운 NMHDR 포인터 (처리 동안 유효)
                 let hdr = unsafe { &*(lparam.0 as *const NMHDR) };
-                if hdr.hwndFrom == state.file_list.hwnd() {
+                if hdr.hwndFrom == state.tab_strip.hwnd() && hdr.code == TCN_SELCHANGE {
+                    let sel = state.tab_strip.selection();
+                    if sel >= 0 {
+                        state.tab_switch(hwnd, sel as usize);
+                        apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
+                    }
+                } else if hdr.hwndFrom == state.file_list.hwnd() {
                     match hdr.code {
                         LVN_GETDISPINFOW => {
                             // 안전성: LVN_GETDISPINFOW의 lparam은 NMLVDISPINFOW
@@ -415,14 +480,21 @@ unsafe extern "system" fn panel_proc(
             }
             LRESULT(0)
         }
-        WM_APP_ADDRESS_ENTER | WM_APP_NAV_BACK | WM_APP_NAV_FORWARD | WM_APP_NAV_UP => {
+        WM_APP_ADDRESS_ENTER | WM_APP_NAV_BACK | WM_APP_NAV_FORWARD | WM_APP_NAV_UP
+        | WM_APP_TAB_NEW | WM_APP_TAB_CLOSE => {
             let mut apply: Option<(HWND, usize)> = None;
+            // TAB_CLOSE: 1=탭 제거됨, 0=마지막 탭(호출부가 패널 닫기로 연결)
+            let mut result = LRESULT(0);
             if let Some(mut state) = state_of(hwnd) {
                 match msg {
                     WM_APP_ADDRESS_ENTER => state.nav_enter(hwnd),
                     WM_APP_NAV_BACK => state.nav_back(hwnd),
                     WM_APP_NAV_FORWARD => state.nav_forward(hwnd),
                     WM_APP_NAV_UP => state.nav_up(hwnd),
+                    WM_APP_TAB_NEW => state.tab_new(hwnd),
+                    WM_APP_TAB_CLOSE => {
+                        result = LRESULT(if state.tab_close(hwnd) { 1 } else { 0 });
+                    }
                     _ => {}
                 }
                 apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
@@ -430,7 +502,7 @@ unsafe extern "system" fn panel_proc(
             if let Some((list, count)) = apply {
                 apply_item_count(list, count);
             }
-            LRESULT(0)
+            result
         }
         WM_NCDESTROY => {
             // 안전성: WM_CREATE에서 넣은 포인터를 정확히 한 번 회수
@@ -451,24 +523,27 @@ unsafe extern "system" fn panel_proc(
 
 /// WM_CREATE — 자식 컨트롤·상태 생성 후 첫 탐색 시작
 fn init_state(hwnd: HWND) -> Result<()> {
+    let tab_strip = TabStrip::create(hwnd)?;
     let address_bar = AddressBar::create(hwnd)?;
     let file_list = FileList::create(hwnd)?;
     let status_label = create_status_label(hwnd)?;
     let (tx, rx) = channel();
     let start = home_dir();
     address_bar.set_path(&start);
+    tab_strip.insert(0, &tab_title(&start));
+    tab_strip.set_selection(0);
     let mut state = PanelState {
+        tab_strip,
         address_bar,
         file_list,
         status_label,
-        history: History::new(start.clone()),
-        committed: start.clone(),
+        tabs: TabsModel::new(TabState::new(start.clone())),
         pending: None,
         generation: 0,
         tx,
         rx,
     };
-    // 첫 화면 — 시작 경로는 이미 히스토리·committed에 있으므로 Keep으로 열거만
+    // 첫 화면 — 시작 경로는 이미 활성 탭 히스토리에 있으므로 Keep으로 열거만
     state.navigate(hwnd, start, PendingKind::Keep);
     state.update_nav_state();
     let boxed = Box::new(RefCell::new(state));

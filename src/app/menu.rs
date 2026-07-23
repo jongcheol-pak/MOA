@@ -1,6 +1,6 @@
 //! 메뉴 바·액셀러레이터 — 분할 명령 (plan D10, 한국어 문구)
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LEFT, VK_OEM_5, VK_RIGHT, VK_UP, VK_W};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W};
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL,
     FSHIFT, FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_STRING,
@@ -15,6 +15,8 @@ pub const IDM_CLOSE_PANE: u32 = 103;
 pub const IDM_NAV_BACK: u32 = 104;
 pub const IDM_NAV_FORWARD: u32 = 105;
 pub const IDM_NAV_UP: u32 = 106;
+pub const IDM_TAB_NEW: u32 = 107;
+pub const IDM_TAB_CLOSE: u32 = 108;
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
@@ -58,6 +60,21 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
         )?;
         AppendMenuW(bar, MF_POPUP, go.0 as usize, w!("이동(&G)"))?;
 
+        let tab = CreateMenu()?;
+        AppendMenuW(
+            tab,
+            MF_STRING,
+            IDM_TAB_NEW as usize,
+            w!("새 탭(&N)\tCtrl+T"),
+        )?;
+        AppendMenuW(
+            tab,
+            MF_STRING,
+            IDM_TAB_CLOSE as usize,
+            w!("탭 닫기(&C)\tCtrl+W"),
+        )?;
+        AppendMenuW(bar, MF_POPUP, tab.0 as usize, w!("탭(&T)"))?;
+
         SetMenu(hwnd, Some(bar))?;
         Ok(bar)
     }
@@ -95,6 +112,16 @@ pub fn create_accels() -> Result<HACCEL> {
             fVirt: FVIRTKEY | FALT,
             key: VK_UP.0,
             cmd: IDM_NAV_UP as u16,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_T.0,
+            cmd: IDM_TAB_NEW as u16,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_W.0,
+            cmd: IDM_TAB_CLOSE as u16,
         },
     ];
     // 안전성: 배열은 호출 동안 유효하며 OS가 내부 복사본을 만든다

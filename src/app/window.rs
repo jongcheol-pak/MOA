@@ -3,8 +3,11 @@ use crate::app::layout::SplitDir;
 use crate::app::layout_host::LayoutHost;
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_SPLIT_H, IDM_SPLIT_V,
+    IDM_TAB_CLOSE, IDM_TAB_NEW,
 };
-use crate::panel::panel::{WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP};
+use crate::panel::panel::{
+    WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_TAB_CLOSE, WM_APP_TAB_NEW,
+};
 use std::cell::{RefCell, RefMut};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH, ScreenToClient};
@@ -163,6 +166,19 @@ fn post_to(hwnd: HWND, msg: u32) {
     }
 }
 
+/// 패널로 동기 질의 — 패널 상태 RefCell은 메인 창 것과 별개라 차용 충돌 없음
+fn send_to(hwnd: HWND, msg: u32) -> LRESULT {
+    // 안전성: 유효한 자식 창 핸들에 동기 메시지
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            hwnd,
+            msg,
+            Some(WPARAM(0)),
+            Some(LPARAM(0)),
+        )
+    }
+}
+
 fn coords(lparam: LPARAM) -> (i32, i32) {
     let x = (lparam.0 & 0xffff) as u16 as i16 as i32;
     let y = ((lparam.0 >> 16) & 0xffff) as u16 as i16 as i32;
@@ -196,15 +212,24 @@ unsafe extern "system" fn wnd_proc(
                     let _ = state.host.split_active(hwnd, SplitDir::Vertical);
                 }
                 IDM_CLOSE_PANE => state.host.close_active(hwnd),
-                // 전역 네비게이션 단축키 → 활성 패널로 게시 (Post — 차용 해제 후 처리됨)
-                id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP) => {
+                // 전역 네비게이션·새 탭 단축키 → 활성 패널로 게시 (Post — 차용 해제 후 처리됨)
+                id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP | IDM_TAB_NEW) => {
                     if let Some(panel) = state.host.active_hwnd() {
                         let nav_msg = match id {
                             IDM_NAV_BACK => WM_APP_NAV_BACK,
                             IDM_NAV_FORWARD => WM_APP_NAV_FORWARD,
-                            _ => WM_APP_NAV_UP,
+                            IDM_NAV_UP => WM_APP_NAV_UP,
+                            _ => WM_APP_TAB_NEW,
                         };
                         post_to(panel, nav_msg);
+                    }
+                }
+                // 탭 닫기는 동기 질의 — 0(마지막 탭)이면 패널 닫기로 연결 (FR-2·T6 Edge)
+                IDM_TAB_CLOSE => {
+                    if let Some(panel) = state.host.active_hwnd()
+                        && send_to(panel, WM_APP_TAB_CLOSE).0 == 0
+                    {
+                        state.host.close_active(hwnd);
                     }
                 }
                 _ => return def_proc(hwnd, msg, wparam, lparam),
