@@ -140,7 +140,9 @@ impl FileList {
         self.hwnd
     }
 
-    /// 새 폴더 내용으로 교체 — 정렬 후 가상 카운트 갱신
+    /// 새 폴더 내용으로 교체 (정렬 포함).
+    /// 카운트 반영은 호출부가 RefCell 차용 해제 후 `apply_item_count`로 수행한다
+    /// (LVM_SETITEMCOUNT의 동기 LVN_GETDISPINFO 재진입이 차용과 겹치지 않게 — quality 리뷰 M2)
     pub fn set_entries(&mut self, dir_path: String, entries: Vec<FileEntry>) {
         self.dir_path = dir_path;
         self.entries = entries;
@@ -148,10 +150,15 @@ impl FileList {
         self.resort();
     }
 
+    /// 데이터만 비운다 — 카운트 반영은 set_entries와 동일하게 호출부 몫
     pub fn clear(&mut self) {
         self.entries.clear();
         self.type_names.clear();
-        self.update_count();
+    }
+
+    /// 현재 항목 수 — 차용 해제 후 카운트 적용용
+    pub fn item_count(&self) -> usize {
+        self.entries.len()
     }
 
     // T5(더블클릭 진입·실행)에서 소비 예정 — 사용 시점에 expect가 자동 해제 경고를 낸다
@@ -181,13 +188,18 @@ impl FileList {
             return;
         };
         if (info.item.mask.0 & LVIF_IMAGE.0) != 0 && info.item.iSubItem == 0 {
-            let ext = entry.extension();
-            let full = format!(
-                "{}\\{}",
-                self.dir_path.trim_end_matches('\\'),
-                entry.name_string()
-            );
-            info.item.iImage = self.icons.icon_index(&ext, entry.is_dir, Some(&full));
+            info.item.iImage = if entry.is_dir {
+                // 폴더는 경로 조립 불필요 (m2 — 불필요한 할당 제거)
+                self.icons.icon_index("", true, None)
+            } else {
+                let ext = entry.extension();
+                let full = format!(
+                    "{}\\{}",
+                    self.dir_path.trim_end_matches('\\'),
+                    entry.name_string()
+                );
+                self.icons.icon_index(&ext, false, Some(&full))
+            };
         }
         if (info.item.mask.0 & LVIF_TEXT.0) != 0 {
             let text = match info.item.iSubItem {
@@ -245,19 +257,15 @@ impl FileList {
             self.entries.push(e);
             self.type_names.push(t);
         }
-        self.update_count();
     }
+}
 
-    fn update_count(&self) {
-        // 안전성: 가상 카운트 갱신 — 전체 무효화로 재요청 유도
-        unsafe {
-            SendMessageW(
-                self.hwnd,
-                LVM_SETITEMCOUNT,
-                Some(WPARAM(self.entries.len())),
-                Some(LPARAM(0)),
-            );
-        }
+/// 가상 리스트뷰 카운트 갱신 — 반드시 패널 상태의 RefCell 차용을 놓은 뒤 호출한다
+/// (동기 LVN_GETDISPINFO 재진입이 try_borrow_mut 실패로 표시 누락되는 것 방지)
+pub fn apply_item_count(list: HWND, count: usize) {
+    // 안전성: 유효한 리스트뷰 핸들에 표준 메시지 — 전체 무효화로 재요청 유도
+    unsafe {
+        SendMessageW(list, LVM_SETITEMCOUNT, Some(WPARAM(count)), Some(LPARAM(0)));
     }
 }
 

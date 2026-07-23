@@ -206,7 +206,7 @@
   - **Acceptance**: Given 폴더 경로가 지정된 패널, When 열거 완료, Then 이름/크기/종류/수정일이 표시되고 헤더 클릭으로 정렬 토글(이름은 StrCmpLogicalW·폴더 우선 — 정렬 비교 함수는 단위테스트) — 목록 표시는 HUMAN-VERIFY. Given 10만 파일 테스트 폴더, When 진입, Then UI 입력이 멈추지 않음(열거 중 "읽는 중…" 표시, NFR-3 체감 확인은 part2 T5에서 실측).
   - **Files**:
     - 주: `src/panel/file_list.rs`, `src/fs/enumerate.rs`, `src/fs/icons.rs`, `src/panel/panel.rs`
-    - 동반: `src/panel/mod.rs`, `src/fs/mod.rs`, `src/app/window.rs`(WM_APP 배선)
+    - 동반: `src/panel/mod.rs`, `src/fs/mod.rs`, `src/main.rs`(모듈 등록), `src/app/layout_host.rs`(자리표시 창 → panel::create 교체), `Cargo.toml`(windows feature 확장 — 구현 중 자율 추가 기록. WM_APP 배선은 window.rs가 아니라 패널 자체 프로시저가 처리하는 것으로 조정)
     - 테스트: `src/panel/file_list.rs`·`src/fs/enumerate.rs`의 `#[cfg(test)]`(정렬 비교·열거 결과 모델)
   - **Edge Cases**:
     - 접근 거부 폴더 → 목록 영역에 "이 폴더에 접근할 수 없습니다" 문구 (D6)

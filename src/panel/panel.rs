@@ -3,7 +3,7 @@
 //! 각 패널 창은 자기 상태를 GWLP_USERDATA의 `Box<RefCell<PanelState>>`로 소유한다.
 //! LayoutHost는 HWND만 알고 배치한다 (plan 패널 상호 독립 원칙).
 use crate::fs::enumerate::{EnumOutcome, EnumResult, WM_APP_ENUM_DONE, spawn_enumerate};
-use crate::panel::file_list::FileList;
+use crate::panel::file_list::{FileList, apply_item_count};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -224,6 +224,8 @@ unsafe extern "system" fn panel_proc(
             LRESULT(0)
         }
         WM_NOTIFY => {
+            // 카운트 반영은 차용 스코프 밖에서 — file_list::apply_item_count 주석 참조
+            let mut apply: Option<(HWND, usize)> = None;
             if let Some(mut state) = state_of(hwnd) {
                 // 안전성: WM_NOTIFY의 lparam은 OS가 채운 NMHDR 포인터 (처리 동안 유효)
                 let hdr = unsafe { &*(lparam.0 as *const NMHDR) };
@@ -240,16 +242,25 @@ unsafe extern "system" fn panel_proc(
                                 &*(lparam.0 as *const windows::Win32::UI::Controls::NMLISTVIEW)
                             };
                             state.file_list.on_column_click(nmlv.iSubItem);
+                            apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
                         }
                         _ => {}
                     }
                 }
             }
+            if let Some((list, count)) = apply {
+                apply_item_count(list, count);
+            }
             LRESULT(0)
         }
         WM_APP_ENUM_DONE => {
+            let mut apply: Option<(HWND, usize)> = None;
             if let Some(mut state) = state_of(hwnd) {
                 state.on_enum_done();
+                apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
+            }
+            if let Some((list, count)) = apply {
+                apply_item_count(list, count);
             }
             LRESULT(0)
         }

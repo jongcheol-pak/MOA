@@ -17,6 +17,8 @@ pub struct IconCache {
     himl: HIMAGELIST,
     icon_by_ext: HashMap<String, i32>,
     type_by_ext: HashMap<String, String>,
+    /// 개별 아이콘(경로별) 캐시 — 파일당 1회만 디스크 조회 (AGENTS UI 스레드 블로킹 최소화)
+    icon_by_path: HashMap<String, i32>,
     dir_icon: i32,
     dir_type: String,
 }
@@ -39,6 +41,7 @@ impl IconCache {
             himl: HIMAGELIST(himl as isize),
             icon_by_ext: HashMap::new(),
             type_by_ext: HashMap::new(),
+            icon_by_path: HashMap::new(),
             dir_icon: info.iIcon,
             dir_type: wide_to_string(&info.szTypeName),
         }
@@ -57,6 +60,10 @@ impl IconCache {
         if PER_FILE_ICON_EXTS.contains(&ext)
             && let Some(path) = full_path
         {
+            // 경로별 1회만 실제 조회 — 스크롤 재방문 시 캐시 히트 (blocking 최소화)
+            if let Some(&idx) = self.icon_by_path.get(path) {
+                return idx;
+            }
             let mut info = SHFILEINFOW::default();
             // 안전성: 실제 파일 경로 조회 — 실패 시 iIcon 0(기본)이 그대로 쓰인다
             unsafe {
@@ -68,6 +75,7 @@ impl IconCache {
                     SHGFI_SYSICONINDEX | SHGFI_SMALLICON,
                 );
             }
+            self.icon_by_path.insert(path.to_string(), info.iIcon);
             return info.iIcon;
         }
         if let Some(&idx) = self.icon_by_ext.get(ext) {
