@@ -126,7 +126,7 @@
 
 ## Tasks
 
-- [ ] T1. 폴더 트리 — 패널별 토글 (FR-9)
+- [x] T1. 폴더 트리 — 패널별 토글 (FR-9)
   - **Type**: C
   - **Design**: ① 배치: `src/panel/folder_tree.rs` ② 신규 심볼: `FolderTree` — `SysTreeView32` 생성, 드라이브 루트 나열, `TVN_ITEMEXPANDING` 지연 확장(하위 폴더 1단계만, 워커 열거 재사용), 선택 시 `Panel::navigate` 호출 책임 ③ 의존: Panel이 소유·배치(트리 표시 시 좌측 고정폭 200px), fs::enumerate 재사용 ④ 비추상화: 목록→트리 역방향 동기화 없음(D14), 트리 전용 아이콘 처리 없음(폴더 아이콘 IconCache 재사용).
   - **Acceptance**: Given 실행 앱, When 메뉴 "보기 > 폴더 트리"(패널별 토글), Then 트리 표시/숨김이 활성 패널에만 적용되고, 노드 확장은 하위 1단계만 열거, 노드 클릭 시 활성 탭이 해당 경로로 이동 — HUMAN-VERIFY. 빌드·clippy·기존 테스트 0 실패는 기계 검증.

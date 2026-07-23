@@ -3,10 +3,11 @@ use crate::app::layout::SplitDir;
 use crate::app::layout_host::LayoutHost;
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_SPLIT_H, IDM_SPLIT_V,
-    IDM_TAB_CLOSE, IDM_TAB_NEW,
+    IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
 };
 use crate::panel::panel::{
     WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_TAB_CLOSE, WM_APP_TAB_NEW,
+    WM_APP_TREE_TOGGLE,
 };
 use std::cell::{RefCell, RefMut};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -212,13 +213,15 @@ unsafe extern "system" fn wnd_proc(
                     let _ = state.host.split_active(hwnd, SplitDir::Vertical);
                 }
                 IDM_CLOSE_PANE => state.host.close_active(hwnd),
-                // 전역 네비게이션·새 탭 단축키 → 활성 패널로 게시 (Post — 차용 해제 후 처리됨)
-                id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP | IDM_TAB_NEW) => {
+                // 전역 네비게이션·새 탭·트리 토글 → 활성 패널로 게시 (Post — 차용 해제 후 처리됨)
+                id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP | IDM_TAB_NEW
+                | IDM_TREE_TOGGLE) => {
                     if let Some(panel) = state.host.active_hwnd() {
                         let nav_msg = match id {
                             IDM_NAV_BACK => WM_APP_NAV_BACK,
                             IDM_NAV_FORWARD => WM_APP_NAV_FORWARD,
                             IDM_NAV_UP => WM_APP_NAV_UP,
+                            IDM_TREE_TOGGLE => WM_APP_TREE_TOGGLE,
                             _ => WM_APP_TAB_NEW,
                         };
                         post_to(panel, nav_msg);

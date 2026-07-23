@@ -11,6 +11,7 @@ use crate::panel::address_bar::{
     normalize_input,
 };
 use crate::panel::file_list::{FileList, apply_item_count};
+use crate::panel::folder_tree::{FolderTree, TREE_WIDTH, apply_expand};
 use crate::panel::tabs::{CloseOutcome, TAB_HEIGHT, TabState, TabStrip, TabsModel, tab_title};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,7 @@ use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
     LVN_COLUMNCLICK, LVN_GETDISPINFOW, NM_DBLCLK, NMHDR, NMITEMACTIVATE, NMLVDISPINFOW,
-    TCN_SELCHANGE,
+    NMTREEVIEWW, TCN_SELCHANGE, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
 };
 use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -42,6 +43,8 @@ pub const WM_APP_NAV_UP: u32 = WM_APP + 5;
 /// 탭 명령 (Ctrl+T / Ctrl+W). TAB_CLOSE는 SendMessage 반환값 1=처리, 0=마지막 탭(패널 닫기로 연결)
 pub const WM_APP_TAB_NEW: u32 = WM_APP + 6;
 pub const WM_APP_TAB_CLOSE: u32 = WM_APP + 7;
+/// 폴더 트리 표시/숨김 토글 (메뉴 "보기 > 폴더 트리" — 패널별, FR-9)
+pub const WM_APP_TREE_TOGGLE: u32 = WM_APP + 8;
 
 /// 성공 시 히스토리에 반영할 동작 종류
 enum PendingKind {
@@ -60,6 +63,7 @@ struct PanelState {
     tab_strip: TabStrip,
     address_bar: AddressBar,
     file_list: FileList,
+    folder_tree: FolderTree,
     status_label: HWND,
     tabs: TabsModel,
     /// 진행 중 탐색 대상 (성공 시 활성 탭에 커밋)
@@ -258,8 +262,17 @@ impl PanelState {
         self.tab_strip.resize(0, 0, w, TAB_HEIGHT);
         self.address_bar.layout_at(TAB_HEIGHT, w);
         let top = TAB_HEIGHT + STRIP_HEIGHT;
-        move_child(self.status_label, 0, top, w, STATUS_HEIGHT);
-        self.file_list.resize(0, top, w, (h - top).max(0));
+        // 트리 표시 시 좌측 고정폭을 차지하고 상태·목록은 우측으로 밀린다 (FR-9)
+        let (content_x, content_w) = if self.folder_tree.visible() {
+            let tree_w = TREE_WIDTH.min(w);
+            self.folder_tree.resize(0, top, tree_w, (h - top).max(0));
+            (tree_w, (w - tree_w).max(0))
+        } else {
+            (0, w)
+        };
+        move_child(self.status_label, content_x, top, content_w, STATUS_HEIGHT);
+        self.file_list
+            .resize(content_x, top, content_w, (h - top).max(0));
     }
 }
 
@@ -430,6 +443,8 @@ unsafe extern "system" fn panel_proc(
         WM_NOTIFY => {
             // 카운트 반영은 차용 스코프 밖에서 — file_list::apply_item_count 주석 참조
             let mut apply: Option<(HWND, usize)> = None;
+            // TVN_ITEMEXPANDING 보류(1) 반환용
+            let mut result = LRESULT(0);
             if let Some(mut state) = state_of(hwnd) {
                 // 안전성: WM_NOTIFY의 lparam은 OS가 채운 NMHDR 포인터 (처리 동안 유효)
                 let hdr = unsafe { &*(lparam.0 as *const NMHDR) };
@@ -438,6 +453,26 @@ unsafe extern "system" fn panel_proc(
                     if sel >= 0 {
                         state.tab_switch(hwnd, sel as usize);
                         apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
+                    }
+                } else if hdr.hwndFrom == state.folder_tree.hwnd() {
+                    match hdr.code {
+                        TVN_ITEMEXPANDINGW => {
+                            // 안전성: TVN_*의 lparam은 NMTREEVIEWW
+                            let nmtv = unsafe { &*(lparam.0 as *const NMTREEVIEWW) };
+                            if state.folder_tree.on_expanding(nmtv, hwnd) {
+                                result = LRESULT(1); // 확장 보류 — 열거 완료 후 apply_expand
+                            }
+                        }
+                        TVN_SELCHANGEDW => {
+                            // 안전성: TVN_*의 lparam은 NMTREEVIEWW
+                            let nmtv = unsafe { &*(lparam.0 as *const NMTREEVIEWW) };
+                            if let Some(path) = state.folder_tree.on_sel_changed(nmtv) {
+                                state.navigate(hwnd, path, PendingKind::Push);
+                                apply =
+                                    Some((state.file_list.hwnd(), state.file_list.item_count()));
+                            }
+                        }
+                        _ => {}
                     }
                 } else if hdr.hwndFrom == state.file_list.hwnd() {
                     match hdr.code {
@@ -467,21 +502,31 @@ unsafe extern "system" fn panel_proc(
             if let Some((list, count)) = apply {
                 apply_item_count(list, count);
             }
-            LRESULT(0)
+            result
         }
         WM_APP_ENUM_DONE => {
+            // 목록·트리가 채널을 각자 소유하므로 둘 다 비운다 (통지 메시지는 공용)
             let mut apply: Option<(HWND, usize)> = None;
+            let mut expand: Option<(HWND, Vec<isize>)> = None;
             if let Some(mut state) = state_of(hwnd) {
                 state.on_enum_done();
+                let items = state.folder_tree.on_enum_done();
+                if !items.is_empty() {
+                    expand = Some((state.folder_tree.hwnd(), items));
+                }
                 apply = Some((state.file_list.hwnd(), state.file_list.item_count()));
             }
             if let Some((list, count)) = apply {
                 apply_item_count(list, count);
             }
+            // 확장 실행은 차용 해제 후 — TVN_ITEMEXPANDING 동기 재진입 대비 (apply_expand 주석)
+            if let Some((tree, items)) = expand {
+                apply_expand(tree, &items);
+            }
             LRESULT(0)
         }
         WM_APP_ADDRESS_ENTER | WM_APP_NAV_BACK | WM_APP_NAV_FORWARD | WM_APP_NAV_UP
-        | WM_APP_TAB_NEW | WM_APP_TAB_CLOSE => {
+        | WM_APP_TAB_NEW | WM_APP_TAB_CLOSE | WM_APP_TREE_TOGGLE => {
             let mut apply: Option<(HWND, usize)> = None;
             // TAB_CLOSE: 1=탭 제거됨, 0=마지막 탭(호출부가 패널 닫기로 연결)
             let mut result = LRESULT(0);
@@ -494,6 +539,10 @@ unsafe extern "system" fn panel_proc(
                     WM_APP_TAB_NEW => state.tab_new(hwnd),
                     WM_APP_TAB_CLOSE => {
                         result = LRESULT(if state.tab_close(hwnd) { 1 } else { 0 });
+                    }
+                    WM_APP_TREE_TOGGLE => {
+                        state.folder_tree.toggle();
+                        state.relayout(hwnd);
                     }
                     _ => {}
                 }
@@ -526,6 +575,7 @@ fn init_state(hwnd: HWND) -> Result<()> {
     let tab_strip = TabStrip::create(hwnd)?;
     let address_bar = AddressBar::create(hwnd)?;
     let file_list = FileList::create(hwnd)?;
+    let folder_tree = FolderTree::create(hwnd)?;
     let status_label = create_status_label(hwnd)?;
     let (tx, rx) = channel();
     let start = home_dir();
@@ -536,6 +586,7 @@ fn init_state(hwnd: HWND) -> Result<()> {
         tab_strip,
         address_bar,
         file_list,
+        folder_tree,
         status_label,
         tabs: TabsModel::new(TabState::new(start.clone())),
         pending: None,

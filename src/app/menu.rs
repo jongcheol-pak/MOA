@@ -3,8 +3,8 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W};
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL,
-    FSHIFT, FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_STRING,
-    SetMenu,
+    FSHIFT, FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, SetMenu,
 };
 use windows::core::{Result, w};
 
@@ -17,6 +17,7 @@ pub const IDM_NAV_FORWARD: u32 = 105;
 pub const IDM_NAV_UP: u32 = 106;
 pub const IDM_TAB_NEW: u32 = 107;
 pub const IDM_TAB_CLOSE: u32 = 108;
+pub const IDM_TREE_TOGGLE: u32 = 109;
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
@@ -41,6 +42,13 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
             MF_STRING,
             IDM_CLOSE_PANE as usize,
             w!("패널 닫기(&C)\tCtrl+Shift+W"),
+        )?;
+        AppendMenuW(view, MF_SEPARATOR, 0, None)?;
+        AppendMenuW(
+            view,
+            MF_STRING,
+            IDM_TREE_TOGGLE as usize,
+            w!("폴더 트리(&T)"),
         )?;
         AppendMenuW(bar, MF_POPUP, view.0 as usize, w!("보기(&V)"))?;
 
