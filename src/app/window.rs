@@ -1,6 +1,6 @@
 //! 메인 창 — 클래스 등록·생성·윈도우 프로시저·명령 배선
 use crate::app::layout::SplitDir;
-use crate::app::layout_host::LayoutHost;
+use crate::app::layout_host::{self, LayoutHost};
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH, IDM_SPLIT_H,
     IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
@@ -87,9 +87,11 @@ impl MainWindow {
             let menu = menu::attach_menu(hwnd)?;
             // 세션이 있으면 분할 구조 복원, 없거나 손상이면 기본 1패널 (FR-11, T4 Edge)
             let session = settings::load_session();
+            // 배치 영역은 창 클라이언트 전체 — 사이드바가 생기면 그만큼 좁혀 주입한다 (T5·T7)
+            let area = layout_host::client_rect(hwnd);
             let host = match &session {
-                Some(s) => LayoutHost::from_shape(hwnd, &s.layout.to_shape())?,
-                None => LayoutHost::new(hwnd)?,
+                Some(s) => LayoutHost::from_shape(hwnd, &s.layout.to_shape(), area)?,
+                None => LayoutHost::new(hwnd, area)?,
             };
             if let Some(s) = &session {
                 restore_panels(&host, s);
@@ -320,7 +322,9 @@ unsafe extern "system" fn wnd_proc(
     match msg {
         WM_SIZE => {
             if let Some(mut state) = state_of(hwnd) {
-                state.host.relayout(hwnd);
+                // 영역 주입 → 배치 (relayout은 더 이상 부모 클라이언트를 스스로 읽지 않는다)
+                state.host.set_area(layout_host::client_rect(hwnd));
+                state.host.relayout();
             }
             LRESULT(0)
         }
@@ -335,7 +339,7 @@ unsafe extern "system" fn wnd_proc(
                 IDM_SPLIT_V => {
                     let _ = state.host.split_active(hwnd, SplitDir::Vertical);
                 }
-                IDM_CLOSE_PANE => state.host.close_active(hwnd),
+                IDM_CLOSE_PANE => state.host.close_active(),
                 // 전역 네비게이션·새 탭·트리 토글·새로 고침 → 활성 패널로 게시
                 // (Post — 차용 해제 후 처리됨)
                 id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP | IDM_TAB_NEW
@@ -357,7 +361,7 @@ unsafe extern "system" fn wnd_proc(
                     if let Some(panel) = state.host.active_hwnd()
                         && send_to(panel, WM_APP_TAB_CLOSE).0 == 0
                     {
-                        state.host.close_active(hwnd);
+                        state.host.close_active();
                     }
                 }
                 _ => return def_proc(hwnd, msg, wparam, lparam),
@@ -383,7 +387,7 @@ unsafe extern "system" fn wnd_proc(
         WM_MOUSEMOVE => {
             if let Some(mut state) = state_of(hwnd) {
                 let (x, y) = coords(lparam);
-                if state.host.drag_move(hwnd, x, y) {
+                if state.host.drag_move(x, y) {
                     return LRESULT(0);
                 }
             }

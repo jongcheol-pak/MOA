@@ -10,7 +10,8 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     BeginDeferWindowPos, DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect,
-    IDC_SIZENS, IDC_SIZEWE, LoadCursorW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
+    IDC_SIZENS, IDC_SIZEWE, LoadCursorW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
+    ShowWindow,
 };
 use windows::core::Result;
 
@@ -21,20 +22,25 @@ struct DragState {
     node_area: Rect,
 }
 
-/// 분할 레이아웃과 패널 자식 창들을 소유·배치한다
+/// 분할 레이아웃과 패널 자식 창들을 소유·배치한다.
+///
+/// 배치 영역(`area`)은 부모가 주입한다 — 창 클라이언트 전체가 아니라 "이 호스트에게 할당된 사각형"이며,
+/// 좌측 사이드바만큼 오른쪽으로 밀린 영역이 들어올 수 있다 (plan D1).
 pub struct LayoutHost {
     tree: LayoutTree,
-    /// 리프 id → 패널 자식 HWND (T4에서 실제 Panel로 대체되는 자리표시 창)
+    /// 리프 id → 패널 자식 HWND
     panes: Vec<(PanelId, HWND)>,
     active: PanelId,
     drag: Option<DragState>,
+    /// 부모가 지정한 배치 영역 (부모 클라이언트 좌표)
+    area: Rect,
     /// 마지막 compute_rects 결과 캐시 — 히트테스트·커서 판정용
     layout_cache: ComputedLayout,
 }
 
 impl LayoutHost {
     /// 첫 패널 1개로 시작
-    pub fn new(parent: HWND) -> Result<LayoutHost> {
+    pub fn new(parent: HWND, area: Rect) -> Result<LayoutHost> {
         let (tree, first) = LayoutTree::new();
         let hwnd = panel_win::create(parent)?;
         let mut host = LayoutHost {
@@ -42,17 +48,18 @@ impl LayoutHost {
             panes: vec![(first, hwnd)],
             active: first,
             drag: None,
+            area,
             layout_cache: ComputedLayout {
                 panes: Vec::new(),
                 splitters: Vec::new(),
             },
         };
-        host.relayout(parent);
+        host.relayout();
         Ok(host)
     }
 
     /// 세션의 분할 구조로 재구성해 시작 (FR-11 복원). 리프마다 패널 창을 만든다
-    pub fn from_shape(parent: HWND, shape: &TreeShape) -> Result<LayoutHost> {
+    pub fn from_shape(parent: HWND, shape: &TreeShape, area: Rect) -> Result<LayoutHost> {
         let (tree, ids) = LayoutTree::from_shape(shape);
         let mut panes = Vec::with_capacity(ids.len());
         for id in &ids {
@@ -64,13 +71,48 @@ impl LayoutHost {
             panes,
             active,
             drag: None,
+            area,
             layout_cache: ComputedLayout {
                 panes: Vec::new(),
                 splitters: Vec::new(),
             },
         };
-        host.relayout(parent);
+        host.relayout();
         Ok(host)
+    }
+
+    /// 배치 영역 갱신 — 실제 배치는 이어지는 `relayout()`이 수행한다 (항상 짝으로 호출)
+    pub fn set_area(&mut self, area: Rect) {
+        self.area = area;
+    }
+
+    /// 소유한 패널 창을 일괄 표시/숨김 — 워크스페이스 전환용.
+    /// 표시로 되돌릴 때는 배치가 낡았을 수 있으므로 `set_area`+`relayout`과 함께 쓴다
+    pub fn set_visible(&self, visible: bool) {
+        let cmd = if visible { SW_SHOW } else { SW_HIDE };
+        for (_, hwnd) in &self.panes {
+            // 안전성: 우리가 만든 살아있는 자식 창 핸들의 표시 상태 변경뿐
+            unsafe {
+                let _ = ShowWindow(*hwnd, cmd);
+            }
+        }
+    }
+
+    /// 소유한 패널 창을 전부 파괴한다 — 워크스페이스 삭제용.
+    /// 호출 후 이 호스트는 재사용하지 않는다(엔트리째 목록에서 제거). 남은 트리는 그대로지만
+    /// `panes`가 비어 `active_hwnd()`는 None이 되고 배치 호출은 무시된다
+    pub fn destroy_all(&mut self) {
+        for (_, hwnd) in &self.panes {
+            // 안전성: 우리가 만든 자식 창 핸들 파괴 — 이후 참조 없음
+            unsafe {
+                let _ = DestroyWindow(*hwnd);
+            }
+        }
+        self.panes.clear();
+        self.layout_cache = ComputedLayout {
+            panes: Vec::new(),
+            splitters: Vec::new(),
+        };
     }
 
     /// 세션 저장용 스냅숏 — (분할 구조, walk 순서의 패널 HWND 목록).
@@ -110,15 +152,15 @@ impl LayoutHost {
             .map(|(_, h)| *h)
     }
 
-    /// 활성 패널을 지정 방향으로 분할한다. 최소 크기 미달이면 무시(상태 유지 — plan T3 Edge)
+    /// 활성 패널을 지정 방향으로 분할한다. 최소 크기 미달이면 무시(상태 유지 — plan T3 Edge).
+    /// 크기 판정은 주입된 배치 영역 기준이고, `parent`는 새 패널 창 생성에만 쓰인다
     pub fn split_active(&mut self, parent: HWND, dir: SplitDir) -> Result<()> {
-        let area = client_rect(parent);
-        match self.tree.split(self.active, dir, area) {
+        match self.tree.split(self.active, dir, self.area) {
             Ok(new_id) => {
                 let hwnd = panel_win::create(parent)?;
                 self.panes.push((new_id, hwnd));
                 self.active = new_id;
-                self.relayout(parent);
+                self.relayout();
                 Ok(())
             }
             Err(LayoutError::TooSmall) | Err(LayoutError::NotFound) => Ok(()),
@@ -127,7 +169,7 @@ impl LayoutHost {
     }
 
     /// 활성 패널을 닫는다. 마지막 1개면 무시 (메뉴는 비활성이지만 단축키 방어)
-    pub fn close_active(&mut self, parent: HWND) {
+    pub fn close_active(&mut self) {
         if self.tree.close(self.active).is_err() {
             return;
         }
@@ -142,7 +184,7 @@ impl LayoutHost {
         if let Some((id, _)) = self.panes.first() {
             self.active = *id;
         }
-        self.relayout(parent);
+        self.relayout();
     }
 
     /// 좌표(부모 클라이언트)의 패널을 활성으로 지정 (WM_PARENTNOTIFY 클릭 배선)
@@ -157,10 +199,13 @@ impl LayoutHost {
         }
     }
 
-    /// 현재 트리 기준으로 모든 패널 자식 창을 일괄 배치한다
-    pub fn relayout(&mut self, parent: HWND) {
-        let area = client_rect(parent);
-        self.layout_cache = self.tree.compute_rects(area);
+    /// 주입된 배치 영역 기준으로 모든 패널 자식 창을 일괄 배치한다.
+    /// 영역이 바뀌었으면 `set_area`를 먼저 호출한다 (창 크기 변경·사이드바 폭 변경)
+    pub fn relayout(&mut self) {
+        if self.panes.is_empty() {
+            return; // destroy_all 이후 — 배치할 창이 없다
+        }
+        self.layout_cache = self.tree.compute_rects(self.area);
         // 안전성: DeferWindowPos 일괄 배치 — 모든 핸들은 살아있는 자식 창.
         // 실패 시 hdwp가 무효화될 수 있으므로(공식 문서) 배칭을 중단한다
         unsafe {
@@ -213,7 +258,7 @@ impl LayoutHost {
     }
 
     /// 드래그 중 마우스 이동 → 비율 갱신·재배치. 드래그 중이었으면 true
-    pub fn drag_move(&mut self, parent: HWND, x: i32, y: i32) -> bool {
+    pub fn drag_move(&mut self, x: i32, y: i32) -> bool {
         let Some(drag) = &self.drag else {
             return false;
         };
@@ -226,7 +271,7 @@ impl LayoutHost {
         }
         let ratio = (pos - start) as f32 / axis_len as f32;
         let _ = self.tree.set_ratio(drag.path, ratio, axis_len);
-        self.relayout(parent);
+        self.relayout();
         true
     }
 
@@ -282,8 +327,8 @@ fn contains(r: Rect, x: i32, y: i32) -> bool {
     x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
 }
 
-/// 부모 클라이언트 영역을 자체 Rect로
-fn client_rect(hwnd: HWND) -> Rect {
+/// 부모 클라이언트 영역을 자체 Rect로 — 배치 영역 계산의 출발점(window.rs가 사이드바 폭을 빼서 주입)
+pub fn client_rect(hwnd: HWND) -> Rect {
     let mut rc = windows::Win32::Foundation::RECT::default();
     // 안전성: 유효한 창 핸들의 클라이언트 영역 조회
     unsafe {

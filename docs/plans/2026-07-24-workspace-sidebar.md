@@ -291,7 +291,7 @@
     - (i) 자동 이름 규칙 모호 → D7에서 확정
   - **Depends on**: -
 
-- [ ] T2. LayoutHost 배치 영역 주입·표시 토글·전체 파괴
+- [x] T2. LayoutHost 배치 영역 주입·표시 토글·전체 파괴
   - **Type**: D
   - **Design**: ① `src/app/layout_host.rs` 수정. ② `LayoutHost`에 `area: Rect` 필드 추가; `new(parent, area)`/`from_shape(parent, shape, area)`로 변경, `set_area(&mut self, area: Rect)`, `set_visible(&self, visible: bool)`(소유 패널 HWND 일괄 `ShowWindow`), `destroy_all(&mut self)`(모든 패널 HWND `DestroyWindow` 후 `panes` 비움 — 워크스페이스 삭제용), `relayout(&mut self)`·`close_active(&mut self)`는 `parent` 파라미터 제거(내부에서 `self.area` 사용), `split_active(&mut self, parent, dir)`는 패널 생성에만 `parent`를 쓰고 크기 판정은 `self.area` 기준. ③ `layout.rs`(순수 로직)를 참조하고 `window.rs`가 참조 — 의존 방향 불변. ④ 추상화하지 않을 것: 워크스페이스 개념을 LayoutHost에 넣지 않는다(호스트는 "영역 하나에 그려지는 분할 트리"만 안다).
   - **Acceptance**: Given 영역=클라이언트 전체, When 분할·스플리터 드래그·패널 닫기 수행, Then 변경 전과 동일 동작(회귀 없음, HUMAN-VERIFY) / Given 영역 x=232 주입, When 스플리터 위 커서·드래그, Then 232px 오프셋 위치에서 정확히 반응(HUMAN-VERIFY) / `set_visible(false)` 후 해당 호스트의 모든 패널 창이 비표시 / `destroy_all` 후 `active_hwnd()`가 `None`이고 이후 `relayout`·`set_visible` 호출이 크래시 없이 무시된다(`panel_count()`는 레이아웃 트리 리프 수를 세므로 판정 기준으로 쓰지 않는다 — `layout.rs:104-112`) / `cargo build`·`cargo clippy --all-targets -- -D warnings`(미사용 파라미터 경고 0)·`cargo test` 통과(기존 43+2 유지)
@@ -458,6 +458,9 @@
 ## Retry Ledger
 
 ## Progress Log
+- T1-T2 완료 (커밋 861e4e1, T2 pre-review f0e1870): ① `src/app/workspace.rs` 신규 — `WorkspaceList`(add/rename/remove/reorder/set_active/set_subtitle)·자동 이름(사용 중이지 않은 최소 번호)·`elide_path`, 단위테스트 13개. ② `LayoutHost`에 `area` 주입 — `new`/`from_shape`에 area 인자, `relayout`/`close_active`/`drag_move`의 `parent` 제거, `set_area`/`set_visible`/`destroy_all` 추가, `client_rect`를 `pub`으로 승격해 window.rs가 영역을 계산·주입(WM_SIZE에서 `set_area`+`relayout` 짝 호출).
+  - 결정: `drag_move`의 `parent` 제거는 Design에 없던 파생이지만 `relayout()` 변경으로 미사용 파라미터가 되어 함께 정리(리뷰에서 정상 파생 확인).
+  - 결정: 테스트 함수명에 영문 대문자(`NotFound`)를 쓰면 `-D warnings`의 `non_snake_case`에 걸린다 — 한글 이름으로 통일.
 
 ## Next Steps
 
