@@ -56,7 +56,7 @@
 - [x] T4. 폴더 트리(TreeView) 다크
 - [x] T5. 주소창(Edit) + 네비 버튼 다크
 - [x] T6. 탭 컨트롤 오너드로우 다크
-- [ ] T7. 메뉴바 오너드로우 다크
+- [x] T7. 메뉴바 오너드로우 다크
 
 ## Progress Log
 
@@ -65,6 +65,7 @@
 - T3-T4 완료 (5d3bda0 외): 파일 목록(ListView) 다크 — SetWindowTheme + LVM 색상 메시지 + ListView 서브클래스(list_dark_proc)로 헤더 NM_CUSTOMDRAW 다크. 폴더 트리(TreeView) 다크 — SetWindowTheme + TVM_SETBKCOLOR/TEXTCOLOR/LINECOLOR. theme.rs에 SURFACE_BG/TEXT/HEADER_BG/HEADER_TEXT/TREE_LINE 추가. 각 task 빌드·clippy·test(75+2) OK, spec/quality 리뷰 OK.
 - T5-T6 완료 (dcddfd6 외): 주소창 Edit(WM_CTLCOLOREDIT)·네비 버튼 3개(BS_OWNERDRAW+draw_nav_button)·패널 컨테이너 배경(WINDOW_BG)·상태 라벨(WM_CTLCOLORSTATIC) 다크 + PanelState 브러시 필드/Drop. 탭 컨트롤(TCS_OWNERDRAWFIXED + draw_tab, WM_DRAWITEM ODT_TAB 분기) 다크. theme.rs에 CONTROL_BG/HOT/ACTIVE/TEXT_DIM 추가. T5 quality M1(register_class 브러시 누수) 수정 후 재검토 통과. 각 task 빌드·clippy·test OK.
   - 결정: 패널 배경·상태라벨을 T5 범위에 포함(주소창이 얹히는 컨테이너가 밝으면 다크 미완성). register_class는 첫 등록만 브러시를 클래스에 연결하고 중복 등록 시 해제(누수 방지).
+- T7 완료: 메뉴바 오너드로우 다크 — menu.rs를 MENUITEMINFOW/InsertMenuItemW 기반 add_item/add_popup/add_separator(MFT_OWNERDRAW)로 재작성(문구·id·단축키 원문 유지), window.rs에 WM_MEASUREITEM/WM_DRAWITEM(ODT_MENU) + measure_menu_item/draw_menu_item/menu_font/split_accel 추가. 팝업 배경은 Win32 제약상 best-effort. split_accel 단위테스트 추가(76 passed). spec MAJOR(테스트 누락) 수정, quality MINOR 3(m2 상수화 반영, m1/m3 follow-up) 후 통과.
 
 ## Tasks
 

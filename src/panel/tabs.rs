@@ -160,7 +160,14 @@ pub fn draw_tab(dis: &DRAWITEMSTRUCT) {
             Some(LPARAM(&mut item as *mut _ as isize)),
         );
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        SetTextColor(dis.hDC, if selected { theme::TEXT } else { theme::TEXT_DIM });
+        SetTextColor(
+            dis.hDC,
+            if selected {
+                theme::TEXT
+            } else {
+                theme::TEXT_DIM
+            },
+        );
         SetBkMode(dis.hDC, TRANSPARENT);
         DrawTextW(
             dis.hDC,

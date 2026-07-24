@@ -1,7 +1,6 @@
 //! 메인 창 — 클래스 등록·생성·윈도우 프로시저·명령 배선
 use crate::app::layout::{MIN_PANE_SIZE, Rect, SPLITTER_THICKNESS, SplitDir};
 use crate::app::layout_host::{self, LayoutHost};
-use crate::app::theme;
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH,
     IDM_SIDEBAR_TOGGLE, IDM_SPLIT_H, IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
@@ -14,6 +13,7 @@ use crate::app::sidebar::{
     self, RenameRequest, Sidebar, WM_APP_WS_CONTEXT, WM_APP_WS_DELETE, WM_APP_WS_NEW,
     WM_APP_WS_RENAME, WM_APP_WS_REORDER, WM_APP_WS_SELECT, WM_APP_WS_TOGGLE,
 };
+use crate::app::theme;
 use crate::app::workspace::WorkspaceList;
 use crate::panel::panel::{
     PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_PATH_CHANGED,
@@ -28,20 +28,20 @@ use windows::Win32::Graphics::Gdi::{
     DeleteObject, DrawTextW, FillRect, GetDC, GetTextExtentPoint32W, HFONT, MONITOR_DEFAULTTONULL,
     MonitorFromRect, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
     DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_SELECTED, ODT_MENU,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     BeginDeferWindowPos, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DeferWindowPos, DestroyMenu, EndDeferWindowPos, GWLP_USERDATA, GetCursorPos,
-    GetWindowLongPtrW, GetWindowPlacement, HACCEL, HDWP, HMENU, HTCLIENT, IDC_ARROW,
-    IDC_SIZEWE, IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, NONCLIENTMETRICSW,
-    PostQuitMessage, RegisterClassExW, SPI_GETNONCLIENTMETRICS, SW_HIDE, SW_SHOW,
-    SW_SHOWMAXIMIZED, SWP_NOACTIVATE, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor,
-    SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, SystemParametersInfoW,
-    TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOWPLACEMENT,
+    GetWindowLongPtrW, GetWindowPlacement, HACCEL, HDWP, HMENU, HTCLIENT, IDC_ARROW, IDC_SIZEWE,
+    IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, NONCLIENTMETRICSW, PostQuitMessage,
+    RegisterClassExW, SPI_GETNONCLIENTMETRICS, SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED, SWP_NOACTIVATE,
+    SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor, SetWindowLongPtrW,
+    SetWindowPlacement, SetWindowPos, ShowWindow, SystemParametersInfoW, TPM_LEFTALIGN,
+    TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOWPLACEMENT,
     WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM,
     WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MEASUREITEM, WM_MOUSEMOVE, WM_PARENTNOTIFY,
     WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW,
@@ -412,7 +412,8 @@ fn layout_children(hwnd: HWND) {
         // (plan T1 — 종전에는 사이드바 MoveWindow 후 host.relayout()으로 두 프레임에 나뉘어 갱신됐다).
         // 실패 경로는 기존 단독 배치(relayout)로 폴백한다 — 다음 배치가 복구.
         // 안전성: 사이드바·패널 모두 우리가 만든 살아있는 자식 창
-        let hdwp: Option<HDWP> = unsafe { BeginDeferWindowPos((host.pane_count() + 1) as i32) }.ok();
+        let hdwp: Option<HDWP> =
+            unsafe { BeginDeferWindowPos((host.pane_count() + 1) as i32) }.ok();
         let hdwp = hdwp.and_then(|hdwp| {
             if sidebar_w > 0 {
                 // 안전성: 유효 hdwp에 사이드바 배치 추가 (0,0 원점 · 폭 sidebar_w · 창 높이)
@@ -627,7 +628,11 @@ fn draw_menu_item(dis: &DRAWITEMSTRUCT) {
         SetBkMode(dis.hDC, TRANSPARENT);
         SetTextColor(
             dis.hDC,
-            if disabled { theme::TEXT_DIM } else { theme::TEXT },
+            if disabled {
+                theme::TEXT_DIM
+            } else {
+                theme::TEXT
+            },
         );
         let mut lr = RECT {
             left: dis.rcItem.left + MENU_PAD_X,

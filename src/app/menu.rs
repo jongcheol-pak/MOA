@@ -82,7 +82,11 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
         add_separator(view)?;
         add_item(view, IDM_TREE_TOGGLE, w!("폴더 트리(&T)"))?;
         add_item(view, IDM_REFRESH, w!("새로 고침(&R)\tF5"))?;
-        add_item(view, IDM_SIDEBAR_TOGGLE, w!("워크스페이스 사이드바(&S)\tCtrl+B"))?;
+        add_item(
+            view,
+            IDM_SIDEBAR_TOGGLE,
+            w!("워크스페이스 사이드바(&S)\tCtrl+B"),
+        )?;
         add_popup(bar, view, w!("보기(&V)"))?;
 
         let go = CreateMenu()?;

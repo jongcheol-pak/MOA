@@ -5,10 +5,10 @@
 //!
 //! 탐색은 pending-커밋 모델이다: 열거가 성공했을 때만 경로·히스토리를 커밋한다.
 //! 실패(삭제·권한)하면 오류 문구만 표시하고 현 위치(주소창·히스토리)는 유지된다 (T5 Edge).
+use crate::app::theme;
 use crate::fs::enumerate::{EnumOutcome, EnumResult, WM_APP_ENUM_DONE, spawn_enumerate};
 use crate::fs::shell_menu;
 use crate::fs::watcher::{DirWatcher, WM_APP_DIR_CHANGED};
-use crate::app::theme;
 use crate::panel::address_bar::{
     AddressBar, ID_NAV_BACK, ID_NAV_FORWARD, ID_NAV_UP, STRIP_HEIGHT, WM_APP_ADDRESS_ENTER,
     draw_nav_button, normalize_input,
@@ -33,12 +33,12 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetCursorPos,
-    GetWindowLongPtrW, IDC_ARROW, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW,
-    SW_SHOWNORMAL, SetWindowLongPtrW, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WM_APP,
-    WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_DRAWITEM,
-    WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NCDESTROY, WM_NOTIFY, WM_SIZE, WNDCLASSEXW,
-    WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetWindowLongPtrW,
+    IDC_ARROW, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWNORMAL, SetWindowLongPtrW,
+    SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE,
+    WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR,
+    WM_NCDESTROY, WM_NOTIFY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 

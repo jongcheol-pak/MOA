@@ -11,8 +11,8 @@ use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_DISABLED, ODS_HOTLIGHT, O
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, VK_RETURN};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BS_OWNERDRAW, CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, MoveWindow,
-    PostMessageW, SetWindowTextW, WINDOW_STYLE, WM_KEYDOWN, WS_CHILD, WS_CLIPSIBLINGS,
+    BS_OWNERDRAW, CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW,
+    MoveWindow, PostMessageW, SetWindowTextW, WINDOW_STYLE, WM_KEYDOWN, WS_CHILD, WS_CLIPSIBLINGS,
     WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, Result, w};
@@ -164,7 +164,11 @@ pub fn draw_nav_button(dis: &DRAWITEMSTRUCT) {
         let len = GetWindowTextW(dis.hwndItem, &mut buf);
         SetTextColor(
             dis.hDC,
-            if disabled { theme::TEXT_DIM } else { theme::TEXT },
+            if disabled {
+                theme::TEXT_DIM
+            } else {
+                theme::TEXT
+            },
         );
         SetBkMode(dis.hDC, TRANSPARENT);
         DrawTextW(
@@ -185,7 +189,11 @@ fn create_button(parent: HWND, label: windows::core::PCWSTR, id: u32) -> Result<
             w!("BUTTON"),
             label,
             // BS_OWNERDRAW: 표준 버튼은 배경 다크가 안 먹으므로 부모 WM_DRAWITEM에서 직접 그린다 (plan T5)
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
+            WS_CHILD
+                | WS_VISIBLE
+                | WS_CLIPSIBLINGS
+                | WS_TABSTOP
+                | WINDOW_STYLE(BS_OWNERDRAW as u32),
             0,
             0,
             0,
