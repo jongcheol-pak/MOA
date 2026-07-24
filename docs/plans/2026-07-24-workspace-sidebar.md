@@ -42,6 +42,7 @@
 - shell_menu `items_menu`의 `pidls[0]` 암묵 계약 문서화 (part2 T2 리뷰 m1 — 대기 유지)
 - 사이드바 항목 가상 스크롤·커스텀 다크 스크롤바 (이번엔 휠 스크롤만 — 항목이 수십 개를 넘으면 재검토)
 - 인라인 이름 편집 EDIT의 다크 스타일링 (앱 전체 테마 도입 시 함께)
+- 메뉴 바 "워크스페이스" 항목의 `F2`·`Delete` 힌트 표기 정책 (두 키는 D16에 따라 사이드바 포커스에서만 동작 — 전역 단축키로 오인될 소지. 힌트 유지 vs 제거는 사용자 결정, F-7 MINOR m3)
 
 ## Investigation Log
 
@@ -99,7 +100,7 @@
 
 - **세션 스키마 v1 → v2**: 최상위가 `{window, layout, panels}`에서 `{window, sidebar, active_workspace, workspaces[{name, layout, panels, active_panel}]}`로 바뀐다. v1 파일은 기존 규칙대로 버전 불일치 → 전체 폴백(초기화, 사용자 선택). 마이그레이션 코드 없음.
 - **신규 창 메시지**: `WM_APP_PATH_CHANGED`(WM_APP+13, 패널 → 부모 게시, wparam=발신 패널 HWND) — 부제 갱신 신호. 경로는 기존 `WM_APP_SESSION_COLLECT` 동기 질의로 조회(신규 페이로드 없음).
-- **신규 창 메시지**: `WM_APP_WS_SELECT`(WM_APP+14, wparam=선택 인덱스), `WM_APP_WS_NEW`(WM_APP+15), `WM_APP_WS_CONTEXT`(WM_APP+16, wparam=인덱스, lparam=화면 좌표) — 사이드바 자식 창이 부모(메인 창)로 게시.
+- **신규 창 메시지** (구현 결과 — 계획 시점 +13~+16 예상에서 확장됨. 수신 창이 패널/사이드바/메인으로 갈려 충돌 없음): `WM_APP_WS_SELECT`(+14, wparam=인덱스), `WM_APP_WS_NEW`(+15), `WM_APP_WS_CONTEXT`(+16, wparam=인덱스·lparam=화면 좌표), `WM_APP_WS_RENAME`(+17, lparam=`RenameRequest` 포인터·동기 전용), `WM_APP_WS_DELETE`(+18), `WM_APP_WS_REORDER`(+19, wparam=from·lparam=to), `WM_APP_WS_TOGGLE`(+22) — 사이드바 → 메인 창. 사이드바 내부 전용은 `+20`(편집 커밋)·`+21`(편집 취소).
 - **`LayoutHost` 공개 API 변경**: `relayout`/`close_active`의 `parent` 제거, `new`/`from_shape`에 area 추가, `set_area`/`set_visible`/`destroy_all` 신설. 소비자는 `window.rs` 단독.
 - **패널↔레이아웃 1:1 walk 순서 계약**(part2 T4)은 워크스페이스 단위로 그대로 유지된다.
 
@@ -291,8 +292,8 @@
 | 이름 색/크기/좌측 x/상단 패딩 | `#E8E8E8`/13px/38px/12px | `sidebar.rs:76,58,56,57` | ✅ | ⏳ 미확인 |
 | 경로 색/크기/줄 간격 | `#8A8A8A`/11px/6px | `sidebar.rs:77,60,59` | ✅ | ⏳ 미확인 |
 | 텍스트 넘침 말줄임 | `DT_END_ELLIPSIS` | `sidebar.rs` `draw_line`/`draw_header_text` | ✅ | ⏳ 미확인 |
-| 드래그 삽입선 2px `#4A9EFF` | — | (T6에서 구현) | ⏳ 미구현 | ⏳ 미확인 |
-| 인라인 편집 EDIT 배치 | — | (T6에서 구현) | ⏳ 미구현 | ⏳ 미확인 |
+| 드래그 삽입선 2px `#4A9EFF` (T6) | 2px `#4A9EFF` | `sidebar.rs` `INSERT_LINE_HEIGHT`·`COLOR_ACCENT` + `paint`의 삽입선 fill | ✅ | ⏳ 미확인 |
+| 인라인 편집 EDIT 배치 (T6) | 항목 1줄 영역, 시스템 기본 배경 | `sidebar.rs` `begin_rename`(`rect.left+TEXT_X`, `rect.top+NAME_TOP-2`, 표준 EDIT — `WM_CTLCOLOREDIT` 커스터마이즈 없음) | ✅ | ⏳ 미확인 |
 | 사이드바↔탐색기 경계 4px | `SPLITTER_THICKNESS` | `window.rs` `explorer_area` | ✅ | ⏳ 미확인 |
 
 ## Tasks
@@ -446,7 +447,7 @@
     - (ii-b) 실측 미달로 D2(지연 생성 후 유지) 또는 D1(배치 구조) 자체를 바꿔야 하면 plan에 없던 설계 변경 → `## 불가피한 Halt`
   - **Depends on**: T1, T2, T3, T4, T5, T6, T7
 
-- [ ] T9. 부제 갱신이 인라인 편집을 파괴하지 않도록 분리 (F-7 BLOCKER B1)
+- [x] T9. 부제 갱신이 인라인 편집을 파괴하지 않도록 분리 (F-7 BLOCKER B1)
   - **Type**: C
   - **Design**: ① `src/app/sidebar.rs`(표시 갱신 API 분리)와 `src/app/window.rs`(부제 갱신 경로만 교체). ② 신규 `Sidebar::refresh_items(&self, items, active)` — 표시 스냅숏·활성만 교체하고 **편집 중인 EDIT은 건드리지 않는다**(무효화만). 기존 `set_items`는 목록 **구조가 바뀌는** 경로(생성·삭제·순서 변경·이름 커밋) 전용으로 남겨 편집 종료를 유지한다. ③ `window.rs::refresh_subtitle`만 신규 API를 쓰고 `sync_sidebar`는 그대로. ④ 추상화하지 않을 것: 편집 상태를 외부에 노출하거나 갱신 정책 플래그를 만들지 않는다(두 진입점의 의미가 다르므로 함수를 나눈다).
   - **Acceptance**: Given `+`로 새 워크스페이스 생성, When 첫 폴더 열거가 끝나 `WM_APP_PATH_CHANGED`가 도착, Then 인라인 EDIT이 그대로 열려 있고 입력 중이던 텍스트가 유지된다(FR-16) / Given F2로 이름 편집 중, When 감시 폴더에 파일이 생성·삭제되어 목록이 자동 갱신, Then 편집이 취소되지 않는다(FR-18) / 목록 구조가 바뀌는 조작(생성·삭제·정렬)에서는 기존대로 편집이 종료된다 / `cargo build`·`clippy -D warnings`·`test` 통과
@@ -497,6 +498,8 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- Phase F 재진입 1/3회 — F-7 BLOCKER B1(부제 갱신이 인라인 편집을 취소) → T9 추가·수정 후 F-2/F-7 재실행
+- T6: 리뷰 지적 수정 사이클 1/5 (MAJOR 2·MINOR 1 → 1회 수정 후 재리뷰 통과)
 
 ## Progress Log
 - T1-T2 완료 (커밋 861e4e1, T2 pre-review f0e1870): ① `src/app/workspace.rs` 신규 — `WorkspaceList`(add/rename/remove/reorder/set_active/set_subtitle)·자동 이름(사용 중이지 않은 최소 번호)·`elide_path`, 단위테스트 13개. ② `LayoutHost`에 `area` 주입 — `new`/`from_shape`에 area 인자, `relayout`/`close_active`/`drag_move`의 `parent` 제거, `set_area`/`set_visible`/`destroy_all` 추가, `client_rect`를 `pub`으로 승격해 window.rs가 영역을 계산·주입(WM_SIZE에서 `set_area`+`relayout` 짝 호출).
