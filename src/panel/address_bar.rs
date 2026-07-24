@@ -1,11 +1,17 @@
 //! 주소창 스트립 — [←][→][↑] 버튼 + 경로 입력 Edit (FR-6)
+use crate::app::theme;
 use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    CreateSolidBrush, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FillRect,
+    SetBkMode, SetTextColor, TRANSPARENT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_DISABLED, ODS_HOTLIGHT, ODS_SELECTED};
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, VK_RETURN};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, MoveWindow,
+    BS_OWNERDRAW, CreateWindowExW, ES_AUTOHSCROLL, GetWindowTextLengthW, GetWindowTextW, MoveWindow,
     PostMessageW, SetWindowTextW, WINDOW_STYLE, WM_KEYDOWN, WS_CHILD, WS_CLIPSIBLINGS,
     WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
 };
@@ -134,6 +140,42 @@ pub fn normalize_input(current: &Path, input: &str) -> Option<PathBuf> {
     }
 }
 
+/// 네비 버튼(←→↑) 오너드로우 — 부모 패널의 WM_DRAWITEM에서 호출한다 (plan T5).
+/// 배경을 상태별 다크색으로 채우고 버튼 텍스트(글리프)를 중앙에 그린다.
+pub fn draw_nav_button(dis: &DRAWITEMSTRUCT) {
+    let disabled = (dis.itemState.0 & ODS_DISABLED.0) != 0;
+    let pressed = (dis.itemState.0 & ODS_SELECTED.0) != 0;
+    let hot = (dis.itemState.0 & ODS_HOTLIGHT.0) != 0;
+    let bg = if pressed {
+        theme::CONTROL_ACTIVE
+    } else if hot && !disabled {
+        theme::CONTROL_HOT
+    } else {
+        theme::CONTROL_BG
+    };
+    let mut rc = dis.rcItem;
+    // 안전성: 오너드로우가 넘긴 유효 DC에 배경·글리프를 그린다. 브러시는 생성 즉시 해제
+    unsafe {
+        let brush = CreateSolidBrush(bg);
+        FillRect(dis.hDC, &rc, brush);
+        let _ = DeleteObject(brush.into());
+        // 버튼 텍스트(←→↑)를 읽어 중앙에 그린다
+        let mut buf = [0u16; 8];
+        let len = GetWindowTextW(dis.hwndItem, &mut buf);
+        SetTextColor(
+            dis.hDC,
+            if disabled { theme::TEXT_DIM } else { theme::TEXT },
+        );
+        SetBkMode(dis.hDC, TRANSPARENT);
+        DrawTextW(
+            dis.hDC,
+            &mut buf[..len.max(0) as usize],
+            &mut rc,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+    }
+}
+
 fn create_button(parent: HWND, label: windows::core::PCWSTR, id: u32) -> Result<HWND> {
     // 안전성: 표준 BUTTON 자식 생성 — hMenu 자리에 컨트롤 id 전달 (Win32 관례)
     unsafe {
@@ -142,7 +184,8 @@ fn create_button(parent: HWND, label: windows::core::PCWSTR, id: u32) -> Result<
             Default::default(),
             w!("BUTTON"),
             label,
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP,
+            // BS_OWNERDRAW: 표준 버튼은 배경 다크가 안 먹으므로 부모 WM_DRAWITEM에서 직접 그린다 (plan T5)
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
             0,
             0,
             0,

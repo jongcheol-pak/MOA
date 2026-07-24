@@ -8,9 +8,10 @@
 use crate::fs::enumerate::{EnumOutcome, EnumResult, WM_APP_ENUM_DONE, spawn_enumerate};
 use crate::fs::shell_menu;
 use crate::fs::watcher::{DirWatcher, WM_APP_DIR_CHANGED};
+use crate::app::theme;
 use crate::panel::address_bar::{
     AddressBar, ID_NAV_BACK, ID_NAV_FORWARD, ID_NAV_UP, STRIP_HEIGHT, WM_APP_ADDRESS_ENTER,
-    normalize_input,
+    draw_nav_button, normalize_input,
 };
 use crate::panel::file_list::{FileList, apply_item_count};
 use crate::panel::folder_tree::{FolderTree, TREE_WIDTH, apply_expand};
@@ -19,19 +20,22 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Gdi::{COLOR_BTNFACE, HBRUSH};
+use windows::Win32::Graphics::Gdi::{
+    CreateSolidBrush, DeleteObject, HBRUSH, HDC, SetBkColor, SetTextColor,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    LVN_COLUMNCLICK, LVN_GETDISPINFOW, NM_DBLCLK, NMHDR, NMITEMACTIVATE, NMLVDISPINFOW,
-    NMTREEVIEWW, TCN_SELCHANGE, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
+    DRAWITEMSTRUCT, LVN_COLUMNCLICK, LVN_GETDISPINFOW, NM_DBLCLK, NMHDR, NMITEMACTIVATE,
+    NMLVDISPINFOW, NMTREEVIEWW, ODT_BUTTON, TCN_SELCHANGE, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
 };
 use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetWindowLongPtrW,
-    IDC_ARROW, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWNORMAL, SetWindowLongPtrW,
-    SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE,
-    WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NCDESTROY, WM_NOTIFY, WM_SIZE,
-    WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetCursorPos,
+    GetWindowLongPtrW, IDC_ARROW, LoadCursorW, RegisterClassExW, SW_HIDE, SW_SHOW,
+    SW_SHOWNORMAL, SetWindowLongPtrW, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WM_APP,
+    WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_DRAWITEM,
+    WM_INITMENUPOPUP, WM_MEASUREITEM, WM_MENUCHAR, WM_NCDESTROY, WM_NOTIFY, WM_SIZE, WNDCLASSEXW,
+    WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -85,6 +89,10 @@ struct PanelState {
     file_list: FileList,
     folder_tree: FolderTree,
     status_label: HWND,
+    /// 주소창 Edit 다크 배경 브러시 (WM_CTLCOLOREDIT 반환용, drop에서 해제)
+    edit_brush: HBRUSH,
+    /// 상태 라벨 다크 배경 브러시 (WM_CTLCOLORSTATIC 반환용, drop에서 해제)
+    static_brush: HBRUSH,
     tabs: TabsModel,
     /// 진행 중 탐색 대상 (성공 시 활성 탭에 커밋)
     pending: Option<(PathBuf, PendingKind)>,
@@ -96,6 +104,16 @@ struct PanelState {
     watcher: Option<DirWatcher>,
     watch_tx: Sender<()>,
     watch_rx: Receiver<()>,
+}
+
+impl Drop for PanelState {
+    fn drop(&mut self) {
+        // 안전성: 이 패널이 만든 다크 배경 브러시만 해제 — 이후 참조 없음
+        unsafe {
+            let _ = DeleteObject(self.edit_brush.into());
+            let _ = DeleteObject(self.static_brush.into());
+        }
+    }
 }
 
 impl PanelState {
@@ -407,7 +425,8 @@ fn register_class() -> Result<()> {
             lpfnWndProc: Some(panel_proc),
             hInstance: instance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
-            hbrBackground: HBRUSH((COLOR_BTNFACE.0 + 1) as isize as *mut core::ffi::c_void),
+            // 고정 다크 — 패널 여백(자식 컨트롤 사이)을 다크로 (plan T5)
+            hbrBackground: CreateSolidBrush(theme::WINDOW_BG),
             lpszClassName: PANEL_CLASS,
             ..Default::default()
         };
@@ -728,7 +747,55 @@ unsafe extern "system" fn panel_proc(
                 None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
             }
         }
-        WM_INITMENUPOPUP | WM_DRAWITEM | WM_MEASUREITEM | WM_MENUCHAR => {
+        WM_DRAWITEM => {
+            // 안전성: WM_DRAWITEM lparam은 OS가 채운 DRAWITEMSTRUCT 포인터
+            let dis = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
+            if dis.CtlType == ODT_BUTTON
+                && (dis.CtlID == ID_NAV_BACK
+                    || dis.CtlID == ID_NAV_FORWARD
+                    || dis.CtlID == ID_NAV_UP)
+            {
+                // 네비 버튼 오너드로우 다크 (plan T5)
+                draw_nav_button(dis);
+                LRESULT(1)
+            } else {
+                // 셸 메뉴 항목은 IContextMenu2/3로 포워딩 (T2 Edge)
+                match shell_menu::forward_menu_msg(msg, wparam, lparam) {
+                    Some(result) => result,
+                    // 안전성: 기본 처리 위임
+                    None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+                }
+            }
+        }
+        WM_CTLCOLOREDIT => {
+            // 주소창 Edit 다크 (plan T5) — 글자·배경색 지정 후 다크 배경 브러시 반환
+            let Some(state) = state_of(hwnd) else {
+                // 안전성: 상태 미부착 시 기본 처리
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            };
+            // 안전성: WM_CTLCOLOR* wparam은 대상 컨트롤의 HDC
+            unsafe {
+                let hdc = HDC(wparam.0 as *mut core::ffi::c_void);
+                SetTextColor(hdc, theme::TEXT);
+                SetBkColor(hdc, theme::SURFACE_BG);
+            }
+            LRESULT(state.edit_brush.0 as isize)
+        }
+        WM_CTLCOLORSTATIC => {
+            // 상태 라벨 다크 (plan T5)
+            let Some(state) = state_of(hwnd) else {
+                // 안전성: 상태 미부착 시 기본 처리
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            };
+            // 안전성: WM_CTLCOLOR* wparam은 대상 컨트롤의 HDC
+            unsafe {
+                let hdc = HDC(wparam.0 as *mut core::ffi::c_void);
+                SetTextColor(hdc, theme::TEXT_DIM);
+                SetBkColor(hdc, theme::WINDOW_BG);
+            }
+            LRESULT(state.static_brush.0 as isize)
+        }
+        WM_INITMENUPOPUP | WM_MEASUREITEM | WM_MENUCHAR => {
             // 셸 메뉴 모달 중이면 IContextMenu2/3로 포워딩 — 서브메뉴(보내기 등) 채움 (T2 Edge)
             match shell_menu::forward_menu_msg(msg, wparam, lparam) {
                 Some(result) => result,
@@ -760,6 +827,9 @@ fn init_state(hwnd: HWND) -> Result<()> {
     let file_list = FileList::create(hwnd)?;
     let folder_tree = FolderTree::create(hwnd)?;
     let status_label = create_status_label(hwnd)?;
+    // 고정 다크 (plan T5) — 주소창 Edit·상태 라벨 배경 브러시 (drop에서 해제)
+    let edit_brush = unsafe { CreateSolidBrush(theme::SURFACE_BG) };
+    let static_brush = unsafe { CreateSolidBrush(theme::WINDOW_BG) };
     let (tx, rx) = channel();
     let (watch_tx, watch_rx) = channel();
     let start = home_dir();
@@ -772,6 +842,8 @@ fn init_state(hwnd: HWND) -> Result<()> {
         file_list,
         folder_tree,
         status_label,
+        edit_brush,
+        static_brush,
         tabs: TabsModel::new(TabState::new(start.clone())),
         pending: None,
         generation: 0,

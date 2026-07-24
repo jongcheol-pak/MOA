@@ -22,6 +22,14 @@ pub const HEADER_BG: COLORREF = rgb(0x25, 0x25, 0x25);
 pub const HEADER_TEXT: COLORREF = rgb(0xC8, 0xC8, 0xC8);
 /// 트리 연결선
 pub const TREE_LINE: COLORREF = rgb(0x45, 0x45, 0x45);
+/// 버튼·오너드로우 컨트롤 기본 배경
+pub const CONTROL_BG: COLORREF = rgb(0x2A, 0x2A, 0x2A);
+/// 버튼 hover 배경
+pub const CONTROL_HOT: COLORREF = rgb(0x38, 0x38, 0x38);
+/// 버튼 눌림 배경
+pub const CONTROL_ACTIVE: COLORREF = rgb(0x45, 0x45, 0x45);
+/// 비활성 글자색
+pub const TEXT_DIM: COLORREF = rgb(0x6A, 0x6A, 0x6A);
 
 /// 최상위 창 타이틀바를 다크로 전환한다.
 /// 미지원 OS(구버전 Windows)에서는 실패하지만 앱 동작에는 영향 없으므로 반환을 무시한다.
