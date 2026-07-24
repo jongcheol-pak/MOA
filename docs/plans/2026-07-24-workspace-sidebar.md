@@ -309,7 +309,7 @@
     - (ii-a) `LayoutHost` 공개 시그니처 변경(area 주입·파라미터 제거) + 신규 공개 메서드 3개 → `## 사전 승인 항목`에 등록
   - **Depends on**: -
 
-- [ ] T3. 세션 스키마 v2 (워크스페이스 1개 상태 유지)
+- [x] T3. 세션 스키마 v2 (워크스페이스 1개 상태 유지)
   - **Type**: D
   - **Design**: ① `src/app/settings.rs`(스키마·검증·테스트)와 `src/app/window.rs`(수집·복원 배선). ② 신규 직렬화 타입 `WorkspaceSession{name: String, layout: LayoutNode, panels: Vec<PanelSession>, active_panel: usize}`(D18), `SidebarSession{width: i32, collapsed: bool}`(사이드바 창 내부 상태 타입 `sidebar::SidebarState`와 이름이 겹치지 않게 `Session` 접미사 사용); `Session`을 `{version: 2, window, sidebar, active_workspace, workspaces}`로 변경, `SESSION_VERSION = 2`. 검증은 기존 정책 계승(워크스페이스 비었거나 `active_workspace` 범위 밖·`active_panel` 범위 밖·리프 수 불일치·빈 탭·비유한 비율·비양수 창 크기 → 전체 폴백) + 사이드바 폭은 `[160,480]` 클램프(D9). 이 단계의 `window.rs`는 **워크스페이스 1개짜리 v2 세션**을 저장/복원한다(이름은 "워크스페이스 1", 사이드바 상태는 기본값) — 화면 동작은 이번 단계에서 변하지 않는다. ③ `layout::TreeShape`·기존 `LayoutNode`·`PanelSession`을 재사용하고 `window.rs`가 소비한다. ④ 추상화하지 않을 것: 스키마 마이그레이션 프레임워크를 만들지 않는다(v1은 폴백 — 사용자 결정).
   - **Acceptance**: Given v2 샘플 세션, When `serde_json` 직렬화 후 `parse_session`, Then 왕복 동일성이 성립한다 / v1 스키마 파일·손상 JSON·`active_workspace` 범위 밖·`active_panel` 범위 밖·리프 수 불일치는 모두 `None`(폴백) / 사이드바 폭 100·9999는 각각 160·480으로 클램프된다 / Given 분할 2개·탭 여러 개 상태, When 앱 종료 후 재실행, Then 기존과 동일하게 레이아웃·탭이 복원된다(HUMAN-VERIFY) / `cargo test` 통과(settings 테스트 전면 갱신 포함)
@@ -329,7 +329,7 @@
 
 - [ ] T4. 사이드바 창 — 다크 목록 렌더링·선택·생성 버튼
   - **Type**: D
-  - **Design**: ① `src/app/sidebar.rs` 신규(패널 창과 같은 자식 창 패턴 — 자체 창 클래스 `FileExplorerSidebar`, 상태는 `Box<RefCell<SidebarState>>` in GWLP_USERDATA). ② `Sidebar{hwnd}` — 창 래퍼, `create(parent) -> Result<Sidebar>`, `set_items(&[Workspace], active: usize)` — 표시 데이터 갱신 후 무효화, `hwnd()`; 내부 `SidebarState{items, active, hover, scroll, fonts, brushes, icon}`, 그리기 `paint`, 순수 함수 `item_at(y, scroll, count) -> Option<usize>`·`clamp_scroll(scroll, count, view_h) -> i32`. 시각 상수(`SIDEBAR_*`)는 파일 상단에 `## 시각 요소 분해` 표와 1:1 선언. 클릭 시 `SetFocus`(D17). ③ `workspace.rs`(표시 데이터)·`fs::icons`(폴더 아이콘)를 참조하고 부모에 `WM_APP_WS_SELECT`/`WM_APP_WS_NEW`를 게시한다 — 워크스페이스를 소유하지 않는다(표시·입력 전용). ④ 추상화하지 않을 것: 범용 리스트 컨트롤·테마 시스템을 만들지 않는다.
+  - **Design**: ① `src/app/sidebar.rs` 신규(패널 창과 같은 자식 창 패턴 — 자체 창 클래스 `FileExplorerSidebar`, 상태는 `Box<RefCell<SidebarState>>` in GWLP_USERDATA). ② `Sidebar{hwnd}` — 창 래퍼, `create(parent) -> Result<Sidebar>`, `set_items(&[Workspace], active: usize)` — 표시 데이터 갱신 후 무효화, `hwnd()`; 내부 `SidebarState{items, active, hover, scroll, fonts, brushes, icon}`, 그리기 `paint`, 순수 함수 `item_at(y, scroll, count) -> Option<usize>`·`clamp_scroll(scroll, count, view_h) -> i32`. 시각 상수(색·항목 높이·패딩 등)는 파일 상단에 `## 시각 요소 분해` 표와 1:1 선언하되, **폭 토큰(기본 232·최소 160·최대 480)은 T3에서 이미 선언된 `settings::SIDEBAR_DEFAULT_WIDTH`/`SIDEBAR_MIN_WIDTH`/`SIDEBAR_MAX_WIDTH`를 재사용하고 재선언하지 않는다**(T3 리뷰 MINOR — 세션 검증이 같은 값을 쓰므로 소유는 settings). 클릭 시 `SetFocus`(D17). ③ `workspace.rs`(표시 데이터)·`fs::icons`(폴더 아이콘)를 참조하고 부모에 `WM_APP_WS_SELECT`/`WM_APP_WS_NEW`를 게시한다 — 워크스페이스를 소유하지 않는다(표시·입력 전용). ④ 추상화하지 않을 것: 범용 리스트 컨트롤·테마 시스템을 만들지 않는다.
   - **Acceptance**: Given 더미 워크스페이스 3개를 `set_items`로 주입(이 단계에서는 `window.rs`가 고정 더미 목록을 만들어 검증 — 실제 목록 연결은 T5), When 창 표시, Then 헤더("워크스페이스")·`+` 버튼·2줄 항목이 `## 시각 요소 분해` 표의 색·치수대로 그려진다(HUMAN-VERIFY) / When 항목 클릭, Then `WM_APP_WS_SELECT`(wparam=인덱스)가 부모에 게시되고 사이드바가 포커스를 갖는다 / When `+` 클릭, Then `WM_APP_WS_NEW` 게시 / When 항목이 화면보다 많고 휠을 굴리면, Then 스크롤 오프셋이 [0,최대]로 클램프된다 / `item_at`·`clamp_scroll` 단위테스트 통과 / `cargo clippy --all-targets -- -D warnings` 통과
   - **Files**:
     - 주: `src/app/sidebar.rs`(신규)
@@ -409,7 +409,7 @@
 - [ ] T8. 전체 검증 — 성능 실측·시각 대조·회귀
   - **Type**: C
   - **Design**: ① 검증 스크립트는 시스템 임시 폴더(스크래치)에 두고 저장소에 남기지 않는다(part2 T5 방식 — `APPDATA` 리다이렉트로 사용자 설정 미오염). ② 신규 심볼 없음(코드 수정은 실측 미달 시에만). ③ 대상은 릴리즈 빌드 산출물. ④ 추상화하지 않을 것: 벤치마크 하네스를 저장소에 추가하지 않는다.
-  - **Acceptance**: NFR-8 — 워크스페이스 5개를 각각 1회 방문한 상태의 유휴 Working Set이 100MB 미만(측정값 기록) / NFR-1 회귀 — 시작→창 표시 1초 미만 / NFR-2 회귀 — 워크스페이스 1개·패널 2개 유휴 50MB 미만 / 워크스페이스 5개 생성 후 4개 삭제 시 Working Set이 생성 전 수준으로 회수된다(누수 확인) / `## 시각 요소 분해` 표의 모든 항목이 `sidebar.rs` 상수와 1:1 일치(코드 대조) / `cargo build --release`·`cargo clippy --all-targets -- -D warnings`·`cargo fmt --check`·`cargo test` 전부 통과 / 미달 항목은 원인·조치를 Progress Log에 기록
+  - **Acceptance**: NFR-8 — 워크스페이스 5개를 각각 1회 방문한 상태의 유휴 Working Set이 100MB 미만(측정값 기록) / NFR-1 회귀 — 시작→창 표시 1초 미만 / NFR-2 회귀 — 워크스페이스 1개·패널 2개 유휴 50MB 미만 / 워크스페이스 5개 생성 후 4개 삭제 시 Working Set이 생성 전 수준으로 회수된다(누수 확인) / `## 시각 요소 분해` 표의 모든 항목이 코드 상수와 1:1 일치(색·치수는 `sidebar.rs`, 폭 토큰은 `settings::SIDEBAR_*` — 코드 대조) / `cargo build --release`·`cargo clippy --all-targets -- -D warnings`·`cargo fmt --check`·`cargo test` 전부 통과 / 미달 항목은 원인·조치를 Progress Log에 기록
   - **Files**:
     - 주: (없음 — 측정·대조. 미달 시 해당 소스 수정)
     - 테스트: `cargo test` 전체

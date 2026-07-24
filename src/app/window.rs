@@ -5,7 +5,9 @@ use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH, IDM_SPLIT_H,
     IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
 };
-use crate::app::settings::{self, LayoutNode, PanelSession, Session, WindowState};
+use crate::app::settings::{
+    self, LayoutNode, PanelSession, Session, WindowState, WorkspaceSession,
+};
 use crate::panel::panel::{
     PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_REFRESH,
     WM_APP_SESSION_COLLECT, WM_APP_SESSION_RESTORE, WM_APP_TAB_CLOSE, WM_APP_TAB_NEW,
@@ -85,16 +87,20 @@ impl MainWindow {
 
             // 상태는 창 생성 후 부착 — 부착 전 도착하는 메시지는 null 가드로 기본 처리
             let menu = menu::attach_menu(hwnd)?;
-            // 세션이 있으면 분할 구조 복원, 없거나 손상이면 기본 1패널 (FR-11, T4 Edge)
+            // 세션이 있으면 활성 워크스페이스의 분할 구조를 복원, 없거나 손상이면 기본 1패널
+            // (FR-11·FR-20 — 나머지 워크스페이스의 지연 생성은 T5)
             let session = settings::load_session();
+            let active_ws = session
+                .as_ref()
+                .and_then(|s| s.workspaces.get(s.active_workspace));
             // 배치 영역은 창 클라이언트 전체 — 사이드바가 생기면 그만큼 좁혀 주입한다 (T5·T7)
             let area = layout_host::client_rect(hwnd);
-            let host = match &session {
-                Some(s) => LayoutHost::from_shape(hwnd, &s.layout.to_shape(), area)?,
+            let host = match active_ws {
+                Some(ws) => LayoutHost::from_shape(hwnd, &ws.layout.to_shape(), area)?,
                 None => LayoutHost::new(hwnd, area)?,
             };
-            if let Some(s) = &session {
-                restore_panels(&host, s);
+            if let Some(ws) = active_ws {
+                restore_panels(&host, ws);
             }
             menu::update_close_enabled(menu, host.panel_count());
             let state = Box::new(RefCell::new(AppState { host, menu }));
@@ -207,9 +213,9 @@ fn send_ptr(hwnd: HWND, msg: u32, lparam: isize) -> LRESULT {
     }
 }
 
-/// 세션의 패널별 탭을 각 패널에 복원 (walk 순서 1:1 — layout_host 계약)
-fn restore_panels(host: &LayoutHost, session: &Session) {
-    for (panel, ps) in host.panel_hwnds().iter().zip(&session.panels) {
+/// 워크스페이스의 패널별 탭을 각 패널에 복원 (walk 순서 1:1 — layout_host 계약)
+fn restore_panels(host: &LayoutHost, workspace: &WorkspaceSession) {
+    for (panel, ps) in host.panel_hwnds().iter().zip(&workspace.panels) {
         let data = PanelSessionData {
             tabs: ps.tabs.iter().map(PathBuf::from).collect(),
             active: ps.active_tab,
@@ -300,8 +306,16 @@ fn save_current_session(hwnd: HWND) {
             h: rc.bottom - rc.top,
             maximized: wp.showCmd == SW_SHOWMAXIMIZED.0 as u32,
         },
-        layout: LayoutNode::from_shape(&shape),
-        panels,
+        // 사이드바 상태와 워크스페이스 목록은 T5·T7에서 실제 값으로 채운다.
+        // 이 단계는 스키마만 v2이고 화면은 워크스페이스 1개짜리와 같다
+        sidebar: settings::SidebarSession::default(),
+        active_workspace: 0,
+        workspaces: vec![WorkspaceSession {
+            name: "워크스페이스 1".to_string(),
+            layout: LayoutNode::from_shape(&shape),
+            panels,
+            active_panel: 0,
+        }],
     });
 }
 
