@@ -30,7 +30,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_SELECTED, ODT_MENU,
+    DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_GRAYED, ODS_SELECTED, ODT_MENU,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -595,7 +595,8 @@ fn measure_menu_item(mis: &mut MEASUREITEMSTRUCT) {
 /// 팝업 배경(항목 밖 여백·테두리)은 Win32 제약상 시스템 색이 남을 수 있다 (best-effort)
 fn draw_menu_item(dis: &DRAWITEMSTRUCT) {
     let selected = (dis.itemState.0 & ODS_SELECTED.0) != 0;
-    let disabled = (dis.itemState.0 & ODS_DISABLED.0) != 0;
+    // MF_GRAYED 항목은 ODS_GRAYED가 서고 ODS_DISABLED는 아닐 수 있어 둘 다 검사한다 (F-7 m1)
+    let disabled = (dis.itemState.0 & (ODS_DISABLED.0 | ODS_GRAYED.0)) != 0;
     // 안전성: 오너드로우가 넘긴 유효 DC에 배경·텍스트를 그린다. 브러시·폰트는 생성 즉시 해제
     unsafe {
         let bg = if selected {
