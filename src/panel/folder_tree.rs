@@ -4,6 +4,7 @@
 //! 워커 스레드로 열거한다 (plan D14 — UI 무정지). 열거 완료는 패널 창의
 //! WM_APP_ENUM_DONE로 통지되며, 데이터는 트리 전용 채널로 받는다.
 //! 목록→트리 역방향 동기화는 하지 않는다 (D14 — 단방향).
+use crate::app::theme;
 use crate::fs::enumerate::{EnumOutcome, EnumResult, FileEntry, spawn_enumerate};
 use crate::fs::icons::IconCache;
 use std::collections::{HashMap, HashSet};
@@ -13,9 +14,10 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Storage::FileSystem::GetLogicalDrives;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    HTREEITEM, NMTREEVIEWW, TVC_UNKNOWN, TVE_EXPAND, TVI_LAST, TVI_ROOT, TVIF_CHILDREN, TVIF_IMAGE,
-    TVIF_SELECTEDIMAGE, TVIF_TEXT, TVINSERTSTRUCTW, TVITEMEXW_CHILDREN, TVITEMW, TVM_EXPAND,
-    TVM_INSERTITEMW, TVM_SETIMAGELIST, TVM_SETITEMW, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
+    HTREEITEM, NMTREEVIEWW, SetWindowTheme, TVC_UNKNOWN, TVE_EXPAND, TVI_LAST, TVI_ROOT,
+    TVIF_CHILDREN, TVIF_IMAGE, TVIF_SELECTEDIMAGE, TVIF_TEXT, TVINSERTSTRUCTW, TVITEMEXW_CHILDREN,
+    TVITEMW, TVM_EXPAND, TVM_INSERTITEMW, TVM_SETBKCOLOR, TVM_SETIMAGELIST, TVM_SETITEMW,
+    TVM_SETLINECOLOR, TVM_SETTEXTCOLOR, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT,
     TVS_SHOWSELALWAYS, TVSIL_NORMAL, WC_TREEVIEWW,
 };
 use windows::Win32::UI::Shell::StrCmpLogicalW;
@@ -23,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, MoveWindow, SW_HIDE, SW_SHOW, SendMessageW, ShowWindow, WINDOW_STYLE,
     WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_TABSTOP,
 };
-use windows::core::{HSTRING, PCWSTR, Result};
+use windows::core::{HSTRING, PCWSTR, Result, w};
 
 /// 트리 고정 폭 (plan T1 Design — 조절은 v2)
 pub const TREE_WIDTH: i32 = 200;
@@ -75,8 +77,27 @@ impl FolderTree {
         // 시스템 공유 이미지 리스트 + 폴더 아이콘 (IconCache 재사용 — 인스턴스는 보관 불필요)
         let mut icons = IconCache::new();
         let dir_icon = icons.icon_index("", true, None);
-        // 안전성: 유효한 트리 핸들에 표준 초기화 메시지
+        // 안전성: 유효한 트리 핸들에 표준 초기화 메시지 + 고정 다크 색 (plan T4)
         unsafe {
+            let _ = SetWindowTheme(hwnd, w!("DarkMode_Explorer"), PCWSTR::null());
+            SendMessageW(
+                hwnd,
+                TVM_SETBKCOLOR,
+                Some(WPARAM(0)),
+                Some(LPARAM(theme::SURFACE_BG.0 as isize)),
+            );
+            SendMessageW(
+                hwnd,
+                TVM_SETTEXTCOLOR,
+                Some(WPARAM(0)),
+                Some(LPARAM(theme::TEXT.0 as isize)),
+            );
+            SendMessageW(
+                hwnd,
+                TVM_SETLINECOLOR,
+                Some(WPARAM(0)),
+                Some(LPARAM(theme::TREE_LINE.0 as isize)),
+            );
             SendMessageW(
                 hwnd,
                 TVM_SETIMAGELIST,

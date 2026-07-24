@@ -53,7 +53,7 @@
 - [x] T1. 사이드바 크기 조절 잔상 개선 — 배치 통합 + 더블버퍼링
 - [x] T2. 다크 인프라 + 메인 창(타이틀바·배경·splitter)
 - [x] T3. 파일 목록(ListView) 다크
-- [ ] T4. 폴더 트리(TreeView) 다크
+- [x] T4. 폴더 트리(TreeView) 다크
 - [ ] T5. 주소창(Edit) + 네비 버튼 다크
 - [ ] T6. 탭 컨트롤 오너드로우 다크
 - [ ] T7. 메뉴바 오너드로우 다크
@@ -62,6 +62,7 @@
 
 - T1 완료 (ae08343): `LayoutHost::defer_into`/`pane_count` 추가 → `layout_children`이 사이드바+패널을 단일 `DeferWindowPos` 배치로 통합. 사이드바 `paint`에 메모리 DC 더블버퍼링. 빌드·clippy·test(75+2) OK, spec/quality 리뷰 OK.
 - T2 완료: `app/theme.rs` 신규(WINDOW_BG + apply_dark_titlebar), Cargo.toml에 Win32_Graphics_Dwm 추가, 메인 창 배경 브러시 다크(CreateSolidBrush) + DWM 다크 타이틀바. 빌드·clippy·test OK, spec/quality 리뷰 OK. theme 색은 각 후속 task에서 필요분만 추가(YAGNI).
+- T3-T4 완료 (5d3bda0 외): 파일 목록(ListView) 다크 — SetWindowTheme + LVM 색상 메시지 + ListView 서브클래스(list_dark_proc)로 헤더 NM_CUSTOMDRAW 다크. 폴더 트리(TreeView) 다크 — SetWindowTheme + TVM_SETBKCOLOR/TEXTCOLOR/LINECOLOR. theme.rs에 SURFACE_BG/TEXT/HEADER_BG/HEADER_TEXT/TREE_LINE 추가. 각 task 빌드·clippy·test(75+2) OK, spec/quality 리뷰 OK.
 
 ## Tasks
 
