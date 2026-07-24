@@ -1,7 +1,7 @@
 //! 메뉴 바·액셀러레이터 — 분할 명령 (plan D10, 한국어 문구)
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    VK_F5, VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W,
+    VK_B, VK_F5, VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL,
@@ -25,6 +25,8 @@ pub const IDM_REFRESH: u32 = 110;
 pub const IDM_WS_NEW: u32 = 111;
 pub const IDM_WS_RENAME: u32 = 112;
 pub const IDM_WS_DELETE: u32 = 113;
+/// 사이드바 접기/펼치기 (FR-19) — 접힌 상태에서 되돌아오는 유일한 경로이기도 하다 (D11)
+pub const IDM_SIDEBAR_TOGGLE: u32 = 114;
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
@@ -62,6 +64,12 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
             MF_STRING,
             IDM_REFRESH as usize,
             w!("새로 고침(&R)\tF5"),
+        )?;
+        AppendMenuW(
+            view,
+            MF_STRING,
+            IDM_SIDEBAR_TOGGLE as usize,
+            w!("워크스페이스 사이드바(&S)\tCtrl+B"),
         )?;
         AppendMenuW(bar, MF_POPUP, view.0 as usize, w!("보기(&V)"))?;
 
@@ -152,6 +160,12 @@ pub fn create_accels() -> Result<HACCEL> {
             fVirt: FVIRTKEY | FCONTROL,
             key: VK_W.0,
             cmd: IDM_TAB_CLOSE as u16,
+        },
+        // Ctrl 조합만 액셀러레이터로 둔다 — 무수식 키(F2·Delete)는 편집 컨트롤 입력을 가로챈다 (D16)
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_B.0,
+            cmd: IDM_SIDEBAR_TOGGLE as u16,
         },
     ];
     // 안전성: 배열은 호출 동안 유효하며 OS가 내부 복사본을 만든다

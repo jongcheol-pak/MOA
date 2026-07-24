@@ -50,6 +50,8 @@ pub const WM_APP_WS_RENAME: u32 = WM_APP + 17;
 pub const WM_APP_WS_DELETE: u32 = WM_APP + 18;
 /// 순서 변경 — wparam=원래 인덱스, lparam=놓인 인덱스
 pub const WM_APP_WS_REORDER: u32 = WM_APP + 19;
+/// 사이드바 접기 토글 (상단 토글 버튼 — FR-19). 메뉴·Ctrl+B와 같은 동작이다
+pub const WM_APP_WS_TOGGLE: u32 = WM_APP + 22;
 
 /// 사이드바 내부 전용 — 인라인 편집 EDIT의 서브클래스가 사이드바로 보내는 커밋/취소 신호
 const WM_APP_RENAME_COMMIT: u32 = WM_APP + 20;
@@ -62,8 +64,13 @@ pub struct RenameRequest {
 }
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px — D13) ──
-/// 사이드바 상단 접기 토글 영역 — 토글 아이콘·동작은 T7에서 채운다
+/// 사이드바 상단 접기 토글 영역
 const TOGGLE_STRIP_HEIGHT: i32 = 28;
+/// 접기 토글 버튼 크기·좌측 여백
+const TOGGLE_SIZE: i32 = 24;
+const TOGGLE_MARGIN: i32 = 8;
+/// 접기 토글 아이콘 — 좌측 패널 표시를 뜻하는 반쪽 사각형 기호
+const TOGGLE_GLYPH: &str = "◧";
 const HEADER_HEIGHT: i32 = 36;
 const HEADER_TEXT: PCWSTR = w!("워크스페이스");
 /// 새 워크스페이스 버튼 — 헤더 우측
@@ -232,6 +239,8 @@ struct SidebarState {
     hover: Option<usize>,
     /// `+` 버튼 위에 마우스가 있는가
     hover_plus: bool,
+    /// 접기 토글 버튼 위에 마우스가 있는가
+    hover_toggle: bool,
     /// 세로 스크롤 오프셋(px) — 스크롤바 없이 휠로만 움직인다 (D5)
     scroll: i32,
     /// WM_MOUSELEAVE 추적 등록 여부 — 중복 등록 방지
@@ -260,6 +269,7 @@ impl SidebarState {
             active: 0,
             hover: None,
             hover_plus: false,
+            hover_toggle: false,
             scroll: 0,
             tracking: false,
             edit: None,
@@ -415,6 +425,17 @@ fn def_sidebar(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT 
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
+/// 접기 토글 버튼 사각형 (상단 좌측)
+fn toggle_rect() -> RECT {
+    let top = (TOGGLE_STRIP_HEIGHT - TOGGLE_SIZE) / 2;
+    RECT {
+        left: TOGGLE_MARGIN,
+        top,
+        right: TOGGLE_MARGIN + TOGGLE_SIZE,
+        bottom: top + TOGGLE_SIZE,
+    }
+}
+
 /// `+` 버튼 사각형 (헤더 우측)
 fn plus_rect(width: i32) -> RECT {
     let top = TOGGLE_STRIP_HEIGHT + (HEADER_HEIGHT - PLUS_SIZE) / 2;
@@ -499,6 +520,21 @@ fn paint(hwnd: HWND, state: &mut SidebarState) {
         bottom: height,
     };
     fill(hdc, &full, state.bg_brush);
+
+    // 상단: 접기 토글 버튼 (FR-19)
+    let mut toggle = toggle_rect();
+    let toggle_color = if state.hover_toggle {
+        COLOR_HEADER_HOT
+    } else {
+        COLOR_HEADER
+    };
+    draw_line(
+        hdc,
+        &mut toggle,
+        TOGGLE_GLYPH,
+        state.header_font,
+        toggle_color,
+    );
 
     // 헤더: 제목 + 새 워크스페이스 버튼
     let mut title = RECT {
@@ -823,6 +859,10 @@ unsafe extern "system" fn sidebar_proc(
             }
             let (x, y) = coords(lparam);
             let (width, _) = client_size(hwnd);
+            if in_rect(&toggle_rect(), x, y) {
+                post_to_parent(hwnd, WM_APP_WS_TOGGLE, WPARAM(0));
+                return LRESULT(0);
+            }
             if in_rect(&plus_rect(width), x, y) {
                 post_to_parent(hwnd, WM_APP_WS_NEW, WPARAM(0));
                 return LRESULT(0);
@@ -854,9 +894,13 @@ unsafe extern "system" fn sidebar_proc(
             if let Some(mut state) = state_of(hwnd) {
                 let hover = item_at(y, state.scroll, state.items.len());
                 let hover_plus = in_rect(&plus_rect(width), x, y);
-                changed = hover != state.hover || hover_plus != state.hover_plus;
+                let hover_toggle = in_rect(&toggle_rect(), x, y);
+                changed = hover != state.hover
+                    || hover_plus != state.hover_plus
+                    || hover_toggle != state.hover_toggle;
                 state.hover = hover;
                 state.hover_plus = hover_plus;
+                state.hover_toggle = hover_toggle;
                 if !state.tracking {
                     state.tracking = true;
                     need_track = true;
@@ -968,6 +1012,7 @@ unsafe extern "system" fn sidebar_proc(
                 state.tracking = false;
                 state.hover = None;
                 state.hover_plus = false;
+                state.hover_toggle = false;
             }
             invalidate(hwnd);
             LRESULT(0)

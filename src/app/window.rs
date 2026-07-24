@@ -1,17 +1,17 @@
 //! 메인 창 — 클래스 등록·생성·윈도우 프로시저·명령 배선
-use crate::app::layout::{Rect, SPLITTER_THICKNESS, SplitDir};
+use crate::app::layout::{MIN_PANE_SIZE, Rect, SPLITTER_THICKNESS, SplitDir};
 use crate::app::layout_host::{self, LayoutHost};
 use crate::app::menu::{
-    self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH, IDM_SPLIT_H,
-    IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE, IDM_WS_DELETE, IDM_WS_NEW,
-    IDM_WS_RENAME,
+    self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH,
+    IDM_SIDEBAR_TOGGLE, IDM_SPLIT_H, IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
+    IDM_WS_DELETE, IDM_WS_NEW, IDM_WS_RENAME,
 };
 use crate::app::settings::{
     self, LayoutNode, PanelSession, Session, WindowState, WorkspaceSession,
 };
 use crate::app::sidebar::{
     self, RenameRequest, Sidebar, WM_APP_WS_CONTEXT, WM_APP_WS_DELETE, WM_APP_WS_NEW,
-    WM_APP_WS_RENAME, WM_APP_WS_REORDER, WM_APP_WS_SELECT,
+    WM_APP_WS_RENAME, WM_APP_WS_REORDER, WM_APP_WS_SELECT, WM_APP_WS_TOGGLE,
 };
 use crate::app::workspace::WorkspaceList;
 use crate::panel::panel::{
@@ -26,15 +26,17 @@ use windows::Win32::Graphics::Gdi::{
     COLOR_WINDOW, HBRUSH, MONITOR_DEFAULTTONULL, MonitorFromRect, ScreenToClient,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
     DestroyMenu, GWLP_USERDATA, GetCursorPos, GetWindowLongPtrW, GetWindowPlacement, HACCEL, HMENU,
-    HTCLIENT, IDC_ARROW, IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, MoveWindow,
-    PostQuitMessage, RegisterClassExW, SW_SHOW, SW_SHOWMAXIMIZED, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_RETURNCMD,
-    TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE,
-    WM_COMMAND, WM_DESTROY, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    HTCLIENT, IDC_ARROW, IDC_SIZEWE, IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW,
+    MoveWindow, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED,
+    SWP_NOACTIVATE, SWP_NOZORDER, SetCursor, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos,
+    ShowWindow, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE,
+    WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
+    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR,
+    WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -53,6 +55,22 @@ struct AppState {
     list: WorkspaceList,
     /// 워크스페이스별 탐색기 상태 — `list.items()`와 **인덱스 1:1**로 대응한다 (FR-17)
     entries: Vec<EntryState>,
+    /// 사이드바 폭(px) — 접힘 상태에서도 값은 유지해 다시 펼칠 때 복원한다 (FR-19)
+    sidebar_width: i32,
+    sidebar_collapsed: bool,
+    /// 사이드바↔탐색기 경계 드래그 진행 상태
+    sidebar_drag: Option<SidebarDrag>,
+}
+
+/// 사이드바 폭 드래그 — 시작 시점의 커서 x와 폭을 기억해 이동량만큼 폭을 바꾼다
+struct SidebarDrag {
+    start_x: i32,
+    start_width: i32,
+}
+
+/// 사이드바 폭을 허용 범위로 클램프한다 (순수 함수, 단위테스트 대상 — D9와 같은 범위)
+fn clamp_sidebar_width(width: i32) -> i32 {
+    width.clamp(settings::SIDEBAR_MIN_WIDTH, settings::SIDEBAR_MAX_WIDTH)
 }
 
 /// 워크스페이스 하나의 탐색기 상태 — 방문 전에는 세션 데이터만 들고 있다 (D2 지연 생성)
@@ -87,7 +105,7 @@ impl AppState {
             return;
         };
         let ws = ws.clone();
-        let area = explorer_area(hwnd);
+        let area = self.explorer_area(hwnd);
         let Ok(host) = LayoutHost::from_shape(hwnd, &ws.layout.to_shape(), area) else {
             return;
         };
@@ -98,6 +116,18 @@ impl AppState {
     /// 활성 워크스페이스의 패널 수 — 메뉴 활성 상태 갱신용 (미방문이면 1로 본다)
     fn active_panel_count(&self) -> usize {
         self.active_host_ref().map_or(1, LayoutHost::panel_count)
+    }
+
+    /// 현재 창에서 사이드바가 실제로 차지하는 폭 (접힘·창 폭 반영)
+    fn visible_sidebar_width(&self, hwnd: HWND) -> i32 {
+        let client = layout_host::client_rect(hwnd);
+        effective_sidebar_width(client.w, self.sidebar_width, self.sidebar_collapsed)
+    }
+
+    /// 현재 상태 기준 탐색기 배치 영역
+    fn explorer_area(&self, hwnd: HWND) -> Rect {
+        let client = layout_host::client_rect(hwnd);
+        explorer_area_for(client, self.visible_sidebar_width(hwnd))
     }
 }
 
@@ -151,7 +181,16 @@ impl MainWindow {
             // 좌측 사이드바를 먼저 만들고, 탐색기는 그만큼 좁아진 영역에 배치한다 (FR-15)
             let sidebar = Sidebar::create(hwnd)?;
             let (list, mut entries) = restore_workspaces(session.as_ref());
-            let area = explorer_area(hwnd);
+            // 저장된 사이드바 폭·접힘을 먼저 반영해 탐색기 영역을 잡는다 (FR-19·FR-20)
+            let sidebar_state = session
+                .as_ref()
+                .map(|s| s.sidebar.clone())
+                .unwrap_or_default();
+            let client = layout_host::client_rect(hwnd);
+            let area = explorer_area_for(
+                client,
+                effective_sidebar_width(client.w, sidebar_state.width, sidebar_state.collapsed),
+            );
             if entries.is_empty() {
                 // 세션 없음·손상 → 기본 워크스페이스 1개로 시작
                 entries.push(EntryState::Live(LayoutHost::new(hwnd, area)?));
@@ -172,6 +211,9 @@ impl MainWindow {
                 sidebar,
                 list,
                 entries,
+                sidebar_width: clamp_sidebar_width(sidebar_state.width),
+                sidebar_collapsed: sidebar_state.collapsed,
+                sidebar_drag: None,
             };
             menu::update_close_enabled(menu, state.active_panel_count());
             menu::update_workspace_enabled(menu, state.list.len());
@@ -290,11 +332,25 @@ fn send_ptr(hwnd: HWND, msg: u32, lparam: isize) -> LRESULT {
     }
 }
 
-/// 탐색기(LayoutHost)에 줄 배치 영역 — 창 클라이언트에서 사이드바 폭과 경계선을 뺀 나머지.
-/// 폭·접힘을 상태에서 읽는 것은 T7이며, 지금은 기본 폭 고정이다
-fn explorer_area(hwnd: HWND) -> Rect {
-    let client = layout_host::client_rect(hwnd);
-    let taken = (settings::SIDEBAR_DEFAULT_WIDTH + SPLITTER_THICKNESS).min(client.w);
+/// 실제로 화면에 줄 사이드바 폭 — 접혀 있으면 0, 창이 좁으면 최소 폭까지 줄인다 (FR-19 Edge).
+/// 순수 함수 (단위테스트 대상)
+fn effective_sidebar_width(client_w: i32, width: i32, collapsed: bool) -> i32 {
+    if collapsed || client_w <= 0 {
+        return 0;
+    }
+    // 탐색기에 최소 패널 폭은 남긴다. 그래도 부족하면 사이드바 최소 폭이 우선이며,
+    // 그마저 창보다 크면 창 폭으로 자른다
+    let room = (client_w - SPLITTER_THICKNESS - MIN_PANE_SIZE).max(settings::SIDEBAR_MIN_WIDTH);
+    width.min(room).min(client_w)
+}
+
+/// 사이드바 폭이 주어졌을 때 탐색기가 쓰는 영역 (순수 함수, 단위테스트 대상)
+fn explorer_area_for(client: Rect, sidebar_width: i32) -> Rect {
+    let taken = if sidebar_width > 0 {
+        (sidebar_width + SPLITTER_THICKNESS).min(client.w)
+    } else {
+        0
+    };
     Rect {
         x: taken,
         y: client.y,
@@ -303,22 +359,39 @@ fn explorer_area(hwnd: HWND) -> Rect {
     }
 }
 
+/// 사이드바↔탐색기 경계선(스플리터) 사각형 — 히트테스트·커서 판정용 (순수 함수)
+fn sidebar_splitter_rect(client: Rect, sidebar_width: i32) -> Rect {
+    Rect {
+        x: sidebar_width,
+        y: client.y,
+        w: SPLITTER_THICKNESS,
+        h: client.h,
+    }
+}
+
 /// 사이드바와 활성 워크스페이스 탐색기를 현재 창 크기에 맞춰 배치한다 (WM_SIZE·생성 직후 공용)
 fn layout_children(hwnd: HWND) {
     let client = layout_host::client_rect(hwnd);
-    let sidebar_w = settings::SIDEBAR_DEFAULT_WIDTH.min(client.w);
-    let area = explorer_area(hwnd);
     // 사이드바 이동은 상태 차용을 놓고 수행한다 — 이동이 사이드바에 동기 WM_SIZE를 보내고,
     // 그 처리(편집 커밋)가 메인 창 상태를 다시 요구할 수 있다(차용 중이면 이름 변경이 유실된다)
-    let sidebar_hwnd = {
+    let (sidebar_hwnd, sidebar_w, area) = {
         let Some(state) = state_of(hwnd) else {
             return;
         };
-        state.sidebar.hwnd()
+        (
+            state.sidebar.hwnd(),
+            state.visible_sidebar_width(hwnd),
+            state.explorer_area(hwnd),
+        )
     };
-    // 안전성: 우리가 만든 살아있는 자식 창 이동
+    // 안전성: 우리가 만든 살아있는 자식 창의 표시·배치 (접힘이면 숨긴다 — D11)
     unsafe {
-        let _ = MoveWindow(sidebar_hwnd, 0, 0, sidebar_w, client.h, true);
+        if sidebar_w > 0 {
+            let _ = ShowWindow(sidebar_hwnd, SW_SHOW);
+            let _ = MoveWindow(sidebar_hwnd, 0, 0, sidebar_w, client.h, true);
+        } else {
+            let _ = ShowWindow(sidebar_hwnd, SW_HIDE);
+        }
     }
     let Some(mut state) = state_of(hwnd) else {
         return;
@@ -327,6 +400,90 @@ fn layout_children(hwnd: HWND) {
         host.set_area(area);
         host.relayout();
     }
+}
+
+/// 사이드바 접기/펼치기 (FR-19) — 접힌 상태의 복귀 경로는 메뉴와 Ctrl+B다 (D11)
+fn toggle_sidebar(hwnd: HWND) {
+    {
+        let Some(mut state) = state_of(hwnd) else {
+            return;
+        };
+        state.sidebar_collapsed = !state.sidebar_collapsed;
+        state.sidebar_drag = None; // 접는 중이던 드래그는 취소
+    }
+    layout_children(hwnd);
+}
+
+/// 사이드바 경계선을 잡았으면 드래그를 시작한다 (접힘 상태에서는 경계선이 없다)
+fn begin_sidebar_drag(hwnd: HWND, x: i32, y: i32) -> bool {
+    let Some(mut state) = state_of(hwnd) else {
+        return false;
+    };
+    let sidebar_w = state.visible_sidebar_width(hwnd);
+    if sidebar_w <= 0 {
+        return false;
+    }
+    let client = layout_host::client_rect(hwnd);
+    let splitter = sidebar_splitter_rect(client, sidebar_w);
+    if !contains(splitter, x, y) {
+        return false;
+    }
+    state.sidebar_drag = Some(SidebarDrag {
+        start_x: x,
+        start_width: state.sidebar_width,
+    });
+    // 안전성: 캡처는 WM_LBUTTONUP·WM_CAPTURECHANGED에서 해제된다
+    unsafe {
+        SetCapture(hwnd);
+    }
+    true
+}
+
+/// 드래그 중 폭 갱신 — 드래그 중이었으면 true
+fn drag_sidebar(hwnd: HWND, x: i32) -> bool {
+    {
+        let Some(mut state) = state_of(hwnd) else {
+            return false;
+        };
+        let Some(drag) = &state.sidebar_drag else {
+            return false;
+        };
+        let width = clamp_sidebar_width(drag.start_width + (x - drag.start_x));
+        if width == state.sidebar_width {
+            return true;
+        }
+        state.sidebar_width = width;
+    }
+    layout_children(hwnd);
+    true
+}
+
+/// 드래그 종료 (버튼 업·캡처 상실 공용)
+fn end_sidebar_drag(hwnd: HWND, release: bool) {
+    let was_dragging = state_of(hwnd).is_some_and(|mut s| s.sidebar_drag.take().is_some());
+    if was_dragging && release {
+        // 안전성: 자기 스레드가 잡은 캡처 해제
+        unsafe {
+            let _ = ReleaseCapture();
+        }
+    }
+}
+
+/// 좌표가 사이드바 경계선 위인지 (커서 모양 판정용)
+fn on_sidebar_splitter(hwnd: HWND, x: i32, y: i32) -> bool {
+    let Some(state) = state_of(hwnd) else {
+        return false;
+    };
+    let sidebar_w = state.visible_sidebar_width(hwnd);
+    if sidebar_w <= 0 {
+        return false;
+    }
+    let client = layout_host::client_rect(hwnd);
+    contains(sidebar_splitter_rect(client, sidebar_w), x, y)
+}
+
+fn contains(r: Rect, x: i32, y: i32) -> bool {
+    x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
 }
 
 /// 세션에서 워크스페이스 목록·엔트리를 복원한다. 세션이 없거나 목록이 비면 기본 1개 목록과
@@ -423,7 +580,7 @@ fn switch_workspace(hwnd: HWND, index: usize) {
             previous.set_visible(false);
         }
         state.list.set_active(index);
-        let area = explorer_area(hwnd);
+        let area = state.explorer_area(hwnd);
         if let Some(host) = state.active_host() {
             host.set_area(area);
             host.relayout();
@@ -523,10 +680,10 @@ fn show_active_workspace(hwnd: HWND) {
         };
         state.list.active_index()
     };
-    let area = explorer_area(hwnd);
     let Some(mut state) = state_of(hwnd) else {
         return;
     };
+    let area = state.explorer_area(hwnd);
     if matches!(state.entries.get(index), Some(EntryState::Pending(_))) {
         state.materialize(hwnd, index);
     }
@@ -592,6 +749,16 @@ fn show_workspace_menu(hwnd: HWND, lparam: LPARAM) {
     }
 }
 
+/// 사이드바 경계선용 좌우 리사이즈 커서 적용
+fn set_size_we_cursor() {
+    // 안전성: 시스템 공유 커서 로드·적용 — 실패 시 기본 커서 유지, 해제 불필요
+    unsafe {
+        if let Ok(cursor) = LoadCursorW(None, IDC_SIZEWE) {
+            SetCursor(Some(cursor));
+        }
+    }
+}
+
 /// 화면 좌표 추출 — 키보드 메뉴 키(-1,-1)면 현재 커서 위치로 대체한다
 fn screen_coords(lparam: LPARAM) -> (i32, i32) {
     let (x, y) = coords(lparam);
@@ -609,10 +776,10 @@ fn screen_coords(lparam: LPARAM) -> (i32, i32) {
 /// 새 워크스페이스 (FR-16) — 홈 폴더 1패널로 만들고 즉시 전환한 뒤 이름 편집 상태로 들어간다
 fn new_workspace(hwnd: HWND) {
     {
-        let area = explorer_area(hwnd);
         let Some(mut state) = state_of(hwnd) else {
             return;
         };
+        let area = state.explorer_area(hwnd);
         let Ok(host) = LayoutHost::new(hwnd, area) else {
             return; // 창 생성 실패 — 목록도 바꾸지 않는다
         };
@@ -771,8 +938,10 @@ fn save_current_session(hwnd: HWND) {
             h: rc.bottom - rc.top,
             maximized: wp.showCmd == SW_SHOWMAXIMIZED.0 as u32,
         },
-        // 사이드바 폭·접힘은 T7에서 실제 값으로 채운다
-        sidebar: settings::SidebarSession::default(),
+        sidebar: settings::SidebarSession {
+            width: state.sidebar_width,
+            collapsed: state.sidebar_collapsed,
+        },
         active_workspace,
         workspaces,
     });
@@ -846,6 +1015,11 @@ unsafe extern "system" fn wnd_proc(
                         host.close_active();
                     }
                 }
+                IDM_SIDEBAR_TOGGLE => {
+                    drop(state);
+                    toggle_sidebar(hwnd);
+                    return LRESULT(0);
+                }
                 // 워크스페이스 명령은 상태 차용을 놓고 처리한다 (편집 커밋·모달이 재진입할 수 있다)
                 id @ (IDM_WS_NEW | IDM_WS_RENAME | IDM_WS_DELETE) => {
                     let index = state.list.active_index();
@@ -871,28 +1045,34 @@ unsafe extern "system" fn wnd_proc(
             def_proc(hwnd, msg, wparam, lparam)
         }
         WM_LBUTTONDOWN => {
-            if let Some(mut state) = state_of(hwnd) {
-                let (x, y) = coords(lparam);
-                if let Some(host) = state.active_host()
-                    && host.begin_drag(hwnd, x, y)
-                {
-                    return LRESULT(0);
-                }
+            let (x, y) = coords(lparam);
+            // 사이드바 경계선이 우선 — 잡히면 폭 조절 드래그 (FR-19)
+            if begin_sidebar_drag(hwnd, x, y) {
+                return LRESULT(0);
+            }
+            if let Some(mut state) = state_of(hwnd)
+                && let Some(host) = state.active_host()
+                && host.begin_drag(hwnd, x, y)
+            {
+                return LRESULT(0);
             }
             def_proc(hwnd, msg, wparam, lparam)
         }
         WM_MOUSEMOVE => {
-            if let Some(mut state) = state_of(hwnd) {
-                let (x, y) = coords(lparam);
-                if let Some(host) = state.active_host()
-                    && host.drag_move(x, y)
-                {
-                    return LRESULT(0);
-                }
+            let (x, y) = coords(lparam);
+            if drag_sidebar(hwnd, x) {
+                return LRESULT(0);
+            }
+            if let Some(mut state) = state_of(hwnd)
+                && let Some(host) = state.active_host()
+                && host.drag_move(x, y)
+            {
+                return LRESULT(0);
             }
             def_proc(hwnd, msg, wparam, lparam)
         }
         WM_LBUTTONUP => {
+            end_sidebar_drag(hwnd, true);
             if let Some(mut state) = state_of(hwnd)
                 && let Some(host) = state.active_host()
             {
@@ -902,6 +1082,7 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_CAPTURECHANGED => {
             // 드래그 중 캡처 상실(Alt+Tab 등) → 드래그 상태 정리 (plan T3 Edge)
+            end_sidebar_drag(hwnd, false);
             if let Some(mut state) = state_of(hwnd)
                 && let Some(host) = state.active_host()
             {
@@ -910,13 +1091,23 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_SETCURSOR => {
+            let on_client = loword(lparam.0 as usize) == HTCLIENT;
+            // 사이드바 폭 드래그 중이거나 경계선 위면 좌우 리사이즈 커서 (FR-19)
+            let sidebar_hot = state_of(hwnd).is_some_and(|s| s.sidebar_drag.is_some())
+                || (on_client
+                    && cursor_in_client(hwnd)
+                        .is_some_and(|(x, y)| on_sidebar_splitter(hwnd, x, y)));
+            if sidebar_hot {
+                set_size_we_cursor();
+                return LRESULT(1);
+            }
             if let Some(state) = state_of(hwnd)
                 && let Some(host) = state.active_host_ref()
             {
                 if host.apply_drag_cursor() {
                     return LRESULT(1);
                 }
-                if loword(lparam.0 as usize) == HTCLIENT
+                if on_client
                     && let Some((x, y)) = cursor_in_client(hwnd)
                     && host.apply_splitter_cursor(x, y)
                 {
@@ -970,6 +1161,10 @@ unsafe extern "system" fn wnd_proc(
             reorder_workspace(hwnd, wparam.0, lparam.0 as usize);
             LRESULT(0)
         }
+        WM_APP_WS_TOGGLE => {
+            toggle_sidebar(hwnd);
+            LRESULT(0)
+        }
         WM_APP_PATH_CHANGED => {
             // 활성 워크스페이스의 활성 패널이 보낸 것만 부제에 반영한다 (D6 규칙 1)
             let source = HWND(wparam.0 as *mut core::ffi::c_void);
@@ -995,5 +1190,65 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ => def_proc(hwnd, msg, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client(w: i32) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            w,
+            h: 800,
+        }
+    }
+
+    #[test]
+    fn 사이드바_폭은_허용_범위로_클램프된다() {
+        assert_eq!(clamp_sidebar_width(50), settings::SIDEBAR_MIN_WIDTH);
+        assert_eq!(clamp_sidebar_width(9999), settings::SIDEBAR_MAX_WIDTH);
+        assert_eq!(clamp_sidebar_width(300), 300);
+    }
+
+    #[test]
+    fn 접힌_사이드바는_폭이_0이다() {
+        assert_eq!(effective_sidebar_width(1200, 232, true), 0);
+        assert_eq!(effective_sidebar_width(1200, 232, false), 232);
+    }
+
+    #[test]
+    fn 창이_좁으면_사이드바를_최소_폭까지_줄인다() {
+        // 탐색기 최소 폭을 남길 수 없는 창 → 사이드바 최소 폭이 우선
+        let narrow = settings::SIDEBAR_MIN_WIDTH + 40;
+        assert_eq!(
+            effective_sidebar_width(narrow, 400, false),
+            settings::SIDEBAR_MIN_WIDTH
+        );
+        // 창보다 넓은 폭은 창 폭으로 잘린다
+        assert_eq!(effective_sidebar_width(100, 400, false), 100);
+    }
+
+    #[test]
+    fn 탐색기_영역은_사이드바와_경계선만큼_밀린다() {
+        let area = explorer_area_for(client(1000), 232);
+        assert_eq!(area.x, 232 + SPLITTER_THICKNESS);
+        assert_eq!(area.w, 1000 - 232 - SPLITTER_THICKNESS);
+
+        // 접힘(0)이면 창 전체를 쓴다
+        let full = explorer_area_for(client(1000), 0);
+        assert_eq!(full.x, 0);
+        assert_eq!(full.w, 1000);
+    }
+
+    #[test]
+    fn 경계선은_사이드바_오른쪽에_붙는다() {
+        let splitter = sidebar_splitter_rect(client(1000), 232);
+        assert_eq!(splitter.x, 232);
+        assert_eq!(splitter.w, SPLITTER_THICKNESS);
+        assert!(contains(splitter, 233, 10));
+        assert!(!contains(splitter, 231, 10));
     }
 }
