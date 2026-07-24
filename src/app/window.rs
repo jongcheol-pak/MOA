@@ -3,12 +3,16 @@ use crate::app::layout::{Rect, SPLITTER_THICKNESS, SplitDir};
 use crate::app::layout_host::{self, LayoutHost};
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH, IDM_SPLIT_H,
-    IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
+    IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE, IDM_WS_DELETE, IDM_WS_NEW,
+    IDM_WS_RENAME,
 };
 use crate::app::settings::{
     self, LayoutNode, PanelSession, Session, WindowState, WorkspaceSession,
 };
-use crate::app::sidebar::{Sidebar, WM_APP_WS_NEW, WM_APP_WS_SELECT};
+use crate::app::sidebar::{
+    self, RenameRequest, Sidebar, WM_APP_WS_CONTEXT, WM_APP_WS_DELETE, WM_APP_WS_NEW,
+    WM_APP_WS_RENAME, WM_APP_WS_REORDER, WM_APP_WS_SELECT,
+};
 use crate::app::workspace::WorkspaceList;
 use crate::panel::panel::{
     PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_PATH_CHANGED,
@@ -23,15 +27,16 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, GWLP_USERDATA,
-    GetCursorPos, GetWindowLongPtrW, GetWindowPlacement, HACCEL, HMENU, HTCLIENT, IDC_ARROW,
-    LoadCursorW, MoveWindow, PostQuitMessage, RegisterClassExW, SW_SHOW, SW_SHOWMAXIMIZED,
-    SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow,
-    WINDOW_EX_STYLE, WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY,
-    WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY,
-    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+    DestroyMenu, GWLP_USERDATA, GetCursorPos, GetWindowLongPtrW, GetWindowPlacement, HACCEL, HMENU,
+    HTCLIENT, IDC_ARROW, IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, MoveWindow,
+    PostQuitMessage, RegisterClassExW, SW_SHOW, SW_SHOWMAXIMIZED, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, TPM_LEFTALIGN, TPM_RETURNCMD,
+    TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE,
+    WM_COMMAND, WM_DESTROY, WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
-use windows::core::{PCWSTR, Result, w};
+use windows::core::{HSTRING, PCWSTR, Result, w};
 
 const WINDOW_CLASS: PCWSTR = w!("FileExplorerMainWindow");
 
@@ -422,8 +427,177 @@ fn switch_workspace(hwnd: HWND, index: usize) {
     refresh_subtitle(hwnd);
 }
 
-/// 새 워크스페이스 (FR-16) — 홈 폴더 1패널로 만들고 즉시 전환한다.
-/// 생성 직후 인라인 이름 편집으로 들어가는 것은 T6
+/// 활성 워크스페이스를 삭제한다 (FR-18·D8) — 마지막 1개는 불가, 확인 후 창까지 파괴
+fn delete_workspace(hwnd: HWND, index: usize) {
+    let name = {
+        let Some(state) = state_of(hwnd) else {
+            return;
+        };
+        if state.list.len() <= 1 {
+            return; // 마지막 1개는 삭제 불가 (메뉴는 비활성이지만 키 입력 방어)
+        }
+        match state.list.items().get(index) {
+            Some(item) => item.name.clone(),
+            None => return,
+        }
+    };
+    if !confirm_delete(hwnd, &name) {
+        return;
+    }
+    {
+        let Some(mut state) = state_of(hwnd) else {
+            return;
+        };
+        // 방문했던 워크스페이스면 패널 창까지 파괴한다 (미방문이면 보관 데이터만 사라진다)
+        if let Some(EntryState::Live(host)) = state.entries.get_mut(index) {
+            host.end_drag(false);
+            host.destroy_all();
+        }
+        if state.list.remove(index).is_err() {
+            return;
+        }
+        state.entries.remove(index);
+    }
+    show_active_workspace(hwnd);
+    sync_sidebar(hwnd);
+    refresh_subtitle(hwnd);
+}
+
+/// 삭제 확인 대화상자 — 되돌릴 수 없으므로 한 번 묻는다 (D8)
+fn confirm_delete(hwnd: HWND, name: &str) -> bool {
+    let text = HSTRING::from(format!(
+        "'{name}' 워크스페이스를 삭제할까요?\n이 워크스페이스의 화면 구성과 탭이 함께 사라집니다."
+    ));
+    // 안전성: 모달 메시지 박스 — 인자는 스택/정적 값
+    let answer = unsafe {
+        MessageBoxW(
+            Some(hwnd),
+            &text,
+            w!("워크스페이스 삭제"),
+            MB_YESNO | MB_ICONWARNING,
+        )
+    };
+    answer == IDYES
+}
+
+/// 이름 변경 (FR-18) — 빈 이름은 모델이 거부하므로 이전 이름이 유지된다 (D7)
+fn rename_workspace(hwnd: HWND, index: usize, name: &str) {
+    {
+        let Some(mut state) = state_of(hwnd) else {
+            return;
+        };
+        state.list.rename(index, name);
+    }
+    sync_sidebar(hwnd);
+}
+
+/// 순서 변경 (FR-18) — 목록과 엔트리를 같은 규칙으로 옮겨 인덱스 1:1을 유지한다
+fn reorder_workspace(hwnd: HWND, from: usize, to: usize) {
+    {
+        let Some(mut state) = state_of(hwnd) else {
+            return;
+        };
+        if !state.list.reorder(from, to) {
+            return;
+        }
+        let entry = state.entries.remove(from);
+        state.entries.insert(to, entry);
+    }
+    sync_sidebar(hwnd);
+}
+
+/// 활성 워크스페이스가 화면에 보이도록 승격·배치한다 (삭제 직후 활성이 바뀐 경우 등)
+fn show_active_workspace(hwnd: HWND) {
+    let index = {
+        let Some(state) = state_of(hwnd) else {
+            return;
+        };
+        state.list.active_index()
+    };
+    let area = explorer_area(hwnd);
+    let Some(mut state) = state_of(hwnd) else {
+        return;
+    };
+    if matches!(state.entries.get(index), Some(EntryState::Pending(_))) {
+        state.materialize(hwnd, index);
+    }
+    if let Some(host) = state.active_host() {
+        host.set_area(area);
+        host.relayout();
+        host.set_visible(true);
+    }
+    let count = state.active_panel_count();
+    menu::update_close_enabled(state.menu, count);
+    menu::update_workspace_enabled(state.menu, state.list.len());
+}
+
+/// 사이드바에서 활성 항목의 인라인 이름 편집을 시작한다 (상태 차용을 놓고 호출)
+fn begin_active_rename(hwnd: HWND) {
+    let target = {
+        let Some(state) = state_of(hwnd) else {
+            return;
+        };
+        (state.sidebar.hwnd(), state.list.active_index())
+    };
+    sidebar::begin_rename(target.0, target.1);
+}
+
+/// 사이드바 우클릭 위치에 워크스페이스 컨텍스트 메뉴를 띄운다 (FR-18).
+/// 메뉴 문구·id는 메뉴 바와 공유한다 (menu::append_workspace_items)
+fn show_workspace_menu(hwnd: HWND, lparam: LPARAM) {
+    let (x, y) = screen_coords(lparam);
+    let count = state_of(hwnd).map_or(1, |s| s.list.len());
+    // 안전성: 팝업 메뉴 생성·표시 후 반드시 파괴 — TPM_RETURNCMD라 선택 id가 반환된다
+    let command = unsafe {
+        let Ok(popup) = CreatePopupMenu() else {
+            return;
+        };
+        if menu::append_workspace_items(popup).is_err() {
+            let _ = DestroyMenu(popup);
+            return;
+        }
+        menu::update_workspace_enabled(popup, count);
+        let selected = TrackPopupMenuEx(
+            popup,
+            (TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN).0,
+            x,
+            y,
+            hwnd,
+            None,
+        );
+        let _ = DestroyMenu(popup);
+        selected.0 as u32
+    };
+    match command {
+        IDM_WS_NEW => {
+            new_workspace(hwnd);
+        }
+        IDM_WS_RENAME => begin_active_rename(hwnd),
+        IDM_WS_DELETE => {
+            let index = state_of(hwnd).map(|s| s.list.active_index());
+            if let Some(index) = index {
+                delete_workspace(hwnd, index);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 화면 좌표 추출 — 키보드 메뉴 키(-1,-1)면 현재 커서 위치로 대체한다
+fn screen_coords(lparam: LPARAM) -> (i32, i32) {
+    let (x, y) = coords(lparam);
+    if x != -1 || y != -1 {
+        return (x, y);
+    }
+    let mut pt = POINT::default();
+    // 안전성: pt는 스택 소유
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+    }
+    (pt.x, pt.y)
+}
+
+/// 새 워크스페이스 (FR-16) — 홈 폴더 1패널로 만들고 즉시 전환한 뒤 이름 편집 상태로 들어간다
 fn new_workspace(hwnd: HWND) {
     {
         let area = explorer_area(hwnd);
@@ -441,9 +615,12 @@ fn new_workspace(hwnd: HWND) {
         state.entries.insert(index, EntryState::Live(host));
         let count = state.active_panel_count();
         menu::update_close_enabled(state.menu, count);
+        menu::update_workspace_enabled(state.menu, state.list.len());
     }
     sync_sidebar(hwnd);
     refresh_subtitle(hwnd);
+    // 자동 이름이 부여된 상태로 바로 고쳐 쓸 수 있게 편집을 연다 (FR-16 — Esc면 자동 이름 유지)
+    begin_active_rename(hwnd);
 }
 
 /// 경로 변경 알림의 발신 패널이 활성 워크스페이스의 활성 패널인가 (D6 규칙 1)
@@ -660,6 +837,17 @@ unsafe extern "system" fn wnd_proc(
                         host.close_active();
                     }
                 }
+                // 워크스페이스 명령은 상태 차용을 놓고 처리한다 (편집 커밋·모달이 재진입할 수 있다)
+                id @ (IDM_WS_NEW | IDM_WS_RENAME | IDM_WS_DELETE) => {
+                    let index = state.list.active_index();
+                    drop(state);
+                    match id {
+                        IDM_WS_NEW => new_workspace(hwnd),
+                        IDM_WS_RENAME => begin_active_rename(hwnd),
+                        _ => delete_workspace(hwnd, index),
+                    }
+                    return LRESULT(0);
+                }
                 _ => return def_proc(hwnd, msg, wparam, lparam),
             }
             let count = state.active_panel_count();
@@ -751,6 +939,26 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_APP_WS_NEW => {
             new_workspace(hwnd);
+            LRESULT(0)
+        }
+        WM_APP_WS_CONTEXT => {
+            show_workspace_menu(hwnd, lparam);
+            LRESULT(0)
+        }
+        WM_APP_WS_RENAME => {
+            // 안전성: lparam은 사이드바가 동기 SendMessage로 전달한 스택 소유 RenameRequest 포인터
+            let request = unsafe { (lparam.0 as *const RenameRequest).as_ref() };
+            if let Some(request) = request {
+                rename_workspace(hwnd, request.index, &request.name);
+            }
+            LRESULT(0)
+        }
+        WM_APP_WS_DELETE => {
+            delete_workspace(hwnd, wparam.0);
+            LRESULT(0)
+        }
+        WM_APP_WS_REORDER => {
+            reorder_workspace(hwnd, wparam.0, lparam.0 as usize);
             LRESULT(0)
         }
         WM_APP_PATH_CHANGED => {

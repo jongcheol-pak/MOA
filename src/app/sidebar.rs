@@ -9,26 +9,31 @@
 use crate::app::workspace::Workspace;
 use crate::fs::icons::IconCache;
 use std::cell::{RefCell, RefMut};
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontIndirectW, CreateSolidBrush, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
     DT_SINGLELINE, DeleteObject, DrawTextW, EndPaint, FW_SEMIBOLD, FillRect, HBRUSH, HDC, HFONT,
-    InvalidateRect, PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    InvalidateRect, PAINTSTRUCT, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
+    TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Controls::{ILD_TRANSPARENT, ImageList_Draw, WM_MOUSELEAVE};
+use windows::Win32::UI::Controls::{EM_SETSEL, ILD_TRANSPARENT, ImageList_Draw, WM_MOUSELEAVE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+    ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_DELETE,
+    VK_DOWN, VK_ESCAPE, VK_F2, VK_RETURN, VK_UP,
 };
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, IDC_ARROW,
-    LoadCursorW, NONCLIENTMETRICSW, PostMessageW, RegisterClassExW, SPI_GETNONCLIENTMETRICS,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SystemParametersInfoW, WINDOW_EX_STYLE,
-    WM_APP, WM_CREATE, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY,
-    WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_TABSTOP,
-    WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, ES_AUTOHSCROLL, GWLP_USERDATA, GetClientRect,
+    GetParent, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, IDC_ARROW, LoadCursorW,
+    NONCLIENTMETRICSW, PostMessageW, RegisterClassExW, SPI_GETNONCLIENTMETRICS,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SendMessageW, SetWindowLongPtrW, SystemParametersInfoW,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CAPTURECHANGED, WM_CONTEXTMENU, WM_CREATE,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN,
+    WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
 };
-use windows::core::{PCWSTR, Result, w};
+use windows::core::{HSTRING, PCWSTR, Result, w};
 
 const SIDEBAR_CLASS: PCWSTR = w!("FileExplorerSidebar");
 
@@ -36,6 +41,25 @@ const SIDEBAR_CLASS: PCWSTR = w!("FileExplorerSidebar");
 /// SELECT는 wparam=선택 인덱스, NEW는 인자 없음. WM_APP+13은 패널의 경로 변경 알림이 쓴다
 pub const WM_APP_WS_SELECT: u32 = WM_APP + 14;
 pub const WM_APP_WS_NEW: u32 = WM_APP + 15;
+/// 항목 우클릭 — wparam=인덱스, lparam=화면 좌표(하위 워드 x, 상위 워드 y)
+pub const WM_APP_WS_CONTEXT: u32 = WM_APP + 16;
+/// 이름 변경 커밋 — lparam은 같은 스레드 SendMessage로 전달되는 `RenameRequest` 포인터.
+/// 게시(Post) 금지 — 포인터가 호출 스택 소유다 (패널 세션 계약과 같은 규약)
+pub const WM_APP_WS_RENAME: u32 = WM_APP + 17;
+/// 삭제 요청 — wparam=인덱스
+pub const WM_APP_WS_DELETE: u32 = WM_APP + 18;
+/// 순서 변경 — wparam=원래 인덱스, lparam=놓인 인덱스
+pub const WM_APP_WS_REORDER: u32 = WM_APP + 19;
+
+/// 사이드바 내부 전용 — 인라인 편집 EDIT의 서브클래스가 사이드바로 보내는 커밋/취소 신호
+const WM_APP_RENAME_COMMIT: u32 = WM_APP + 20;
+const WM_APP_RENAME_CANCEL: u32 = WM_APP + 21;
+
+/// 이름 변경 요청 페이로드 — 사이드바와 메인 창 사이 계약
+pub struct RenameRequest {
+    pub index: usize,
+    pub name: String,
+}
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px — D13) ──
 /// 사이드바 상단 접기 토글 영역 — 토글 아이콘·동작은 T7에서 채운다
@@ -61,6 +85,10 @@ const SUBTITLE_FONT_PX: i32 = 11;
 const HEADER_FONT_PX: i32 = 12;
 /// 휠 한 칸(WHEEL_DELTA 120)당 스크롤 픽셀
 const WHEEL_STEP: i32 = ITEM_PITCH;
+/// 드래그 정렬 시작 임계 — 이만큼 움직여야 재정렬로 본다 (D12: 단순 클릭과 구분)
+const DRAG_THRESHOLD: i32 = 8;
+/// 드롭 위치 삽입선 두께
+const INSERT_LINE_HEIGHT: i32 = 2;
 
 /// COLORREF는 0x00BBGGRR 순서 — 실수 방지용 헬퍼
 const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -105,6 +133,37 @@ pub fn clamp_scroll(scroll: i32, count: usize, view_h: i32) -> i32 {
     scroll.clamp(0, (content - view).max(0))
 }
 
+/// 드래그를 놓은 y가 가리키는 삽입 위치 — 항목의 세로 중앙을 넘으면 그 다음 자리 (D12).
+/// 반환값은 0..=count 범위이며 `count`는 맨 끝을 뜻한다 (순수 함수, 단위테스트 대상)
+pub fn drop_index(y: i32, scroll: i32, count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let offset = (y - LIST_TOP + scroll).max(0);
+    let slot = offset / ITEM_PITCH;
+    let within = offset % ITEM_PITCH;
+    let index = (slot as usize).min(count.saturating_sub(1));
+    if slot as usize >= count {
+        return count; // 목록 아래 빈 공간 → 맨 끝
+    }
+    if within >= ITEM_HEIGHT / 2 {
+        index + 1
+    } else {
+        index
+    }
+}
+
+/// 항목 카드의 사각형 (인라인 편집 EDIT 배치·그리기 공용)
+fn item_rect(index: usize, scroll: i32, width: i32) -> RECT {
+    let top = LIST_TOP + index as i32 * ITEM_PITCH - scroll;
+    RECT {
+        left: ITEM_MARGIN_X,
+        top,
+        right: (width - ITEM_MARGIN_X).max(ITEM_MARGIN_X),
+        bottom: top + ITEM_HEIGHT,
+    }
+}
+
 /// 사이드바 창 래퍼 — 상태는 창이 소유한다(GWLP_USERDATA)
 pub struct Sidebar {
     hwnd: HWND,
@@ -139,8 +198,10 @@ impl Sidebar {
     }
 
     /// 표시 데이터 갱신 — 목록·활성 항목을 통째로 교체하고 다시 그린다.
-    /// 진실은 메인 창의 `WorkspaceList`이고 여기 있는 것은 그리기용 스냅숏이다
+    /// 진실은 메인 창의 `WorkspaceList`이고 여기 있는 것은 그리기용 스냅숏이다.
+    /// 목록이 바뀌면 편집 중이던 EDIT은 유령이 되므로 먼저 정리한다
     pub fn set_items(&self, items: &[Workspace], active: usize) {
+        end_rename(self.hwnd, false);
         let Some(mut state) = state_of(self.hwnd) else {
             return;
         };
@@ -152,6 +213,15 @@ impl Sidebar {
         drop(state);
         invalidate(self.hwnd);
     }
+}
+
+/// 드래그 정렬 진행 상태 — 임계(8px)를 넘기 전에는 `started=false`로 단순 클릭과 구분한다
+struct DragReorder {
+    from: usize,
+    origin_y: i32,
+    started: bool,
+    /// 현재 커서가 가리키는 삽입 위치 (삽입선 표시용)
+    insert_at: usize,
 }
 
 /// 사이드바 내부 상태 — 표시 스냅숏 + 그리기 자원
@@ -166,6 +236,10 @@ struct SidebarState {
     scroll: i32,
     /// WM_MOUSELEAVE 추적 등록 여부 — 중복 등록 방지
     tracking: bool,
+    /// 인라인 이름 편집 중인 (EDIT 창, 대상 인덱스) — 없으면 편집 중이 아니다
+    edit: Option<(HWND, usize)>,
+    /// 드래그 정렬 상태 (D12)
+    drag: Option<DragReorder>,
     name_font: HFONT,
     subtitle_font: HFONT,
     header_font: HFONT,
@@ -188,6 +262,8 @@ impl SidebarState {
             hover_plus: false,
             scroll: 0,
             tracking: false,
+            edit: None,
+            drag: None,
             name_font: ui_font(NAME_FONT_PX, true),
             subtitle_font: ui_font(SUBTITLE_FONT_PX, false),
             header_font: ui_font(HEADER_FONT_PX, false),
@@ -308,13 +384,35 @@ fn invalidate(hwnd: HWND) {
 }
 
 fn post_to_parent(hwnd: HWND, msg: u32, wparam: WPARAM) {
+    post_to_parent_with(hwnd, msg, wparam, LPARAM(0));
+}
+
+fn post_to_parent_with(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) {
     // 안전성: 부모 창으로 비동기 게시 — 부모가 없으면 실패만 반환
     unsafe {
-        let parent = windows::Win32::UI::WindowsAndMessaging::GetParent(hwnd);
-        if let Ok(parent) = parent {
-            let _ = PostMessageW(Some(parent), msg, wparam, LPARAM(0));
+        if let Ok(parent) = GetParent(hwnd) {
+            let _ = PostMessageW(Some(parent), msg, wparam, lparam);
         }
     }
+}
+
+/// 화면 좌표를 이 창의 클라이언트 좌표로 (우클릭 위치 판정용)
+fn client_point(hwnd: HWND, sx: i32, sy: i32) -> Option<(i32, i32)> {
+    let mut pt = POINT { x: sx, y: sy };
+    // 안전성: pt는 스택 소유, 유효한 창 핸들
+    unsafe {
+        if ScreenToClient(hwnd, &mut pt).as_bool() {
+            Some((pt.x, pt.y))
+        } else {
+            None
+        }
+    }
+}
+
+/// 기본 프로시저 위임 래퍼
+fn def_sidebar(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // 안전성: 받은 인자를 그대로 OS 기본 처리에 전달
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
 /// `+` 버튼 사각형 (헤더 우측)
@@ -484,6 +582,20 @@ fn paint(hwnd: HWND, state: &mut SidebarState) {
         );
     }
 
+    // 드래그 정렬 중이면 놓일 자리에 삽입선을 그린다 (D12)
+    if let Some(drag) = &state.drag
+        && drag.started
+    {
+        let y = LIST_TOP + drag.insert_at as i32 * ITEM_PITCH - state.scroll - ITEM_GAP / 2;
+        let line = RECT {
+            left: ITEM_MARGIN_X,
+            top: y,
+            right: (width - ITEM_MARGIN_X).max(ITEM_MARGIN_X),
+            bottom: y + INSERT_LINE_HEIGHT,
+        };
+        fill(hdc, &line, state.accent_brush);
+    }
+
     // 안전성: BeginPaint와 짝을 이루는 해제
     unsafe {
         let _ = EndPaint(hwnd, &ps);
@@ -509,6 +621,135 @@ fn draw_header_text(hdc: HDC, rc: &mut RECT, font: HFONT, color: COLORREF) {
             DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX,
         );
         SelectObject(hdc, old);
+    }
+}
+
+/// 인라인 편집 EDIT을 항목 이름 줄 위에 띄운다 (FR-16 생성 직후·FR-18 이름 변경).
+/// 이미 편집 중이면 그 편집을 커밋하고 새로 연다.
+/// 메인 창은 자기 상태 차용을 놓은 뒤 이 함수를 호출한다(편집 커밋이 부모로 동기 전달되므로)
+pub fn begin_rename(hwnd: HWND, index: usize) {
+    end_rename(hwnd, true);
+    let (width, _) = client_size(hwnd);
+    let (name, rect) = {
+        let Some(state) = state_of(hwnd) else {
+            return;
+        };
+        let Some(item) = state.items.get(index) else {
+            return;
+        };
+        (item.name.clone(), item_rect(index, state.scroll, width))
+    };
+    // 안전성: 표준 EDIT 자식 생성 후 서브클래스 부착 — 핸들은 end_rename에서 파괴한다
+    let edit = unsafe {
+        let Ok(instance) = GetModuleHandleW(None) else {
+            return;
+        };
+        let Ok(edit) = CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            w!("EDIT"),
+            &HSTRING::from(name.as_str()),
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+            rect.left + TEXT_X,
+            rect.top + NAME_TOP - 2,
+            (rect.right - rect.left - TEXT_X - 8).max(40),
+            NAME_FONT_PX + 10,
+            Some(hwnd),
+            None,
+            Some(instance.into()),
+            None,
+        ) else {
+            return;
+        };
+        let _ = SetWindowSubclass(edit, Some(edit_subclass_proc), 1, 0);
+        // 전체 선택 후 포커스 — 새 워크스페이스의 자동 이름을 바로 덮어쓸 수 있게 한다
+        SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
+        let _ = SetFocus(Some(edit));
+        edit
+    };
+    if let Some(mut state) = state_of(hwnd) {
+        state.edit = Some((edit, index));
+    }
+}
+
+/// 인라인 편집 종료 — `commit`이면 입력값을 부모에 전달한다.
+/// 편집 중이 아니면 아무 일도 하지 않는다(모든 진입점에서 선호출해도 안전)
+fn end_rename(hwnd: HWND, commit: bool) {
+    let Some((edit, index)) = state_of(hwnd).and_then(|mut s| s.edit.take()) else {
+        return;
+    };
+    let text = window_text(edit);
+    // 안전성: 우리가 만든 EDIT 파괴 — 서브클래스는 창과 함께 사라진다
+    unsafe {
+        let _ = DestroyWindow(edit);
+    }
+    if commit {
+        let request = RenameRequest { index, name: text };
+        // 포인터는 이 스택이 소유 — 반드시 동기 SendMessage (Post 금지)
+        send_to_parent(
+            hwnd,
+            WM_APP_WS_RENAME,
+            WPARAM(0),
+            LPARAM(&request as *const RenameRequest as isize),
+        );
+    }
+    // 안전성: 편집이 끝나면 목록이 다시 키 입력을 받아야 한다
+    unsafe {
+        let _ = SetFocus(Some(hwnd));
+    }
+    invalidate(hwnd);
+}
+
+/// 창 텍스트 읽기 (인라인 편집 EDIT 전용 — address_bar와 같은 표준 패턴)
+fn window_text(hwnd: HWND) -> String {
+    // 안전성: 길이 조회 후 그 크기 버퍼로 읽기
+    unsafe {
+        let len = GetWindowTextLengthW(hwnd);
+        if len <= 0 {
+            return String::new();
+        }
+        let mut buf = vec![0u16; len as usize + 1];
+        let read = GetWindowTextW(hwnd, &mut buf);
+        String::from_utf16_lossy(&buf[..read.max(0) as usize])
+    }
+}
+
+/// 인라인 편집 EDIT 서브클래스 — Enter는 커밋, Esc는 취소, 포커스 상실은 커밋으로 처리한다
+unsafe extern "system" fn edit_subclass_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    let notify = match (msg, wparam.0 as u16) {
+        (WM_KEYDOWN, key) if key == VK_RETURN.0 => Some(WM_APP_RENAME_COMMIT),
+        (WM_KEYDOWN, key) if key == VK_ESCAPE.0 => Some(WM_APP_RENAME_CANCEL),
+        (WM_KILLFOCUS, _) => Some(WM_APP_RENAME_COMMIT),
+        _ => None,
+    };
+    if let Some(msg) = notify {
+        // 안전성: 부모(사이드바)에 게시 — 편집 창 파괴는 부모가 수행하므로 여기서는 알리기만 한다
+        unsafe {
+            if let Ok(parent) = GetParent(hwnd) {
+                let _ = PostMessageW(Some(parent), msg, WPARAM(0), LPARAM(0));
+            }
+        }
+        if msg == WM_APP_RENAME_COMMIT && lparam.0 == 0 {
+            return LRESULT(0); // Enter 기본 처리(경고음) 억제
+        }
+    }
+    // 안전성: 나머지는 원래 프로시저로 위임
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// 부모(메인 창)로 동기 질의 — 포인터 페이로드 계약 전용
+fn send_to_parent(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) {
+    // 안전성: 부모 조회 후 동기 전달 — lparam 포인터는 호출 동안 유효하다
+    unsafe {
+        if let Ok(parent) = GetParent(hwnd) {
+            SendMessageW(parent, msg, Some(wparam), Some(lparam));
+        }
     }
 }
 
@@ -569,7 +810,8 @@ unsafe extern "system" fn sidebar_proc(
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
-            // 클릭하면 포커스를 가져간다 — F2·Delete·방향키(T6)와 휠 스크롤이 이 창으로 온다 (D17)
+            // 클릭하면 포커스를 가져간다 — F2·Delete·방향키와 휠 스크롤이 이 창으로 온다 (D17)
+            end_rename(hwnd, true); // 편집 중이었으면 커밋하고 목록 조작을 이어간다
             // 안전성: 유효한 자식 창에 포커스 이동
             unsafe {
                 let _ = SetFocus(Some(hwnd));
@@ -582,6 +824,19 @@ unsafe extern "system" fn sidebar_proc(
             }
             let hit = state_of(hwnd).and_then(|s| item_at(y, s.scroll, s.items.len()));
             if let Some(index) = hit {
+                // 드래그 후보로 기록만 한다 — 임계(8px)를 넘겨야 재정렬이 시작된다 (D12)
+                if let Some(mut state) = state_of(hwnd) {
+                    state.drag = Some(DragReorder {
+                        from: index,
+                        origin_y: y,
+                        started: false,
+                        insert_at: index,
+                    });
+                }
+                // 안전성: 드래그 추적을 위해 캡처 — WM_LBUTTONUP·WM_CAPTURECHANGED에서 해제
+                unsafe {
+                    SetCapture(hwnd);
+                }
                 post_to_parent(hwnd, WM_APP_WS_SELECT, WPARAM(index));
             }
             LRESULT(0)
@@ -601,6 +856,22 @@ unsafe extern "system" fn sidebar_proc(
                     state.tracking = true;
                     need_track = true;
                 }
+                // 드래그 정렬 진행 — 임계를 넘으면 시작하고 삽입 위치를 갱신한다
+                let count = state.items.len();
+                let scroll = state.scroll;
+                if let Some(drag) = &mut state.drag {
+                    if !drag.started && (y - drag.origin_y).abs() >= DRAG_THRESHOLD {
+                        drag.started = true;
+                        changed = true;
+                    }
+                    if drag.started {
+                        let insert_at = drop_index(y, scroll, count);
+                        if insert_at != drag.insert_at {
+                            drag.insert_at = insert_at;
+                            changed = true;
+                        }
+                    }
+                }
             }
             if need_track {
                 track_leave(hwnd);
@@ -608,6 +879,83 @@ unsafe extern "system" fn sidebar_proc(
             if changed {
                 invalidate(hwnd);
             }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            let drop = state_of(hwnd).and_then(|mut s| s.drag.take());
+            // 안전성: 자기 스레드가 잡은 캡처 해제
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            if let Some(drag) = drop
+                && drag.started
+            {
+                // 자기 자신 앞뒤로 놓으면 순서가 그대로다 — 그 경우는 알리지 않는다
+                let to = if drag.insert_at > drag.from {
+                    drag.insert_at - 1
+                } else {
+                    drag.insert_at
+                };
+                if to != drag.from {
+                    post_to_parent_with(
+                        hwnd,
+                        WM_APP_WS_REORDER,
+                        WPARAM(drag.from),
+                        LPARAM(to as isize),
+                    );
+                }
+            }
+            invalidate(hwnd);
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            // 캡처 상실(Alt+Tab 등) → 드래그 취소 (순서 불변)
+            if let Some(mut state) = state_of(hwnd) {
+                state.drag = None;
+            }
+            invalidate(hwnd);
+            LRESULT(0)
+        }
+        WM_CONTEXTMENU => {
+            // 우클릭 위치의 항목을 선택 상태로 만든 뒤 부모에 메뉴 표시를 위임한다.
+            // lparam은 화면 좌표이며 키보드 메뉴 키(-1,-1)는 부모가 커서 위치로 대체한다
+            let (sx, sy) = coords(lparam);
+            let index = client_point(hwnd, sx, sy).and_then(|(_, y)| {
+                state_of(hwnd).and_then(|s| item_at(y, s.scroll, s.items.len()))
+            });
+            if let Some(index) = index {
+                end_rename(hwnd, true);
+                post_to_parent(hwnd, WM_APP_WS_SELECT, WPARAM(index));
+                post_to_parent_with(hwnd, WM_APP_WS_CONTEXT, WPARAM(index), lparam);
+            }
+            LRESULT(0)
+        }
+        WM_KEYDOWN => {
+            // 키 조작은 사이드바가 포커스를 가진 동안에만 동작한다 (D16 — 전역 액셀러레이터 금지)
+            let key = wparam.0 as u16;
+            let (active, count) = match state_of(hwnd) {
+                Some(state) => (state.active, state.items.len()),
+                None => return LRESULT(0),
+            };
+            match key {
+                k if k == VK_F2.0 => begin_rename(hwnd, active),
+                k if k == VK_DELETE.0 => post_to_parent(hwnd, WM_APP_WS_DELETE, WPARAM(active)),
+                k if k == VK_UP.0 && active > 0 => {
+                    post_to_parent(hwnd, WM_APP_WS_SELECT, WPARAM(active - 1));
+                }
+                k if k == VK_DOWN.0 && active + 1 < count => {
+                    post_to_parent(hwnd, WM_APP_WS_SELECT, WPARAM(active + 1));
+                }
+                _ => return def_sidebar(hwnd, msg, wparam, lparam),
+            }
+            LRESULT(0)
+        }
+        WM_APP_RENAME_COMMIT => {
+            end_rename(hwnd, true);
+            LRESULT(0)
+        }
+        WM_APP_RENAME_CANCEL => {
+            end_rename(hwnd, false);
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
@@ -689,6 +1037,40 @@ mod tests {
         let view_h = LIST_TOP + 500;
         assert_eq!(clamp_scroll(0, 2, view_h), 0);
         assert_eq!(clamp_scroll(300, 2, view_h), 0);
+    }
+
+    #[test]
+    fn 드롭_위치는_항목_중앙을_기준으로_갈린다() {
+        // 첫 항목 위쪽 절반 → 그 앞(0), 아래쪽 절반 → 그 뒤(1)
+        assert_eq!(drop_index(LIST_TOP + 1, 0, 3), 0);
+        assert_eq!(drop_index(LIST_TOP + ITEM_HEIGHT / 2, 0, 3), 1);
+        // 두 번째 항목 아래쪽 절반 → 2
+        assert_eq!(drop_index(LIST_TOP + ITEM_PITCH + ITEM_HEIGHT - 1, 0, 3), 2);
+    }
+
+    #[test]
+    fn 목록_아래_빈_공간에_놓으면_맨_끝이다() {
+        assert_eq!(drop_index(LIST_TOP + ITEM_PITCH * 5, 0, 3), 3);
+        assert_eq!(drop_index(LIST_TOP - 100, 0, 3), 0); // 위쪽 밖은 맨 앞
+        assert_eq!(drop_index(LIST_TOP, 0, 0), 0); // 빈 목록
+    }
+
+    #[test]
+    fn 스크롤된_상태의_드롭_위치() {
+        assert_eq!(drop_index(LIST_TOP + 1, ITEM_PITCH, 3), 1);
+        assert_eq!(drop_index(LIST_TOP + ITEM_HEIGHT / 2, ITEM_PITCH, 3), 2);
+    }
+
+    #[test]
+    fn 항목_사각형은_스크롤과_여백을_반영한다() {
+        let rc = item_rect(1, 0, 232);
+        assert_eq!(rc.top, LIST_TOP + ITEM_PITCH);
+        assert_eq!(rc.bottom - rc.top, ITEM_HEIGHT);
+        assert_eq!(rc.left, ITEM_MARGIN_X);
+        assert_eq!(rc.right, 232 - ITEM_MARGIN_X);
+
+        let scrolled = item_rect(1, ITEM_PITCH, 232);
+        assert_eq!(scrolled.top, LIST_TOP);
     }
 
     #[test]

@@ -21,6 +21,10 @@ pub const IDM_TAB_NEW: u32 = 107;
 pub const IDM_TAB_CLOSE: u32 = 108;
 pub const IDM_TREE_TOGGLE: u32 = 109;
 pub const IDM_REFRESH: u32 = 110;
+/// 워크스페이스 명령 (FR-16·FR-18) — 사이드바 컨텍스트 메뉴와 메뉴 바가 공유한다
+pub const IDM_WS_NEW: u32 = 111;
+pub const IDM_WS_RENAME: u32 = 112;
+pub const IDM_WS_DELETE: u32 = 113;
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
@@ -92,6 +96,10 @@ pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
         )?;
         AppendMenuW(bar, MF_POPUP, tab.0 as usize, w!("탭(&T)"))?;
 
+        let workspace = CreateMenu()?;
+        append_workspace_items(workspace)?;
+        AppendMenuW(bar, MF_POPUP, workspace.0 as usize, w!("워크스페이스(&W)"))?;
+
         SetMenu(hwnd, Some(bar))?;
         Ok(bar)
     }
@@ -148,6 +156,45 @@ pub fn create_accels() -> Result<HACCEL> {
     ];
     // 안전성: 배열은 호출 동안 유효하며 OS가 내부 복사본을 만든다
     unsafe { CreateAcceleratorTableW(&accels) }
+}
+
+/// 워크스페이스 명령 3종을 메뉴에 추가한다 (메뉴 바·컨텍스트 메뉴 공용 — 문구 일치 보장)
+pub fn append_workspace_items(menu: HMENU) -> Result<()> {
+    // 안전성: 유효한 메뉴 핸들에 항목 추가
+    unsafe {
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_WS_NEW as usize,
+            w!("새 워크스페이스(&N)"),
+        )?;
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_WS_RENAME as usize,
+            w!("이름 바꾸기(&R)\tF2"),
+        )?;
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_WS_DELETE as usize,
+            w!("삭제(&D)\tDelete"),
+        )?;
+    }
+    Ok(())
+}
+
+/// 워크스페이스 수에 따라 "삭제" 활성/비활성 갱신 (마지막 1개는 삭제 불가 — D8)
+pub fn update_workspace_enabled(menu: HMENU, workspace_count: usize) {
+    let flags = if workspace_count > 1 {
+        MF_BYCOMMAND | MF_ENABLED
+    } else {
+        MF_BYCOMMAND | MF_GRAYED
+    };
+    // 안전성: 유효한 메뉴 핸들·명령 id에 대한 상태 변경뿐
+    unsafe {
+        let _ = EnableMenuItem(menu, IDM_WS_DELETE, flags);
+    }
 }
 
 /// 패널 수에 따라 "패널 닫기" 메뉴 활성/비활성 갱신 (마지막 1개는 닫기 불가 — FR-2)
