@@ -48,6 +48,20 @@
 - **4-C 테스트**: 순수 로직 변경 없음(색상·그리기는 UI). 기존 단위테스트(레이아웃·정렬·히스토리 등)에 영향 없음. 다크·잔상은 UI라 HUMAN-VERIFY.
 - **4-D**: 위 표.
 
+## 진행 체크리스트
+
+- [x] T1. 사이드바 크기 조절 잔상 개선 — 배치 통합 + 더블버퍼링
+- [ ] T2. 다크 인프라 + 메인 창(타이틀바·배경·splitter)
+- [ ] T3. 파일 목록(ListView) 다크
+- [ ] T4. 폴더 트리(TreeView) 다크
+- [ ] T5. 주소창(Edit) + 네비 버튼 다크
+- [ ] T6. 탭 컨트롤 오너드로우 다크
+- [ ] T7. 메뉴바 오너드로우 다크
+
+## Progress Log
+
+- T1 완료 (커밋 예정): `LayoutHost::defer_into`/`pane_count` 추가 → `layout_children`이 사이드바+패널을 단일 `DeferWindowPos` 배치로 통합. 사이드바 `paint`에 메모리 DC 더블버퍼링. 빌드·clippy·test(75+2) OK, spec/quality 리뷰 OK.
+
 ## Tasks
 
 ### T1: 사이드바 크기 조절 잔상 개선 — 배치 통합 + 더블버퍼링
@@ -174,6 +188,7 @@
 
 - 라이트/다크 테마 **전환 UI**(토글·설정) — 이번은 고정 다크만. 필요 시 후속.
 - 사이드바 사설 색상 상수를 `theme.rs` 공용 팔레트로 이전(리팩토링) — 이번 범위 외.
+- [T1 quality MINOR] `relayout()`에서 `BeginDeferWindowPos` 실패 시 `layout_cache` 미갱신(리팩터 전엔 실패해도 히트테스트 캐시 갱신됨). 실전 발생 거의 없고 다음 relayout이 복구 — 저위험 follow-up.
 
 ## Out of Scope
 

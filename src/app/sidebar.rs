@@ -11,10 +11,10 @@ use crate::fs::icons::IconCache;
 use std::cell::{RefCell, RefMut};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontIndirectW, CreateSolidBrush, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX,
-    DT_SINGLELINE, DeleteObject, DrawTextW, EndPaint, FW_SEMIBOLD, FillRect, HBRUSH, HDC, HFONT,
-    InvalidateRect, PAINTSTRUCT, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontIndirectW,
+    CreateSolidBrush, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DeleteDC, DeleteObject,
+    DrawTextW, EndPaint, FW_SEMIBOLD, FillRect, HBRUSH, HDC, HFONT, InvalidateRect, PAINTSTRUCT,
+    SRCCOPY, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{EM_SETSEL, ILD_TRANSPARENT, ImageList_Draw, WM_MOUSELEAVE};
@@ -522,7 +522,14 @@ fn paint(hwnd: HWND, state: &mut SidebarState) {
     let (width, height) = client_size(hwnd);
     let mut ps = PAINTSTRUCT::default();
     // 안전성: BeginPaint/EndPaint 짝 — 사이의 DC만 사용한다
-    let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+    let screen = unsafe { BeginPaint(hwnd, &mut ps) };
+    // 더블버퍼 — 모든 그리기를 메모리 DC에 모아 한 번에 BitBlt한다. 크기 조절 중 배경→헤더→항목이
+    // 화면에 순차로 나타나며 생기던 깜빡임/잔상을 없앤다 (plan T1).
+    // 안전성: screen과 호환되는 메모리 DC·비트맵을 만들고 함수 끝에서 해제한다
+    let mem = unsafe { CreateCompatibleDC(Some(screen)) };
+    let bmp = unsafe { CreateCompatibleBitmap(screen, width, height) };
+    let old_bmp = unsafe { SelectObject(mem, bmp.into()) };
+    let hdc = mem; // 이하 그리기는 메모리 DC에 수행하고 마지막에 화면으로 복사한다
 
     let full = RECT {
         left: 0,
@@ -643,8 +650,13 @@ fn paint(hwnd: HWND, state: &mut SidebarState) {
         fill(hdc, &line, state.accent_brush);
     }
 
-    // 안전성: BeginPaint와 짝을 이루는 해제
+    // 메모리 버퍼를 화면에 한 번에 복사한 뒤 GDI 객체와 페인트를 해제한다
+    // 안전성: 같은 크기 영역 복사, 선택 해제 후 우리가 만든 DC·비트맵만 삭제, BeginPaint와 짝 해제
     unsafe {
+        let _ = BitBlt(screen, 0, 0, width, height, Some(mem), 0, 0, SRCCOPY);
+        SelectObject(mem, old_bmp);
+        let _ = DeleteObject(bmp.into());
+        let _ = DeleteDC(mem);
         let _ = EndPaint(hwnd, &ps);
     }
 }

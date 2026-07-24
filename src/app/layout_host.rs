@@ -9,7 +9,7 @@ use crate::panel::panel as panel_win;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BeginDeferWindowPos, DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect,
+    BeginDeferWindowPos, DeferWindowPos, DestroyWindow, EndDeferWindowPos, GetClientRect, HDWP,
     IDC_SIZENS, IDC_SIZEWE, LoadCursorW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
     ShowWindow,
 };
@@ -205,19 +205,33 @@ impl LayoutHost {
         if self.panes.is_empty() {
             return; // destroy_all 이후 — 배치할 창이 없다
         }
+        // 안전성: DeferWindowPos 일괄 배치 시작 — 실제 배치는 defer_into가 수행한다
+        let hdwp = match unsafe { BeginDeferWindowPos(self.panes.len() as i32) } {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        if let Some(hdwp) = self.defer_into(hdwp) {
+            // 안전성: defer_into가 반환한 유효 핸들의 마무리
+            unsafe {
+                let _ = EndDeferWindowPos(hdwp);
+            }
+        }
+    }
+
+    /// 소유한 패널을 **외부 defer 배치**(`hdwp`)에 추가하고 갱신된 핸들을 반환한다.
+    /// 사이드바와 한 배치로 묶어 크기 조절 시 두 영역이 시차 없이 함께 이동하게 한다(plan T1 D3 —
+    /// 종전에는 사이드바 `MoveWindow`와 패널 배치가 분리돼 잔상이 남았다).
+    /// layout_cache(히트테스트용)는 배치 성패와 무관하게 갱신한다. DeferWindowPos 실패 시 None
+    /// (무효 hdwp로 계속하지 않음 — 다음 relayout이 복구).
+    pub fn defer_into(&mut self, mut hdwp: HDWP) -> Option<HDWP> {
         self.layout_cache = self.tree.compute_rects(self.area);
-        // 안전성: DeferWindowPos 일괄 배치 — 모든 핸들은 살아있는 자식 창.
-        // 실패 시 hdwp가 무효화될 수 있으므로(공식 문서) 배칭을 중단한다
-        unsafe {
-            let mut hdwp = match BeginDeferWindowPos(self.panes.len() as i32) {
-                Ok(h) => h,
-                Err(_) => return,
+        // 안전성: 모든 핸들은 살아있는 자식 창. 실패 시 hdwp가 무효화될 수 있으므로(공식 문서) None 전파
+        for (id, hwnd) in &self.panes {
+            let Some((_, r)) = self.layout_cache.panes.iter().find(|(pid, _)| pid == id) else {
+                continue;
             };
-            for (id, hwnd) in &self.panes {
-                let Some((_, r)) = self.layout_cache.panes.iter().find(|(pid, _)| pid == id) else {
-                    continue;
-                };
-                match DeferWindowPos(
+            match unsafe {
+                DeferWindowPos(
                     hdwp,
                     *hwnd,
                     None,
@@ -226,13 +240,18 @@ impl LayoutHost {
                     r.w.max(0),
                     r.h.max(0),
                     SWP_NOZORDER | SWP_NOACTIVATE,
-                ) {
-                    Ok(next) => hdwp = next,
-                    Err(_) => return, // 무효 hdwp로 계속하지 않음 — 다음 relayout이 복구
-                }
+                )
+            } {
+                Ok(next) => hdwp = next,
+                Err(_) => return None,
             }
-            let _ = EndDeferWindowPos(hdwp);
         }
+        Some(hdwp)
+    }
+
+    /// 소유한 패널 창 개수 — 외부 배치가 BeginDeferWindowPos 힌트로 쓴다
+    pub fn pane_count(&self) -> usize {
+        self.panes.len()
     }
 
     /// 좌표(부모 클라이언트)에서 스플리터를 찾아 드래그 시작. 잡았으면 true

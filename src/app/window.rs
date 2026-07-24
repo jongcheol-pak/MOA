@@ -28,10 +28,11 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyMenu, GWLP_USERDATA, GetCursorPos, GetWindowLongPtrW, GetWindowPlacement, HACCEL, HMENU,
-    HTCLIENT, IDC_ARROW, IDC_SIZEWE, IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW,
-    MoveWindow, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED,
+    BeginDeferWindowPos, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
+    DefWindowProcW, DeferWindowPos, DestroyMenu, EndDeferWindowPos, GWLP_USERDATA, GetCursorPos,
+    GetWindowLongPtrW, GetWindowPlacement, HACCEL, HDWP, HMENU, HTCLIENT, IDC_ARROW, IDC_SIZEWE,
+    IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, PostQuitMessage, RegisterClassExW,
+    SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED,
     SWP_NOACTIVATE, SWP_NOZORDER, SetCursor, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos,
     ShowWindow, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE,
     WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
@@ -386,21 +387,48 @@ fn layout_children(hwnd: HWND) {
             state.explorer_area(hwnd),
         )
     };
-    // 안전성: 우리가 만든 살아있는 자식 창의 표시·배치 (접힘이면 숨긴다 — D11)
+    // 표시/숨김만 별도(접힘이면 숨긴다 — D11). 폭>0이면 실제 위치·크기는 아래 통합 배치가 잡는다.
+    // 안전성: 우리가 만든 살아있는 자식 창의 표시 상태 변경
     unsafe {
-        if sidebar_w > 0 {
-            let _ = ShowWindow(sidebar_hwnd, SW_SHOW);
-            let _ = MoveWindow(sidebar_hwnd, 0, 0, sidebar_w, client.h, true);
-        } else {
-            let _ = ShowWindow(sidebar_hwnd, SW_HIDE);
-        }
+        let _ = ShowWindow(sidebar_hwnd, if sidebar_w > 0 { SW_SHOW } else { SW_HIDE });
     }
     let Some(mut state) = state_of(hwnd) else {
         return;
     };
     if let Some(host) = state.active_host() {
         host.set_area(area);
-        host.relayout();
+        // 사이드바와 탐색기 패널을 한 DeferWindowPos 배치로 묶어 크기 조절 시 시차·잔상을 없앤다
+        // (plan T1 — 종전에는 사이드바 MoveWindow 후 host.relayout()으로 두 프레임에 나뉘어 갱신됐다).
+        // 실패 경로는 기존 단독 배치(relayout)로 폴백한다 — 다음 배치가 복구.
+        // 안전성: 사이드바·패널 모두 우리가 만든 살아있는 자식 창
+        let hdwp: Option<HDWP> = unsafe { BeginDeferWindowPos((host.pane_count() + 1) as i32) }.ok();
+        let hdwp = hdwp.and_then(|hdwp| {
+            if sidebar_w > 0 {
+                // 안전성: 유효 hdwp에 사이드바 배치 추가 (0,0 원점 · 폭 sidebar_w · 창 높이)
+                unsafe {
+                    DeferWindowPos(
+                        hdwp,
+                        sidebar_hwnd,
+                        None,
+                        0,
+                        0,
+                        sidebar_w,
+                        client.h,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                }
+                .ok()
+            } else {
+                Some(hdwp)
+            }
+        });
+        match hdwp.and_then(|hdwp| host.defer_into(hdwp)) {
+            // 안전성: defer_into가 반환한 유효 핸들의 마무리
+            Some(hdwp) => unsafe {
+                let _ = EndDeferWindowPos(hdwp);
+            },
+            None => host.relayout(), // 배치 시작/추가 실패 → 단독 배치로 폴백
+        }
     }
 }
 
