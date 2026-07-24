@@ -550,7 +550,8 @@ fn refresh_subtitle(hwnd: HWND) {
     };
     state.list.set_subtitle(index, &path);
     let active = state.list.active_index();
-    state.sidebar.set_items(state.list.items(), active);
+    // 구조가 아니라 경로 줄만 바뀌는 갱신 — 편집 중인 이름 입력을 유지한다 (T9)
+    state.sidebar.refresh_items(state.list.items(), active);
 }
 
 /// 사이드바 표시 스냅숏을 현재 목록으로 갱신한다

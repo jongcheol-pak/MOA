@@ -204,11 +204,22 @@ impl Sidebar {
         self.hwnd
     }
 
-    /// 표시 데이터 갱신 — 목록·활성 항목을 통째로 교체하고 다시 그린다.
-    /// 진실은 메인 창의 `WorkspaceList`이고 여기 있는 것은 그리기용 스냅숏이다.
-    /// 목록이 바뀌면 편집 중이던 EDIT은 유령이 되므로 먼저 정리한다
+    /// 표시 데이터 갱신 — 목록 **구조가 바뀌는** 경로 전용 (생성·삭제·순서 변경·이름 커밋).
+    /// 항목 수·순서가 달라지면 편집 중이던 EDIT은 엉뚱한 항목 위에 남으므로 먼저 정리한다.
+    /// 진실은 메인 창의 `WorkspaceList`이고 여기 있는 것은 그리기용 스냅숏이다
     pub fn set_items(&self, items: &[Workspace], active: usize) {
         end_rename(self.hwnd, false);
+        self.replace_snapshot(items, active);
+    }
+
+    /// 표시 스냅숏만 교체 — **편집 중인 EDIT을 건드리지 않는다** (부제 자동 갱신 전용).
+    /// 폴더 이동·활성 패널 변경으로 경로 줄만 바뀌는 경우가 이 경로다: 여기서 편집을 닫으면
+    /// 새 워크스페이스의 첫 열거가 끝나는 순간 방금 연 이름 편집이 취소된다 (F-7 BLOCKER B1)
+    pub fn refresh_items(&self, items: &[Workspace], active: usize) {
+        self.replace_snapshot(items, active);
+    }
+
+    fn replace_snapshot(&self, items: &[Workspace], active: usize) {
         let Some(mut state) = state_of(self.hwnd) else {
             return;
         };
