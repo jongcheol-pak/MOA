@@ -58,6 +58,11 @@ impl IconCache {
         self.himl
     }
 
+    /// 폴더 아이콘 인덱스 — 워크스페이스 사이드바가 항목 아이콘으로 직접 그린다 (plan D14)
+    pub fn dir_icon(&self) -> i32 {
+        self.dir_icon
+    }
+
     /// 항목의 아이콘 인덱스. exe/lnk 등은 전체 경로로 개별 조회(표시 시점 지연 — 보이는 행만)
     pub fn icon_index(&mut self, ext: &str, is_dir: bool, full_path: Option<&str>) -> i32 {
         if is_dir {

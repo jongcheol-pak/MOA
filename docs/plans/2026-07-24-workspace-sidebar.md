@@ -270,6 +270,30 @@
 | 인라인 편집 EDIT | 배치 | 항목 1줄 영역과 동일 사각형, 시스템 기본(밝은) 배경 | plan 확정값(다크 EDIT 커스텀은 Deferred) |
 | 사이드바↔탐색기 경계 | 스플리터 두께 | 4px (`layout::SPLITTER_THICKNESS`와 동일) | `src/app/layout.rs:9` |
 
+### V-9 대조 결과 (T4 시점 — 코드 상수 기준)
+
+데스크톱 UI라 자율 루프에서 창 렌더 캡처를 신뢰성 있게 수행할 수단이 없다 → **렌더 일치는 전부 `⏳ 미확인`이며 Phase F-8이 게이트한다**. 아래는 디자인 값 ↔ 코드 상수 대조다(빌드 통과는 시각 일치의 근거가 아니다).
+
+| 요소·속성 | 디자인 값 | 코드 위치 | 상수 대조 | 렌더 |
+|---|---|---|---|---|
+| 사이드바 기본/최소/최대 폭 | 232 / 160 / 480 | `settings.rs:18-20` | ✅ | ⏳ 미확인 |
+| 사이드바 배경 | `#1B1B1B` | `sidebar.rs:70` | ✅ | ⏳ 미확인 |
+| 상단 토글 영역 높이 | 28px | `sidebar.rs:42` (아이콘·동작은 T7) | ✅ | ⏳ 미확인 |
+| 헤더 높이 / 문구 / 글자색·크기 | 36px / "워크스페이스" / `#9A9A9A`·12px | `sidebar.rs:43,44,78,61` | ✅ | ⏳ 미확인 |
+| `+` 버튼 크기·여백 / 색·호버 | 24x24·8px / `#9A9A9A`→`#E8E8E8` | `sidebar.rs:46,47,78,79` | ✅ | ⏳ 미확인 |
+| 항목 높이 / 간격(pitch) | 60 / 4 (64) | `sidebar.rs:48,49,51` | ✅ | ⏳ 미확인 |
+| 항목 좌우 바깥 여백 | 8px | `sidebar.rs:52` | ✅ | ⏳ 미확인 |
+| 항목 배경 기본/선택/호버 | `#232323`/`#2E2E2E`/`#282828` | `sidebar.rs:71,72,73` | ✅ | ⏳ 미확인 |
+| 항목 테두리 1px | `#2C2C2C` | `sidebar.rs:74` + `frame()` | ✅ | ⏳ 미확인 |
+| 선택 좌측 강조 바 | 3px `#4A9EFF` | `sidebar.rs:53,75` | ✅ | ⏳ 미확인 |
+| 항목 아이콘 크기·좌측 패딩 | 16x16·12px, 세로 중앙 | `sidebar.rs:54,55` + `ImageList_Draw` 호출 | ✅ | ⏳ 미확인 |
+| 이름 색/크기/좌측 x/상단 패딩 | `#E8E8E8`/13px/38px/12px | `sidebar.rs:76,58,56,57` | ✅ | ⏳ 미확인 |
+| 경로 색/크기/줄 간격 | `#8A8A8A`/11px/6px | `sidebar.rs:77,60,59` | ✅ | ⏳ 미확인 |
+| 텍스트 넘침 말줄임 | `DT_END_ELLIPSIS` | `sidebar.rs` `draw_line`/`draw_header_text` | ✅ | ⏳ 미확인 |
+| 드래그 삽입선 2px `#4A9EFF` | — | (T6에서 구현) | ⏳ 미구현 | ⏳ 미확인 |
+| 인라인 편집 EDIT 배치 | — | (T6에서 구현) | ⏳ 미구현 | ⏳ 미확인 |
+| 사이드바↔탐색기 경계 4px | `SPLITTER_THICKNESS` | `window.rs` `explorer_area` | ✅ | ⏳ 미확인 |
+
 ## Tasks
 
 <!-- T1~T3 (모델·배치·세션 기반) / T4~T6 (사이드바 UI·워크스페이스 동작) / T7~T8 (부가 기능·검증) -->
@@ -327,7 +351,7 @@
     - (i) v1 호환 정책 → 사용자 결정(초기화 폴백)으로 확정
   - **Depends on**: -
 
-- [ ] T4. 사이드바 창 — 다크 목록 렌더링·선택·생성 버튼
+- [x] T4. 사이드바 창 — 다크 목록 렌더링·선택·생성 버튼
   - **Type**: D
   - **Design**: ① `src/app/sidebar.rs` 신규(패널 창과 같은 자식 창 패턴 — 자체 창 클래스 `FileExplorerSidebar`, 상태는 `Box<RefCell<SidebarState>>` in GWLP_USERDATA). ② `Sidebar{hwnd}` — 창 래퍼, `create(parent) -> Result<Sidebar>`, `set_items(&[Workspace], active: usize)` — 표시 데이터 갱신 후 무효화, `hwnd()`; 내부 `SidebarState{items, active, hover, scroll, fonts, brushes, icon}`, 그리기 `paint`, 순수 함수 `item_at(y, scroll, count) -> Option<usize>`·`clamp_scroll(scroll, count, view_h) -> i32`. 시각 상수(색·항목 높이·패딩 등)는 파일 상단에 `## 시각 요소 분해` 표와 1:1 선언하되, **폭 토큰(기본 232·최소 160·최대 480)은 T3에서 이미 선언된 `settings::SIDEBAR_DEFAULT_WIDTH`/`SIDEBAR_MIN_WIDTH`/`SIDEBAR_MAX_WIDTH`를 재사용하고 재선언하지 않는다**(T3 리뷰 MINOR — 세션 검증이 같은 값을 쓰므로 소유는 settings). 클릭 시 `SetFocus`(D17). ③ `workspace.rs`(표시 데이터)·`fs::icons`(폴더 아이콘)를 참조하고 부모에 `WM_APP_WS_SELECT`/`WM_APP_WS_NEW`를 게시한다 — 워크스페이스를 소유하지 않는다(표시·입력 전용). ④ 추상화하지 않을 것: 범용 리스트 컨트롤·테마 시스템을 만들지 않는다.
   - **Acceptance**: Given 더미 워크스페이스 3개를 `set_items`로 주입(이 단계에서는 `window.rs`가 고정 더미 목록을 만들어 검증 — 실제 목록 연결은 T5), When 창 표시, Then 헤더("워크스페이스")·`+` 버튼·2줄 항목이 `## 시각 요소 분해` 표의 색·치수대로 그려진다(HUMAN-VERIFY) / When 항목 클릭, Then `WM_APP_WS_SELECT`(wparam=인덱스)가 부모에 게시되고 사이드바가 포커스를 갖는다 / When `+` 클릭, Then `WM_APP_WS_NEW` 게시 / When 항목이 화면보다 많고 휠을 굴리면, Then 스크롤 오프셋이 [0,최대]로 클램프된다 / `item_at`·`clamp_scroll` 단위테스트 통과 / `cargo clippy --all-targets -- -D warnings` 통과
@@ -461,6 +485,10 @@
 - T1-T2 완료 (커밋 861e4e1, T2 pre-review f0e1870): ① `src/app/workspace.rs` 신규 — `WorkspaceList`(add/rename/remove/reorder/set_active/set_subtitle)·자동 이름(사용 중이지 않은 최소 번호)·`elide_path`, 단위테스트 13개. ② `LayoutHost`에 `area` 주입 — `new`/`from_shape`에 area 인자, `relayout`/`close_active`/`drag_move`의 `parent` 제거, `set_area`/`set_visible`/`destroy_all` 추가, `client_rect`를 `pub`으로 승격해 window.rs가 영역을 계산·주입(WM_SIZE에서 `set_area`+`relayout` 짝 호출).
   - 결정: `drag_move`의 `parent` 제거는 Design에 없던 파생이지만 `relayout()` 변경으로 미사용 파라미터가 되어 함께 정리(리뷰에서 정상 파생 확인).
   - 결정: 테스트 함수명에 영문 대문자(`NotFound`)를 쓰면 `-D warnings`의 `non_snake_case`에 걸린다 — 한글 이름으로 통일.
+- T3-T4 완료 (커밋 c4d8ed1, T4 pre-review 1e6c225): ① 세션 스키마 v2(`Session{sidebar, active_workspace, workspaces[{name,layout,panels,active_panel}]}`) + 워크스페이스 단위 검증·폭 클램프, window.rs는 워크스페이스 1개로 저장/복원. ② `src/app/sidebar.rs` 신규 — 커스텀 창 클래스 `FileExplorerSidebar`, WM_PAINT 직접 그리기(다크 2줄 카드·헤더·`+` 버튼·선택 강조 바·시스템 폴더 아이콘), 휠 스크롤·hover(TrackMouseEvent)·클릭 시 SetFocus, 부모에 `WM_APP_WS_SELECT`/`WM_APP_WS_NEW` 게시. window.rs는 `explorer_area`/`layout_children`로 사이드바+탐색기를 분할 배치.
+  - 결정: 사이드바 폭 토큰(232/160/480)은 세션 검증이 같은 값을 쓰므로 `settings`가 소유하고 sidebar는 재선언 없이 참조(T3 spec 리뷰 MINOR 해소).
+  - 결정: T4 단계의 목록은 `sample_list()` 임시 3개 — T5에서 세션 기반 실제 목록으로 교체. `AppState`에는 아직 목록을 보관하지 않는다(미사용 필드 경고 회피).
+  - V-9: 데스크톱 UI라 렌더 확인 불가 → 시각 행 전부 `⏳ 미확인`으로 F-8 인계, 코드 상수 대조는 전 행 ✅.
 
 ## Next Steps
 

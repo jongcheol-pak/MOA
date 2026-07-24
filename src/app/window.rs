@@ -1,5 +1,5 @@
 //! 메인 창 — 클래스 등록·생성·윈도우 프로시저·명령 배선
-use crate::app::layout::SplitDir;
+use crate::app::layout::{Rect, SPLITTER_THICKNESS, SplitDir};
 use crate::app::layout_host::{self, LayoutHost};
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH, IDM_SPLIT_H,
@@ -8,6 +8,8 @@ use crate::app::menu::{
 use crate::app::settings::{
     self, LayoutNode, PanelSession, Session, WindowState, WorkspaceSession,
 };
+use crate::app::sidebar::Sidebar;
+use crate::app::workspace::WorkspaceList;
 use crate::panel::panel::{
     PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_REFRESH,
     WM_APP_SESSION_COLLECT, WM_APP_SESSION_RESTORE, WM_APP_TAB_CLOSE, WM_APP_TAB_NEW,
@@ -23,11 +25,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, GWLP_USERDATA,
     GetCursorPos, GetWindowLongPtrW, GetWindowPlacement, HACCEL, HMENU, HTCLIENT, IDC_ARROW,
-    LoadCursorW, PostQuitMessage, RegisterClassExW, SW_SHOW, SW_SHOWMAXIMIZED, SWP_NOACTIVATE,
-    SWP_NOZORDER, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, WINDOW_EX_STYLE,
-    WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
-    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR,
-    WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    LoadCursorW, MoveWindow, PostQuitMessage, RegisterClassExW, SW_SHOW, SW_SHOWMAXIMIZED,
+    SWP_NOACTIVATE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow,
+    WINDOW_EX_STYLE, WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY,
+    WM_DPICHANGED, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY,
+    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, Result, w};
 
@@ -41,6 +43,9 @@ const WINDOW_CLASS: PCWSTR = w!("FileExplorerMainWindow");
 struct AppState {
     host: LayoutHost,
     menu: HMENU,
+    /// 좌측 워크스페이스 목록 창 (FR-15).
+    /// 목록 모델(WorkspaceList) 소유와 전환 배선은 T5에서 붙는다 — 지금은 표시 스냅숏만 넘긴다
+    sidebar: Sidebar,
 }
 
 /// 메인 창. 메시지 루프(main 소유)가 hwnd·haccel을 사용한다.
@@ -93,8 +98,9 @@ impl MainWindow {
             let active_ws = session
                 .as_ref()
                 .and_then(|s| s.workspaces.get(s.active_workspace));
-            // 배치 영역은 창 클라이언트 전체 — 사이드바가 생기면 그만큼 좁혀 주입한다 (T5·T7)
-            let area = layout_host::client_rect(hwnd);
+            // 좌측 사이드바를 먼저 만들고, 탐색기는 그만큼 좁아진 영역에 배치한다 (FR-15)
+            let sidebar = Sidebar::create(hwnd)?;
+            let area = explorer_area(hwnd);
             let host = match active_ws {
                 Some(ws) => LayoutHost::from_shape(hwnd, &ws.layout.to_shape(), area)?,
                 None => LayoutHost::new(hwnd, area)?,
@@ -103,8 +109,15 @@ impl MainWindow {
                 restore_panels(&host, ws);
             }
             menu::update_close_enabled(menu, host.panel_count());
-            let state = Box::new(RefCell::new(AppState { host, menu }));
+            let list = sample_list();
+            sidebar.set_items(list.items(), list.active_index());
+            let state = Box::new(RefCell::new(AppState {
+                host,
+                menu,
+                sidebar,
+            }));
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
+            layout_children(hwnd);
 
             let haccel = menu::create_accels()?;
             match &session {
@@ -211,6 +224,50 @@ fn send_ptr(hwnd: HWND, msg: u32, lparam: isize) -> LRESULT {
             Some(LPARAM(lparam)),
         )
     }
+}
+
+/// 탐색기(LayoutHost)에 줄 배치 영역 — 창 클라이언트에서 사이드바 폭과 경계선을 뺀 나머지.
+/// 폭·접힘을 상태에서 읽는 것은 T7이며, 지금은 기본 폭 고정이다
+fn explorer_area(hwnd: HWND) -> Rect {
+    let client = layout_host::client_rect(hwnd);
+    let taken = (settings::SIDEBAR_DEFAULT_WIDTH + SPLITTER_THICKNESS).min(client.w);
+    Rect {
+        x: taken,
+        y: client.y,
+        w: (client.w - taken).max(0),
+        h: client.h,
+    }
+}
+
+/// 사이드바와 탐색기를 현재 창 크기에 맞춰 배치한다 (WM_SIZE·생성 직후 공용)
+fn layout_children(hwnd: HWND) {
+    let client = layout_host::client_rect(hwnd);
+    let sidebar_w = settings::SIDEBAR_DEFAULT_WIDTH.min(client.w);
+    let area = explorer_area(hwnd);
+    let Some(mut state) = state_of(hwnd) else {
+        return;
+    };
+    // 안전성: 우리가 만든 살아있는 자식 창 이동
+    unsafe {
+        let _ = MoveWindow(state.sidebar.hwnd(), 0, 0, sidebar_w, client.h, true);
+    }
+    state.host.set_area(area);
+    state.host.relayout();
+}
+
+/// T4 시각 확인용 임시 목록 — T5에서 세션 기반 실제 목록·전환 배선으로 교체한다
+fn sample_list() -> WorkspaceList {
+    let mut list = WorkspaceList::new();
+    list.add();
+    list.add();
+    let home = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("C:\\"));
+    for index in 0..list.len() {
+        list.set_subtitle(index, &home);
+    }
+    list.set_active(0);
+    list
 }
 
 /// 워크스페이스의 패널별 탭을 각 패널에 복원 (walk 순서 1:1 — layout_host 계약)
@@ -335,11 +392,9 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_SIZE => {
-            if let Some(mut state) = state_of(hwnd) {
-                // 영역 주입 → 배치 (relayout은 더 이상 부모 클라이언트를 스스로 읽지 않는다)
-                state.host.set_area(layout_host::client_rect(hwnd));
-                state.host.relayout();
-            }
+            // 사이드바 배치 + 탐색기 영역 주입 → 배치
+            // (relayout은 더 이상 부모 클라이언트를 스스로 읽지 않는다)
+            layout_children(hwnd);
             LRESULT(0)
         }
         WM_COMMAND => {
