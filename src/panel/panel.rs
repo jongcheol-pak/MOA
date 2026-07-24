@@ -15,7 +15,9 @@ use crate::panel::address_bar::{
 };
 use crate::panel::file_list::{FileList, apply_item_count};
 use crate::panel::folder_tree::{FolderTree, TREE_WIDTH, apply_expand};
-use crate::panel::tabs::{CloseOutcome, TAB_HEIGHT, TabState, TabStrip, TabsModel, tab_title};
+use crate::panel::tabs::{
+    CloseOutcome, TAB_HEIGHT, TabState, TabStrip, TabsModel, draw_tab, tab_title,
+};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -26,7 +28,8 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
     DRAWITEMSTRUCT, LVN_COLUMNCLICK, LVN_GETDISPINFOW, NM_DBLCLK, NMHDR, NMITEMACTIVATE,
-    NMLVDISPINFOW, NMTREEVIEWW, ODT_BUTTON, TCN_SELCHANGE, TVN_ITEMEXPANDINGW, TVN_SELCHANGEDW,
+    NMLVDISPINFOW, NMTREEVIEWW, ODT_BUTTON, ODT_TAB, TCN_SELCHANGE, TVN_ITEMEXPANDINGW,
+    TVN_SELCHANGEDW,
 };
 use windows::Win32::UI::Shell::{SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -763,6 +766,10 @@ unsafe extern "system" fn panel_proc(
             {
                 // 네비 버튼 오너드로우 다크 (plan T5)
                 draw_nav_button(dis);
+                LRESULT(1)
+            } else if dis.CtlType == ODT_TAB {
+                // 탭 오너드로우 다크 (plan T6)
+                draw_tab(dis);
                 LRESULT(1)
             } else {
                 // 셸 메뉴 항목은 IContextMenu2/3로 포워딩 (T2 Edge)

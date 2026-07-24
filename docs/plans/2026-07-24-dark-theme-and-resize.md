@@ -55,7 +55,7 @@
 - [x] T3. 파일 목록(ListView) 다크
 - [x] T4. 폴더 트리(TreeView) 다크
 - [x] T5. 주소창(Edit) + 네비 버튼 다크
-- [ ] T6. 탭 컨트롤 오너드로우 다크
+- [x] T6. 탭 컨트롤 오너드로우 다크
 - [ ] T7. 메뉴바 오너드로우 다크
 
 ## Progress Log
@@ -63,6 +63,8 @@
 - T1 완료 (ae08343): `LayoutHost::defer_into`/`pane_count` 추가 → `layout_children`이 사이드바+패널을 단일 `DeferWindowPos` 배치로 통합. 사이드바 `paint`에 메모리 DC 더블버퍼링. 빌드·clippy·test(75+2) OK, spec/quality 리뷰 OK.
 - T2 완료: `app/theme.rs` 신규(WINDOW_BG + apply_dark_titlebar), Cargo.toml에 Win32_Graphics_Dwm 추가, 메인 창 배경 브러시 다크(CreateSolidBrush) + DWM 다크 타이틀바. 빌드·clippy·test OK, spec/quality 리뷰 OK. theme 색은 각 후속 task에서 필요분만 추가(YAGNI).
 - T3-T4 완료 (5d3bda0 외): 파일 목록(ListView) 다크 — SetWindowTheme + LVM 색상 메시지 + ListView 서브클래스(list_dark_proc)로 헤더 NM_CUSTOMDRAW 다크. 폴더 트리(TreeView) 다크 — SetWindowTheme + TVM_SETBKCOLOR/TEXTCOLOR/LINECOLOR. theme.rs에 SURFACE_BG/TEXT/HEADER_BG/HEADER_TEXT/TREE_LINE 추가. 각 task 빌드·clippy·test(75+2) OK, spec/quality 리뷰 OK.
+- T5-T6 완료 (dcddfd6 외): 주소창 Edit(WM_CTLCOLOREDIT)·네비 버튼 3개(BS_OWNERDRAW+draw_nav_button)·패널 컨테이너 배경(WINDOW_BG)·상태 라벨(WM_CTLCOLORSTATIC) 다크 + PanelState 브러시 필드/Drop. 탭 컨트롤(TCS_OWNERDRAWFIXED + draw_tab, WM_DRAWITEM ODT_TAB 분기) 다크. theme.rs에 CONTROL_BG/HOT/ACTIVE/TEXT_DIM 추가. T5 quality M1(register_class 브러시 누수) 수정 후 재검토 통과. 각 task 빌드·clippy·test OK.
+  - 결정: 패널 배경·상태라벨을 T5 범위에 포함(주소창이 얹히는 컨테이너가 밝으면 다크 미완성). register_class는 첫 등록만 브러시를 클래스에 연결하고 중복 등록 시 해제(누수 방지).
 
 ## Tasks
 

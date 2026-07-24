@@ -1,17 +1,22 @@
 //! 패널별 탭 — 순수 모델(TabsModel, 단위테스트 대상) + WC_TABCONTROL 래퍼 (FR-3)
+use crate::app::theme;
 use crate::panel::history::History;
 use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    CreateSolidBrush, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FillRect,
+    SetBkMode, SetTextColor, TRANSPARENT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    TCIF_TEXT, TCITEMW, TCM_DELETEITEM, TCM_GETCURSEL, TCM_INSERTITEMW, TCM_SETCURSEL,
-    TCM_SETITEMW, WC_TABCONTROLW,
+    DRAWITEMSTRUCT, ODS_SELECTED, TCIF_TEXT, TCITEMW, TCM_DELETEITEM, TCM_GETCURSEL, TCM_GETITEMW,
+    TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMW, TCS_OWNERDRAWFIXED, WC_TABCONTROLW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, MoveWindow, SendMessageW, WINDOW_EX_STYLE, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, MoveWindow, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
 };
-use windows::core::{HSTRING, Result};
+use windows::core::{HSTRING, PWSTR, Result};
 
 /// 탭 스트립 높이
 pub const TAB_HEIGHT: i32 = 26;
@@ -125,6 +130,47 @@ pub fn tab_title(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+/// 탭 오너드로우 다크 — 부모 패널의 WM_DRAWITEM에서 호출한다 (plan T6).
+/// 활성/비활성 탭 배경을 다크색으로 채우고 제목을 중앙에 그린다.
+pub fn draw_tab(dis: &DRAWITEMSTRUCT) {
+    let selected = (dis.itemState.0 & ODS_SELECTED.0) != 0;
+    let bg = if selected {
+        theme::SURFACE_BG
+    } else {
+        theme::WINDOW_BG
+    };
+    let mut rc = dis.rcItem;
+    // 안전성: 오너드로우가 넘긴 유효 DC에 배경·제목을 그린다. 브러시는 생성 즉시 해제
+    unsafe {
+        let brush = CreateSolidBrush(bg);
+        FillRect(dis.hDC, &rc, brush);
+        let _ = DeleteObject(brush.into());
+        // 탭 제목(itemID번 탭)을 버퍼로 읽어 중앙에 그린다
+        let mut buf = [0u16; 256];
+        let mut item = TCITEMW {
+            mask: TCIF_TEXT,
+            pszText: PWSTR(buf.as_mut_ptr()),
+            cchTextMax: buf.len() as i32,
+            ..Default::default()
+        };
+        SendMessageW(
+            dis.hwndItem,
+            TCM_GETITEMW,
+            Some(WPARAM(dis.itemID as usize)),
+            Some(LPARAM(&mut item as *mut _ as isize)),
+        );
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        SetTextColor(dis.hDC, if selected { theme::TEXT } else { theme::TEXT_DIM });
+        SetBkMode(dis.hDC, TRANSPARENT);
+        DrawTextW(
+            dis.hDC,
+            &mut buf[..len],
+            &mut rc,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+    }
+}
+
 /// WC_TABCONTROL 래퍼 — 표시만 담당, 진실은 TabsModel
 pub struct TabStrip {
     hwnd: HWND,
@@ -139,7 +185,12 @@ impl TabStrip {
                 WINDOW_EX_STYLE::default(),
                 WC_TABCONTROLW,
                 None,
-                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP,
+                // TCS_OWNERDRAWFIXED: 탭은 테마 다크가 안 먹으므로 부모 WM_DRAWITEM에서 직접 그린다 (plan T6)
+                WS_CHILD
+                    | WS_VISIBLE
+                    | WS_CLIPSIBLINGS
+                    | WS_TABSTOP
+                    | WINDOW_STYLE(TCS_OWNERDRAWFIXED),
                 0,
                 0,
                 0,
