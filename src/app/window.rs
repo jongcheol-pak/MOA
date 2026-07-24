@@ -174,6 +174,7 @@ impl MainWindow {
                 entries,
             };
             menu::update_close_enabled(menu, state.active_panel_count());
+            menu::update_workspace_enabled(menu, state.list.len());
             state
                 .sidebar
                 .set_items(state.list.items(), state.list.active_index());
@@ -307,13 +308,21 @@ fn layout_children(hwnd: HWND) {
     let client = layout_host::client_rect(hwnd);
     let sidebar_w = settings::SIDEBAR_DEFAULT_WIDTH.min(client.w);
     let area = explorer_area(hwnd);
-    let Some(mut state) = state_of(hwnd) else {
-        return;
+    // 사이드바 이동은 상태 차용을 놓고 수행한다 — 이동이 사이드바에 동기 WM_SIZE를 보내고,
+    // 그 처리(편집 커밋)가 메인 창 상태를 다시 요구할 수 있다(차용 중이면 이름 변경이 유실된다)
+    let sidebar_hwnd = {
+        let Some(state) = state_of(hwnd) else {
+            return;
+        };
+        state.sidebar.hwnd()
     };
     // 안전성: 우리가 만든 살아있는 자식 창 이동
     unsafe {
-        let _ = MoveWindow(state.sidebar.hwnd(), 0, 0, sidebar_w, client.h, true);
+        let _ = MoveWindow(sidebar_hwnd, 0, 0, sidebar_w, client.h, true);
     }
+    let Some(mut state) = state_of(hwnd) else {
+        return;
+    };
     if let Some(host) = state.active_host() {
         host.set_area(area);
         host.relayout();

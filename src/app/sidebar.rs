@@ -722,22 +722,24 @@ unsafe extern "system" fn edit_subclass_proc(
     _id: usize,
     _data: usize,
 ) -> LRESULT {
-    let notify = match (msg, wparam.0 as u16) {
-        (WM_KEYDOWN, key) if key == VK_RETURN.0 => Some(WM_APP_RENAME_COMMIT),
-        (WM_KEYDOWN, key) if key == VK_ESCAPE.0 => Some(WM_APP_RENAME_CANCEL),
-        (WM_KILLFOCUS, _) => Some(WM_APP_RENAME_COMMIT),
-        _ => None,
+    // (알릴 메시지, 기본 처리를 삼킬지) — Enter/Esc는 EDIT이 기본 처리하면 경고음이 나므로 삼킨다
+    let (notify, swallow) = match (msg, wparam.0 as u16) {
+        (WM_KEYDOWN, key) if key == VK_RETURN.0 => (Some(WM_APP_RENAME_COMMIT), true),
+        (WM_KEYDOWN, key) if key == VK_ESCAPE.0 => (Some(WM_APP_RENAME_CANCEL), true),
+        // 포커스 상실은 커밋으로 보되 기본 처리는 그대로 이어간다
+        (WM_KILLFOCUS, _) => (Some(WM_APP_RENAME_COMMIT), false),
+        _ => (None, false),
     };
-    if let Some(msg) = notify {
+    if let Some(notify) = notify {
         // 안전성: 부모(사이드바)에 게시 — 편집 창 파괴는 부모가 수행하므로 여기서는 알리기만 한다
         unsafe {
             if let Ok(parent) = GetParent(hwnd) {
-                let _ = PostMessageW(Some(parent), msg, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(parent), notify, WPARAM(0), LPARAM(0));
             }
         }
-        if msg == WM_APP_RENAME_COMMIT && lparam.0 == 0 {
-            return LRESULT(0); // Enter 기본 처리(경고음) 억제
-        }
+    }
+    if swallow {
+        return LRESULT(0);
     }
     // 안전성: 나머지는 원래 프로시저로 위임
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
@@ -801,6 +803,9 @@ unsafe extern "system" fn sidebar_proc(
             LRESULT(0)
         }
         WM_SIZE => {
+            // 크기가 바뀌면 스크롤이 재계산돼 항목 위치가 움직인다 — 편집 중이던 EDIT은
+            // 생성 당시 좌표에 고정돼 어긋나므로 먼저 커밋하고 닫는다 (T6 Edge)
+            end_rename(hwnd, true);
             if let Some(mut state) = state_of(hwnd) {
                 let count = state.items.len();
                 let height = client_height(hwnd);
