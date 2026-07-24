@@ -1,21 +1,30 @@
 //! 파일 목록 — SysListView32 가상 모드(LVS_OWNERDATA) 래퍼 (FR-4·FR-5)
+use crate::app::theme;
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    CreateSolidBrush, DeleteObject, FillRect, SetBkMode, SetTextColor, TRANSPARENT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Controls::{
-    LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCFMT_LEFT, LVCFMT_RIGHT, LVCOLUMNW, LVIF_IMAGE, LVIF_TEXT,
-    LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST,
-    LVM_SETITEMCOUNT, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA,
-    LVS_REPORT, LVS_SHAREIMAGELISTS, LVS_SHOWSELALWAYS, LVSIL_SMALL, NMLVDISPINFOW, WC_LISTVIEWW,
+    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, LVCF_FMT, LVCF_TEXT,
+    LVCF_WIDTH, LVCFMT_LEFT, LVCFMT_RIGHT, LVCOLUMNW, LVIF_IMAGE, LVIF_TEXT, LVM_GETNEXTITEM,
+    LVM_INSERTCOLUMNW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST,
+    LVM_SETITEMCOUNT, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHAREIMAGELISTS, LVS_SHOWSELALWAYS,
+    LVSIL_SMALL, NM_CUSTOMDRAW, NMCUSTOMDRAW, NMHDR, NMLVDISPINFOW, SetWindowTheme, WC_LISTVIEWW,
 };
-use windows::Win32::UI::Shell::StrCmpLogicalW;
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass, StrCmpLogicalW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, MoveWindow, SendMessageW, WINDOW_STYLE, WS_CHILD, WS_CLIPSIBLINGS,
+    CreateWindowExW, MoveWindow, SendMessageW, WINDOW_STYLE, WM_NOTIFY, WS_CHILD, WS_CLIPSIBLINGS,
     WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
 };
-use windows::core::{HSTRING, PCWSTR, Result};
+use windows::core::{HSTRING, PCWSTR, Result, w};
+
+/// 목록 헤더 다크 그리기용 서브클래스 ID
+const DARK_SUBCLASS_ID: usize = 1;
 
 /// 정렬 열
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -91,6 +100,28 @@ impl FileList {
 
         // 안전성: 유효한 리스트뷰 핸들에 대한 표준 초기화 메시지
         unsafe {
+            // 고정 다크 (plan T3) — 목록 본체 배경·글자. 헤더는 아래 서브클래스가 그린다
+            let _ = SetWindowTheme(list.hwnd, w!("DarkMode_Explorer"), PCWSTR::null());
+            SendMessageW(
+                list.hwnd,
+                LVM_SETBKCOLOR,
+                Some(WPARAM(0)),
+                Some(LPARAM(theme::SURFACE_BG.0 as isize)),
+            );
+            SendMessageW(
+                list.hwnd,
+                LVM_SETTEXTCOLOR,
+                Some(WPARAM(0)),
+                Some(LPARAM(theme::TEXT.0 as isize)),
+            );
+            SendMessageW(
+                list.hwnd,
+                LVM_SETTEXTBKCOLOR,
+                Some(WPARAM(0)),
+                Some(LPARAM(theme::SURFACE_BG.0 as isize)),
+            );
+            // 헤더(SysHeader32) 통지는 ListView가 소비하므로 ListView를 서브클래싱해 가로챈다
+            let _ = SetWindowSubclass(list.hwnd, Some(list_dark_proc), DARK_SUBCLASS_ID, 0);
             SendMessageW(
                 list.hwnd,
                 LVM_SETEXTENDEDLISTVIEWSTYLE,
@@ -282,6 +313,42 @@ impl FileList {
 
 /// 가상 리스트뷰 카운트 갱신 — 반드시 패널 상태의 RefCell 차용을 놓은 뒤 호출한다
 /// (동기 LVN_GETDISPINFO 재진입이 try_borrow_mut 실패로 표시 누락되는 것 방지)
+/// ListView 서브클래스 — 헤더(SysHeader32) 커스텀드로우를 가로채 다크로 그린다 (plan T3).
+/// 헤더는 ListView의 자식이라 NM_CUSTOMDRAW 통지가 ListView로 오며 부모(패널)로는 가지 않는다.
+unsafe extern "system" fn list_dark_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    if msg == WM_NOTIFY {
+        // 안전성: WM_NOTIFY lparam은 OS가 채운 NMHDR 포인터
+        let code = unsafe { (*(lparam.0 as *const NMHDR)).code };
+        if code == NM_CUSTOMDRAW {
+            // 안전성: NM_CUSTOMDRAW 통지의 lparam은 NMCUSTOMDRAW
+            let cd = unsafe { &*(lparam.0 as *const NMCUSTOMDRAW) };
+            if cd.dwDrawStage == CDDS_PREPAINT {
+                return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+            }
+            if cd.dwDrawStage == CDDS_ITEMPREPAINT {
+                // 안전성: 헤더 배경을 다크로 채우고 글자색만 지정 — 텍스트·정렬표식은 시스템이 위에 그린다
+                unsafe {
+                    let brush = CreateSolidBrush(theme::HEADER_BG);
+                    FillRect(cd.hdc, &cd.rc, brush);
+                    let _ = DeleteObject(brush.into());
+                    SetTextColor(cd.hdc, theme::HEADER_TEXT);
+                    SetBkMode(cd.hdc, TRANSPARENT);
+                }
+                return LRESULT(CDRF_DODEFAULT as isize);
+            }
+        }
+    }
+    // 안전성: 기본 서브클래스 체인으로 위임
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
 pub fn apply_item_count(list: HWND, count: usize) {
     // 안전성: 유효한 리스트뷰 핸들에 표준 메시지 — 전체 무효화로 재요청 유도
     unsafe {

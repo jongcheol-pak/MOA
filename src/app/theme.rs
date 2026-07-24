@@ -12,6 +12,14 @@ const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
 
 /// 창 배경·스플리터 틈 (사이드바 COLOR_BG와 동일)
 pub const WINDOW_BG: COLORREF = rgb(0x1B, 0x1B, 0x1B);
+/// 목록·트리·입력 컨트롤 배경
+pub const SURFACE_BG: COLORREF = rgb(0x1E, 0x1E, 0x1E);
+/// 기본 글자색
+pub const TEXT: COLORREF = rgb(0xE8, 0xE8, 0xE8);
+/// 목록 헤더 배경
+pub const HEADER_BG: COLORREF = rgb(0x25, 0x25, 0x25);
+/// 목록 헤더 글자
+pub const HEADER_TEXT: COLORREF = rgb(0xC8, 0xC8, 0xC8);
 
 /// 최상위 창 타이틀바를 다크로 전환한다.
 /// 미지원 OS(구버전 Windows)에서는 실패하지만 앱 동작에는 영향 없으므로 반환을 무시한다.
