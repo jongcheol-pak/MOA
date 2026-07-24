@@ -420,17 +420,23 @@ fn register_class() -> Result<()> {
     // 안전성: 클래스 중복 등록은 무해 (첫 등록만 유효)
     unsafe {
         let instance = GetModuleHandleW(None)?;
+        // 고정 다크 — 패널 여백(자식 컨트롤 사이)을 다크로 (plan T5).
+        // 배경 브러시는 실제 GDI 객체이므로, 패널마다 register_class가 호출돼도 첫 등록만 이 브러시를
+        // 클래스에 연결한다. 2번째 패널부터는 RegisterClassExW가 0(이미 등록)을 반환하며, 이번에 만든
+        // 브러시는 어디에도 연결되지 못하므로 즉시 해제해 누수를 막는다 (T5 quality 리뷰 M1).
+        let brush = CreateSolidBrush(theme::WINDOW_BG);
         let wc = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(panel_proc),
             hInstance: instance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW)?,
-            // 고정 다크 — 패널 여백(자식 컨트롤 사이)을 다크로 (plan T5)
-            hbrBackground: CreateSolidBrush(theme::WINDOW_BG),
+            hbrBackground: brush,
             lpszClassName: PANEL_CLASS,
             ..Default::default()
         };
-        let _ = RegisterClassExW(&wc);
+        if RegisterClassExW(&wc) == 0 {
+            let _ = DeleteObject(brush.into());
+        }
     }
     Ok(())
 }
