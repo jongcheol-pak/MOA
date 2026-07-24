@@ -391,7 +391,7 @@
     - (ii-a) `src/panel/panel.rs`에 알림 메시지 게시 추가 → `## 사전 승인 항목`에 등록
   - **Depends on**: T1, T2, T3, T4
 
-- [ ] T6. 이름 변경·삭제·순서 변경 + 메뉴 바 워크스페이스 항목
+- [x] T6. 이름 변경·삭제·순서 변경 + 메뉴 바 워크스페이스 항목
   - **Type**: D
   - **Design**: ① `src/app/sidebar.rs`(입력·인라인 편집·드래그), `src/app/menu.rs`(메뉴 항목), `src/app/window.rs`(명령 처리·모델 갱신). ② `Sidebar::begin_rename(index)` — 항목 1줄 영역에 `EDIT` 자식 생성 + `SetWindowSubclass`로 Enter/Esc 가로채기(`address_bar` 패턴 재사용), `Sidebar::end_rename(commit: bool)`, 드래그 상태 `DragReorder{from, cursor_y, started}`(임계 8px, D12)와 순수 함수 `drop_index(cursor_y, scroll, count) -> usize`, 컨텍스트 메뉴는 `WM_APP_WS_CONTEXT`로 부모에 위임. 키 처리는 사이드바 `WM_KEYDOWN` 로컬(F2·Delete·↑/↓ — D16). 메뉴 상수 `IDM_WS_NEW`/`IDM_WS_RENAME`/`IDM_WS_DELETE` 추가. ③ 사이드바는 조작을 부모에 알리고, 모델 변경(`WorkspaceList::rename/remove/reorder`)과 `LayoutHost::destroy_all`(T2)은 `window.rs`가 수행한 뒤 `set_items`로 되돌린다(단방향 흐름). ④ 추상화하지 않을 것: 범용 드래그 프레임워크·명령 패턴을 만들지 않는다.
   - **Acceptance**: Given 항목 선택 상태, When F2(사이드바 포커스) 또는 컨텍스트 메뉴 "이름 바꾸기", Then 인라인 EDIT이 뜨고 Enter는 커밋·Esc는 취소한다(FR-18) / **Given 워크스페이스 목록, When `+` 버튼 또는 메뉴 "새로 만들기", Then 자동 이름("워크스페이스 N")이 부여된 상태로 인라인 EDIT이 즉시 열리고 Esc를 누르면 자동 이름이 유지된다(FR-16)** / When 삭제 명령, Then 확인 대화상자 후 삭제되고 해당 워크스페이스가 `Live`면 `destroy_all`로 패널 창이 전부 파괴되며 `Pending`이면 보관 데이터만 폐기된다 / 워크스페이스가 1개면 삭제 메뉴가 비활성이고 Delete 키도 무시된다 / When 항목을 8px 이상 드래그해 다른 항목 위에 놓으면, Then 순서가 바뀌고 활성 항목이 유지된다(HUMAN-VERIFY) / 메뉴 바 "워크스페이스(&W)"에 새로 만들기·이름 바꾸기·삭제가 있고 상황에 맞게 활성/비활성된다 / **주소창·인라인 EDIT에서 Delete 키로 문자 삭제가 정상 동작한다(D16 회귀 확인)** / `drop_index` 단위테스트 통과 / `cargo clippy --all-targets -- -D warnings`·`test` 통과
@@ -489,6 +489,10 @@
   - 결정: 사이드바 폭 토큰(232/160/480)은 세션 검증이 같은 값을 쓰므로 `settings`가 소유하고 sidebar는 재선언 없이 참조(T3 spec 리뷰 MINOR 해소).
   - 결정: T4 단계의 목록은 `sample_list()` 임시 3개 — T5에서 세션 기반 실제 목록으로 교체. `AppState`에는 아직 목록을 보관하지 않는다(미사용 필드 경고 회피).
   - V-9: 데스크톱 UI라 렌더 확인 불가 → 시각 행 전부 `⏳ 미확인`으로 F-8 인계, 코드 상수 대조는 전 행 ✅.
+- T5-T6 완료 (커밋 c16c846, T6 review-fix a4f07d1): ① AppState를 `list + entries(Pending/Live)` 구조로 재편해 워크스페이스별 탐색기를 지연 생성·숨김 유지로 전환, 전역 명령·드래그·활성 패널 추적을 활성 워크스페이스 경유로 변경, 부제는 `WM_APP_PATH_CHANGED`(panel.rs 신규) + 활성 패널 전환 시 갱신. ② 인라인 이름 편집(EDIT+서브클래스)·삭제(확인 대화상자+destroy_all)·드래그 정렬(8px 임계·중앙 기준 삽입선)·컨텍스트 메뉴·메뉴 바 "워크스페이스(&W)" 추가.
+  - 결정: F2·Delete·↑/↓는 사이드바 `WM_KEYDOWN` 로컬 처리로 한정(D16) — 액셀러레이터는 포커스 무관하게 소비되어 주소창 Delete가 회귀하기 때문.
+  - 결정(리뷰 M1): `layout_children`은 `MoveWindow` 전에 AppState 차용을 놓는다 — 사이드바 리사이즈가 동기 WM_SIZE→편집 커밋→부모 SendMessage로 재진입해 차용 중이면 이름 변경이 조용히 유실된다.
+  - 결정(리뷰 M2·m1): 창 생성 시 `update_workspace_enabled` 초기화, 서브클래스는 Enter/Esc만 기본 처리를 삼키고 WM_KILLFOCUS는 위임.
 
 ## Next Steps
 
