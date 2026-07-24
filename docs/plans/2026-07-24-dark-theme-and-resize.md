@@ -207,6 +207,16 @@
 
 (없음 — 다크 범위·방식·잔상 개선 방식 모두 사용자 확정.)
 
+## Phase Ledger
+
+- Phase F 통과 (HEAD ed6e68f) — 전체 build/clippy/test(76+2)/fmt 통과, plan-completion-reviewer(Opus) OK(M1 메뉴 니모닉·m1 비활성 표시·m2 PRD 수정 후 재검토 통과)
+- Phase G 통과 (Must 100%) — FR-21(Should, 탐색기 고정 다크) T2~T7 커버 확인. 기존 active Must FR(FR-1~8·15~17)은 이번 작업이 렌더링만 추가해 회귀 없음(테스트 76 통과·cross-task 정합 확인), 이번 범위 외 기구현으로 유지.
+
+## Next Steps
+
+- 권장 다음 액션: HUMAN-VERIFY(`cargo run`) — 다크 렌더링·크기 조절 잔상 소멸·메뉴 Alt 니모닉·각 컨트롤 색 대비 확인. 이후 필요 시 push/PR(별도 승인).
+- Suggested skills: 공식 /code-review, 공식 /security-review
+
 ## 통과 체크리스트
 
 - [x] 요구 이해 작성
