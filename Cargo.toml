@@ -8,6 +8,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    # DwmSetWindowAttribute — 다크 타이틀바(DWMWA_USE_IMMERSIVE_DARK_MODE)
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     # SECURITY_ATTRIBUTES 정의 — CreateFileW/CreateEventW(변경 감시)가 요구
     "Win32_Security",

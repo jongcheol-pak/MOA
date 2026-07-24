@@ -1,6 +1,7 @@
 //! 메인 창 — 클래스 등록·생성·윈도우 프로시저·명령 배선
 use crate::app::layout::{MIN_PANE_SIZE, Rect, SPLITTER_THICKNESS, SplitDir};
 use crate::app::layout_host::{self, LayoutHost};
+use crate::app::theme;
 use crate::app::menu::{
     self, IDM_CLOSE_PANE, IDM_NAV_BACK, IDM_NAV_FORWARD, IDM_NAV_UP, IDM_REFRESH,
     IDM_SIDEBAR_TOGGLE, IDM_SPLIT_H, IDM_SPLIT_V, IDM_TAB_CLOSE, IDM_TAB_NEW, IDM_TREE_TOGGLE,
@@ -23,7 +24,7 @@ use std::cell::{RefCell, RefMut};
 use std::path::PathBuf;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    COLOR_WINDOW, HBRUSH, MONITOR_DEFAULTTONULL, MonitorFromRect, ScreenToClient,
+    CreateSolidBrush, MONITOR_DEFAULTTONULL, MonitorFromRect, ScreenToClient,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
@@ -150,8 +151,9 @@ impl MainWindow {
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: instance.into(),
                 hCursor: LoadCursorW(None, IDC_ARROW)?,
-                // 시스템 배경 브러시 관례: COLOR_* + 1 값을 HBRUSH로 전달
-                hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize as *mut core::ffi::c_void),
+                // 고정 다크 — 창 배경·스플리터 틈을 다크로 칠한다 (plan T2).
+                // 클래스 소유 브러시는 앱 수명 동안 유지되며 프로세스 종료 시 회수된다
+                hbrBackground: CreateSolidBrush(theme::WINDOW_BG),
                 lpszClassName: WINDOW_CLASS,
                 ..Default::default()
             };
@@ -175,6 +177,9 @@ impl MainWindow {
                 Some(instance.into()),
                 None,
             )?;
+
+            // 고정 다크 — 타이틀바를 다크로 (plan T2). 미지원 OS면 조용히 무시된다
+            theme::apply_dark_titlebar(hwnd);
 
             // 상태는 창 생성 후 부착 — 부착 전 도착하는 메시지는 null 가드로 기본 처리
             let menu = menu::attach_menu(hwnd)?;

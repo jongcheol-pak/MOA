@@ -4,5 +4,6 @@ pub mod layout_host;
 pub mod menu;
 pub mod settings;
 pub mod sidebar;
+pub mod theme;
 pub mod window;
 pub mod workspace;
