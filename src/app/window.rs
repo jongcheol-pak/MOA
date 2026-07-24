@@ -8,12 +8,12 @@ use crate::app::menu::{
 use crate::app::settings::{
     self, LayoutNode, PanelSession, Session, WindowState, WorkspaceSession,
 };
-use crate::app::sidebar::Sidebar;
+use crate::app::sidebar::{Sidebar, WM_APP_WS_NEW, WM_APP_WS_SELECT};
 use crate::app::workspace::WorkspaceList;
 use crate::panel::panel::{
-    PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_REFRESH,
-    WM_APP_SESSION_COLLECT, WM_APP_SESSION_RESTORE, WM_APP_TAB_CLOSE, WM_APP_TAB_NEW,
-    WM_APP_TREE_TOGGLE,
+    PanelSessionData, WM_APP_NAV_BACK, WM_APP_NAV_FORWARD, WM_APP_NAV_UP, WM_APP_PATH_CHANGED,
+    WM_APP_REFRESH, WM_APP_SESSION_COLLECT, WM_APP_SESSION_RESTORE, WM_APP_TAB_CLOSE,
+    WM_APP_TAB_NEW, WM_APP_TREE_TOGGLE,
 };
 use std::cell::{RefCell, RefMut};
 use std::path::PathBuf;
@@ -41,11 +41,59 @@ const WINDOW_CLASS: PCWSTR = w!("FileExplorerMainWindow");
 /// 상태 접근)가 1차로 별칭을 차단하며, RefCell의 try_borrow_mut은 그 필터가 변경·확장돼
 /// 재진입 경로에서 상태에 접근하게 되더라도 별칭 &mut이 만들어질 수 없게 하는 구조적 안전망이다.
 struct AppState {
-    host: LayoutHost,
     menu: HMENU,
-    /// 좌측 워크스페이스 목록 창 (FR-15).
-    /// 목록 모델(WorkspaceList) 소유와 전환 배선은 T5에서 붙는다 — 지금은 표시 스냅숏만 넘긴다
+    /// 좌측 워크스페이스 목록 창 (FR-15)
     sidebar: Sidebar,
+    /// 워크스페이스 목록 모델 — 사이드바는 이 스냅숏을 받아 그린다
+    list: WorkspaceList,
+    /// 워크스페이스별 탐색기 상태 — `list.items()`와 **인덱스 1:1**로 대응한다 (FR-17)
+    entries: Vec<EntryState>,
+}
+
+/// 워크스페이스 하나의 탐색기 상태 — 방문 전에는 세션 데이터만 들고 있다 (D2 지연 생성)
+enum EntryState {
+    /// 미방문 — 저장된 세션 데이터 보관 (창 없음). 선택되면 Live로 승격된다
+    Pending(WorkspaceSession),
+    /// 방문함 — 탐색기 창들이 만들어져 있다 (비활성이면 숨김 상태)
+    Live(LayoutHost),
+}
+
+impl AppState {
+    /// 활성 워크스페이스의 탐색기 — 미방문(Pending)이면 None
+    fn active_host(&mut self) -> Option<&mut LayoutHost> {
+        match self.entries.get_mut(self.list.active_index()) {
+            Some(EntryState::Live(host)) => Some(host),
+            _ => None,
+        }
+    }
+
+    /// 활성 워크스페이스의 탐색기 (읽기 전용)
+    fn active_host_ref(&self) -> Option<&LayoutHost> {
+        match self.entries.get(self.list.active_index()) {
+            Some(EntryState::Live(host)) => Some(host),
+            _ => None,
+        }
+    }
+
+    /// 미방문 워크스페이스를 실제 탐색기 창으로 승격한다 (지연 생성 — D2).
+    /// 창 생성에 실패하면 Pending 상태 그대로 두고 호출부가 전환을 포기한다
+    fn materialize(&mut self, hwnd: HWND, index: usize) {
+        let Some(EntryState::Pending(ws)) = self.entries.get(index) else {
+            return;
+        };
+        let ws = ws.clone();
+        let area = explorer_area(hwnd);
+        let Ok(host) = LayoutHost::from_shape(hwnd, &ws.layout.to_shape(), area) else {
+            return;
+        };
+        restore_panels(&host, &ws);
+        self.entries[index] = EntryState::Live(host);
+    }
+
+    /// 활성 워크스페이스의 패널 수 — 메뉴 활성 상태 갱신용 (미방문이면 1로 본다)
+    fn active_panel_count(&self) -> usize {
+        self.active_host_ref().map_or(1, LayoutHost::panel_count)
+    }
 }
 
 /// 메인 창. 메시지 루프(main 소유)가 hwnd·haccel을 사용한다.
@@ -92,32 +140,42 @@ impl MainWindow {
 
             // 상태는 창 생성 후 부착 — 부착 전 도착하는 메시지는 null 가드로 기본 처리
             let menu = menu::attach_menu(hwnd)?;
-            // 세션이 있으면 활성 워크스페이스의 분할 구조를 복원, 없거나 손상이면 기본 1패널
-            // (FR-11·FR-20 — 나머지 워크스페이스의 지연 생성은 T5)
+            // 세션이 있으면 워크스페이스 전부를 미방문(Pending)으로 적재하고 활성 1개만 승격한다
+            // (FR-20·D2 — 방문한 워크스페이스만 창을 만들어 메모리를 억제)
             let session = settings::load_session();
-            let active_ws = session
-                .as_ref()
-                .and_then(|s| s.workspaces.get(s.active_workspace));
             // 좌측 사이드바를 먼저 만들고, 탐색기는 그만큼 좁아진 영역에 배치한다 (FR-15)
             let sidebar = Sidebar::create(hwnd)?;
+            let (list, mut entries) = restore_workspaces(session.as_ref());
             let area = explorer_area(hwnd);
-            let host = match active_ws {
-                Some(ws) => LayoutHost::from_shape(hwnd, &ws.layout.to_shape(), area)?,
-                None => LayoutHost::new(hwnd, area)?,
-            };
-            if let Some(ws) = active_ws {
-                restore_panels(&host, ws);
+            if entries.is_empty() {
+                // 세션 없음·손상 → 기본 워크스페이스 1개로 시작
+                entries.push(EntryState::Live(LayoutHost::new(hwnd, area)?));
+            } else {
+                let active = list.active_index();
+                match &entries[active] {
+                    EntryState::Pending(ws) => {
+                        let ws = ws.clone();
+                        let host = LayoutHost::from_shape(hwnd, &ws.layout.to_shape(), area)?;
+                        restore_panels(&host, &ws);
+                        entries[active] = EntryState::Live(host);
+                    }
+                    EntryState::Live(_) => {}
+                }
             }
-            menu::update_close_enabled(menu, host.panel_count());
-            let list = sample_list();
-            sidebar.set_items(list.items(), list.active_index());
-            let state = Box::new(RefCell::new(AppState {
-                host,
+            let state = AppState {
                 menu,
                 sidebar,
-            }));
+                list,
+                entries,
+            };
+            menu::update_close_enabled(menu, state.active_panel_count());
+            state
+                .sidebar
+                .set_items(state.list.items(), state.list.active_index());
+            let state = Box::new(RefCell::new(state));
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
             layout_children(hwnd);
+            refresh_subtitle(hwnd);
 
             let haccel = menu::create_accels()?;
             match &session {
@@ -239,7 +297,7 @@ fn explorer_area(hwnd: HWND) -> Rect {
     }
 }
 
-/// 사이드바와 탐색기를 현재 창 크기에 맞춰 배치한다 (WM_SIZE·생성 직후 공용)
+/// 사이드바와 활성 워크스페이스 탐색기를 현재 창 크기에 맞춰 배치한다 (WM_SIZE·생성 직후 공용)
 fn layout_children(hwnd: HWND) {
     let client = layout_host::client_rect(hwnd);
     let sidebar_w = settings::SIDEBAR_DEFAULT_WIDTH.min(client.w);
@@ -251,23 +309,152 @@ fn layout_children(hwnd: HWND) {
     unsafe {
         let _ = MoveWindow(state.sidebar.hwnd(), 0, 0, sidebar_w, client.h, true);
     }
-    state.host.set_area(area);
-    state.host.relayout();
+    if let Some(host) = state.active_host() {
+        host.set_area(area);
+        host.relayout();
+    }
 }
 
-/// T4 시각 확인용 임시 목록 — T5에서 세션 기반 실제 목록·전환 배선으로 교체한다
-fn sample_list() -> WorkspaceList {
-    let mut list = WorkspaceList::new();
-    list.add();
-    list.add();
-    let home = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("C:\\"));
-    for index in 0..list.len() {
-        list.set_subtitle(index, &home);
+/// 세션에서 워크스페이스 목록·엔트리를 복원한다. 세션이 없거나 목록이 비면 기본 1개 목록과
+/// 빈 엔트리를 돌려주고, 호출부가 탐색기를 즉시 만든다
+fn restore_workspaces(session: Option<&Session>) -> (WorkspaceList, Vec<EntryState>) {
+    let restored = session.and_then(|s| {
+        let names = s.workspaces.iter().map(|w| w.name.clone()).collect();
+        WorkspaceList::from_names(names, s.active_workspace).map(|list| (list, s))
+    });
+    let Some((mut list, s)) = restored else {
+        return (WorkspaceList::new(), Vec::new());
+    };
+    // 미방문 워크스페이스의 부제는 살아있는 패널이 없으므로 저장 데이터에서 계산한다 (D18)
+    for (index, ws) in s.workspaces.iter().enumerate() {
+        if let Some(path) = pending_subtitle(ws) {
+            list.set_subtitle(index, &path);
+        }
     }
-    list.set_active(0);
-    list
+    let entries = s
+        .workspaces
+        .iter()
+        .cloned()
+        .map(EntryState::Pending)
+        .collect();
+    (list, entries)
+}
+
+/// 미방문 워크스페이스의 부제 경로 — 저장된 활성 패널의 활성 탭 (D18)
+fn pending_subtitle(ws: &WorkspaceSession) -> Option<PathBuf> {
+    ws.panels
+        .get(ws.active_panel)
+        .and_then(|p| p.tabs.get(p.active_tab))
+        .map(PathBuf::from)
+}
+
+/// 활성 워크스페이스의 부제를 활성 패널·활성 탭 경로로 갱신한다 (D6).
+/// 패널 질의는 상태 차용을 놓은 뒤 수행한다 (동기 SendMessage 중 재진입 대비)
+fn refresh_subtitle(hwnd: HWND) {
+    let target = {
+        let Some(state) = state_of(hwnd) else {
+            return;
+        };
+        state
+            .active_host_ref()
+            .and_then(LayoutHost::active_hwnd)
+            .map(|panel| (state.list.active_index(), panel))
+    };
+    let Some((index, panel)) = target else {
+        return;
+    };
+    let mut data = PanelSessionData::default();
+    send_ptr(
+        panel,
+        WM_APP_SESSION_COLLECT,
+        &mut data as *mut PanelSessionData as isize,
+    );
+    let Some(path) = data.tabs.get(data.active).cloned() else {
+        return;
+    };
+    let Some(mut state) = state_of(hwnd) else {
+        return;
+    };
+    state.list.set_subtitle(index, &path);
+    let active = state.list.active_index();
+    state.sidebar.set_items(state.list.items(), active);
+}
+
+/// 사이드바 표시 스냅숏을 현재 목록으로 갱신한다
+fn sync_sidebar(hwnd: HWND) {
+    let Some(state) = state_of(hwnd) else {
+        return;
+    };
+    let active = state.list.active_index();
+    state.sidebar.set_items(state.list.items(), active);
+}
+
+/// 워크스페이스 전환 (FR-17) — 미방문이면 먼저 승격하고, 실패하면 전환하지 않는다
+fn switch_workspace(hwnd: HWND, index: usize) {
+    {
+        let Some(mut state) = state_of(hwnd) else {
+            return;
+        };
+        if index >= state.entries.len() || index == state.list.active_index() {
+            return; // 같은 워크스페이스 재선택은 무시
+        }
+        if matches!(state.entries[index], EntryState::Pending(_)) {
+            state.materialize(hwnd, index);
+            if matches!(state.entries[index], EntryState::Pending(_)) {
+                return; // 창 생성 실패 — 이전 워크스페이스 유지 (조용한 저하)
+            }
+        }
+        if let Some(previous) = state.active_host() {
+            previous.end_drag(false); // 전환 중 스플리터 드래그 정리
+            previous.set_visible(false);
+        }
+        state.list.set_active(index);
+        let area = explorer_area(hwnd);
+        if let Some(host) = state.active_host() {
+            host.set_area(area);
+            host.relayout();
+            host.set_visible(true);
+        }
+        let count = state.active_panel_count();
+        menu::update_close_enabled(state.menu, count);
+    }
+    sync_sidebar(hwnd);
+    refresh_subtitle(hwnd);
+}
+
+/// 새 워크스페이스 (FR-16) — 홈 폴더 1패널로 만들고 즉시 전환한다.
+/// 생성 직후 인라인 이름 편집으로 들어가는 것은 T6
+fn new_workspace(hwnd: HWND) {
+    {
+        let area = explorer_area(hwnd);
+        let Some(mut state) = state_of(hwnd) else {
+            return;
+        };
+        let Ok(host) = LayoutHost::new(hwnd, area) else {
+            return; // 창 생성 실패 — 목록도 바꾸지 않는다
+        };
+        if let Some(previous) = state.active_host() {
+            previous.end_drag(false);
+            previous.set_visible(false);
+        }
+        let index = state.list.add(); // 목록 끝에 추가되고 활성이 된다
+        state.entries.insert(index, EntryState::Live(host));
+        let count = state.active_panel_count();
+        menu::update_close_enabled(state.menu, count);
+    }
+    sync_sidebar(hwnd);
+    refresh_subtitle(hwnd);
+}
+
+/// 경로 변경 알림의 발신 패널이 활성 워크스페이스의 활성 패널인가 (D6 규칙 1)
+fn is_active_panel(hwnd: HWND, source: HWND) -> bool {
+    let Some(state) = state_of(hwnd) else {
+        return false;
+    };
+    state
+        .active_host_ref()
+        .and_then(LayoutHost::active_hwnd)
+        .is_some_and(|active| active == source)
 }
 
 /// 워크스페이스의 패널별 탭을 각 패널에 복원 (walk 순서 1:1 — layout_host 계약)
@@ -321,18 +508,16 @@ fn apply_window_state(hwnd: HWND, w: &WindowState) {
     }
 }
 
-/// WM_CLOSE — 현재 레이아웃·패널 탭·창 위치를 수집해 저장 (FR-11, D15: 종료 시 1회)
-fn save_current_session(hwnd: HWND) {
-    let Some(state) = state_of(hwnd) else {
-        return;
-    };
-    let (shape, hwnds) = state.host.session_snapshot();
+/// 방문한 워크스페이스 하나의 상태 수집 — 분할 구조·패널별 탭·활성 패널 인덱스.
+/// 패널 HWND 순서는 layout 리프 walk 순서와 1:1이다 (layout_host 계약)
+fn collect_workspace(host: &LayoutHost, name: &str) -> WorkspaceSession {
+    let (shape, hwnds) = host.session_snapshot();
     let mut panels = Vec::with_capacity(hwnds.len());
-    for panel in hwnds {
+    for panel in &hwnds {
         let mut data = PanelSessionData::default();
         // 패널 RefCell은 메인 창 것과 별개 — 동기 수집 안전 (send_to 주석 참조)
         send_ptr(
-            panel,
+            *panel,
             WM_APP_SESSION_COLLECT,
             &mut data as *mut PanelSessionData as isize,
         );
@@ -345,6 +530,43 @@ fn save_current_session(hwnd: HWND) {
             active_tab: data.active,
         });
     }
+    // 활성 패널은 walk 순서상의 위치로 저장한다 (부제 산출 전용 — D18)
+    let active_panel = host
+        .active_hwnd()
+        .and_then(|active| hwnds.iter().position(|h| *h == active))
+        .unwrap_or(0);
+    WorkspaceSession {
+        name: name.to_string(),
+        layout: LayoutNode::from_shape(&shape),
+        panels,
+        active_panel,
+    }
+}
+
+/// WM_CLOSE — 워크스페이스 전체·창 위치를 수집해 저장 (FR-11·FR-20, D15: 종료 시 1회)
+fn save_current_session(hwnd: HWND) {
+    let Some(state) = state_of(hwnd) else {
+        return;
+    };
+    // 방문한 워크스페이스는 실제 상태를 수집하고, 미방문은 보관 중이던 데이터를 그대로 다시 저장한다
+    // (이름은 항상 목록 기준 — 이름 변경이 목록에만 반영되기 때문. list와 entries는 인덱스 1:1)
+    let workspaces: Vec<WorkspaceSession> = state
+        .list
+        .items()
+        .iter()
+        .zip(&state.entries)
+        .map(|(item, entry)| match entry {
+            EntryState::Live(host) => collect_workspace(host, &item.name),
+            EntryState::Pending(ws) => WorkspaceSession {
+                name: item.name.clone(),
+                ..ws.clone()
+            },
+        })
+        .collect();
+    if workspaces.is_empty() {
+        return; // 저장할 것이 없다 (정상 경로에서는 발생하지 않음)
+    }
+    let active_workspace = state.list.active_index().min(workspaces.len() - 1);
     let mut wp = WINDOWPLACEMENT {
         length: size_of::<WINDOWPLACEMENT>() as u32,
         ..Default::default()
@@ -363,16 +585,10 @@ fn save_current_session(hwnd: HWND) {
             h: rc.bottom - rc.top,
             maximized: wp.showCmd == SW_SHOWMAXIMIZED.0 as u32,
         },
-        // 사이드바 상태와 워크스페이스 목록은 T5·T7에서 실제 값으로 채운다.
-        // 이 단계는 스키마만 v2이고 화면은 워크스페이스 1개짜리와 같다
+        // 사이드바 폭·접힘은 T7에서 실제 값으로 채운다
         sidebar: settings::SidebarSession::default(),
-        active_workspace: 0,
-        workspaces: vec![WorkspaceSession {
-            name: "워크스페이스 1".to_string(),
-            layout: LayoutNode::from_shape(&shape),
-            panels,
-            active_panel: 0,
-        }],
+        active_workspace,
+        workspaces,
     });
 }
 
@@ -401,19 +617,28 @@ unsafe extern "system" fn wnd_proc(
             let Some(mut state) = state_of(hwnd) else {
                 return LRESULT(0);
             };
+            // 모든 전역 명령은 **활성 워크스페이스**의 탐색기에만 적용된다 (FR-17)
             match loword(wparam.0) {
                 IDM_SPLIT_H => {
-                    let _ = state.host.split_active(hwnd, SplitDir::Horizontal);
+                    if let Some(host) = state.active_host() {
+                        let _ = host.split_active(hwnd, SplitDir::Horizontal);
+                    }
                 }
                 IDM_SPLIT_V => {
-                    let _ = state.host.split_active(hwnd, SplitDir::Vertical);
+                    if let Some(host) = state.active_host() {
+                        let _ = host.split_active(hwnd, SplitDir::Vertical);
+                    }
                 }
-                IDM_CLOSE_PANE => state.host.close_active(),
+                IDM_CLOSE_PANE => {
+                    if let Some(host) = state.active_host() {
+                        host.close_active();
+                    }
+                }
                 // 전역 네비게이션·새 탭·트리 토글·새로 고침 → 활성 패널로 게시
                 // (Post — 차용 해제 후 처리됨)
                 id @ (IDM_NAV_BACK | IDM_NAV_FORWARD | IDM_NAV_UP | IDM_TAB_NEW
                 | IDM_TREE_TOGGLE | IDM_REFRESH) => {
-                    if let Some(panel) = state.host.active_hwnd() {
+                    if let Some(panel) = state.active_host().and_then(|h| h.active_hwnd()) {
                         let nav_msg = match id {
                             IDM_NAV_BACK => WM_APP_NAV_BACK,
                             IDM_NAV_FORWARD => WM_APP_NAV_FORWARD,
@@ -427,27 +652,33 @@ unsafe extern "system" fn wnd_proc(
                 }
                 // 탭 닫기는 동기 질의 — 0(마지막 탭)이면 패널 닫기로 연결 (FR-2·T6 Edge)
                 IDM_TAB_CLOSE => {
-                    if let Some(panel) = state.host.active_hwnd()
+                    let panel = state.active_host().and_then(|h| h.active_hwnd());
+                    if let Some(panel) = panel
                         && send_to(panel, WM_APP_TAB_CLOSE).0 == 0
+                        && let Some(host) = state.active_host()
                     {
-                        state.host.close_active();
+                        host.close_active();
                     }
                 }
                 _ => return def_proc(hwnd, msg, wparam, lparam),
             }
-            menu::update_close_enabled(state.menu, state.host.panel_count());
+            let count = state.active_panel_count();
+            menu::update_close_enabled(state.menu, count);
             LRESULT(0)
         }
         WM_INITMENUPOPUP => {
             if let Some(state) = state_of(hwnd) {
-                menu::update_close_enabled(state.menu, state.host.panel_count());
+                let count = state.active_panel_count();
+                menu::update_close_enabled(state.menu, count);
             }
             def_proc(hwnd, msg, wparam, lparam)
         }
         WM_LBUTTONDOWN => {
             if let Some(mut state) = state_of(hwnd) {
                 let (x, y) = coords(lparam);
-                if state.host.begin_drag(hwnd, x, y) {
+                if let Some(host) = state.active_host()
+                    && host.begin_drag(hwnd, x, y)
+                {
                     return LRESULT(0);
                 }
             }
@@ -456,33 +687,41 @@ unsafe extern "system" fn wnd_proc(
         WM_MOUSEMOVE => {
             if let Some(mut state) = state_of(hwnd) {
                 let (x, y) = coords(lparam);
-                if state.host.drag_move(x, y) {
+                if let Some(host) = state.active_host()
+                    && host.drag_move(x, y)
+                {
                     return LRESULT(0);
                 }
             }
             def_proc(hwnd, msg, wparam, lparam)
         }
         WM_LBUTTONUP => {
-            if let Some(mut state) = state_of(hwnd) {
-                state.host.end_drag(true);
+            if let Some(mut state) = state_of(hwnd)
+                && let Some(host) = state.active_host()
+            {
+                host.end_drag(true);
             }
             def_proc(hwnd, msg, wparam, lparam)
         }
         WM_CAPTURECHANGED => {
             // 드래그 중 캡처 상실(Alt+Tab 등) → 드래그 상태 정리 (plan T3 Edge)
-            if let Some(mut state) = state_of(hwnd) {
-                state.host.end_drag(false);
+            if let Some(mut state) = state_of(hwnd)
+                && let Some(host) = state.active_host()
+            {
+                host.end_drag(false);
             }
             LRESULT(0)
         }
         WM_SETCURSOR => {
-            if let Some(state) = state_of(hwnd) {
-                if state.host.apply_drag_cursor() {
+            if let Some(state) = state_of(hwnd)
+                && let Some(host) = state.active_host_ref()
+            {
+                if host.apply_drag_cursor() {
                     return LRESULT(1);
                 }
                 if loword(lparam.0 as usize) == HTCLIENT
                     && let Some((x, y)) = cursor_in_client(hwnd)
-                    && state.host.apply_splitter_cursor(x, y)
+                    && host.apply_splitter_cursor(x, y)
                 {
                     return LRESULT(1);
                 }
@@ -494,13 +733,33 @@ unsafe extern "system" fn wnd_proc(
             // split/close 도중 동기 재진입하는 WM_CREATE/WM_DESTROY 서브타입은
             // 아래 WM_LBUTTONDOWN 필터가 먼저 걸러 상태 접근 자체가 없다(1차 방어).
             // 필터가 바뀌어도 state_of의 try_borrow_mut이 None을 돌려 별칭은 생기지 않는다(2차 방어).
-            if loword(wparam.0) == WM_LBUTTONDOWN
-                && let Some(mut state) = state_of(hwnd)
-            {
-                let (x, y) = coords(lparam);
-                state.host.set_active_by_point(x, y);
+            if loword(wparam.0) == WM_LBUTTONDOWN {
+                if let Some(mut state) = state_of(hwnd)
+                    && let Some(host) = state.active_host()
+                {
+                    let (x, y) = coords(lparam);
+                    host.set_active_by_point(x, y);
+                }
+                // 활성 패널이 바뀌었을 수 있으므로 부제를 다시 계산한다 (D6 규칙 2)
+                refresh_subtitle(hwnd);
             }
             def_proc(hwnd, msg, wparam, lparam)
+        }
+        WM_APP_WS_SELECT => {
+            switch_workspace(hwnd, wparam.0);
+            LRESULT(0)
+        }
+        WM_APP_WS_NEW => {
+            new_workspace(hwnd);
+            LRESULT(0)
+        }
+        WM_APP_PATH_CHANGED => {
+            // 활성 워크스페이스의 활성 패널이 보낸 것만 부제에 반영한다 (D6 규칙 1)
+            let source = HWND(wparam.0 as *mut core::ffi::c_void);
+            if is_active_panel(hwnd, source) {
+                refresh_subtitle(hwnd);
+            }
+            LRESULT(0)
         }
         WM_DPICHANGED => {
             // 제안 사각형으로 이동 → WM_SIZE가 재배치를 수행 (NFR-4)

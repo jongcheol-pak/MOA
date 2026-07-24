@@ -54,6 +54,9 @@ pub const WM_APP_REFRESH: u32 = WM_APP + 10;
 /// `PanelSessionData` 포인터 (수집: *mut, 복원: *const). 게시(Post) 금지 — 동기 전용
 pub const WM_APP_SESSION_COLLECT: u32 = WM_APP + 11;
 pub const WM_APP_SESSION_RESTORE: u32 = WM_APP + 12;
+/// 활성 탭의 커밋 경로가 바뀌었음을 부모(메인 창)에 알린다 — 사이드바 부제 갱신 신호 (plan D6).
+/// wparam = 발신 패널 HWND. 경로 자체는 부모가 WM_APP_SESSION_COLLECT로 조회한다(페이로드 없음)
+pub const WM_APP_PATH_CHANGED: u32 = WM_APP + 13;
 
 /// 세션 수집/복원 교환 데이터 — 메인 창(window.rs)과 패널 사이 계약
 #[derive(Default)]
@@ -241,6 +244,9 @@ impl PanelState {
                 }
                 let dir = committed.to_string_lossy().into_owned();
                 self.file_list.set_entries(dir, entries);
+                // 탭 전환·새 탭·탭 닫기도 전부 이 커밋 경로를 거치므로 알림은 여기 한 곳이면 충분하다.
+                // 열거 실패(아래 분기)는 경로가 그대로라 알리지 않는다
+                notify_path_changed(hwnd);
             }
             EnumOutcome::AccessDenied => {
                 self.fail_pending("이 폴더에 접근할 수 없습니다");
@@ -367,6 +373,21 @@ pub fn create(parent: HWND) -> Result<HWND> {
             Some(instance.into()),
             None,
         )
+    }
+}
+
+/// 활성 탭 경로 변경을 부모에 알린다 (D6 — 사이드바 부제 갱신 신호)
+fn notify_path_changed(hwnd: HWND) {
+    // 안전성: 부모 창으로 비동기 게시 — 부모가 없거나 이 메시지를 무시해도 무해하다
+    unsafe {
+        if let Ok(parent) = windows::Win32::UI::WindowsAndMessaging::GetParent(hwnd) {
+            let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                Some(parent),
+                WM_APP_PATH_CHANGED,
+                WPARAM(hwnd.0 as usize),
+                LPARAM(0),
+            );
+        }
     }
 }
 

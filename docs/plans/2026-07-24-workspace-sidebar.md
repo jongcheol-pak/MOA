@@ -371,7 +371,7 @@
     - (ii-a) `IconCache` 공개 접근자 추가 → `## 사전 승인 항목`에 등록
   - **Depends on**: T1
 
-- [ ] T5. 워크스페이스 다중 호스트·전환·지연 생성·복원
+- [x] T5. 워크스페이스 다중 호스트·전환·지연 생성·복원
   - **Type**: D
   - **Design**: ① `src/app/window.rs` 수정(상태 소유는 계속 메인 창). ② `AppState`를 `{sidebar: Sidebar, list: WorkspaceList, entries: Vec<EntryState>, menu, sidebar_width, sidebar_collapsed}`로 재구성. `enum EntryState { Pending(WorkspaceSession), Live(LayoutHost) }`(T3에서 정의된 타입 사용) — 미방문 워크스페이스는 세션 데이터만 보관하고 최초 선택 시 `Live`로 승격(D2). 헬퍼 `active_host(&mut self) -> Option<&mut LayoutHost>`, `materialize(&mut self, hwnd, index)`, `explorer_area(hwnd, width, collapsed) -> Rect`(클라이언트 − 사이드바 폭 − 스플리터), `refresh_subtitle(hwnd)`(D6 두 규칙 적용). 시작 시 세션의 모든 워크스페이스를 `Pending`으로 적재하고 활성 1개만 승격, 종료 시 `Live`는 수집·`Pending`은 보관 데이터를 그대로 재저장. ③ `sidebar`·`workspace`·`layout_host`·`settings`를 참조하고, 패널의 `WM_APP_PATH_CHANGED`를 받아 부제를 갱신한다. ④ 추상화하지 않을 것: 워크스페이스 매니저 타입을 따로 만들지 않는다(AppState가 소유자).
   - **Acceptance**: Given 워크스페이스 1개로 시작, When `+`로 생성, Then 홈 폴더 1패널 탐색기가 만들어지고 즉시 전환된다(FR-16) / Given A에서 폴더 이동·분할, When B로 전환 후 다시 A 선택, Then A의 분할·탭·경로·스크롤이 그대로다(FR-17, HUMAN-VERIFY) / When 활성 패널이 폴더를 이동하거나 활성 패널이 바뀌면, Then 사이드바 해당 항목 2줄이 활성 패널·활성 탭 경로로 갱신되고 **비활성 패널의 이동은 부제를 바꾸지 않는다**(D6) / 전역 명령(분할·탭·네비게이션·트리 토글·F5)이 활성 워크스페이스의 활성 패널에만 전달된다 / Given 워크스페이스 3개 저장 세션, When 재시작, Then 목록·이름·순서·활성 워크스페이스가 복원되고 **활성 워크스페이스만 탐색기가 생성**되며 미방문 항목 부제는 `panels[active_panel].tabs[active_tab]`로 표시된다(D18, FR-20) / `cargo build`·`clippy -D warnings`·`test` 통과
