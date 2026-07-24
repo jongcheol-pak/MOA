@@ -446,6 +446,22 @@
     - (ii-b) 실측 미달로 D2(지연 생성 후 유지) 또는 D1(배치 구조) 자체를 바꿔야 하면 plan에 없던 설계 변경 → `## 불가피한 Halt`
   - **Depends on**: T1, T2, T3, T4, T5, T6, T7
 
+- [ ] T9. 부제 갱신이 인라인 편집을 파괴하지 않도록 분리 (F-7 BLOCKER B1)
+  - **Type**: C
+  - **Design**: ① `src/app/sidebar.rs`(표시 갱신 API 분리)와 `src/app/window.rs`(부제 갱신 경로만 교체). ② 신규 `Sidebar::refresh_items(&self, items, active)` — 표시 스냅숏·활성만 교체하고 **편집 중인 EDIT은 건드리지 않는다**(무효화만). 기존 `set_items`는 목록 **구조가 바뀌는** 경로(생성·삭제·순서 변경·이름 커밋) 전용으로 남겨 편집 종료를 유지한다. ③ `window.rs::refresh_subtitle`만 신규 API를 쓰고 `sync_sidebar`는 그대로. ④ 추상화하지 않을 것: 편집 상태를 외부에 노출하거나 갱신 정책 플래그를 만들지 않는다(두 진입점의 의미가 다르므로 함수를 나눈다).
+  - **Acceptance**: Given `+`로 새 워크스페이스 생성, When 첫 폴더 열거가 끝나 `WM_APP_PATH_CHANGED`가 도착, Then 인라인 EDIT이 그대로 열려 있고 입력 중이던 텍스트가 유지된다(FR-16) / Given F2로 이름 편집 중, When 감시 폴더에 파일이 생성·삭제되어 목록이 자동 갱신, Then 편집이 취소되지 않는다(FR-18) / 목록 구조가 바뀌는 조작(생성·삭제·정렬)에서는 기존대로 편집이 종료된다 / `cargo build`·`clippy -D warnings`·`test` 통과
+  - **Files**:
+    - 주: `src/app/sidebar.rs`
+    - 동반: `src/app/window.rs`
+    - 테스트: 없음(HWND 배선 — 순수 계산부 변화 없음)
+  - **Edge Cases**:
+    - 편집 중 부제 갱신으로 항목 텍스트가 바뀌어도 EDIT 위치는 그대로(구조 불변이라 좌표 유효)
+    - 편집 중이 아니면 `refresh_items`는 `set_items`와 동일하게 동작
+    - 활성 워크스페이스가 바뀌는 갱신은 `sync_sidebar`(구조 경로)가 담당하므로 편집 종료가 유지된다
+  - **Halt Forecast**:
+    - (i) 편집 보존 정책 → 이 task Design에서 확정
+  - **Depends on**: T5, T6
+
 ## 사전 승인 항목 (일괄 승인 대상)
 
 - T2 — `LayoutHost::new`/`from_shape`에 area 인자 추가, `relayout`/`close_active`의 `parent` 파라미터 제거, `set_area`/`set_visible`/`destroy_all` 공개 메서드 추가. 소비자는 `src/app/window.rs` 단독이며 함께 수정된다
