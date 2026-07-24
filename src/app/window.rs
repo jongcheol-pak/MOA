@@ -529,6 +529,8 @@ fn on_sidebar_splitter(hwnd: HWND, x: i32, y: i32) -> bool {
 const MENU_PAD_X: i32 = 14;
 const MENU_PAD_Y: i32 = 4;
 const MENU_ACCEL_GAP: i32 = 24;
+/// 구분선 항목 높이 (선 + 위아래 여백)
+const MENU_SEPARATOR_HEIGHT: i32 = 7;
 
 /// 시스템 메뉴 폰트 (SPI). 반환 폰트는 사용 후 DeleteObject로 해제한다
 fn menu_font() -> HFONT {
@@ -559,7 +561,7 @@ fn split_accel(text: &[u16]) -> (&[u16], &[u16]) {
 /// 오너드로우 메뉴 항목 크기 측정 (plan T7). itemData 없으면 구분선
 fn measure_menu_item(mis: &mut MEASUREITEMSTRUCT) {
     if mis.itemData == 0 {
-        mis.itemHeight = 7;
+        mis.itemHeight = MENU_SEPARATOR_HEIGHT as u32;
         mis.itemWidth = 0;
         return;
     }
@@ -1409,6 +1411,27 @@ mod tests {
         assert_eq!(clamp_sidebar_width(50), settings::SIDEBAR_MIN_WIDTH);
         assert_eq!(clamp_sidebar_width(9999), settings::SIDEBAR_MAX_WIDTH);
         assert_eq!(clamp_sidebar_width(300), 300);
+    }
+
+    #[test]
+    fn 메뉴_텍스트를_라벨과_단축키로_나눈다() {
+        // 탭(\t) 뒤가 단축키
+        let with: Vec<u16> = "새 탭(&N)\tCtrl+T".encode_utf16().collect();
+        let (label, accel) = split_accel(&with);
+        assert_eq!(String::from_utf16_lossy(label), "새 탭(&N)");
+        assert_eq!(String::from_utf16_lossy(accel), "Ctrl+T");
+
+        // 탭 없으면 전체가 라벨, 단축키는 빈 슬라이스
+        let without: Vec<u16> = "폴더 트리(&T)".encode_utf16().collect();
+        let (label, accel) = split_accel(&without);
+        assert_eq!(String::from_utf16_lossy(label), "폴더 트리(&T)");
+        assert!(accel.is_empty());
+
+        // 빈 문자열
+        let empty: Vec<u16> = Vec::new();
+        let (label, accel) = split_accel(&empty);
+        assert!(label.is_empty());
+        assert!(accel.is_empty());
     }
 
     #[test]

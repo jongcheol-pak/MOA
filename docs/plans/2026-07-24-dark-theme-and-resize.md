@@ -194,6 +194,8 @@
 - 라이트/다크 테마 **전환 UI**(토글·설정) — 이번은 고정 다크만. 필요 시 후속.
 - 사이드바 사설 색상 상수를 `theme.rs` 공용 팔레트로 이전(리팩토링) — 이번 범위 외.
 - [T1 quality MINOR] `relayout()`에서 `BeginDeferWindowPos` 실패 시 `layout_cache` 미갱신(리팩터 전엔 실패해도 히트테스트 캐시 갱신됨). 실전 발생 거의 없고 다음 relayout이 복구 — 저위험 follow-up.
+- [T7 quality m1] `InsertMenuItemW(menu, u32::MAX, true, ...)`의 "끝에 추가" 위치 관용구 — HUMAN-VERIFY 시 4개 팝업(보기/이동/탭/워크스페이스)과 하위 항목이 순서대로 전부 나타나는지 확인.
+- [T7 quality m3] `menu_font()`가 WM_MEASUREITEM/WM_DRAWITEM마다 SPI 조회+CreateFontIndirectW로 폰트를 새로 만든다(sidebar `ui_font`는 창 생성 시 1회 캐시). 누수는 없으나 캐싱 관례와 불일치 — WM_INITMENUPOPUP 1회 캐시 또는 lazy static 검토(저위험 follow-up).
 
 ## Out of Scope
 
