@@ -1,6 +1,11 @@
 # 작업 내역
 
 ## 최근 변경
+- 2026-07-24: **사이드바 폭 드래그 조절 시 깜빡임 수정 (systematic-debugging)**
+  - **무엇을**: 메인 창(`window.rs`) 스타일에 `WS_CLIPCHILDREN`을 추가. import 1줄 + 창 생성 스타일 `WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN`(사유 주석 포함).
+  - **왜(근본 원인)**: 자식 창들(패널 `panel.rs:366`, 사이드바)은 이미 `WS_CLIPCHILDREN|WS_CLIPSIBLINGS`를 갖췄지만 **부모인 메인 창만 `WS_CLIPCHILDREN`이 누락**돼 있었다. 배경 브러시가 흰색(`COLOR_WINDOW+1`)이고 별도 `WM_ERASEBKGND` 핸들러가 없어 `DefWindowProc`가 흰색으로 배경을 지운다. 사이드바 경계 드래그 → `drag_sidebar`→`layout_children`이 자식(사이드바 `MoveWindow` + 패널 `DeferWindowPos`)을 매 프레임 이동시킬 때, 부모가 자식이 덮은 영역까지 흰색으로 erase한 뒤 자식이 다시 그려져 흰색 깜빡임이 발생했다. 자식들만 clip 스타일을 갖추고 부모만 빠뜨린 전형적 실수.
+  - **검증 결과**: cargo build / clippy(-D warnings) 통과. GUI 렌더링 문제라 자동 회귀 테스트 불가(RED 불능) — 수동 재현: `cargo run` → 사이드바-탐색기 경계선을 좌우로 드래그해 폭을 반복 조절하며 깜빡임 소멸 확인 필요(**HUMAN-VERIFY 잔여**). 잔여 깜빡임이 있으면 사이드바 `MoveWindow`와 host `relayout`을 단일 배치로 묶는 추가 조사(H2) 검토.
+  - **변경 파일**: src/app/window.rs
 - 2026-07-24: **워크스페이스 사이드 패널 + 워크스페이스별 탐색기 (T1~T9)**
   - **무엇을**: 창을 좌측 워크스페이스 목록 / 우측 탐색기로 분리하고, 워크스페이스마다 독립된 탐색기 화면(분할·패널·탭·히스토리)을 갖도록 확장. ① T1 워크스페이스 목록 모델(`app/workspace.rs` 신규 — add/rename/remove/reorder/set_active/set_subtitle, 자동 이름은 사용 중이지 않은 최소 번호, `elide_path`) ② T2 `LayoutHost` 배치 영역 주입(`area` 필드, `set_area`/`set_visible`/`destroy_all` 추가, `relayout`/`close_active`/`drag_move`의 `parent` 제거, `client_rect` pub 승격) ③ T3 세션 스키마 v2(`Session{sidebar, active_workspace, workspaces[{name,layout,panels,active_panel}]}`, 워크스페이스 단위 무결성 검증 + 사이드바 폭만 클램프) ④ T4 사이드바 창(`app/sidebar.rs` 신규 — 커스텀 창 클래스 + WM_PAINT 직접 그리기, 다크 2줄 카드·헤더·`+` 버튼·선택 강조 바·시스템 폴더 아이콘·휠 스크롤·hover) ⑤ T5 다중 호스트·전환·지연 생성·복원(`EntryState::Pending/Live`) ⑥ T6 이름 변경(인라인 EDIT+서브클래스)·삭제(확인 대화상자·`destroy_all`)·드래그 정렬(8px 임계·중앙 기준 삽입선)·컨텍스트 메뉴·메뉴 바 "워크스페이스(&W)" ⑦ T7 사이드바 접기(`Ctrl+B`·메뉴·상단 ◧ 버튼)·경계 드래그 폭 조절(160~480)·상태 저장 ⑧ T8 성능 실측·회귀 ⑨ T9 부제 자동 갱신이 인라인 편집을 취소하던 결함 수정(F-7 BLOCKER — `refresh_items`/`set_items` 분리)
   - **왜**: PRD 갱신(2026-07-24 승인)으로 FR-15~FR-20·NFR-8 추가 — Out of Scope였던 "세션 프로필 다중 관리"를 요구로 채택하고 "다크 모드·테마" 제외는 *앱 전체 테마 전환 기능*으로 한정(사이드바 고정 다크는 허용). plan: docs/plans/2026-07-24-workspace-sidebar.md

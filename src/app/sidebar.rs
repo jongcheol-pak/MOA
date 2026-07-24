@@ -86,10 +86,10 @@ const ICON_SIZE: i32 = 16;
 const ICON_X: i32 = 12;
 const TEXT_X: i32 = 38;
 const NAME_TOP: i32 = 12;
-const NAME_FONT_PX: i32 = 13;
+const NAME_FONT_PX: i32 = 15;
 const SUBTITLE_GAP: i32 = 6;
-const SUBTITLE_FONT_PX: i32 = 11;
-const HEADER_FONT_PX: i32 = 12;
+const SUBTITLE_FONT_PX: i32 = 13;
+const HEADER_FONT_PX: i32 = 14;
 /// 휠 한 칸(WHEEL_DELTA 120)당 스크롤 픽셀
 const WHEEL_STEP: i32 = ITEM_PITCH;
 /// 드래그 정렬 시작 임계 — 이만큼 움직여야 재정렬로 본다 (D12: 단순 클릭과 구분)

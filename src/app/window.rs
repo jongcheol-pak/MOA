@@ -36,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE,
     WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
     WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR,
-    WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -162,7 +162,9 @@ impl MainWindow {
                 WINDOW_EX_STYLE::default(),
                 WINDOW_CLASS,
                 w!("파일 탐색기"),
-                WS_OVERLAPPEDWINDOW,
+                // WS_CLIPCHILDREN: 자식(사이드바·패널)이 덮은 영역을 부모가 다시 칠하지 않게 한다.
+                // 없으면 사이드바 드래그 중 자식 이동마다 부모가 흰 배경으로 erase → 깜빡임
+                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 1200,
