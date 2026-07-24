@@ -414,7 +414,9 @@ fn toggle_sidebar(hwnd: HWND) {
     layout_children(hwnd);
 }
 
-/// 사이드바 경계선을 잡았으면 드래그를 시작한다 (접힘 상태에서는 경계선이 없다)
+/// 사이드바 경계선을 잡았으면 드래그를 시작한다 (접힘 상태에서는 경계선이 없다).
+/// `layout_host`의 스플리터 드래그를 재사용하지 않는 이유: 그쪽은 분할 트리 노드의 **비율**을 바꾸지만
+/// 여기는 단일 경계선의 **절대 폭**을 바꾼다 — 공용화하면 두 의미가 한 함수에 섞인다 (plan T7 Design ④)
 fn begin_sidebar_drag(hwnd: HWND, x: i32, y: i32) -> bool {
     let Some(mut state) = state_of(hwnd) else {
         return false;

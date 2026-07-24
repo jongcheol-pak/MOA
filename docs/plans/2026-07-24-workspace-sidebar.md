@@ -412,9 +412,9 @@
     - (ii-a) 메뉴 바에 최상위 팝업 "워크스페이스(&W)" 추가(사용자 가시 UI 변경) → `## 사전 승인 항목`에 등록
   - **Depends on**: T5
 
-- [ ] T7. 사이드바 접기·폭 조절 + 상태 저장 배선
+- [x] T7. 사이드바 접기·폭 조절 + 상태 저장 배선
   - **Type**: C
-  - **Design**: ① `src/app/window.rs`(경계 히트테스트·드래그·영역 재계산·세션 반영), `src/app/sidebar.rs`(상단 토글 버튼 그리기·클릭), `src/app/menu.rs`(보기 메뉴 항목·Ctrl+B). ② 신규 심볼: `window.rs`의 `SidebarDrag{start_x, start_width}` 상태, `toggle_sidebar(hwnd)`·`sidebar_splitter_rect(hwnd) -> Rect`·`clamp_sidebar_width(w: i32) -> i32`(순수 함수, 테스트 대상), `menu::IDM_SIDEBAR_TOGGLE`. T5의 `explorer_area`가 폭·접힘을 반영하도록 값만 연결하고, 종료 저장 시 `settings::SidebarSession{width, collapsed}`에 실제 값을 기록한다(T3 스키마 사용). ③ 기존 흐름에 상태 1쌍을 추가할 뿐 새 의존 방향은 없다. ④ 추상화하지 않을 것: `layout_host`의 스플리터 드래그 로직을 공용화하지 않는다(대상이 단일 경계선 — 4-D).
+  - **Design**: ① `src/app/window.rs`(경계 히트테스트·드래그·영역 재계산·세션 반영), `src/app/sidebar.rs`(상단 토글 버튼 그리기·클릭), `src/app/menu.rs`(보기 메뉴 항목·Ctrl+B). ② 신규 심볼: `window.rs`의 `SidebarDrag{start_x, start_width}` 상태, `toggle_sidebar(hwnd)`·`sidebar_splitter_rect(client: Rect, sidebar_width: i32) -> Rect`·`clamp_sidebar_width(w: i32) -> i32`·`effective_sidebar_width(client_w, width, collapsed) -> i32`·`explorer_area_for(client, sidebar_width) -> Rect`(전부 순수 함수, 테스트 대상 — 히트테스트·배치 계산을 HWND에서 떼어냈다), `menu::IDM_SIDEBAR_TOGGLE`. T5의 `explorer_area`가 폭·접힘을 반영하도록 값만 연결하고, 종료 저장 시 `settings::SidebarSession{width, collapsed}`에 실제 값을 기록한다(T3 스키마 사용). ③ 기존 흐름에 상태 1쌍을 추가할 뿐 새 의존 방향은 없다. ④ 추상화하지 않을 것: `layout_host`의 스플리터 드래그 로직을 공용화하지 않는다(대상이 단일 경계선 — 4-D).
   - **Acceptance**: Given 사이드바 표시 상태, When 경계선 드래그, Then 폭이 160~480px로 클램프되며 탐색기 영역이 즉시 재배치된다(FR-19) / When Ctrl+B 또는 보기 메뉴 또는 상단 토글 버튼, Then 사이드바가 접히고 탐색기가 창 전체를 차지한다 / 접힌 상태에서 Ctrl+B·메뉴로 복원된다(D11) / 경계선 위에서 좌우 리사이즈 커서가 표시된다 / Given 폭 320·접힘 해제 상태, When 재시작, Then 같은 폭·상태로 복원된다(FR-20, HUMAN-VERIFY) / `clamp_sidebar_width` 단위테스트 통과 / `cargo clippy --all-targets -- -D warnings`·`test` 통과
   - **Files**:
     - 주: `src/app/window.rs`
