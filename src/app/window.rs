@@ -22,23 +22,29 @@ use crate::panel::panel::{
 };
 use std::cell::{RefCell, RefMut};
 use std::path::PathBuf;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, MONITOR_DEFAULTTONULL, MonitorFromRect, ScreenToClient,
+    CreateFontIndirectW, CreateSolidBrush, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
+    DeleteObject, DrawTextW, FillRect, GetDC, GetTextExtentPoint32W, HFONT, MONITOR_DEFAULTTONULL,
+    MonitorFromRect, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+};
+use windows::Win32::UI::Controls::{
+    DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_SELECTED, ODT_MENU,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     BeginDeferWindowPos, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DeferWindowPos, DestroyMenu, EndDeferWindowPos, GWLP_USERDATA, GetCursorPos,
-    GetWindowLongPtrW, GetWindowPlacement, HACCEL, HDWP, HMENU, HTCLIENT, IDC_ARROW, IDC_SIZEWE,
-    IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, PostQuitMessage, RegisterClassExW,
-    SW_HIDE, SW_SHOW, SW_SHOWMAXIMIZED,
-    SWP_NOACTIVATE, SWP_NOZORDER, SetCursor, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos,
-    ShowWindow, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE,
-    WINDOWPLACEMENT, WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
-    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PARENTNOTIFY, WM_SETCURSOR,
-    WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW,
+    GetWindowLongPtrW, GetWindowPlacement, HACCEL, HDWP, HMENU, HTCLIENT, IDC_ARROW,
+    IDC_SIZEWE, IDYES, LoadCursorW, MB_ICONWARNING, MB_YESNO, MessageBoxW, NONCLIENTMETRICSW,
+    PostQuitMessage, RegisterClassExW, SPI_GETNONCLIENTMETRICS, SW_HIDE, SW_SHOW,
+    SW_SHOWMAXIMIZED, SWP_NOACTIVATE, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursor,
+    SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow, SystemParametersInfoW,
+    TPM_LEFTALIGN, TPM_RETURNCMD, TPM_TOPALIGN, TrackPopupMenuEx, WINDOW_EX_STYLE, WINDOWPLACEMENT,
+    WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM,
+    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MEASUREITEM, WM_MOUSEMOVE, WM_PARENTNOTIFY,
+    WM_SETCURSOR, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -517,6 +523,136 @@ fn on_sidebar_splitter(hwnd: HWND, x: i32, y: i32) -> bool {
     }
     let client = layout_host::client_rect(hwnd);
     contains(sidebar_splitter_rect(client, sidebar_w), x, y)
+}
+
+/// 메뉴 항목 좌우 여백·상하 여백·단축키 간격 (오너드로우 측정·그리기 공용)
+const MENU_PAD_X: i32 = 14;
+const MENU_PAD_Y: i32 = 4;
+const MENU_ACCEL_GAP: i32 = 24;
+
+/// 시스템 메뉴 폰트 (SPI). 반환 폰트는 사용 후 DeleteObject로 해제한다
+fn menu_font() -> HFONT {
+    let mut metrics = NONCLIENTMETRICSW {
+        cbSize: size_of::<NONCLIENTMETRICSW>() as u32,
+        ..Default::default()
+    };
+    // 안전성: metrics는 스택 소유이며 cbSize를 채워 전달한다 (SPI 규약)
+    unsafe {
+        let _ = SystemParametersInfoW(
+            SPI_GETNONCLIENTMETRICS,
+            size_of::<NONCLIENTMETRICSW>() as u32,
+            Some(&mut metrics as *mut _ as *mut core::ffi::c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        );
+        CreateFontIndirectW(&metrics.lfMenuFont)
+    }
+}
+
+/// 메뉴 텍스트를 라벨과 단축키(\t 뒤)로 나눈다
+fn split_accel(text: &[u16]) -> (&[u16], &[u16]) {
+    match text.iter().position(|&c| c == b'\t' as u16) {
+        Some(i) => (&text[..i], &text[i + 1..]),
+        None => (text, &[]),
+    }
+}
+
+/// 오너드로우 메뉴 항목 크기 측정 (plan T7). itemData 없으면 구분선
+fn measure_menu_item(mis: &mut MEASUREITEMSTRUCT) {
+    if mis.itemData == 0 {
+        mis.itemHeight = 7;
+        mis.itemWidth = 0;
+        return;
+    }
+    // 안전성: itemData는 menu의 add_item이 실은 'static wide 문자열 포인터
+    let pcw = PCWSTR(mis.itemData as *const u16);
+    let text = unsafe { pcw.as_wide() };
+    let (label, accel) = split_accel(text);
+    // 안전성: 화면 DC로 텍스트 크기만 측정하고 폰트·DC를 즉시 해제한다
+    unsafe {
+        let hdc = GetDC(None);
+        let font = menu_font();
+        let old = SelectObject(hdc, font.into());
+        let mut sz = SIZE::default();
+        let _ = GetTextExtentPoint32W(hdc, label, &mut sz);
+        let mut width = sz.cx + MENU_PAD_X * 2;
+        if !accel.is_empty() {
+            let mut asz = SIZE::default();
+            let _ = GetTextExtentPoint32W(hdc, accel, &mut asz);
+            width += asz.cx + MENU_ACCEL_GAP;
+        }
+        SelectObject(hdc, old);
+        let _ = DeleteObject(font.into());
+        ReleaseDC(None, hdc);
+        mis.itemWidth = width.max(0) as u32;
+        mis.itemHeight = (sz.cy + MENU_PAD_Y * 2).max(0) as u32;
+    }
+}
+
+/// 오너드로우 메뉴 항목 다크 그리기 (plan T7). itemData 없으면 구분선.
+/// 팝업 배경(항목 밖 여백·테두리)은 Win32 제약상 시스템 색이 남을 수 있다 (best-effort)
+fn draw_menu_item(dis: &DRAWITEMSTRUCT) {
+    let selected = (dis.itemState.0 & ODS_SELECTED.0) != 0;
+    let disabled = (dis.itemState.0 & ODS_DISABLED.0) != 0;
+    // 안전성: 오너드로우가 넘긴 유효 DC에 배경·텍스트를 그린다. 브러시·폰트는 생성 즉시 해제
+    unsafe {
+        let bg = if selected {
+            theme::CONTROL_HOT
+        } else {
+            theme::WINDOW_BG
+        };
+        let brush = CreateSolidBrush(bg);
+        FillRect(dis.hDC, &dis.rcItem, brush);
+        let _ = DeleteObject(brush.into());
+        if dis.itemData == 0 {
+            // 구분선 — 가운데 얇은 다크 선
+            let mid = (dis.rcItem.top + dis.rcItem.bottom) / 2;
+            let line = RECT {
+                left: dis.rcItem.left + 4,
+                top: mid,
+                right: dis.rcItem.right - 4,
+                bottom: mid + 1,
+            };
+            let lb = CreateSolidBrush(theme::TREE_LINE);
+            FillRect(dis.hDC, &line, lb);
+            let _ = DeleteObject(lb.into());
+            return;
+        }
+        let pcw = PCWSTR(dis.itemData as *const u16);
+        let text = pcw.as_wide();
+        let (label, accel) = split_accel(text);
+        let font = menu_font();
+        let old = SelectObject(dis.hDC, font.into());
+        SetBkMode(dis.hDC, TRANSPARENT);
+        SetTextColor(
+            dis.hDC,
+            if disabled { theme::TEXT_DIM } else { theme::TEXT },
+        );
+        let mut lr = RECT {
+            left: dis.rcItem.left + MENU_PAD_X,
+            top: dis.rcItem.top,
+            right: dis.rcItem.right - MENU_PAD_X,
+            bottom: dis.rcItem.bottom,
+        };
+        let mut label_v = label.to_vec();
+        DrawTextW(
+            dis.hDC,
+            &mut label_v,
+            &mut lr,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        );
+        if !accel.is_empty() {
+            let mut ar = lr;
+            let mut accel_v = accel.to_vec();
+            DrawTextW(
+                dis.hDC,
+                &mut accel_v,
+                &mut ar,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
+        SelectObject(dis.hDC, old);
+        let _ = DeleteObject(font.into());
+    }
 }
 
 fn contains(r: Rect, x: i32, y: i32) -> bool {
@@ -1005,6 +1141,30 @@ unsafe extern "system" fn wnd_proc(
             // (relayout은 더 이상 부모 클라이언트를 스스로 읽지 않는다)
             layout_children(hwnd);
             LRESULT(0)
+        }
+        WM_MEASUREITEM => {
+            // 메뉴 오너드로우 항목 크기 측정 (plan T7)
+            // 안전성: lparam은 OS가 채운 MEASUREITEMSTRUCT
+            let mis = unsafe { &mut *(lparam.0 as *mut MEASUREITEMSTRUCT) };
+            if mis.CtlType == ODT_MENU {
+                measure_menu_item(mis);
+                LRESULT(1)
+            } else {
+                // 안전성: 기본 처리 위임
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
+        }
+        WM_DRAWITEM => {
+            // 메뉴 오너드로우 항목 다크 그리기 (plan T7)
+            // 안전성: lparam은 OS가 채운 DRAWITEMSTRUCT
+            let dis = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
+            if dis.CtlType == ODT_MENU {
+                draw_menu_item(dis);
+                LRESULT(1)
+            } else {
+                // 안전성: 기본 처리 위임
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
         }
         WM_COMMAND => {
             let Some(mut state) = state_of(hwnd) else {

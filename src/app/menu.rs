@@ -4,11 +4,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_B, VK_F5, VK_LEFT, VK_OEM_5, VK_RIGHT, VK_T, VK_UP, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ACCEL, AppendMenuW, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL,
-    FSHIFT, FVIRTKEY, HACCEL, HMENU, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, SetMenu,
+    ACCEL, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL, FSHIFT, FVIRTKEY,
+    HACCEL, HMENU, InsertMenuItemW, MENUITEMINFOW, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED,
+    MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_SUBMENU, SetMenu,
 };
-use windows::core::{Result, w};
+use windows::core::{PCWSTR, Result, w};
 
 /// WM_COMMAND 명령 id (u16 범위)
 pub const IDM_SPLIT_H: u32 = 101;
@@ -28,85 +28,77 @@ pub const IDM_WS_DELETE: u32 = 113;
 /// 사이드바 접기/펼치기 (FR-19) — 접힌 상태에서 되돌아오는 유일한 경로이기도 하다 (D11)
 pub const IDM_SIDEBAR_TOGGLE: u32 = 114;
 
+/// 오너드로우 명령 항목을 메뉴 끝에 추가한다 (plan T7 — 다크 그리기용).
+/// 표시 텍스트는 'static wide 문자열이며, 그 포인터를 `dwItemData`에 실어 WM_DRAWITEM이 그린다.
+fn add_item(menu: HMENU, id: u32, text: PCWSTR) -> Result<()> {
+    let mii = MENUITEMINFOW {
+        cbSize: size_of::<MENUITEMINFOW>() as u32,
+        fMask: MIIM_ID | MIIM_FTYPE | MIIM_DATA,
+        fType: MFT_OWNERDRAW,
+        wID: id,
+        dwItemData: text.0 as usize,
+        ..Default::default()
+    };
+    // 안전성: 유효한 메뉴 핸들에 항목 삽입. dwItemData는 'static 문자열 포인터라 메뉴 수명 동안 유효
+    unsafe { InsertMenuItemW(menu, u32::MAX, true, &mii) }
+}
+
+/// 오너드로우 팝업(서브메뉴) 항목을 메뉴 바 끝에 추가한다.
+fn add_popup(bar: HMENU, sub: HMENU, text: PCWSTR) -> Result<()> {
+    let mii = MENUITEMINFOW {
+        cbSize: size_of::<MENUITEMINFOW>() as u32,
+        fMask: MIIM_SUBMENU | MIIM_FTYPE | MIIM_DATA,
+        fType: MFT_OWNERDRAW,
+        hSubMenu: sub,
+        dwItemData: text.0 as usize,
+        ..Default::default()
+    };
+    // 안전성: 유효한 메뉴·서브메뉴 핸들. dwItemData는 'static 문자열 포인터
+    unsafe { InsertMenuItemW(bar, u32::MAX, true, &mii) }
+}
+
+/// 오너드로우 구분선을 메뉴 끝에 추가한다 (itemData 없음 → WM_DRAWITEM이 다크 선으로 그린다).
+fn add_separator(menu: HMENU) -> Result<()> {
+    let mii = MENUITEMINFOW {
+        cbSize: size_of::<MENUITEMINFOW>() as u32,
+        fMask: MIIM_FTYPE,
+        fType: MFT_OWNERDRAW | MFT_SEPARATOR,
+        ..Default::default()
+    };
+    // 안전성: 유효한 메뉴 핸들에 구분선 삽입
+    unsafe { InsertMenuItemW(menu, u32::MAX, true, &mii) }
+}
+
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
+/// 항목은 전부 MFT_OWNERDRAW라 배경·글자를 다크로 직접 그린다 (plan T7).
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
     // 안전성: 메뉴 핸들은 SetMenu로 창에 귀속되어 창 파괴 시 함께 해제된다
     unsafe {
         let bar = CreateMenu()?;
         let view = CreateMenu()?;
-        AppendMenuW(
-            view,
-            MF_STRING,
-            IDM_SPLIT_H as usize,
-            w!("좌우 분할(&H)\tCtrl+\\"),
-        )?;
-        AppendMenuW(
-            view,
-            MF_STRING,
-            IDM_SPLIT_V as usize,
-            w!("상하 분할(&V)\tCtrl+Shift+\\"),
-        )?;
-        AppendMenuW(
-            view,
-            MF_STRING,
-            IDM_CLOSE_PANE as usize,
-            w!("패널 닫기(&C)\tCtrl+Shift+W"),
-        )?;
-        AppendMenuW(view, MF_SEPARATOR, 0, None)?;
-        AppendMenuW(
-            view,
-            MF_STRING,
-            IDM_TREE_TOGGLE as usize,
-            w!("폴더 트리(&T)"),
-        )?;
-        AppendMenuW(
-            view,
-            MF_STRING,
-            IDM_REFRESH as usize,
-            w!("새로 고침(&R)\tF5"),
-        )?;
-        AppendMenuW(
-            view,
-            MF_STRING,
-            IDM_SIDEBAR_TOGGLE as usize,
-            w!("워크스페이스 사이드바(&S)\tCtrl+B"),
-        )?;
-        AppendMenuW(bar, MF_POPUP, view.0 as usize, w!("보기(&V)"))?;
+        add_item(view, IDM_SPLIT_H, w!("좌우 분할(&H)\tCtrl+\\"))?;
+        add_item(view, IDM_SPLIT_V, w!("상하 분할(&V)\tCtrl+Shift+\\"))?;
+        add_item(view, IDM_CLOSE_PANE, w!("패널 닫기(&C)\tCtrl+Shift+W"))?;
+        add_separator(view)?;
+        add_item(view, IDM_TREE_TOGGLE, w!("폴더 트리(&T)"))?;
+        add_item(view, IDM_REFRESH, w!("새로 고침(&R)\tF5"))?;
+        add_item(view, IDM_SIDEBAR_TOGGLE, w!("워크스페이스 사이드바(&S)\tCtrl+B"))?;
+        add_popup(bar, view, w!("보기(&V)"))?;
 
         let go = CreateMenu()?;
-        AppendMenuW(go, MF_STRING, IDM_NAV_BACK as usize, w!("뒤로(&B)\tAlt+←"))?;
-        AppendMenuW(
-            go,
-            MF_STRING,
-            IDM_NAV_FORWARD as usize,
-            w!("앞으로(&F)\tAlt+→"),
-        )?;
-        AppendMenuW(
-            go,
-            MF_STRING,
-            IDM_NAV_UP as usize,
-            w!("상위 폴더(&U)\tAlt+↑"),
-        )?;
-        AppendMenuW(bar, MF_POPUP, go.0 as usize, w!("이동(&G)"))?;
+        add_item(go, IDM_NAV_BACK, w!("뒤로(&B)\tAlt+←"))?;
+        add_item(go, IDM_NAV_FORWARD, w!("앞으로(&F)\tAlt+→"))?;
+        add_item(go, IDM_NAV_UP, w!("상위 폴더(&U)\tAlt+↑"))?;
+        add_popup(bar, go, w!("이동(&G)"))?;
 
         let tab = CreateMenu()?;
-        AppendMenuW(
-            tab,
-            MF_STRING,
-            IDM_TAB_NEW as usize,
-            w!("새 탭(&N)\tCtrl+T"),
-        )?;
-        AppendMenuW(
-            tab,
-            MF_STRING,
-            IDM_TAB_CLOSE as usize,
-            w!("탭 닫기(&C)\tCtrl+W"),
-        )?;
-        AppendMenuW(bar, MF_POPUP, tab.0 as usize, w!("탭(&T)"))?;
+        add_item(tab, IDM_TAB_NEW, w!("새 탭(&N)\tCtrl+T"))?;
+        add_item(tab, IDM_TAB_CLOSE, w!("탭 닫기(&C)\tCtrl+W"))?;
+        add_popup(bar, tab, w!("탭(&T)"))?;
 
         let workspace = CreateMenu()?;
         append_workspace_items(workspace)?;
-        AppendMenuW(bar, MF_POPUP, workspace.0 as usize, w!("워크스페이스(&W)"))?;
+        add_popup(bar, workspace, w!("워크스페이스(&W)"))?;
 
         SetMenu(hwnd, Some(bar))?;
         Ok(bar)
@@ -174,27 +166,9 @@ pub fn create_accels() -> Result<HACCEL> {
 
 /// 워크스페이스 명령 3종을 메뉴에 추가한다 (메뉴 바·컨텍스트 메뉴 공용 — 문구 일치 보장)
 pub fn append_workspace_items(menu: HMENU) -> Result<()> {
-    // 안전성: 유효한 메뉴 핸들에 항목 추가
-    unsafe {
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            IDM_WS_NEW as usize,
-            w!("새 워크스페이스(&N)"),
-        )?;
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            IDM_WS_RENAME as usize,
-            w!("이름 바꾸기(&R)\tF2"),
-        )?;
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            IDM_WS_DELETE as usize,
-            w!("삭제(&D)\tDelete"),
-        )?;
-    }
+    add_item(menu, IDM_WS_NEW, w!("새 워크스페이스(&N)"))?;
+    add_item(menu, IDM_WS_RENAME, w!("이름 바꾸기(&R)\tF2"))?;
+    add_item(menu, IDM_WS_DELETE, w!("삭제(&D)\tDelete"))?;
     Ok(())
 }
 
