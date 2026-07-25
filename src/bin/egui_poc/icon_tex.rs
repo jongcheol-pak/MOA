@@ -18,14 +18,27 @@ pub struct IconTextures {
     by_index: HashMap<i32, Option<egui::TextureHandle>>,
     /// 실제로 텍스처를 만든 횟수 — 캐시가 동작하는지 화면에서 확인하기 위한 계측
     created: usize,
+    /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(T3 실측 3096ms)
+    created_this_frame: usize,
 }
+
+/// 한 프레임에 새로 만들 텍스처 수 상한.
+/// 실측에서 텍스처 다수가 한 프레임에 생성되며 3초급 스파이크가 났다 —
+/// 넘치는 것은 다음 프레임으로 미루고 그 프레임에는 아이콘 없이 그린다(몇 프레임 안에 채워진다)
+const MAX_NEW_TEXTURES_PER_FRAME: usize = 8;
 
 impl IconTextures {
     pub fn new() -> IconTextures {
         IconTextures {
             by_index: HashMap::new(),
             created: 0,
+            created_this_frame: 0,
         }
+    }
+
+    /// 프레임 시작 시 호출 — 프레임당 생성 상한을 초기화한다
+    pub fn begin_frame(&mut self) {
+        self.created_this_frame = 0;
     }
 
     /// 지금까지 만든 텍스처 수 (아이콘 종류 수와 같아야 정상)
@@ -41,9 +54,14 @@ impl IconTextures {
         index: i32,
     ) -> Option<&egui::TextureHandle> {
         if !self.by_index.contains_key(&index) {
+            // 상한을 넘으면 이번 프레임에는 만들지 않는다 — 캐시에 넣지도 않으므로 다음 프레임에 재시도된다
+            if self.created_this_frame >= MAX_NEW_TEXTURES_PER_FRAME {
+                return None;
+            }
             let image = icon_to_image(himl, index);
             let handle = image.map(|img| {
                 self.created += 1;
+                self.created_this_frame += 1;
                 ctx.load_texture(format!("icon{index}"), img, egui::TextureOptions::LINEAR)
             });
             self.by_index.insert(index, handle);

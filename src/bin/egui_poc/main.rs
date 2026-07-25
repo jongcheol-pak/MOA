@@ -158,9 +158,9 @@ struct PocApp {
     entries: Vec<FileEntry>,
     /// 종류 열 문자열 (entries와 같은 인덱스) — 렌더 중 셸 조회를 하지 않기 위해 미리 만든다
     type_names: Vec<String>,
-    /// 아이콘 인덱스 (entries와 같은 인덱스). 종류 문자열과 같은 이유로 미리 계산한다 —
-    /// 렌더 클로저 안에서 `IconCache`를 `&mut`로 잡으면 목록 차용과 충돌한다
-    icon_indices: Vec<i32>,
+    /// 아이콘 인덱스 (entries와 같은 인덱스). `None` = 아직 조회하지 않음 —
+    /// 보이는 행만 렌더 시점에 채운다(exe·lnk의 개별 조회 비용을 로드에서 빼기 위함)
+    icon_indices: Vec<Option<i32>>,
     icons: IconCache,
     icon_textures: IconTextures,
     /// 열거 상태 문구 (오류·진행 표시)
@@ -298,30 +298,22 @@ impl PocApp {
         self.status = message.to_owned();
     }
 
-    /// 종류 문자열·아이콘 인덱스를 미리 계산한다 — 확장자별 캐시라 대량 폴더에서도 조회는 몇 종류뿐이다.
-    /// exe·lnk처럼 파일마다 아이콘이 다른 항목은 개별 조회라 그만큼 로드가 길어진다
-    /// (기존 앱은 보이는 행만 조회한다 — PoC는 차용 단순화를 위해 미리 계산한다)
+    /// 종류 문자열만 미리 계산한다 — 확장자별 캐시라 대량 폴더에서도 조회는 몇 종류뿐이다.
+    ///
+    /// 아이콘 인덱스는 **여기서 계산하지 않는다**: exe·lnk는 파일마다 개별 조회(디스크 접근)라
+    /// 전량 미리 계산하면 그런 파일이 많은 폴더에서 로드가 길어진다. 기존 앱처럼 **보이는 행만**
+    /// 렌더 시점에 조회한다(`None` = 아직 조회 안 함)
     fn rebuild_row_meta(&mut self) {
-        let meta: Vec<(String, bool, String)> = self
+        let meta: Vec<(String, bool)> = self
             .entries
             .iter()
-            .map(|e| {
-                let full = self
-                    .dir
-                    .join(e.name_string())
-                    .to_string_lossy()
-                    .into_owned();
-                (e.extension(), e.is_dir, full)
-            })
+            .map(|e| (e.extension(), e.is_dir))
             .collect();
         self.type_names = meta
             .iter()
-            .map(|(ext, is_dir, _)| self.icons.type_name(ext, *is_dir))
+            .map(|(ext, is_dir)| self.icons.type_name(ext, *is_dir))
             .collect();
-        self.icon_indices = meta
-            .iter()
-            .map(|(ext, is_dir, full)| self.icons.icon_index(ext, *is_dir, Some(full)))
-            .collect();
+        self.icon_indices = vec![None; self.entries.len()];
     }
 
     /// 셸 컨텍스트 메뉴를 띄운다. `index`가 없으면 폴더 배경 메뉴.
@@ -479,9 +471,11 @@ impl PocApp {
         // 클로저가 self를 통째로 빌리지 않도록 필요한 것만 미리 참조로 분리한다
         let entries = &self.entries;
         let type_names = &self.type_names;
-        let icon_indices = &self.icon_indices;
+        let icon_indices = &mut self.icon_indices;
         let icon_textures = &mut self.icon_textures;
-        let himl = self.icons.himl();
+        let icons = &mut self.icons;
+        let dir = &self.dir;
+        let himl = icons.himl();
         let ctx = ui.ctx().clone();
         let mut open_index = None;
         // 우클릭은 모달 메뉴를 띄우므로 스크롤 클로저 안에서 바로 실행하지 않고 요청만 모은다
@@ -534,7 +528,19 @@ impl PocApp {
                     painter.rect_filled(rect, 0.0, hover_bg);
                 }
                 let y = rect.center().y;
-                let icon_index = icon_indices.get(index).copied().unwrap_or(-1);
+                // 보이는 행에 한해 아이콘 인덱스를 이때 조회한다 (지연 조회)
+                let icon_index = match icon_indices.get(index).copied().flatten() {
+                    Some(cached) => cached,
+                    None => {
+                        let full = dir.join(entry.name_string()).to_string_lossy().into_owned();
+                        let looked_up =
+                            icons.icon_index(&entry.extension(), entry.is_dir, Some(&full));
+                        if let Some(slot) = icon_indices.get_mut(index) {
+                            *slot = Some(looked_up);
+                        }
+                        looked_up
+                    }
+                };
                 if let Some(tex) = icon_textures.get(&ctx, himl, icon_index) {
                     let icon_rect = egui::Rect::from_min_size(
                         egui::pos2(rect.left() + 4.0, y - 8.0),
@@ -606,6 +612,7 @@ impl PocApp {
 impl eframe::App for PocApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.frame_start = Instant::now();
+        self.icon_textures.begin_frame();
         // 첫 프레임을 그린 뒤 열거를 시작한다 (창이 먼저 뜨고, 열거 중 응답성이 측정된다)
         if let Some(path) = self.deferred_start.take() {
             self.load_dir(path, ctx);
@@ -654,6 +661,47 @@ impl eframe::App for PocApp {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, is_dir: bool) -> FileEntry {
+        let mut wide: Vec<u16> = name.encode_utf16().collect();
+        wide.push(0);
+        FileEntry {
+            name: wide,
+            is_dir,
+            size: 0,
+            modified: 0,
+        }
+    }
+
+    fn names(entries: &[FileEntry]) -> Vec<String> {
+        entries.iter().map(|e| e.name_string()).collect()
+    }
+
+    #[test]
+    fn 폴더가_파일보다_앞에_온다() {
+        let mut list = vec![entry("zeta.txt", false), entry("alpha", true)];
+        sort_entries(&mut list);
+        assert_eq!(names(&list), vec!["alpha", "zeta.txt"]);
+    }
+
+    #[test]
+    fn 이름은_숫자_인지_정렬이다() {
+        let mut list = vec![entry("파일10.txt", false), entry("파일2.txt", false)];
+        sort_entries(&mut list);
+        assert_eq!(names(&list), vec!["파일2.txt", "파일10.txt"]);
+    }
+
+    #[test]
+    fn 빈_목록도_안전하다() {
+        let mut list: Vec<FileEntry> = Vec::new();
+        sort_entries(&mut list);
+        assert!(list.is_empty());
+    }
+}
+
 fn main() -> eframe::Result {
     let com = init_com();
     // 기본은 wgpu. `--glow`를 주면 OpenGL 백엔드로 띄워 메모리를 비교 측정한다
@@ -673,7 +721,12 @@ fn main() -> eframe::Result {
         "egui_poc",
         options,
         Box::new(move |cc| {
-            let korean_font = install_korean_font(&cc.egui_ctx);
+            // `--no-font`: 한글 폰트(맑은 고딕 13MB)가 메모리에 얼마나 기여하는지 재기 위한 측정 스위치
+            let korean_font = if std::env::args().any(|a| a == "--no-font") {
+                false
+            } else {
+                install_korean_font(&cc.egui_ctx)
+            };
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
             let shell = ShellHost::new(cc);
