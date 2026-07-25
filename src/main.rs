@@ -30,6 +30,9 @@ fn run() -> windows::core::Result<()> {
     // 안전성: COM은 이 스레드에서 1회 초기화, 인자는 정적 상수 — 실패는 .ok()?로 전파
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
 
+    // 앱 전역 다크 모드 활성화 — 창·컨트롤 생성 전에 켜야 SetWindowTheme가 다크로 적용된다
+    app::theme::enable_dark_mode();
+
     let window = app::window::MainWindow::create()?;
 
     // 안전성: 표준 Win32 메시지 루프 — msg는 스택 소유, 종료 후 COM 해제 순서 보장

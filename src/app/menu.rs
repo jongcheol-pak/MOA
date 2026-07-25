@@ -6,8 +6,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, CreateAcceleratorTableW, CreateMenu, EnableMenuItem, FALT, FCONTROL, FSHIFT, FVIRTKEY,
     HACCEL, HMENU, InsertMenuItemW, MENUITEMINFOW, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED,
-    MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_DATA, MIIM_FTYPE, MIIM_ID, MIIM_STRING, MIIM_SUBMENU,
-    SetMenu,
+    MFT_SEPARATOR, MIIM_FTYPE, MIIM_ID, MIIM_STRING, MIIM_SUBMENU, SetMenu,
 };
 use windows::core::{PCWSTR, PWSTR, Result, w};
 
@@ -29,17 +28,12 @@ pub const IDM_WS_DELETE: u32 = 113;
 /// 사이드바 접기/펼치기 (FR-19) — 접힌 상태에서 되돌아오는 유일한 경로이기도 하다 (D11)
 pub const IDM_SIDEBAR_TOGGLE: u32 = 114;
 
-/// 오너드로우 명령 항목을 메뉴 끝에 추가한다 (plan T7 — 다크 그리기용).
-/// 표시 텍스트('static wide 문자열)를 `dwItemData`에 실어 WM_DRAWITEM이 그린다.
-/// 동시에 `MIIM_STRING`+`dwTypeData`로 같은 텍스트를 등록해 Alt 니모닉(&)·타입어헤드가 살아 있게 한다
-/// (오너드로우는 그리기만 가로챌 뿐 텍스트가 없으면 Windows가 니모닉을 매칭하지 못한다 — F-7 M1).
+/// 명령 항목을 메뉴 끝에 추가한다 (일반 텍스트 항목 — uxtheme 다크모드가 다크로 그린다).
 fn add_item(menu: HMENU, id: u32, text: PCWSTR) -> Result<()> {
     let mii = MENUITEMINFOW {
         cbSize: size_of::<MENUITEMINFOW>() as u32,
-        fMask: MIIM_ID | MIIM_FTYPE | MIIM_DATA | MIIM_STRING,
-        fType: MFT_OWNERDRAW,
+        fMask: MIIM_ID | MIIM_STRING,
         wID: id,
-        dwItemData: text.0 as usize,
         dwTypeData: PWSTR(text.0 as *mut u16),
         ..Default::default()
     };
@@ -47,15 +41,12 @@ fn add_item(menu: HMENU, id: u32, text: PCWSTR) -> Result<()> {
     unsafe { InsertMenuItemW(menu, u32::MAX, true, &mii) }
 }
 
-/// 오너드로우 팝업(서브메뉴) 항목을 메뉴 바 끝에 추가한다.
-/// add_item과 같은 이유로 `MIIM_STRING`을 병행해 Alt 니모닉을 유지한다 (F-7 M1).
+/// 팝업(서브메뉴) 항목을 메뉴 바 끝에 추가한다.
 fn add_popup(bar: HMENU, sub: HMENU, text: PCWSTR) -> Result<()> {
     let mii = MENUITEMINFOW {
         cbSize: size_of::<MENUITEMINFOW>() as u32,
-        fMask: MIIM_SUBMENU | MIIM_FTYPE | MIIM_DATA | MIIM_STRING,
-        fType: MFT_OWNERDRAW,
+        fMask: MIIM_SUBMENU | MIIM_STRING,
         hSubMenu: sub,
-        dwItemData: text.0 as usize,
         dwTypeData: PWSTR(text.0 as *mut u16),
         ..Default::default()
     };
@@ -63,12 +54,12 @@ fn add_popup(bar: HMENU, sub: HMENU, text: PCWSTR) -> Result<()> {
     unsafe { InsertMenuItemW(bar, u32::MAX, true, &mii) }
 }
 
-/// 오너드로우 구분선을 메뉴 끝에 추가한다 (itemData 없음 → WM_DRAWITEM이 다크 선으로 그린다).
+/// 구분선을 메뉴 끝에 추가한다.
 fn add_separator(menu: HMENU) -> Result<()> {
     let mii = MENUITEMINFOW {
         cbSize: size_of::<MENUITEMINFOW>() as u32,
         fMask: MIIM_FTYPE,
-        fType: MFT_OWNERDRAW | MFT_SEPARATOR,
+        fType: MFT_SEPARATOR,
         ..Default::default()
     };
     // 안전성: 유효한 메뉴 핸들에 구분선 삽입
@@ -76,7 +67,7 @@ fn add_separator(menu: HMENU) -> Result<()> {
 }
 
 /// 메뉴 바를 만들어 창에 붙인다. 반환값은 이후 활성/비활성 갱신용 메뉴 핸들.
-/// 항목은 전부 MFT_OWNERDRAW라 배경·글자를 다크로 직접 그린다 (plan T7).
+/// 항목은 일반 텍스트 메뉴이며, uxtheme 다크모드가 팝업을 다크로 그린다 (plan T7 재작업).
 pub fn attach_menu(hwnd: HWND) -> Result<HMENU> {
     // 안전성: 메뉴 핸들은 SetMenu로 창에 귀속되어 창 파괴 시 함께 해제된다
     unsafe {

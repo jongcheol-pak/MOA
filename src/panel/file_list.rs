@@ -2,29 +2,31 @@
 use crate::app::theme;
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DeleteObject, FillRect, SetBkMode, SetTextColor, TRANSPARENT,
+    CreateSolidBrush, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
+    DeleteObject, DrawTextW, FillRect, HDC, HGDIOBJ, SelectObject, SetBkMode, SetTextColor,
+    TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Controls::{
-    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW, LVCF_FMT, LVCF_TEXT,
-    LVCF_WIDTH, LVCFMT_LEFT, LVCFMT_RIGHT, LVCOLUMNW, LVIF_IMAGE, LVIF_TEXT, LVM_GETNEXTITEM,
-    LVM_INSERTCOLUMNW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST,
-    LVM_SETITEMCOUNT, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHAREIMAGELISTS, LVS_SHOWSELALWAYS,
-    LVSIL_SMALL, NM_CUSTOMDRAW, NMCUSTOMDRAW, NMHDR, NMLVDISPINFOW, SetWindowTheme, WC_LISTVIEWW,
+    CDDS_ITEMPREPAINT, CDDS_POSTPAINT, CDDS_PREPAINT, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT,
+    CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, CDRF_SKIPDEFAULT, HDF_CENTER, HDF_JUSTIFYMASK,
+    HDF_RIGHT, HDI_FORMAT, HDI_TEXT, HDITEMW, HDM_GETITEMCOUNT, HDM_GETITEMRECT, HDM_GETITEMW,
+    LVCF_FMT, LVCF_TEXT, LVCF_WIDTH, LVCFMT_LEFT, LVCFMT_RIGHT, LVCOLUMNW, LVIF_IMAGE, LVIF_TEXT,
+    LVM_GETHEADER, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_SETBKCOLOR,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMCOUNT, LVM_SETTEXTBKCOLOR,
+    LVM_SETTEXTCOLOR, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA,
+    LVS_REPORT, LVS_SHAREIMAGELISTS, LVS_SHOWSELALWAYS, LVSIL_SMALL, NM_CUSTOMDRAW, NMCUSTOMDRAW,
+    NMHDR, NMLVDISPINFOW, SetWindowTheme, WC_LISTVIEWW,
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass, StrCmpLogicalW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, MoveWindow, SendMessageW, WINDOW_STYLE, WM_NOTIFY, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, GetClientRect, MoveWindow, SendMessageW, WINDOW_STYLE, WM_GETFONT, WM_NOTIFY,
+    WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
-
-/// 목록 헤더 다크 그리기용 서브클래스 ID
-const DARK_SUBCLASS_ID: usize = 1;
 
 /// 정렬 열
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -120,8 +122,12 @@ impl FileList {
                 Some(WPARAM(0)),
                 Some(LPARAM(theme::SURFACE_BG.0 as isize)),
             );
-            // 헤더(SysHeader32) 통지는 ListView가 소비하므로 ListView를 서브클래싱해 가로챈다
-            let _ = SetWindowSubclass(list.hwnd, Some(list_dark_proc), DARK_SUBCLASS_ID, 0);
+            // 헤더(SysHeader32) 다크: 헤더 창을 다크로 인식시킨 뒤(부속 UI용), 배경·글자는
+            // ListView 서브클래스(list_dark_proc)가 커스텀드로우로 직접 그린다.
+            // SetWindowTheme("ItemsView")로 시스템이 다크 배경을 그리게 하는 방식은 이 환경에서
+            // 배경이 밝게 남는 것으로 실측 확인돼 쓰지 않는다.
+            theme::allow_dark_for_window(list.header_hwnd());
+            let _ = SetWindowSubclass(list.hwnd, Some(list_dark_proc), 1, 0);
             SendMessageW(
                 list.hwnd,
                 LVM_SETEXTENDEDLISTVIEWSTYLE,
@@ -169,6 +175,13 @@ impl FileList {
 
     pub fn hwnd(&self) -> HWND {
         self.hwnd
+    }
+
+    /// 목록 헤더(SysHeader32) 핸들 — 다크 테마 적용 대상(create 내부에서 사용)
+    pub fn header_hwnd(&self) -> HWND {
+        // 안전성: 유효한 리스트뷰에 표준 헤더 조회 메시지
+        let h = unsafe { SendMessageW(self.hwnd, LVM_GETHEADER, None, None) };
+        HWND(h.0 as *mut core::ffi::c_void)
     }
 
     /// 새 폴더 내용으로 교체 (정렬 포함).
@@ -313,8 +326,13 @@ impl FileList {
 
 /// 가상 리스트뷰 카운트 갱신 — 반드시 패널 상태의 RefCell 차용을 놓은 뒤 호출한다
 /// (동기 LVN_GETDISPINFO 재진입이 try_borrow_mut 실패로 표시 누락되는 것 방지)
-/// ListView 서브클래스 — 헤더(SysHeader32) 커스텀드로우를 가로채 다크로 그린다 (plan T3).
-/// 헤더는 ListView의 자식이라 NM_CUSTOMDRAW 통지가 ListView로 오며 부모(패널)로는 가지 않는다.
+/// 헤더 제목 좌우 여백 (시스템 헤더와 비슷한 들여쓰기)
+const HEADER_TEXT_PAD: i32 = 6;
+
+/// ListView 서브클래스 프로시저 — 헤더(SysHeader32) 커스텀드로우 다크.
+/// 헤더는 NM_CUSTOMDRAW를 자기 부모(=이 ListView)로 보내며 ListView는 이를 패널로 forward하지
+/// 않는다. 그래서 여기서 가로챈다. 시스템 테마로는 배경이 밝게 남아(실측), 여백·항목 배경·
+/// 구분선·제목을 전부 직접 그리고 CDRF_SKIPDEFAULT로 기본 도색을 막는다.
 unsafe extern "system" fn list_dark_proc(
     hwnd: HWND,
     msg: u32,
@@ -324,29 +342,144 @@ unsafe extern "system" fn list_dark_proc(
     _data: usize,
 ) -> LRESULT {
     if msg == WM_NOTIFY {
-        // 안전성: WM_NOTIFY lparam은 OS가 채운 NMHDR 포인터
-        let code = unsafe { (*(lparam.0 as *const NMHDR)).code };
-        if code == NM_CUSTOMDRAW {
-            // 안전성: NM_CUSTOMDRAW 통지의 lparam은 NMCUSTOMDRAW
+        // 안전성: WM_NOTIFY의 lparam은 OS가 채운 NMHDR 포인터 (처리 동안 유효)
+        let hdr = unsafe { &*(lparam.0 as *const NMHDR) };
+        if hdr.code == NM_CUSTOMDRAW {
+            // 안전성: NM_CUSTOMDRAW 통지의 lparam은 NMCUSTOMDRAW로 확장 해석 가능
             let cd = unsafe { &*(lparam.0 as *const NMCUSTOMDRAW) };
             if cd.dwDrawStage == CDDS_PREPAINT {
-                return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+                return LRESULT((CDRF_NOTIFYITEMDRAW | CDRF_NOTIFYPOSTPAINT) as isize);
             }
             if cd.dwDrawStage == CDDS_ITEMPREPAINT {
-                // 안전성: 헤더 배경을 다크로 채우고 글자색만 지정 — 텍스트·정렬표식은 시스템이 위에 그린다
-                unsafe {
-                    let brush = CreateSolidBrush(theme::HEADER_BG);
-                    FillRect(cd.hdc, &cd.rc, brush);
-                    let _ = DeleteObject(brush.into());
-                    SetTextColor(cd.hdc, theme::HEADER_TEXT);
-                    SetBkMode(cd.hdc, TRANSPARENT);
-                }
+                // 안전성: 항목 배경·구분선·제목을 직접 그린다 (기본 도색은 SKIPDEFAULT로 차단)
+                unsafe { draw_header_item(cd) };
+                return LRESULT(CDRF_SKIPDEFAULT as isize);
+            }
+            if cd.dwDrawStage == CDDS_POSTPAINT {
+                // 안전성: 마지막 열 오른쪽 여백을 덮는다 (모든 항목을 그린 뒤여야 기본 도색을 덮는다)
+                unsafe { fill_header_gap(cd) };
                 return LRESULT(CDRF_DODEFAULT as isize);
             }
         }
     }
-    // 안전성: 기본 서브클래스 체인으로 위임
+    // 안전성: 그 외 메시지는 원래 ListView 프로시저로 위임
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// 단색 채우기 — 브러시는 생성 즉시 해제
+/// 안전성 주의: 유효한 DC에만 호출한다
+unsafe fn fill_solid(hdc: HDC, rc: &RECT, color: COLORREF) {
+    unsafe {
+        let brush = CreateSolidBrush(color);
+        FillRect(hdc, rc, brush);
+        let _ = DeleteObject(brush.into());
+    }
+}
+
+/// 마지막 열 오른쪽의 빈 여백을 다크로 채운다.
+/// 이 여백은 항목이 아니라 헤더 기본 도색이 그리므로, 항목을 모두 그린 뒤(CDDS_POSTPAINT)
+/// 덮어야 한다 — CDDS_PREPAINT에서 채우면 기본 도색이 다시 덮어 흰색으로 남는다(실측).
+/// 안전성 주의: 커스텀드로우가 넘긴 유효 DC·헤더 핸들에만 호출한다 (list_dark_proc 전용)
+unsafe fn fill_header_gap(cd: &NMCUSTOMDRAW) {
+    let header = cd.hdr.hwndFrom;
+    unsafe {
+        let mut client = RECT::default();
+        if GetClientRect(header, &mut client).is_err() {
+            return;
+        }
+        // 열 순서를 바꿔도 안전하도록 모든 항목 rect의 오른쪽 끝 최댓값을 쓴다
+        let count = SendMessageW(header, HDM_GETITEMCOUNT, None, None).0;
+        let mut used_right = 0;
+        for i in 0..count.max(0) {
+            let mut rc = RECT::default();
+            let ok = SendMessageW(
+                header,
+                HDM_GETITEMRECT,
+                Some(WPARAM(i as usize)),
+                Some(LPARAM(&mut rc as *mut _ as isize)),
+            );
+            if ok.0 != 0 {
+                used_right = used_right.max(rc.right);
+            }
+        }
+        if used_right < client.right {
+            let gap = RECT {
+                left: used_right,
+                ..client
+            };
+            fill_solid(cd.hdc, &gap, theme::HEADER_BG);
+        }
+    }
+}
+
+/// 헤더 항목(열 하나)을 다크로 직접 그린다 — 배경·오른쪽 구분선·제목.
+/// 정렬 화살표는 열에 설정하지 않으므로(HDF_SORTUP/DOWN 미사용) 그리지 않는다.
+/// 안전성 주의: 커스텀드로우가 넘긴 유효 DC·헤더 핸들에만 호출한다 (list_dark_proc 전용)
+unsafe fn draw_header_item(cd: &NMCUSTOMDRAW) {
+    let header = cd.hdr.hwndFrom;
+    let state = cd.uItemState.0;
+    let bg = if (state & CDIS_SELECTED.0) != 0 {
+        theme::CONTROL_ACTIVE
+    } else if (state & CDIS_HOT.0) != 0 {
+        theme::CONTROL_HOT
+    } else {
+        theme::HEADER_BG
+    };
+    unsafe {
+        fill_solid(cd.hdc, &cd.rc, bg);
+        let separator = RECT {
+            left: cd.rc.right - 1,
+            ..cd.rc
+        };
+        fill_solid(cd.hdc, &separator, theme::TREE_LINE);
+
+        // 제목·정렬 형식은 헤더에서 읽는다 (SKIPDEFAULT라 시스템이 그려주지 않는다)
+        let mut buf = [0u16; 128];
+        let mut item = HDITEMW {
+            mask: HDI_TEXT | HDI_FORMAT,
+            pszText: windows::core::PWSTR(buf.as_mut_ptr()),
+            cchTextMax: buf.len() as i32,
+            ..Default::default()
+        };
+        let ok = SendMessageW(
+            header,
+            HDM_GETITEMW,
+            Some(WPARAM(cd.dwItemSpec)),
+            Some(LPARAM(&mut item as *mut _ as isize)),
+        );
+        if ok.0 == 0 {
+            return;
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let just = item.fmt.0 & HDF_JUSTIFYMASK.0;
+        let align = if just == HDF_RIGHT.0 {
+            DT_RIGHT
+        } else if just == HDF_CENTER.0 {
+            DT_CENTER
+        } else {
+            DT_LEFT
+        };
+        let mut rc = RECT {
+            left: cd.rc.left + HEADER_TEXT_PAD,
+            right: cd.rc.right - HEADER_TEXT_PAD,
+            ..cd.rc
+        };
+        // 헤더 폰트를 선택해야 기본 도색과 같은 글꼴로 그려진다 (미설정이면 DC 폰트 유지)
+        let font = SendMessageW(header, WM_GETFONT, None, None);
+        let old_font =
+            (font.0 != 0).then(|| SelectObject(cd.hdc, HGDIOBJ(font.0 as *mut core::ffi::c_void)));
+        SetTextColor(cd.hdc, theme::HEADER_TEXT);
+        SetBkMode(cd.hdc, TRANSPARENT);
+        DrawTextW(
+            cd.hdc,
+            &mut buf[..len],
+            &mut rc,
+            align | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+        );
+        if let Some(old) = old_font {
+            SelectObject(cd.hdc, old);
+        }
+    }
 }
 
 pub fn apply_item_count(list: HWND, count: usize) {

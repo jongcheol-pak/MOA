@@ -4,6 +4,8 @@
 //! 사설 팔레트와 통일한다. 각 색은 실제로 쓰는 task에서 추가한다(YAGNI).
 use windows::Win32::Foundation::{COLORREF, HWND};
 use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows::core::{PCSTR, w};
 
 /// COLORREF는 0x00BBGGRR 순서 — 실수 방지용 헬퍼
 const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
@@ -30,6 +32,53 @@ pub const CONTROL_HOT: COLORREF = rgb(0x38, 0x38, 0x38);
 pub const CONTROL_ACTIVE: COLORREF = rgb(0x45, 0x45, 0x45);
 /// 비활성 글자색
 pub const TEXT_DIM: COLORREF = rgb(0x6A, 0x6A, 0x6A);
+
+/// uxtheme 언문서 다크 모드 API로 **앱 전역 다크**를 켠다 (Windows 10 1903+ / 11).
+/// 이걸 켜야 각 컨트롤의 `SetWindowTheme("DarkMode_Explorer")`가 목록 헤더·스크롤바·트리·탭·
+/// 팝업 메뉴를 시스템이 자동으로 다크로 그린다(오너드로우 각개격파보다 안정적 — Windows 탐색기 방식).
+/// 문서화되지 않은 ordinal API지만 다크 앱들이 표준으로 쓴다. 미지원 OS면 조용히 무시된다.
+/// 순서가 중요하다: SetPreferredAppMode → RefreshImmersiveColorPolicyState로 정책을 **즉시 반영**해야
+/// 이후 창·컨트롤 생성 시 다크가 결정적으로 적용된다(둘째를 빠뜨리면 반영이 타이밍에 따라 갈린다).
+/// - ordinal 135: `SetPreferredAppMode(PreferredAppMode)` — 2=ForceDark
+/// - ordinal 104: `RefreshImmersiveColorPolicyState()` — 앱 다크 정책 즉시 반영
+/// - ordinal 136: `FlushMenuThemes()` — 메뉴 테마 갱신
+pub fn enable_dark_mode() {
+    // 안전성: uxtheme.dll을 로드해 ordinal 함수 포인터를 얻어 호출한다. 시그니처는 문서화된 형태를
+    // 그대로 옮긴 것이며, 실패(미지원 OS·심볼 부재)는 조용히 무시한다(다크만 안 될 뿐 앱은 정상)
+    unsafe {
+        let Ok(uxtheme) = LoadLibraryW(w!("uxtheme.dll")) else {
+            return;
+        };
+        // ordinal은 PCSTR 포인터 값 자체로 전달한다(MAKEINTRESOURCE 규약)
+        if let Some(proc) = GetProcAddress(uxtheme, PCSTR(135 as *const u8)) {
+            let set_preferred: extern "system" fn(i32) -> i32 = std::mem::transmute(proc);
+            set_preferred(2); // PreferredAppMode::ForceDark
+        }
+        if let Some(proc) = GetProcAddress(uxtheme, PCSTR(104 as *const u8)) {
+            let refresh: extern "system" fn() = std::mem::transmute(proc);
+            refresh();
+        }
+        if let Some(proc) = GetProcAddress(uxtheme, PCSTR(136 as *const u8)) {
+            let flush: extern "system" fn() = std::mem::transmute(proc);
+            flush();
+        }
+    }
+}
+
+/// 특정 최상위 창에 다크 모드를 허용한다 (ordinal 133 `AllowDarkModeForWindow(HWND, BOOL)`).
+/// `enable_dark_mode` 뒤 창 생성 직후 호출해야 그 창의 비클라이언트·메뉴가 다크로 인식된다.
+pub fn allow_dark_for_window(hwnd: HWND) {
+    // 안전성: uxtheme ordinal 함수 포인터로 창 다크 허용. 실패는 조용히 무시
+    unsafe {
+        let Ok(uxtheme) = LoadLibraryW(w!("uxtheme.dll")) else {
+            return;
+        };
+        if let Some(proc) = GetProcAddress(uxtheme, PCSTR(133 as *const u8)) {
+            let allow: extern "system" fn(HWND, i32) -> i32 = std::mem::transmute(proc);
+            allow(hwnd, 1); // TRUE
+        }
+    }
+}
 
 /// 최상위 창 타이틀바를 다크로 전환한다.
 /// 미지원 OS(구버전 Windows)에서는 실패하지만 앱 동작에는 영향 없으므로 반환을 무시한다.

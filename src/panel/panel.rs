@@ -768,7 +768,7 @@ unsafe extern "system" fn panel_proc(
                 draw_nav_button(dis);
                 LRESULT(1)
             } else if dis.CtlType == ODT_TAB {
-                // 탭 오너드로우 다크 (plan T6)
+                // 탭 오너드로우 다크 (옵션 B)
                 draw_tab(dis);
                 LRESULT(1)
             } else {

@@ -2,9 +2,9 @@
 use crate::app::theme;
 use crate::panel::history::History;
 use std::path::{Path, PathBuf};
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FillRect,
+    CreateSolidBrush, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FillRect, HDC,
     SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -12,9 +12,10 @@ use windows::Win32::UI::Controls::{
     DRAWITEMSTRUCT, ODS_SELECTED, TCIF_TEXT, TCITEMW, TCM_DELETEITEM, TCM_GETCURSEL, TCM_GETITEMW,
     TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMW, TCS_OWNERDRAWFIXED, WC_TABCONTROLW,
 };
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, MoveWindow, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, GetClientRect, MoveWindow, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_ERASEBKGND, WS_CHILD, WS_CLIPSIBLINGS, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PWSTR, Result};
 
@@ -130,7 +131,34 @@ pub fn tab_title(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-/// 탭 오너드로우 다크 — 부모 패널의 WM_DRAWITEM에서 호출한다 (plan T6).
+/// 탭 컨트롤 서브클래스 — 스트립 배경 다크 (WM_ERASEBKGND).
+/// 오너드로우 탭 항목(draw_tab)이 그 위에 그려지므로 항목 밖 여백만 이 다크색으로 남는다.
+unsafe extern "system" fn tab_dark_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    if msg == WM_ERASEBKGND {
+        // 안전성: WM_ERASEBKGND의 wparam은 대상 DC. 클라이언트 전체를 다크로 채우고 처리 완료(1) 반환
+        unsafe {
+            let hdc = HDC(wparam.0 as *mut core::ffi::c_void);
+            let mut rc = RECT::default();
+            if GetClientRect(hwnd, &mut rc).is_ok() {
+                let brush = CreateSolidBrush(theme::WINDOW_BG);
+                FillRect(hdc, &rc, brush);
+                let _ = DeleteObject(brush.into());
+            }
+        }
+        return LRESULT(1);
+    }
+    // 안전성: 그 외 메시지는 원래 탭 프로시저로 위임
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// 탭 오너드로우 다크 — 부모 패널의 WM_DRAWITEM에서 호출한다 (옵션 B).
 /// 활성/비활성 탭 배경을 다크색으로 채우고 제목을 중앙에 그린다.
 pub fn draw_tab(dis: &DRAWITEMSTRUCT) {
     let selected = (dis.itemState.0 & ODS_SELECTED.0) != 0;
@@ -192,7 +220,8 @@ impl TabStrip {
                 WINDOW_EX_STYLE::default(),
                 WC_TABCONTROLW,
                 None,
-                // TCS_OWNERDRAWFIXED: 탭은 테마 다크가 안 먹으므로 부모 WM_DRAWITEM에서 직접 그린다 (plan T6)
+                // TCS_OWNERDRAWFIXED: 탭은 SetWindowTheme(uxtheme)로 다크가 안 먹으므로
+                // 부모 WM_DRAWITEM에서 draw_tab이 직접 그린다 (옵션 B — 오너드로우 복원)
                 WS_CHILD
                     | WS_VISIBLE
                     | WS_CLIPSIBLINGS
@@ -208,6 +237,12 @@ impl TabStrip {
                 None,
             )?
         };
+        // 탭 스트립 배경 다크 — 오너드로우(draw_tab)는 탭 항목만 그리므로, 항목 밖 스트립 여백은
+        // 서브클래스의 WM_ERASEBKGND에서 다크로 채운다 (SetWindowTheme는 탭에 안 먹음).
+        // 안전성: 방금 생성한 유효한 탭 핸들에 표준 서브클래스 등록
+        unsafe {
+            let _ = SetWindowSubclass(hwnd, Some(tab_dark_proc), 1, 0);
+        }
         Ok(TabStrip { hwnd })
     }
 

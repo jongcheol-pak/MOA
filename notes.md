@@ -1,6 +1,12 @@
 # 작업 내역
 
 ## 최근 변경
+- 2026-07-25: **파일 목록 컬럼 헤더 다크 미적용 수정 (다크 후속 3차)**
+  - **무엇을**: `file_list.rs`의 헤더 커스텀드로우를 "글자색만 지정 + `CDRF_DODEFAULT`"에서 **완전 직접 그리기 + `CDRF_SKIPDEFAULT`**로 전환(`draw_header_item`이 항목 배경·구분선·제목을 그림). 열이 없는 오른쪽 여백은 항목이 아니라 헤더 기본 도색이 그리므로 `CDDS_POSTPAINT`에서 `fill_header_gap`으로 덮는다(PREPAINT에서 채우면 기본 도색이 다시 덮어 무효). 효과 없던 `SetWindowTheme(header,"ItemsView")` 제거.
+  - **왜**: 헤더 글자는 다크인데 배경만 흰색으로 남는다는 사용자 재보고. 원인은 **시스템 테마(ItemsView + AllowDarkModeForWindow)로 헤더 배경을 다크로 그리게 하는 방식이 이 환경에서 동작하지 않는 것** — 기본 도색이 밝은 배경을 그린다. 통지 도달 경로(ListView 서브클래스) 자체는 정상이었다. 같은 이슈를 3차까지 끌었던 이유는 1·2차 모두 "코드 확인"만으로 완료 처리하고 시각 검증을 미뤘기 때문 → 이번엔 앱 실행·창 캡처로 실측 확인.
+  - **핵심 결정**: 헤더도 탭·메뉴·버튼과 마찬가지로 **시스템 테마에 기대지 않고 직접 그린다**(이 앱의 다크는 표준 컨트롤=색상 메시지, 오너드로우 계열=직접 그리기로 이원화). 정렬 화살표는 현재 열에 설정하지 않으므로 그리지 않으며, 추후 정렬 표시를 넣으면 SKIPDEFAULT 때문에 직접 그려야 한다.
+  - **검증 결과**: cargo build/clippy(-D warnings)/fmt/test(75+2) 통과 + 실행 화면 캡처로 헤더 다크 확인.
+  - **변경 파일**: src/panel/file_list.rs, debug-2026-07-24-dark-ownerdraw.md(Phase 6)
 - 2026-07-24: **탐색기 전체 다크 테마 + 사이드바 크기 조절 잔상 개선 (T1~T7)**
   - **무엇을**: ① T1 사이드바 크기 조절 잔상 제거 — `LayoutHost::defer_into`/`pane_count` 추가로 `layout_children`이 사이드바+탐색기 패널을 **단일 `DeferWindowPos` 배치**로 묶어 시차 제거, 사이드바 `paint`에 **메모리 DC 더블버퍼링**(BitBlt 1회) 적용. ② T2 다크 인프라 `app/theme.rs` 신규(공용 다크 색상 + `apply_dark_titlebar`) + 메인 창 배경 브러시 다크(`CreateSolidBrush`) + DWM 다크 타이틀바(`Win32_Graphics_Dwm` feature 추가). ③ T3 파일 목록(ListView) 다크 — `SetWindowTheme("DarkMode_Explorer")` + `LVM_SETBKCOLOR/TEXTCOLOR/TEXTBKCOLOR` + ListView 서브클래스(`list_dark_proc`)로 헤더 `NM_CUSTOMDRAW` 다크. ④ T4 폴더 트리(TreeView) 다크 — `TVM_SETBKCOLOR/TEXTCOLOR/LINECOLOR`. ⑤ T5 주소창 Edit(`WM_CTLCOLOREDIT`) + 네비 버튼 3개(`BS_OWNERDRAW` + `draw_nav_button` 오너드로우) + 패널 컨테이너 배경·상태 라벨(`WM_CTLCOLORSTATIC`) 다크, `PanelState`에 브러시 필드 + Drop 해제. ⑥ T6 탭 컨트롤(`TCS_OWNERDRAWFIXED` + `draw_tab`, `WM_DRAWITEM` ODT_TAB 분기) 다크. ⑦ T7 메뉴바 오너드로우 다크 — menu.rs를 `MENUITEMINFOW`/`InsertMenuItemW`(`MFT_OWNERDRAW`)로 재작성 + window.rs `WM_MEASUREITEM`/`WM_DRAWITEM`(ODT_MENU) + `measure_menu_item`/`draw_menu_item`/`menu_font`/`split_accel`.
   - **왜**: 사용자 요청 — 사이즈 조절 시 잔상/부드럽지 않음 + 탐색기 화면 전체 다크. PRD Out of Scope였던 "앱 전체 다크 모드"를 *테마 전환 UI 제외*로 한정하고 고정 다크(FR-21 신규)로 채택. 별도 처리: 워크스페이스 패널 폰트 확대(이름 13→15·부제 11→13·헤더 12→14)와 크기 조절 흰 깜빡임(메인 창 `WS_CLIPCHILDREN`)은 선행 커밋으로 완료. plan: docs/plans/2026-07-24-dark-theme-and-resize.md
