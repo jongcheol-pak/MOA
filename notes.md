@@ -1,6 +1,13 @@
 # 작업 내역
 
 ## 최근 변경
+- 2026-07-25: **egui(eframe) 이식 가능성 PoC (T1~T5, 별도 바이너리)**
+  - **무엇을**: `cargo run --bin egui_poc --features egui-poc`로만 빌드되는 실험 바이너리(`src/bin/egui_poc/`)를 만들어 ① 대량 항목 가상 스크롤 ② 시스템 아이콘 ③ Win32 셸 컨텍스트 메뉴를 실측 검증. 기존 Win32 앱은 동작 무변경(`format_size_kb`·`format_filetime` 가시성만 `pub` 승격 — bin은 별개 crate라 `pub(crate)` 불가).
+  - **왜**: "egui로 적용해줘" 요청에 대해 전면 이식 전 판단 근거를 확보하기 위함. 사용자가 PoC 우선·셸 메뉴는 Win32 유지·판정은 현행 NFR 기준·의존성은 feature 격리를 선택. plan: docs/plans/2026-07-25-egui-poc.md
+  - **결과 요지**: 기술적으로는 이식 가능(스크롤 p95 10.55ms·아이콘 텍스처 197개/4952항목·GDI 누수 0·셸 메뉴 실제 표시). 대가는 **메모리와 크기** — glow 백엔드 131MB / wgpu 359MB vs 현행 22MB, exe 0.42MB → 10MB. **NFR-2(50MB)는 어느 백엔드로도 미달**. 미해결 리스크는 egui_extras 테이블의 **행 클릭 이벤트 미감지**(더블클릭 진입·행 우클릭)로, 해결 못 하면 목록 UI를 직접 구현해야 한다.
+  - **핵심 결정·함정**: ① eframe 0.35의 `App`은 `update`가 아니라 `logic`+`ui` 구조 ② 테이블 셀·`Label`의 기본 sense가 `hover`라 클릭이 안 잡힘 ③ `row.response()`는 행이 아니라 **마지막 셀** 응답 ④ 화면 변화가 없으면 `request_repaint`만으로 연속 렌더가 안 됨(스피너 같은 애니메이션 필요) ⑤ 첫 로드는 창 표시 파이프라인과 겹쳐 응답성 측정 불가 — F5 재열거로 분리 측정 ⑥ 렌더 백엔드 선택이 메모리를 2.7배 가름(D4를 앞당겨 비교).
+  - **검증 결과**: 각 task cargo build/clippy(-D warnings)/fmt/test(75+2) 통과 + 실행 캡처·수치 실측. 기본 `cargo build`에 eframe 미포함 확인(`cargo tree -e normal`).
+  - **미처리 Deferred**: egui_extras 행 클릭(최우선), 메모리 추가 절감 조사, 아이콘 텍스처 생성 스로틀(3초급 스파이크), 아이콘 지연 조회, `sort_entries` 테스트, AGENTS.md `Plan Location` stale 갱신
 - 2026-07-25: **파일 목록 컬럼 헤더 다크 미적용 수정 (다크 후속 3차)**
   - **무엇을**: `file_list.rs`의 헤더 커스텀드로우를 "글자색만 지정 + `CDRF_DODEFAULT`"에서 **완전 직접 그리기 + `CDRF_SKIPDEFAULT`**로 전환(`draw_header_item`이 항목 배경·구분선·제목을 그림). 열이 없는 오른쪽 여백은 항목이 아니라 헤더 기본 도색이 그리므로 `CDDS_POSTPAINT`에서 `fill_header_gap`으로 덮는다(PREPAINT에서 채우면 기본 도색이 다시 덮어 무효). 효과 없던 `SetWindowTheme(header,"ItemsView")` 제거.
   - **왜**: 헤더 글자는 다크인데 배경만 흰색으로 남는다는 사용자 재보고. 원인은 **시스템 테마(ItemsView + AllowDarkModeForWindow)로 헤더 배경을 다크로 그리게 하는 방식이 이 환경에서 동작하지 않는 것** — 기본 도색이 밝은 배경을 그린다. 통지 도달 경로(ListView 서브클래스) 자체는 정상이었다. 같은 이슈를 3차까지 끌었던 이유는 1·2차 모두 "코드 확인"만으로 완료 처리하고 시각 검증을 미뤘기 때문 → 이번엔 앱 실행·창 캡처로 실측 확인.

@@ -565,10 +565,17 @@ impl eframe::App for PocApp {
 
 fn main() -> eframe::Result {
     let com = init_com();
+    // 기본은 wgpu. `--glow`를 주면 OpenGL 백엔드로 띄워 메모리를 비교 측정한다
+    let renderer = if std::env::args().any(|a| a == "--glow") {
+        eframe::Renderer::Glow
+    } else {
+        eframe::Renderer::Wgpu
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 700.0])
             .with_title("egui PoC — 파일 목록"),
+        renderer,
         ..Default::default()
     };
     let result = eframe::run_native(

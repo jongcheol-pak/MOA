@@ -32,7 +32,8 @@ windows = { version = "0.62.2", features = [
 ] }
 
 # egui 이식 PoC 전용 — optional이라 기본 빌드(cargo build)에는 포함되지 않는다
-eframe = { version = "0.35", optional = true }
+# glow(OpenGL) 백엔드도 함께 넣어 기본 wgpu와 메모리를 비교 측정한다 (`--glow` 인자)
+eframe = { version = "0.35", optional = true, features = ["glow"] }
 egui_extras = { version = "0.35", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
