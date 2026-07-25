@@ -31,6 +31,20 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# egui 이식 PoC 전용 — optional이라 기본 빌드(cargo build)에는 포함되지 않는다
+eframe = { version = "0.35", optional = true }
+egui_extras = { version = "0.35", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+
+[features]
+# PoC 바이너리 전용 feature — `cargo run --bin egui_poc --features egui-poc`
+egui-poc = ["dep:eframe", "dep:egui_extras", "dep:raw-window-handle"]
+
+[[bin]]
+name = "egui_poc"
+path = "src/bin/egui_poc/main.rs"
+required-features = ["egui-poc"]
+
 [profile.release]
 # 경량 배포 목표(NFR-2) — 크기 최적화·심볼 제거
 opt-level = "s"
