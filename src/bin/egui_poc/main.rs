@@ -8,12 +8,15 @@
 //! 일반 사용자용 화면이 아니라 이식 판단 근거를 눈으로 읽기 위한 것이다.
 #![windows_subsystem = "windows"]
 
+mod icon_tex;
+
 // egui는 eframe이 재수출한 것을 쓴다 — 별도 의존성으로 넣으면 버전이 어긋날 수 있다
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use file_explorer::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
 use file_explorer::fs::icons::IconCache;
 use file_explorer::panel::file_list::{format_filetime, format_size_kb};
+use icon_tex::IconTextures;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -150,7 +153,11 @@ struct PocApp {
     entries: Vec<FileEntry>,
     /// 종류 열 문자열 (entries와 같은 인덱스) — 렌더 중 셸 조회를 하지 않기 위해 미리 만든다
     type_names: Vec<String>,
+    /// 아이콘 인덱스 (entries와 같은 인덱스). 종류 문자열과 같은 이유로 미리 계산한다 —
+    /// 렌더 클로저 안에서 `IconCache`를 `&mut`로 잡으면 목록 차용과 충돌한다
+    icon_indices: Vec<i32>,
     icons: IconCache,
+    icon_textures: IconTextures,
     /// 열거 상태 문구 (오류·진행 표시)
     status: String,
     /// 진행 중인 열거의 세대 — 늦게 도착한 이전 폴더 결과를 폐기한다
@@ -183,7 +190,9 @@ impl PocApp {
             dir: PathBuf::new(),
             entries: Vec::new(),
             type_names: Vec::new(),
+            icon_indices: Vec::new(),
             icons: IconCache::new(),
+            icon_textures: IconTextures::new(),
             status: String::new(),
             generation: 0,
             pending: None,
@@ -254,7 +263,7 @@ impl PocApp {
             EnumOutcome::Ok(entries) => {
                 self.entries = entries;
                 sort_entries(&mut self.entries);
-                self.rebuild_type_names();
+                self.rebuild_row_meta();
                 self.status.clear();
             }
             EnumOutcome::AccessDenied => self.fail("이 폴더에 접근할 권한이 없습니다"),
@@ -266,19 +275,33 @@ impl PocApp {
     fn fail(&mut self, message: &str) {
         self.entries.clear();
         self.type_names.clear();
+        self.icon_indices.clear();
         self.status = message.to_owned();
     }
 
-    /// 종류 문자열을 미리 계산한다 — 확장자별 캐시라 대량 폴더에서도 조회는 몇 종류뿐이다
-    fn rebuild_type_names(&mut self) {
-        let meta: Vec<(String, bool)> = self
+    /// 종류 문자열·아이콘 인덱스를 미리 계산한다 — 확장자별 캐시라 대량 폴더에서도 조회는 몇 종류뿐이다.
+    /// exe·lnk처럼 파일마다 아이콘이 다른 항목은 개별 조회라 그만큼 로드가 길어진다
+    /// (기존 앱은 보이는 행만 조회한다 — PoC는 차용 단순화를 위해 미리 계산한다)
+    fn rebuild_row_meta(&mut self) {
+        let meta: Vec<(String, bool, String)> = self
             .entries
             .iter()
-            .map(|e| (e.extension(), e.is_dir))
+            .map(|e| {
+                let full = self
+                    .dir
+                    .join(e.name_string())
+                    .to_string_lossy()
+                    .into_owned();
+                (e.extension(), e.is_dir, full)
+            })
             .collect();
         self.type_names = meta
             .iter()
-            .map(|(ext, is_dir)| self.icons.type_name(ext, *is_dir))
+            .map(|(ext, is_dir, _)| self.icons.type_name(ext, *is_dir))
+            .collect();
+        self.icon_indices = meta
+            .iter()
+            .map(|(ext, is_dir, full)| self.icons.icon_index(ext, *is_dir, Some(full)))
             .collect();
     }
 
@@ -317,6 +340,8 @@ impl PocApp {
                 self.load_ms, self.frames_during_load
             ));
             ui.separator();
+            ui.label(format!("아이콘 텍스처 {}개", self.icon_textures.created()));
+            ui.separator();
             ui.label(self.com.label());
             if !self.korean_font {
                 ui.separator();
@@ -342,6 +367,10 @@ impl PocApp {
         // 클로저가 self를 통째로 빌리지 않도록 필요한 것만 미리 참조로 분리한다
         let entries = &self.entries;
         let type_names = &self.type_names;
+        let icon_indices = &self.icon_indices;
+        let icon_textures = &mut self.icon_textures;
+        let himl = self.icons.himl();
+        let ctx = ui.ctx().clone();
         let mut open_index = None;
 
         let mut builder = TableBuilder::new(ui).striped(true).resizable(true);
@@ -375,7 +404,17 @@ impl PocApp {
                     // 각 셀의 Response를 합쳐 행 어디를 눌러도 반응하게 한다
                     // (`row.response()`는 마지막 셀의 것이라 이름 열 클릭을 놓친다)
                     let (_, name_resp) = row.col(|ui| {
-                        ui.label(entry.name_string());
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            let index_icon = icon_indices.get(index).copied().unwrap_or(-1);
+                            if let Some(tex) = icon_textures.get(&ctx, himl, index_icon) {
+                                ui.image(egui::load::SizedTexture::new(
+                                    tex.id(),
+                                    egui::vec2(16.0, 16.0),
+                                ));
+                            }
+                            ui.label(entry.name_string());
+                        });
                     });
                     let (_, size_resp) = row.col(|ui| {
                         let text = if entry.is_dir {
