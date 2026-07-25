@@ -13,7 +13,6 @@ mod shell_host;
 
 // egui는 eframe이 재수출한 것을 쓴다 — 별도 의존성으로 넣으면 버전이 어긋날 수 있다
 use eframe::egui;
-use egui_extras::{Column, TableBuilder};
 use file_explorer::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
 use file_explorer::fs::icons::IconCache;
 use file_explorer::panel::file_list::{format_filetime, format_size_kb};
@@ -32,6 +31,10 @@ use windows::core::PCWSTR;
 const KOREAN_FONT_PATH: &str = r"C:\Windows\Fonts\malgun.ttf";
 /// 목록 행 높이 — 16px 시스템 아이콘(T3)이 들어갈 여유를 둔다
 const ROW_HEIGHT: f32 = 20.0;
+/// 열 폭 (머리글과 행이 같은 x를 쓰도록 상수로 공유). 마지막 열은 남는 폭 전부
+const COL_NAME_W: f32 = 320.0;
+const COL_SIZE_W: f32 = 90.0;
+const COL_TYPE_W: f32 = 150.0;
 
 /// UI 스레드의 COM 아파트먼트 상태 (plan D5).
 /// 셸 컨텍스트 메뉴(IContextMenu)는 STA를 요구하므로 T4의 가용 여부가 여기서 갈린다
@@ -185,6 +188,11 @@ struct PocApp {
     shell: Option<ShellHost>,
     /// 마지막으로 띄운 셸 메뉴 결과 — 화면에서 동작 여부를 확인하기 위한 진단
     shell_note: String,
+    /// 행 Response 진단 계측 — hover는 잡히는데 click만 안 잡히는지 가른다
+    hover_hits: u32,
+    click_hits: u32,
+    /// 행에 실제로 할당된 폭 — 클릭 영역이 좁아 입력을 못 받는지 판별한다
+    row_width: f32,
 }
 
 impl PocApp {
@@ -212,6 +220,9 @@ impl PocApp {
             deferred_start: None,
             shell,
             shell_note: String::new(),
+            hover_hits: 0,
+            click_hits: 0,
+            row_width: 0.0,
         };
         // 시작 폴더를 인자로 받는다 — 대량 폴더 성능 측정을 자동화하기 위한 것
         // (주소 입력 UI는 PoC 범위 밖이라 인자로 대신한다)
@@ -388,6 +399,8 @@ impl PocApp {
             ui.separator();
             ui.label(format!("아이콘 텍스처 {}개", self.icon_textures.created()));
             ui.separator();
+            ui.label(format!("아이콘 {}", self.icon_textures.created()));
+            ui.separator();
             ui.label(self.com.label());
             if !self.korean_font {
                 ui.separator();
@@ -397,6 +410,18 @@ impl PocApp {
                 );
             }
         });
+        // 진단 줄 — 입력이 어디까지 도달하는지 한눈에 본다
+        let pointer = ui.ctx().input(|i| i.pointer.latest_pos());
+        ui.label(format!(
+            "진단: 행 hover {} · click {} · 포인터 {} · 행폭 {:.0}",
+            self.hover_hits,
+            self.click_hits,
+            match pointer {
+                Some(p) => format!("({:.0},{:.0})", p.x, p.y),
+                None => "없음".to_owned(),
+            },
+            self.row_width
+        ));
         if let Some((avg, p95, max)) = self.bench.summary() {
             ui.label(format!(
                 "벤치(스크롤 {}프레임): 평균 {avg:.2} ms · p95 {p95:.2} ms · 최대 {max:.2} ms",
@@ -411,7 +436,44 @@ impl PocApp {
         }
     }
 
-    /// 파일 목록 테이블 — `TableBody::rows`가 보이는 행만 렌더한다(가상 스크롤).
+    /// 열 머리글 — 목록과 같은 x 좌표를 쓰도록 상수로 폭을 맞춘다
+    fn header_row(&self, ui: &mut egui::Ui) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
+        let painter = ui.painter();
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let color = ui.visuals().strong_text_color();
+        let y = rect.center().y;
+        for (title, x) in [
+            ("이름", rect.left() + 6.0),
+            ("크기", rect.left() + COL_NAME_W + 6.0),
+            ("종류", rect.left() + COL_NAME_W + COL_SIZE_W + 6.0),
+            (
+                "수정한 날짜",
+                rect.left() + COL_NAME_W + COL_SIZE_W + COL_TYPE_W + 6.0,
+            ),
+        ] {
+            painter.text(
+                egui::pos2(x, y),
+                egui::Align2::LEFT_CENTER,
+                title,
+                font.clone(),
+                color,
+            );
+        }
+        painter.hline(
+            rect.x_range(),
+            rect.bottom(),
+            ui.visuals().widgets.noninteractive.bg_stroke,
+        );
+    }
+
+    /// 파일 목록 — `ScrollArea::show_rows`가 보이는 행만 렌더한다(가상 스크롤).
+    ///
+    /// `egui_extras::TableBuilder`를 쓰지 않는 이유: 셀 Response가 `sense(click)`을 줘도
+    /// hover·click을 전혀 감지하지 못해(실측: hover 0·click 0) 더블클릭 진입과 우클릭 메뉴가
+    /// 불가능했다. 행 rect를 직접 할당하면 입력이 확실히 잡히고, 그리기도 painter 한 번으로 끝난다.
+    ///
     /// 반환값은 "이 프레임에 셸 메뉴를 띄웠는가" — 배경 메뉴가 연달아 뜨는 것을 막는다
     fn table(&mut self, ui: &mut egui::Ui) -> bool {
         // 클로저가 self를 통째로 빌리지 않도록 필요한 것만 미리 참조로 분리한다
@@ -422,83 +484,111 @@ impl PocApp {
         let himl = self.icons.himl();
         let ctx = ui.ctx().clone();
         let mut open_index = None;
-        // 우클릭은 모달 메뉴를 띄우므로 테이블 클로저 안에서 바로 실행하지 않고 요청만 모은다
+        // 우클릭은 모달 메뉴를 띄우므로 스크롤 클로저 안에서 바로 실행하지 않고 요청만 모은다
         let mut menu_request: Option<(Option<usize>, egui::Pos2)> = None;
+        let hover_hits = &mut self.hover_hits;
+        let click_hits = &mut self.click_hits;
+        let row_width = &mut self.row_width;
 
-        // 셀의 기본 sense는 hover라 클릭·더블클릭·우클릭이 잡히지 않는다 — 명시적으로 켠다
-        let mut builder = TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .sense(egui::Sense::click());
+        let mut scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
         // 벤치 모드에서는 스크롤 위치를 강제로 지정해 렌더 부하를 재현한다
         if self.bench.active {
-            builder = builder.vertical_scroll_offset(self.bench.offset);
+            scroll = scroll.vertical_scroll_offset(self.bench.offset);
         }
-        builder
-            .column(Column::initial(320.0).at_least(120.0).clip(true))
-            .column(Column::initial(90.0).at_least(60.0))
-            .column(Column::initial(150.0).at_least(80.0).clip(true))
-            .column(Column::remainder())
-            .header(22.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("이름");
-                });
-                header.col(|ui| {
-                    ui.strong("크기");
-                });
-                header.col(|ui| {
-                    ui.strong("종류");
-                });
-                header.col(|ui| {
-                    ui.strong("수정한 날짜");
-                });
-            })
-            .body(|body| {
-                body.rows(ROW_HEIGHT, entries.len(), |mut row| {
-                    let index = row.index();
-                    let entry = &entries[index];
-                    // 각 셀의 Response를 합쳐 행 어디를 눌러도 반응하게 한다
-                    // (`row.response()`는 마지막 셀의 것이라 이름 열 클릭을 놓친다)
-                    let (_, name_resp) = row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            let index_icon = icon_indices.get(index).copied().unwrap_or(-1);
-                            if let Some(tex) = icon_textures.get(&ctx, himl, index_icon) {
-                                ui.image(egui::load::SizedTexture::new(
-                                    tex.id(),
-                                    egui::vec2(16.0, 16.0),
-                                ));
-                            }
-                            ui.label(entry.name_string());
-                        });
-                    });
-                    let (_, size_resp) = row.col(|ui| {
-                        let text = if entry.is_dir {
-                            String::new()
-                        } else {
-                            format_size_kb(entry.size)
-                        };
-                        ui.label(text);
-                    });
-                    let (_, type_resp) = row.col(|ui| {
-                        ui.label(type_names.get(index).cloned().unwrap_or_default());
-                    });
-                    let (_, date_resp) = row.col(|ui| {
-                        ui.label(format_filetime(entry.modified));
-                    });
-                    let row_resp = name_resp.union(size_resp).union(type_resp).union(date_resp);
-                    if row_resp.double_clicked() && entry.is_dir {
-                        open_index = Some(index);
-                    }
-                    if row_resp.secondary_clicked()
-                        && let Some(pos) = row_resp.interact_pointer_pos()
-                    {
-                        menu_request = Some((Some(index), pos));
-                    }
-                });
-            });
+        scroll.show_rows(ui, ROW_HEIGHT, entries.len(), |ui, range| {
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let text_color = ui.visuals().text_color();
+            let stripe = ui.visuals().faint_bg_color;
+            let hover_bg = ui.visuals().widgets.hovered.bg_fill;
+            for index in range {
+                let entry = &entries[index];
+                // 행 전체를 하나의 클릭 대상으로 할당한다 — 어느 열을 눌러도 같은 행으로 잡힌다.
+                // `allocate_space`로 자리와 id를 얻고 `interact`로 명시 감지한다
+                // (`allocate_exact_size(.., Sense::click())`는 이 스크롤 영역 안에서 hover조차 잡히지 않았다)
+                let (id, rect) = ui.allocate_space(egui::vec2(ui.available_width(), ROW_HEIGHT));
+                let resp = ui.interact(rect, id, egui::Sense::click());
+                *row_width = rect.width();
+                if resp.hovered() {
+                    *hover_hits += 1;
+                }
+                if resp.clicked() || resp.secondary_clicked() {
+                    *click_hits += 1;
+                }
+                if resp.double_clicked() && entry.is_dir {
+                    open_index = Some(index);
+                }
+                if resp.secondary_clicked()
+                    && let Some(pos) = resp.interact_pointer_pos()
+                {
+                    menu_request = Some((Some(index), pos));
+                }
+                if !ui.is_rect_visible(rect) {
+                    continue;
+                }
 
-        // 테이블 클로저가 끝나 self 차용이 풀린 뒤에 폴더를 이동한다
+                let painter = ui.painter();
+                if index % 2 == 1 {
+                    painter.rect_filled(rect, 0.0, stripe);
+                }
+                if resp.hovered() {
+                    painter.rect_filled(rect, 0.0, hover_bg);
+                }
+                let y = rect.center().y;
+                let icon_index = icon_indices.get(index).copied().unwrap_or(-1);
+                if let Some(tex) = icon_textures.get(&ctx, himl, icon_index) {
+                    let icon_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.left() + 4.0, y - 8.0),
+                        egui::vec2(16.0, 16.0),
+                    );
+                    // painter를 다시 얻는다 — icon_textures가 ui를 빌리는 사이 painter가 무효화된다
+                    ui.painter().image(
+                        tex.id(),
+                        icon_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+
+                let size_text = if entry.is_dir {
+                    String::new()
+                } else {
+                    format_size_kb(entry.size)
+                };
+                let cells = [
+                    (entry.name_string(), rect.left() + 24.0, COL_NAME_W - 28.0),
+                    (size_text, rect.left() + COL_NAME_W + 6.0, COL_SIZE_W - 10.0),
+                    (
+                        type_names.get(index).cloned().unwrap_or_default(),
+                        rect.left() + COL_NAME_W + COL_SIZE_W + 6.0,
+                        COL_TYPE_W - 10.0,
+                    ),
+                    (
+                        format_filetime(entry.modified),
+                        rect.left() + COL_NAME_W + COL_SIZE_W + COL_TYPE_W + 6.0,
+                        rect.width() - (COL_NAME_W + COL_SIZE_W + COL_TYPE_W) - 10.0,
+                    ),
+                ];
+                for (text, x, width) in cells {
+                    if text.is_empty() {
+                        continue;
+                    }
+                    // 열 밖으로 넘치는 긴 이름은 셀 경계에서 자른다
+                    let clip = egui::Rect::from_min_size(
+                        egui::pos2(x, rect.top()),
+                        egui::vec2(width.max(0.0), rect.height()),
+                    );
+                    ui.painter().with_clip_rect(clip).text(
+                        egui::pos2(x, y),
+                        egui::Align2::LEFT_CENTER,
+                        text,
+                        font.clone(),
+                        text_color,
+                    );
+                }
+            }
+        });
+
+        // 스크롤 클로저가 끝나 self 차용이 풀린 뒤에 폴더를 이동한다
         if let Some(index) = open_index {
             let path = self.dir.join(self.entries[index].name_string());
             let ctx = ui.ctx().clone();
@@ -546,6 +636,7 @@ impl eframe::App for PocApp {
         }
         self.top_bar(ui);
         ui.separator();
+        self.header_row(ui);
         self.table(ui);
         // UI 구성이 끝난 시점에 소요를 확정한다 (다음 프레임의 표시에 쓰인다)
         self.frame_ms = self.frame_start.elapsed().as_secs_f32() * 1000.0;
