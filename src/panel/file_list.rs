@@ -520,8 +520,10 @@ fn logical_name_cmp(a: &[u16], b: &[u16]) -> std::cmp::Ordering {
     r.cmp(&0)
 }
 
-/// 탐색기식 크기 표시: KB 올림 + 천 단위 구분
-fn format_size_kb(bytes: u64) -> String {
+/// 탐색기식 크기 표시: KB 올림 + 천 단위 구분.
+/// `pub`인 이유: egui 이식 PoC 바이너리(별도 crate)가 같은 표시 규칙을 쓰기 위해 —
+/// 복제하면 표시 형식이 두 벌로 갈라진다 (plan 2026-07-25-egui-poc D3)
+pub fn format_size_kb(bytes: u64) -> String {
     let kb = bytes.div_ceil(1024).max(if bytes > 0 { 1 } else { 0 });
     let s = kb.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3 + 3);
@@ -537,8 +539,9 @@ fn format_size_kb(bytes: u64) -> String {
     out
 }
 
-/// FILETIME(u64) → 로컬 "yyyy-MM-dd HH:mm"
-fn format_filetime(ft: u64) -> String {
+/// FILETIME(u64) → 로컬 "yyyy-MM-dd HH:mm".
+/// `pub`인 이유는 `format_size_kb`와 동일 (PoC 바이너리와 표시 규칙 공유)
+pub fn format_filetime(ft: u64) -> String {
     use windows::Win32::Foundation::FILETIME;
     let ft = FILETIME {
         dwLowDateTime: (ft & 0xffff_ffff) as u32,
