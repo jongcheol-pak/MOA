@@ -61,7 +61,7 @@
 ## Plan Location
 
 ```
-Plan Location: plan.md
+Plan Location: docs/plans/<YYYY-MM-DD>-<slug>.md   (누적 — 덮어쓰지 않는다)
 PRD Location:  docs/prd.md
 ```
 
