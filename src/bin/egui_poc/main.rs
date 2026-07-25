@@ -9,6 +9,7 @@
 #![windows_subsystem = "windows"]
 
 mod icon_tex;
+mod shell_host;
 
 // egui는 eframe이 재수출한 것을 쓴다 — 별도 의존성으로 넣으면 버전이 어긋날 수 있다
 use eframe::egui;
@@ -17,6 +18,7 @@ use file_explorer::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
 use file_explorer::fs::icons::IconCache;
 use file_explorer::panel::file_list::{format_filetime, format_size_kb};
 use icon_tex::IconTextures;
+use shell_host::ShellHost;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -179,10 +181,14 @@ struct PocApp {
     /// 생성자에서 바로 열거하면 창이 뜨기 전에 열거가 진행돼 ① 창 표시가 늦고
     /// ② "열거 중 몇 프레임을 그렸는가"가 측정되지 않는다
     deferred_start: Option<PathBuf>,
+    /// 셸 컨텍스트 메뉴 호스트 — HWND를 얻지 못하면 None(메뉴 비활성)
+    shell: Option<ShellHost>,
+    /// 마지막으로 띄운 셸 메뉴 결과 — 화면에서 동작 여부를 확인하기 위한 진단
+    shell_note: String,
 }
 
 impl PocApp {
-    fn new(com: ComStatus, korean_font: bool) -> PocApp {
+    fn new(com: ComStatus, korean_font: bool, shell: Option<ShellHost>) -> PocApp {
         let bench_on = std::env::args().any(|a| a == "--bench");
         let app = PocApp {
             com,
@@ -204,6 +210,8 @@ impl PocApp {
             frame_ms_max: 0.0,
             bench: Bench::new(bench_on),
             deferred_start: None,
+            shell,
+            shell_note: String::new(),
         };
         // 시작 폴더를 인자로 받는다 — 대량 폴더 성능 측정을 자동화하기 위한 것
         // (주소 입력 UI는 PoC 범위 밖이라 인자로 대신한다)
@@ -305,6 +313,35 @@ impl PocApp {
             .collect();
     }
 
+    /// 셸 컨텍스트 메뉴를 띄운다. `index`가 없으면 폴더 배경 메뉴.
+    /// 메뉴가 닫힐 때까지 반환하지 않는다(모달) — egui 프레임도 그동안 멈춘다
+    fn show_shell_menu(&mut self, ctx: &egui::Context, index: Option<usize>, pos: egui::Pos2) {
+        if !matches!(self.com, ComStatus::Sta { .. }) {
+            self.shell_note = "COM STA가 아니어서 셸 메뉴를 띄울 수 없습니다".to_owned();
+            return;
+        }
+        let Some(shell) = &self.shell else {
+            self.shell_note = "창 핸들(HWND)을 얻지 못해 셸 메뉴를 띄울 수 없습니다".to_owned();
+            return;
+        };
+        // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
+        let scale = ctx.pixels_per_point();
+        let (screen_x, screen_y) = shell.to_screen((pos.x * scale) as i32, (pos.y * scale) as i32);
+        let items: Vec<PathBuf> = match index {
+            Some(i) => match self.entries.get(i) {
+                Some(entry) => vec![self.dir.join(entry.name_string())],
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        };
+        let target = match items.first() {
+            Some(path) => path.display().to_string(),
+            None => format!("{} (배경)", self.dir.display()),
+        };
+        shell.popup(&self.dir, &items, screen_x, screen_y);
+        self.shell_note = format!("셸 메뉴 표시: {target}");
+    }
+
     fn go_parent(&mut self, ctx: &egui::Context) {
         if let Some(parent) = self.dir.parent().map(PathBuf::from) {
             self.load_dir(parent, ctx);
@@ -318,7 +355,16 @@ impl PocApp {
                 let ctx = ui.ctx().clone();
                 self.go_parent(&ctx);
             }
-            ui.label(self.dir.display().to_string());
+            // 경로 라벨 우클릭 = 폴더 배경 메뉴("새로 만들기" 등).
+            // 목록 아래 여백에 배경 응답을 깔면 행 클릭을 가로채므로 여기로 옮겼다
+            let path_label = ui
+                .add(egui::Label::new(self.dir.display().to_string()).sense(egui::Sense::click()));
+            if path_label.secondary_clicked()
+                && let Some(pos) = path_label.interact_pointer_pos()
+            {
+                let ctx = ui.ctx().clone();
+                self.show_shell_menu(&ctx, None, pos);
+            }
         });
         ui.horizontal(|ui| {
             // 스피너는 애니메이션이라 매 프레임 다시 그리게 만든다 —
@@ -357,13 +403,17 @@ impl PocApp {
                 self.bench.samples.len()
             ));
         }
+        if !self.shell_note.is_empty() {
+            ui.label(&self.shell_note);
+        }
         if !self.status.is_empty() {
             ui.colored_label(egui::Color32::from_rgb(0xE0, 0x80, 0x40), &self.status);
         }
     }
 
-    /// 파일 목록 테이블 — `TableBody::rows`가 보이는 행만 렌더한다(가상 스크롤)
-    fn table(&mut self, ui: &mut egui::Ui) {
+    /// 파일 목록 테이블 — `TableBody::rows`가 보이는 행만 렌더한다(가상 스크롤).
+    /// 반환값은 "이 프레임에 셸 메뉴를 띄웠는가" — 배경 메뉴가 연달아 뜨는 것을 막는다
+    fn table(&mut self, ui: &mut egui::Ui) -> bool {
         // 클로저가 self를 통째로 빌리지 않도록 필요한 것만 미리 참조로 분리한다
         let entries = &self.entries;
         let type_names = &self.type_names;
@@ -372,8 +422,14 @@ impl PocApp {
         let himl = self.icons.himl();
         let ctx = ui.ctx().clone();
         let mut open_index = None;
+        // 우클릭은 모달 메뉴를 띄우므로 테이블 클로저 안에서 바로 실행하지 않고 요청만 모은다
+        let mut menu_request: Option<(Option<usize>, egui::Pos2)> = None;
 
-        let mut builder = TableBuilder::new(ui).striped(true).resizable(true);
+        // 셀의 기본 sense는 hover라 클릭·더블클릭·우클릭이 잡히지 않는다 — 명시적으로 켠다
+        let mut builder = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .sense(egui::Sense::click());
         // 벤치 모드에서는 스크롤 위치를 강제로 지정해 렌더 부하를 재현한다
         if self.bench.active {
             builder = builder.vertical_scroll_offset(self.bench.offset);
@@ -434,6 +490,11 @@ impl PocApp {
                     if row_resp.double_clicked() && entry.is_dir {
                         open_index = Some(index);
                     }
+                    if row_resp.secondary_clicked()
+                        && let Some(pos) = row_resp.interact_pointer_pos()
+                    {
+                        menu_request = Some((Some(index), pos));
+                    }
                 });
             });
 
@@ -443,6 +504,12 @@ impl PocApp {
             let ctx = ui.ctx().clone();
             self.load_dir(path, &ctx);
         }
+        if let Some((index, pos)) = menu_request {
+            let ctx = ui.ctx().clone();
+            self.show_shell_menu(&ctx, index, pos);
+            return true;
+        }
+        false
     }
 }
 
@@ -510,7 +577,9 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let korean_font = install_korean_font(&cc.egui_ctx);
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(PocApp::new(com, korean_font)))
+            // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
+            let shell = ShellHost::new(cc);
+            Ok(Box::new(PocApp::new(com, korean_font, shell)))
         }),
     );
     if let ComStatus::Sta { owned: true } = com {
