@@ -1,0 +1,144 @@
+//! egui 앱 진입 상태 — 창 골격·폰트·COM·셸 호스트 보유.
+//!
+//! 실제 화면 구성(패널·분할·목록)은 이후 task에서 이 구조체에 붙는다.
+use crate::ui::shell_host::ShellHost;
+use crate::ui::theme;
+use eframe::egui;
+use std::sync::Arc;
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+
+/// 맑은 고딕 — egui 기본 폰트에는 한글 글리프가 없어 파일명이 두부(□)로 보인다
+const KOREAN_FONT_PATH: &str = r"C:\Windows\Fonts\malgun.ttf";
+
+/// UI 스레드의 COM 아파트먼트 상태.
+/// 셸 컨텍스트 메뉴(`IContextMenu`)는 STA를 요구하므로 셸 연동 가용 여부가 여기서 갈린다
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ComStatus {
+    /// STA 확보 — 이 프로세스가 초기화했거나(S_OK) 이미 초기화돼 있었다(S_FALSE)
+    Sta { owned: bool },
+    /// 다른 아파트먼트로 이미 초기화됨 — 셸 메뉴 사용 불가
+    WrongApartment,
+    /// 그 외 실패
+    Failed,
+}
+
+impl ComStatus {
+    /// 사용자에게 보일 사유 — STA일 때는 알릴 것이 없다
+    pub fn unavailable_reason(self) -> Option<&'static str> {
+        match self {
+            ComStatus::Sta { .. } => None,
+            ComStatus::WrongApartment => Some(
+                "시스템 메뉴를 사용할 수 없습니다 (COM 초기화 상태가 달라 마우스 오른쪽 메뉴가 열리지 않습니다)",
+            ),
+            ComStatus::Failed => Some("시스템 메뉴를 사용할 수 없습니다 (COM 초기화 실패)"),
+        }
+    }
+}
+
+/// COM을 STA로 초기화한다. 반환을 세 갈래로 처리한다 —
+/// `S_OK`(이번에 초기화)·`S_FALSE`(이미 초기화됨) 모두 STA 확보로 보고 진행한다.
+pub fn init_com() -> ComStatus {
+    // 안전성: UI 스레드에서 1회 호출. 인자는 정적 상수이며 반환 HRESULT로만 분기한다
+    let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if hr.is_ok() {
+        // S_FALSE면 이미 초기화된 상태라 이 프로세스가 해제 책임을 지지 않는다
+        ComStatus::Sta {
+            owned: hr == windows::Win32::Foundation::S_OK,
+        }
+    } else if hr == RPC_E_CHANGED_MODE {
+        ComStatus::WrongApartment
+    } else {
+        ComStatus::Failed
+    }
+}
+
+/// 이 프로세스가 초기화한 경우에만 COM을 해제한다.
+///
+/// # Safety
+///
+/// `init_com`이 `S_OK`를 받은 **같은 스레드에서 1회만** 호출해야 한다.
+/// 다른 스레드에서 부르거나 중복 호출하면 COM 참조 계수가 어긋난다.
+pub unsafe fn uninit_com(com: ComStatus) {
+    if let ComStatus::Sta { owned: true } = com {
+        unsafe { CoUninitialize() };
+    }
+}
+
+/// 한글 폰트를 egui에 등록한다. 폰트 파일이 없으면 기본 폰트로 진행한다(반환 false)
+pub fn install_korean_font(ctx: &egui::Context) -> bool {
+    let Ok(bytes) = std::fs::read(KOREAN_FONT_PATH) else {
+        return false;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "malgun".to_owned(),
+        Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    // 기본 폰트보다 앞에 두어 한글이 우선 매칭되게 한다
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "malgun".to_owned());
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .push("malgun".to_owned());
+    ctx.set_fonts(fonts);
+    true
+}
+
+/// 탐색기 앱 상태.
+pub struct ExplorerApp {
+    com: ComStatus,
+    /// 셸 메뉴용 창 핸들 — HWND를 얻지 못하면 `None`(셸 메뉴 비활성)
+    shell: Option<ShellHost>,
+    /// 한글 폰트 적용 여부 — 실패 시 화면에 알린다
+    korean_font: bool,
+}
+
+impl ExplorerApp {
+    /// eframe 창 생성 직후 호출된다 — 폰트·팔레트·셸 호스트를 이 시점에 준비한다
+    pub fn new(cc: &eframe::CreationContext<'_>, com: ComStatus) -> ExplorerApp {
+        let korean_font = install_korean_font(&cc.egui_ctx);
+        theme::apply_dark(&cc.egui_ctx);
+        // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
+        let shell = ShellHost::new(cc);
+        ExplorerApp {
+            com,
+            shell,
+            korean_font,
+        }
+    }
+
+    /// 셸 메뉴를 쓸 수 없는 경우의 사유 — 없으면 정상
+    fn shell_unavailable(&self) -> Option<&'static str> {
+        if let Some(reason) = self.com.unavailable_reason() {
+            return Some(reason);
+        }
+        if self.shell.is_none() {
+            return Some("시스템 메뉴를 사용할 수 없습니다 (창 정보를 얻지 못했습니다)");
+        }
+        None
+    }
+}
+
+impl eframe::App for ExplorerApp {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {}
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ui.heading("파일 탐색기");
+        ui.separator();
+        if !self.korean_font {
+            ui.colored_label(
+                theme::TEXT_DIM,
+                "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다",
+            );
+        }
+        if let Some(reason) = self.shell_unavailable() {
+            ui.colored_label(theme::TEXT_DIM, reason);
+        }
+    }
+}

@@ -1,4 +1,4 @@
-//! 시스템 아이콘 → egui 텍스처 변환 (plan T3)
+//! 시스템 아이콘 → egui 텍스처 변환 (FR-5)
 //!
 //! `IconCache`는 **시스템 이미지 리스트의 인덱스**만 들고 있다(ListView 전용 설계).
 //! egui는 이미지 리스트를 그릴 수 없으므로 인덱스를 HICON으로 꺼내 RGBA 픽셀로 바꾼 뒤
@@ -18,7 +18,7 @@ pub struct IconTextures {
     by_index: HashMap<i32, Option<egui::TextureHandle>>,
     /// 실제로 텍스처를 만든 횟수 — 캐시가 동작하는지 화면에서 확인하기 위한 계측
     created: usize,
-    /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(T3 실측 3096ms)
+    /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(PoC 실측 3096ms)
     created_this_frame: usize,
 }
 
@@ -26,6 +26,12 @@ pub struct IconTextures {
 /// 실측에서 텍스처 다수가 한 프레임에 생성되며 3초급 스파이크가 났다 —
 /// 넘치는 것은 다음 프레임으로 미루고 그 프레임에는 아이콘 없이 그린다(몇 프레임 안에 채워진다)
 const MAX_NEW_TEXTURES_PER_FRAME: usize = 8;
+
+impl Default for IconTextures {
+    fn default() -> IconTextures {
+        IconTextures::new()
+    }
+}
 
 impl IconTextures {
     pub fn new() -> IconTextures {
@@ -114,7 +120,7 @@ unsafe fn hicon_to_image(hicon: HICON) -> Option<egui::ColorImage> {
 unsafe fn color_bitmap_to_image(hbm: HBITMAP) -> Option<egui::ColorImage> {
     unsafe {
         if hbm.is_invalid() {
-            // 1bpp 마스크만 있는 흑백 아이콘 — PoC 범위에서는 그리지 않는다
+            // 1bpp 마스크만 있는 흑백 아이콘 — 드물어 그리지 않는다(아이콘 없이 표시)
             return None;
         }
         let mut bitmap = BITMAP::default();

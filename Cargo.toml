@@ -31,20 +31,18 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# egui 이식 PoC 전용 — optional이라 기본 빌드(cargo build)에는 포함되지 않는다
-# glow(OpenGL) 백엔드도 함께 넣어 기본 wgpu와 메모리를 비교 측정한다 (`--glow` 인자)
-eframe = { version = "0.35", optional = true, features = ["glow"] }
-raw-window-handle = { version = "0.6", optional = true }
+# egui UI 계층 (src/ui) — 이식 후 이 앱의 주 렌더링 경로다.
+# default-features를 끄고 glow(OpenGL)만 쓴다: PoC 실측에서 wgpu가 359MB, glow가 131MB로
+# 백엔드가 메모리를 2.7배 갈랐다(NFR-2). wgpu를 빌드에 포함하지 않아 exe도 함께 줄인다.
+eframe = { version = "0.35", default-features = false, features = ["glow"] }
+# eframe이 재수출하지 않아 직접 의존 — 창 HWND 추출(셸 컨텍스트 메뉴)에 필요
+raw-window-handle = "0.6"
 
-[features]
-# PoC 바이너리 전용 feature — `cargo run --bin egui_poc --features egui-poc`
-# egui_extras는 제거했다 — 목록을 ScrollArea::show_rows로 직접 구성하면서 불필요해졌다
-egui-poc = ["dep:eframe", "dep:raw-window-handle"]
-
+# 이식 중 진입점 — 현행 Win32 앱(기본 bin)과 병행 유지된다.
+# 이식이 끝나면 src/main.rs로 승격하고 이 섹션을 제거한다 (part2 T7)
 [[bin]]
-name = "egui_poc"
-path = "src/bin/egui_poc/main.rs"
-required-features = ["egui-poc"]
+name = "file_explorer_egui"
+path = "src/bin/egui_app/main.rs"
 
 [profile.release]
 # 경량 배포 목표(NFR-2) — 크기 최적화·심볼 제거

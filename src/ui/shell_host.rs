@@ -1,4 +1,4 @@
-//! Win32 셸 컨텍스트 메뉴 연동 (plan T4)
+//! Win32 셸 컨텍스트 메뉴 연동 (FR-8)
 //!
 //! 기존 `fs::shell_menu`를 그대로 재사용한다. 필요한 것은 두 가지뿐이다:
 //! ① eframe(winit) 창의 **HWND** ② 그 창의 **창 프로시저에 끼어들 지점**.
@@ -6,7 +6,7 @@
 //! ②가 필요한 이유: 셸 메뉴의 "보내기" 같은 서브메뉴는 `IContextMenu2/3`가
 //! `WM_INITMENUPOPUP` 등을 받아야 채워지는데, winit은 그 메시지를 우리 코드로 넘겨주지 않는다.
 //! 그래서 창을 서브클래싱해 `forward_menu_msg`로 전달한다(서브클래스가 없으면 서브메뉴가 빈다).
-use file_explorer::fs::shell_menu::{forward_menu_msg, show_context_menu};
+use crate::fs::shell_menu::{forward_menu_msg, show_context_menu};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
