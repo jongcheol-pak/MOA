@@ -95,8 +95,9 @@ pub fn show_layout(
         );
     }
 
-    // id는 목록 인덱스로 만든다 — `NodePath`는 Hash를 구현하지 않고,
-    // 드래그가 진행되는 동안에는 트리 구조가 바뀌지 않아(비율만 변한다) 인덱스가 안정적이다
+    // id는 목록 인덱스로 만든다 — `NodePath`는 Hash를 구현하지 않기 때문이다.
+    // 드래그 도중에는 인덱스가 흔들리지 않는다: 트리 구조를 바꾸는 분할·닫기는 버튼 클릭,
+    // 즉 **별도의 포인터 누름**으로만 일어나므로 같은 드래그 제스처 안에서 함께 발생할 수 없다
     for (index, splitter) in computed.splitters.iter().enumerate() {
         let rect = to_egui_rect(splitter.rect);
         // 그리기는 원래 두께로, 잡기는 조금 넓게
