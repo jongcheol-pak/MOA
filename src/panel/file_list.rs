@@ -489,8 +489,12 @@ pub fn apply_item_count(list: HWND, count: usize) {
     }
 }
 
-/// 정렬 비교 — 폴더 우선(D7), 이름은 탐색기와 동일한 숫자 인지 정렬
-fn compare_entries(
+/// 정렬 비교 — 폴더 우선(D7), 이름은 탐색기와 동일한 숫자 인지 정렬.
+/// `pub`인 이유: egui UI 계층(`ui::file_list`)이 같은 정렬 규칙을 쓰기 위해 (이식 plan part1 4-D).
+///
+/// 주의: 폴더 우선은 여기서 **방향과 무관하게** 결정된다 — 내림차순을 만들려고 반환값 전체를
+/// `reverse()`하면 폴더 우선까지 뒤집힌다. 같은 종류끼리만 뒤집어야 한다(part1 D13)
+pub fn compare_entries(
     a: &FileEntry,
     type_a: &str,
     b: &FileEntry,

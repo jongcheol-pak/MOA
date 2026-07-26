@@ -1,10 +1,16 @@
-//! egui 앱 진입 상태 — 창 골격·폰트·COM·셸 호스트 보유.
+//! egui 앱 진입 상태 — 창 골격·폰트·COM·셸 호스트·파일 목록 보유.
 //!
-//! 실제 화면 구성(패널·분할·목록)은 이후 task에서 이 구조체에 붙는다.
+//! 분할·탭·주소창은 이후 task에서 이 구조체에 붙는다.
+use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
+use crate::fs::icons::IconCache;
+use crate::ui::file_list::{FileListAction, FileListView};
+use crate::ui::icon_tex::IconTextures;
 use crate::ui::shell_host::ShellHost;
 use crate::ui::theme;
 use eframe::egui;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 
@@ -90,6 +96,62 @@ pub fn install_korean_font(ctx: &egui::Context) -> bool {
     true
 }
 
+/// 백그라운드 폴더 열거 상태.
+///
+/// 기존 `fs::enumerate::spawn_enumerate`는 완료를 `PostMessageW`로 **HWND에 통지**해
+/// egui에서는 쓸 수 없다. 동기 `enumerate_dir`을 자체 워커로 감싸고 채널로 받는다.
+/// UI 스레드에서 직접 열거하면 10만 파일 폴더에서 창이 멈춘다(AGENTS: UI 스레드 블로킹 금지)
+struct DirLoad {
+    /// 늦게 도착한 이전 폴더의 결과를 버리기 위한 세대 번호
+    generation: u64,
+    pending: Option<Receiver<(u64, EnumOutcome)>>,
+}
+
+impl DirLoad {
+    fn new() -> DirLoad {
+        DirLoad {
+            generation: 0,
+            pending: None,
+        }
+    }
+
+    /// 워커 스레드에서 열거를 시작한다. 이전 요청의 결과는 세대 불일치로 폐기된다
+    fn start(&mut self, path: PathBuf, ctx: &egui::Context) {
+        self.generation += 1;
+        let generation = self.generation;
+        let (tx, rx) = channel();
+        self.pending = Some(rx);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let outcome = enumerate_dir(&path);
+            // 수신부가 이미 버려졌으면(앱 종료·폴더 재이동) 전송 실패는 무해하다
+            let _ = tx.send((generation, outcome));
+            ctx.request_repaint();
+        });
+    }
+
+    /// 완료된 결과를 꺼낸다. 아직이면 `None`
+    fn poll(&mut self) -> Option<EnumOutcome> {
+        let rx = self.pending.as_ref()?;
+        match rx.try_recv() {
+            Ok((generation, outcome)) => {
+                self.pending = None;
+                // 폴더를 연달아 이동하면 이전 결과가 나중에 도착할 수 있다
+                (generation == self.generation).then_some(outcome)
+            }
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.pending = None;
+                None
+            }
+        }
+    }
+
+    fn is_loading(&self) -> bool {
+        self.pending.is_some()
+    }
+}
+
 /// 탐색기 앱 상태.
 pub struct ExplorerApp {
     com: ComStatus,
@@ -97,6 +159,17 @@ pub struct ExplorerApp {
     shell: Option<ShellHost>,
     /// 한글 폰트 적용 여부 — 실패 시 화면에 알린다
     korean_font: bool,
+    /// 아이콘 캐시 — 앱 전역 공유 (패널마다 두면 같은 아이콘을 중복 보관하게 된다)
+    icons: IconCache,
+    textures: IconTextures,
+    list: FileListView,
+    load: DirLoad,
+    dir: PathBuf,
+    /// 열거 실패 사유 — 성공 시 빈 문자열
+    status: String,
+    /// 첫 프레임을 그린 뒤 열거를 시작하기 위한 대기 경로.
+    /// 생성자에서 바로 열거하면 창이 늦게 뜬다
+    deferred_start: Option<PathBuf>,
 }
 
 impl ExplorerApp {
@@ -110,6 +183,13 @@ impl ExplorerApp {
             com,
             shell,
             korean_font,
+            icons: IconCache::new(),
+            textures: IconTextures::new(),
+            list: FileListView::new(),
+            load: DirLoad::new(),
+            dir: PathBuf::new(),
+            status: String::new(),
+            deferred_start: Some(start_dir()),
         }
     }
 
@@ -117,6 +197,53 @@ impl ExplorerApp {
     fn shell_available(&self) -> bool {
         self.com.is_available() && self.shell.is_some()
     }
+
+    /// 폴더 이동 — 열거는 워커에서 진행되고 결과는 `poll`에서 받는다
+    fn navigate(&mut self, path: PathBuf, ctx: &egui::Context) {
+        self.dir = path.clone();
+        self.status.clear();
+        self.load.start(path, ctx);
+    }
+
+    /// 워커 결과를 목록에 반영한다
+    fn poll_load(&mut self) {
+        let Some(outcome) = self.load.poll() else {
+            return;
+        };
+        match outcome {
+            EnumOutcome::Ok(entries) => {
+                self.list
+                    .set_entries(self.dir.clone(), entries, &mut self.icons);
+            }
+            EnumOutcome::AccessDenied => {
+                self.list.clear();
+                self.status = "이 폴더를 열 권한이 없습니다".to_owned();
+            }
+            EnumOutcome::NotFound => {
+                self.list.clear();
+                self.status = "폴더를 찾을 수 없습니다".to_owned();
+            }
+            EnumOutcome::Error => {
+                self.list.clear();
+                self.status = "폴더를 여는 중 문제가 발생했습니다".to_owned();
+            }
+        }
+    }
+}
+
+/// 시작 폴더 — 인자로 폴더를 받으면 그곳에서, 없으면 홈 폴더에서 시작한다
+/// (탐색기의 "여기서 열기"처럼 쓰이며, 대량 폴더 성능 측정에도 이 경로를 쓴다)
+fn start_dir() -> PathBuf {
+    let from_arg = std::env::args().nth(1).filter(|a| !a.starts_with("--"));
+    if let Some(arg) = from_arg {
+        let path = PathBuf::from(arg);
+        if path.is_dir() {
+            return path;
+        }
+    }
+    std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(r"C:\"))
 }
 
 impl eframe::App for ExplorerApp {
@@ -126,13 +253,31 @@ impl eframe::App for ExplorerApp {
         theme::WINDOW_BG.to_normalized_gamma_f32()
     }
 
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {}
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.textures.begin_frame();
+        // 첫 프레임을 그린 뒤 열거를 시작한다 — 창이 먼저 뜨고 열거 중에도 응답한다
+        if let Some(path) = self.deferred_start.take() {
+            self.navigate(path, ctx);
+        }
+        self.poll_load();
+        // 열거 중에는 계속 다시 그린다(진행 표시가 갱신되고 완료를 즉시 반영한다)
+        if self.load.is_loading() {
+            ctx.request_repaint();
+        }
+    }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("파일 탐색기");
-            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(self.dir.to_string_lossy().as_ref());
+                if self.load.is_loading() {
+                    ui.spinner();
+                    ui.colored_label(theme::TEXT_DIM, "읽는 중…");
+                } else {
+                    ui.colored_label(theme::TEXT_DIM, format!("{}개 항목", self.list.len()));
+                }
+            });
             if !self.korean_font {
                 ui.colored_label(
                     theme::TEXT_DIM,
@@ -142,6 +287,12 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
+            if !self.status.is_empty() {
+                ui.colored_label(theme::TEXT_DIM, &self.status);
+            }
+            ui.separator();
+            // 셸 메뉴·파일 실행 배선은 T3에서 붙는다 — 지금은 조작만 받아 흘린다
+            let _action: FileListAction = self.list.show(ui, &mut self.icons, &mut self.textures);
         });
     }
 }
