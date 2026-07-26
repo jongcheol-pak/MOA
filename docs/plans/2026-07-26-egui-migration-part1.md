@@ -347,8 +347,31 @@
 - [x] 이식 범위 → **현행 기능 전부**(Must+Should), 미구현 Could 제외
 - [x] plan 분할 → **2개**(part1 탐색 코어 / part2 완성·정리)
 
+## Phase G — 요구 재검증 결과 (part1 몫)
+
+| PRD ID | 우선순위 | 충족 | 근거 |
+|---|---|---|---|
+| FR-1 자유 분할 | Must | ✅ | `ui/splitter.rs` + `tests/layout_flow.rs`(분할→중첩→닫기 시퀀스) · 화면은 ⏳ |
+| FR-2 스플리터·패널 닫기 | Must | ✅ | 드래그→`set_ratio`(클램프는 기존 로직), 마지막 1개 불가 테스트 · 화면은 ⏳ |
+| FR-3 패널별 독립 탭 | Must | ✅ | `TabsModel`(탭별 `History`) + 닫기 회귀 4개 · 화면은 ⏳ |
+| FR-4 상세 보기·열 정렬 | Must | ✅ | `ui/file_list.rs` 4열 + 정렬 테스트 7개(D13 포함) · 화면은 ⏳ |
+| FR-5 시스템 아이콘 | Must | ✅ | 지연 조회 + 프레임당 8개 상한, GDI 62(누수 없음) · 화면은 ⏳ |
+| FR-6 주소창·히스토리 | Must | ✅ | `ui/address_bar.rs` + pending-커밋 + 경로 테스트 3개 · 화면은 ⏳ |
+| FR-7 더블클릭 실행 | Must | ✅ | `shell_host::execute`(`ShellExecuteExW`) · 화면은 ⏳ |
+| FR-8 셸 컨텍스트 메뉴 | Must | ✅ | `ShellHost::popup` + 서브클래스 포워딩. **Phase F에서 호출 위치를 그리기 밖으로 되돌림** · 화면은 ⏳ |
+| FR-21 고정 다크 | Should | ✅ | `ui/theme.rs`(현행 색값 이관) + `clear_color` 오버라이드 · 화면은 ⏳ |
+| NFR-1 콜드 스타트 1초 | — | ✅ | 51~53 ms (2회차 이후) |
+| NFR-2 유휴 150MB | — | ✅ | 129.9 MB (홈 폴더) — 여유 20MB, 최종은 part2 T6 |
+| NFR-3 10만 파일 무정지 | — | ✅ | 렌더 p95 0.63 ms |
+| NFR-5 긴 경로·유니코드 | — | ⏳ | `\\?\` 접두사로 코드상 지원. **실확인은 part2 T6에 편입** |
+| NFR-6 한국어 고정 | — | ✅ | 전 문구 한국어, 맑은 고딕 로드 |
+| FR-9~12, FR-15~20, NFR-4·7·8 | — | ⏭️ | part2 몫 (분할 plan) |
+
+**판정**: part1이 커버 대상으로 선언한 Must FR(1~8) **100% 충족**(코드·테스트 기준). 화면 동작은 ⏳ HUMAN-VERIFY로 분리했고 사용자 확인 대기 중이다. 분할 plan이므로 PRD 전체 Must 100%는 part2 완료 시점에 판정한다.
+
 ## Phase Ledger
 
+- Phase G 통과 (part1 몫 Must 100% — 전체 Must는 part2에서 최종 판정)
 - Phase F 통과 — 전체 빌드·테스트 101 passed·clippy·fmt 통과, F-7(plan-completion-reviewer, Opus) 지적 반영 완료
 - T1~T7 완료 (T7만 Type D, 나머지 Type C — 전부 V-1~V-8 수행·spec·quality 리뷰 통과)
 
@@ -374,6 +397,8 @@
 
 ## Next Steps
 
-- part1 승인 후 `implement-task`로 T1부터 실행
-- part1 완료 시 중간 점검 → part2(`docs/plans/2026-07-26-egui-migration-part2.md`) 실행
-- 이 브랜치(`task/egui-poc`)의 push·PR은 별도 승인 필요. **master에 61개 커밋 미병합 상태**(다크 테마·사이드바 작업 포함)라 병합 전략도 별도 결정 필요
+- 권장 다음 액션: **화면 동작 확인(⏳ HUMAN-VERIFY)** → 이상 없으면 part2 실행
+  - 실행: `cargo run --release --bin file_explorer_egui`(폴더 인자 선택) — 현행 앱은 `cargo run --release --bin file_explorer`로 그대로 뜬다
+  - 우선 확인: **행 우클릭 → 셸 메뉴 → 서브메뉴 → 메뉴 닫은 뒤 입력 계속**(Phase F에서 호출 위치를 바꾼 경로) / 분할·스플리터 드래그 / 정렬 화살표 / 다중 선택
+- part2: `docs/plans/2026-07-26-egui-migration-part2.md` (implement-task에 **경로를 명시해** 호출)
+- 이 브랜치(`task/egui-migration`)의 push·PR·master 병합은 별도 승인 필요. **master에 미병합 커밋이 다수**(다크 테마·사이드바·PoC·이식)라 병합 전략도 함께 결정해야 한다
