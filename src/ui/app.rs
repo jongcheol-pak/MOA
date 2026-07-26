@@ -244,6 +244,7 @@ impl eframe::App for ExplorerApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let mut menu = None;
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
         egui::CentralPanel::default().show(ui, |ui| {
             if !self.korean_font {
@@ -265,7 +266,7 @@ impl eframe::App for ExplorerApp {
                 Some(LayoutCommand::ClosePanel) => self.close_active(area),
                 None => {}
             }
-            splitter::show_layout(
+            menu = splitter::show_layout(
                 ui,
                 &ctx,
                 &mut self.layout,
@@ -273,9 +274,17 @@ impl eframe::App for ExplorerApp {
                 &mut self.active,
                 &mut self.icons,
                 &mut self.textures,
-                self.shell.as_ref(),
             );
         });
+
+        // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
+        // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다
+        if let (Some(menu), Some(shell)) = (menu, self.shell.as_ref()) {
+            // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
+            let scale = ctx.pixels_per_point();
+            let (x, y) = shell.to_screen((menu.pos.x * scale) as i32, (menu.pos.y * scale) as i32);
+            shell.popup(&menu.folder, &menu.items, x, y);
+        }
     }
 }
 

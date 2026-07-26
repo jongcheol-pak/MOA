@@ -16,8 +16,6 @@ use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, I
 /// 같은 확장자 행이 수천 개여도 텍스처는 아이콘 종류 수만큼만 만들어진다.
 pub struct IconTextures {
     by_index: HashMap<i32, Option<egui::TextureHandle>>,
-    /// 실제로 텍스처를 만든 횟수 — 캐시가 동작하는지 화면에서 확인하기 위한 계측
-    created: usize,
     /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(PoC 실측 3096ms)
     created_this_frame: usize,
 }
@@ -37,7 +35,6 @@ impl IconTextures {
     pub fn new() -> IconTextures {
         IconTextures {
             by_index: HashMap::new(),
-            created: 0,
             created_this_frame: 0,
         }
     }
@@ -45,11 +42,6 @@ impl IconTextures {
     /// 프레임 시작 시 호출 — 프레임당 생성 상한을 초기화한다
     pub fn begin_frame(&mut self) {
         self.created_this_frame = 0;
-    }
-
-    /// 지금까지 만든 텍스처 수 (아이콘 종류 수와 같아야 정상)
-    pub fn created(&self) -> usize {
-        self.created
     }
 
     /// 인덱스에 해당하는 텍스처. 변환 실패한 인덱스는 `None`으로 기억해 재시도하지 않는다
@@ -66,7 +58,6 @@ impl IconTextures {
             }
             let image = icon_to_image(himl, index);
             let handle = image.map(|img| {
-                self.created += 1;
                 self.created_this_frame += 1;
                 ctx.load_texture(format!("icon{index}"), img, egui::TextureOptions::LINEAR)
             });

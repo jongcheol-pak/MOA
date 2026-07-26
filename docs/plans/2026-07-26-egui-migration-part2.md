@@ -184,6 +184,7 @@
   - 표에 **egui 앱과 현행 Win32 앱 수치가 모두** 기재되고 각 수치에 측정 방법이 1줄씩 명시된다
   - NFR-1·2·3·8 각각에 **충족/미달 판정**이 명시된다(미달 시 자동 기각하지 않고 실측값과 원인을 보고 — PoC와 같은 원칙)
   - NFR-4(DPI)·NFR-5(긴 경로·유니코드)는 HUMAN-VERIFY 항목으로 구분해 기록한다
+  - **NFR-5는 실제로 확인한다** — part1이 `\?\` 접두사 사용으로 "코드상 가능"까지만 확인했고 260자 초과·유니코드 폴더를 만들어 열거·표시를 본 기록이 없다(part1 F-7 리뷰 m4)
 - **Edge Cases**: 첫 실행 셰이더·폰트 캐시로 콜드 스타트 과대 측정 → 2회차 이후 값 병기 / 측정 중 백그라운드 프로세스 간섭 → 3회 측정 중앙값
 - **Halt Forecast**: **NFR-2(150MB) 또는 NFR-8(200MB) 미달** → T7(구 코드 제거)을 실행하지 않고 실측값·원인 분해와 함께 보고한다(D10). 되돌릴 곳을 남긴 채 사용자가 판단 — 완화폭 재조정 / 폰트 서브셋 등 절감 / 이식 중단 중 선택
 
@@ -191,7 +192,7 @@
 
 - **PRD**: 요구 변경 없음 — 구현 정리
 - **선행 조건**: **T6 실측 통과**(D10). 미통과 시 이 task는 실행하지 않는다
-- **Files**: `src/main.rs`(교체), `src/app/{window,sidebar,menu,layout_host}.rs`(삭제), `src/app/theme.rs`(삭제 검토), `src/app/mod.rs`, `src/panel/{panel,folder_tree,address_bar}.rs`(삭제), `src/panel/{file_list,tabs}.rs`(Win32 부분 제거), `src/panel/mod.rs`, `src/bin/egui_app/`(제거 — main.rs로 승격), `Cargo.toml`, `tests/`, `AGENTS.md`
+- **Files**: `README.md`(갱신 — 아래 참조), `src/main.rs`(교체), `src/app/{window,sidebar,menu,layout_host}.rs`(삭제), `src/app/theme.rs`(삭제 검토), `src/app/mod.rs`, `src/panel/{panel,folder_tree,address_bar}.rs`(삭제), `src/panel/{file_list,tabs}.rs`(Win32 부분 제거), `src/panel/mod.rs`, `src/bin/egui_app/`(제거 — main.rs로 승격), `Cargo.toml`, `tests/`, `AGENTS.md`
 - **Design**: ① 배치 — `src/ui/`가 유일한 UI 계층이 되고 `app/`은 순수 로직(layout·workspace·settings)만, `panel/`은 순수 모델(tabs 모델·history·정렬/포맷)만 남는다 ② 신규 심볼 — 없음(제거 작업) ③ 의존 방향 — 제거 후 `main.rs` → `ui` → `app`(순수)·`panel`(순수)·`fs` ④ 비추상화 — 제거하면서 남는 순수 로직을 새 모듈로 재배치하지 않는다(파일 이동은 diff를 키우고 이식 검증과 섞인다 — 필요하면 별도 작업)
 - **내용**: D9의 의존 역순으로 제거하며 단계마다 `cargo build`로 잔여 참조 확인. `main.rs`를 egui 진입점으로 교체하고 `[[bin]] file_explorer_egui` 제거(기본 `cargo run`이 egui 앱). `theme.rs`는 `enable_dark_mode`(DWM 다크 타이틀바)가 egui 창에 필요한지 확인 후 존치/삭제 결정. `tests/`에서 삭제된 심볼 참조 정리(순수 로직 테스트는 전부 존치). AGENTS.md Repository Structure 갱신
 - **Acceptance**:
@@ -201,6 +202,7 @@
   - 순수 로직 테스트(레이아웃·워크스페이스·세션·탭·히스토리·정렬·포맷)가 **전부 존치되고 통과**한다
   - part1+part2의 모든 FR 동작이 제거 후에도 유지된다(회귀 확인)
   - AGENTS.md Repository Structure에 `src/ui/`가 반영된다
+  - **README.md가 갱신된다** — 현재 "GUI 프레임워크 없이 구현", "단일 exe 약 380KB", 2026-07-24 성능 실측치가 모두 적혀 있어 진입점 승격과 동시에 stale해진다(part1 F-7 리뷰 m5)
 - **Edge Cases**: `file_list.rs`·`tabs.rs`의 부분 삭제에서 순수 함수까지 지우지 않도록 주의 / `mod.rs` 선언 누락으로 인한 컴파일 실패 / 삭제한 심볼을 참조하는 테스트 / `theme.rs`의 `enable_dark_mode`가 여전히 필요한 경우 / 삭제 후 미사용 `windows` crate feature가 남음(Cargo.toml 정리 여부 — 이번엔 건드리지 않음, `fs`가 여전히 사용)
 - **Halt Forecast**: **대량 파일 삭제**(→ 위임 불가 Halt. 사전 승인 대상이 아니라 실행 시점에 삭제 목록을 제시하고 별도 승인) / 제거 후 회귀가 발견되면 되돌리고 보고
 

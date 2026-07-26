@@ -11,7 +11,7 @@ use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::shell_host::{self, ShellHost};
+use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
 use eframe::egui;
@@ -83,6 +83,15 @@ enum PendingNav {
     Push,
     Back,
     Forward,
+}
+
+/// 셸 컨텍스트 메뉴 요청 — 그리기가 모두 끝난 뒤 앱이 실행한다.
+/// `items`가 비면 폴더 배경 메뉴다
+pub struct MenuRequest {
+    pub folder: PathBuf,
+    pub items: Vec<PathBuf>,
+    /// egui 논리 좌표 — 화면 좌표 변환은 실행 시점에 한다
+    pub pos: egui::Pos2,
 }
 
 /// 패널 하나의 탐색 상태
@@ -248,58 +257,56 @@ impl PanelState {
         }
     }
 
-    /// 목록에서 올라온 조작 처리.
+    /// 목록에서 올라온 조작 처리. 셸 메뉴 요청은 **실행하지 않고 값으로 돌려준다**.
     ///
-    /// 셸 메뉴는 `TrackPopupMenuEx` 모달이라 프레임이 그 안에서 멈춘다 —
-    /// 그리기 클로저 안이 아니라 프레임 구성이 끝난 뒤에 호출해야 한다
+    /// `TrackPopupMenuEx`는 자체 메시지 루프를 돌려 winit 이벤트 루프를 재진입시킨다 —
+    /// egui 위젯 트리가 절반만 구성된 상태에서 그 루프에 들어가면 안 되므로,
+    /// 그리기 클로저를 전부 빠져나온 뒤에 띄워야 한다(`ExplorerApp::ui`가 처리)
     fn handle_list_action(
         &mut self,
         action: FileListAction,
-        shell: Option<&ShellHost>,
         ctx: &egui::Context,
-    ) {
+    ) -> Option<MenuRequest> {
         match action {
-            FileListAction::None => {}
+            FileListAction::None => None,
             FileListAction::Open(index) => {
-                let Some(entry) = self.list.entry_at(index) else {
-                    return;
-                };
+                let entry = self.list.entry_at(index)?;
                 let target = self.dir().join(entry.name_string());
                 if entry.is_dir {
                     self.navigate(target, ctx);
                 } else {
                     shell_host::execute(&target);
                 }
+                None
             }
             FileListAction::Context { index, pos } => {
-                let Some(shell) = shell else {
-                    return;
-                };
                 // 행 메뉴는 선택 전체가 대상이다 — 여러 항목을 골라 한 번에 복사·삭제할 수 있다.
-                // 빈 영역이면 항목 없이 호출해 폴더 배경 메뉴("새로 만들기")를 띄운다
+                // 빈 영역이면 항목 없이 요청해 폴더 배경 메뉴("새로 만들기")를 띄운다
                 let items = if index.is_some() {
                     self.list.selected_paths()
                 } else {
                     Vec::new()
                 };
-                // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
-                let scale = ctx.pixels_per_point();
-                let (x, y) = shell.to_screen((pos.x * scale) as i32, (pos.y * scale) as i32);
-                shell.popup(self.dir(), &items, x, y);
+                Some(MenuRequest {
+                    folder: self.dir().to_path_buf(),
+                    items,
+                    pos,
+                })
             }
         }
     }
 
     /// 패널 하나를 그리고 이번 프레임의 조작을 처리한다.
-    /// 세로 구성은 탭 스트립 / 주소창 / 상태 / 파일 목록이며, 목록이 남는 공간을 채운다
+    /// 세로 구성은 탭 스트립 / 주소창 / 상태 / 파일 목록이며, 목록이 남는 공간을 채운다.
+    ///
+    /// 셸 메뉴 요청만은 실행하지 않고 반환한다 — 모달이라 그리기가 끝난 뒤에 띄워야 한다
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-        shell: Option<&ShellHost>,
-    ) {
+    ) -> Option<MenuRequest> {
         let tab_action = crate::ui::tabs::show_tab_strip(ui, &self.tabs);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, &tab.committed, &tab.history);
@@ -317,13 +324,13 @@ impl PanelState {
         ui.separator();
         let action = self.list.show(ui, icons, textures);
 
-        // 그리기가 끝난 뒤 처리한다 — 셸 메뉴가 뜬 동안에는 프레임이 멈춘다
+        // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
         if let Some(tab_action) = tab_action {
             self.handle_tab(tab_action, ctx);
         }
         if let Some(nav) = nav {
             self.handle_nav(nav, ctx);
         }
-        self.handle_list_action(action, shell, ctx);
+        self.handle_list_action(action, ctx)
     }
 }

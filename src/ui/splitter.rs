@@ -6,8 +6,7 @@
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::panel::PanelState;
-use crate::ui::shell_host::ShellHost;
+use crate::ui::panel::{MenuRequest, PanelState};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::HashMap;
@@ -48,8 +47,8 @@ pub fn show_layout(
     active: &mut PanelId,
     icons: &mut IconCache,
     textures: &mut IconTextures,
-    shell: Option<&ShellHost>,
-) {
+) -> Option<MenuRequest> {
+    let mut menu = None;
     let area = ui.available_rect_before_wrap();
     let computed = tree.compute_rects(to_layout_rect(area));
 
@@ -77,10 +76,16 @@ pub fn show_layout(
         let builder = egui::UiBuilder::new()
             .max_rect(pane)
             .id_salt(("pane", id.0));
-        ui.scope_builder(builder, |ui| {
-            ui.set_clip_rect(pane);
-            panel.show(ui, ctx, icons, textures, shell);
-        });
+        let requested = ui
+            .scope_builder(builder, |ui| {
+                ui.set_clip_rect(pane);
+                panel.show(ui, ctx, icons, textures)
+            })
+            .inner;
+        // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
+        if menu.is_none() {
+            menu = requested;
+        }
     }
 
     // 활성 패널 테두리 — 여러 패널이 있을 때만 의미가 있다
@@ -130,6 +135,7 @@ pub fn show_layout(
             }
         }
     }
+    menu
 }
 
 #[cfg(test)]

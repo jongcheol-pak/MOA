@@ -91,15 +91,6 @@ impl FileListView {
         self.resort();
     }
 
-    /// 목록을 비운다 (열거 실패 시)
-    pub fn clear(&mut self) {
-        self.entries.clear();
-        self.type_names.clear();
-        self.icon_indices.clear();
-        self.selection.clear();
-        self.anchor = None;
-    }
-
     pub fn entry_at(&self, index: usize) -> Option<&FileEntry> {
         self.entries.get(index)
     }
