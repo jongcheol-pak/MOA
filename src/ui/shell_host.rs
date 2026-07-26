@@ -11,7 +11,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
-use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+use windows::Win32::UI::Shell::{
+    DefSubclassProc, SHELLEXECUTEINFOW, SetWindowSubclass, ShellExecuteExW,
+};
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::core::{HSTRING, PCWSTR, w};
 
 /// 서브클래스 식별자 — 이 바이너리가 붙인 것임을 구분하는 임의의 상수
 const SUBCLASS_ID: usize = 1;
@@ -56,6 +60,23 @@ impl ShellHost {
             let _ = ClientToScreen(self.hwnd, &mut point);
         }
         (point.x, point.y)
+    }
+}
+
+/// 파일을 연결 프로그램으로 연다 (FR-7).
+/// 실패해도 셸이 자기 UI로 알리므로 여기서는 따로 알리지 않는다
+pub fn execute(path: &Path) {
+    let file = HSTRING::from(path.to_string_lossy().as_ref());
+    let mut sei = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: w!("open"),
+        lpFile: PCWSTR(file.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    // 안전성: sei와 file은 호출이 끝날 때까지 살아 있는 지역 소유다
+    unsafe {
+        let _ = ShellExecuteExW(&mut sei);
     }
 }
 

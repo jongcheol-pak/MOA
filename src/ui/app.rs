@@ -5,7 +5,7 @@ use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::shell_host::ShellHost;
+use crate::ui::shell_host::{self, ShellHost};
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
@@ -205,6 +205,43 @@ impl ExplorerApp {
         self.load.start(path, ctx);
     }
 
+    /// 목록에서 올라온 조작을 처리한다.
+    ///
+    /// 셸 메뉴는 `TrackPopupMenuEx` 모달이라 프레임이 그 안에서 멈춘다 —
+    /// 그리기 클로저 안이 아니라 프레임 구성이 끝난 뒤에 호출해야 한다
+    fn handle_list_action(&mut self, action: FileListAction, ctx: &egui::Context) {
+        match action {
+            FileListAction::None => {}
+            FileListAction::Open(index) => {
+                let Some(entry) = self.list.entry_at(index) else {
+                    return;
+                };
+                let target = self.dir.join(entry.name_string());
+                if entry.is_dir {
+                    self.navigate(target, ctx);
+                } else {
+                    shell_host::execute(&target);
+                }
+            }
+            FileListAction::Context { index, pos } => {
+                let Some(shell) = self.shell.as_ref() else {
+                    return;
+                };
+                // 행 메뉴는 선택 전체가 대상이다 — 여러 항목을 골라 한 번에 복사·삭제할 수 있다.
+                // 빈 영역이면 항목 없이 호출해 폴더 배경 메뉴("새로 만들기")를 띄운다
+                let items = if index.is_some() {
+                    self.list.selected_paths()
+                } else {
+                    Vec::new()
+                };
+                // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
+                let scale = ctx.pixels_per_point();
+                let (x, y) = shell.to_screen((pos.x * scale) as i32, (pos.y * scale) as i32);
+                shell.popup(&self.dir, &items, x, y);
+            }
+        }
+    }
+
     /// 워커 결과를 목록에 반영한다
     fn poll_load(&mut self) {
         let Some(outcome) = self.load.poll() else {
@@ -267,6 +304,8 @@ impl eframe::App for ExplorerApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let mut action = FileListAction::None;
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -291,8 +330,9 @@ impl eframe::App for ExplorerApp {
                 ui.colored_label(theme::TEXT_DIM, &self.status);
             }
             ui.separator();
-            // 셸 메뉴·파일 실행 배선은 T3에서 붙는다 — 지금은 조작만 받아 흘린다
-            let _action: FileListAction = self.list.show(ui, &mut self.icons, &mut self.textures);
+            action = self.list.show(ui, &mut self.icons, &mut self.textures);
         });
+        // 셸 메뉴가 모달이라 그리기가 끝난 뒤에 처리한다 (메뉴가 뜬 동안 프레임이 멈춘다)
+        self.handle_list_action(action, &ctx);
     }
 }

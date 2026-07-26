@@ -117,8 +117,15 @@ unsafe fn show_inner(owner: HWND, folder: &Path, items: &[PathBuf], x: i32, y: i
     }
 }
 
-/// 선택 항목들의 공통 부모 IShellFolder에서 IContextMenu 획득
+/// 선택 항목들의 공통 부모 IShellFolder에서 IContextMenu 획득.
+///
+/// **계약: `items`는 비어 있으면 안 된다** — 부모 폴더를 첫 항목(`pidls[0]`)으로 정하기 때문이다.
+/// 빈 목록은 배경 메뉴를 뜻하므로 호출부(`show_inner`)가 `background_menu`로 분기시킨다
 unsafe fn items_menu(owner: HWND, items: &[PathBuf]) -> Result<IContextMenu> {
+    debug_assert!(
+        !items.is_empty(),
+        "items_menu는 항목이 하나 이상이어야 한다 (빈 목록은 background_menu 담당)"
+    );
     // 안전성: PIDL은 이 함수에서 생성·해제(ILFree). 자식 PIDL 포인터는 절대 PIDL 내부를
     // 가리키므로(ILFindLastID) 절대 PIDL 해제 전까지만 사용한다
     unsafe {
