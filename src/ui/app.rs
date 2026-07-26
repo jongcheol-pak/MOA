@@ -3,11 +3,12 @@
 //! 분할·탭·주소창은 이후 task에서 이 구조체에 붙는다.
 use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
-use crate::panel::history::History;
+use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::shell_host::{self, ShellHost};
+use crate::ui::tabs::TabAction;
 use crate::ui::theme;
 use eframe::egui;
 use std::path::PathBuf;
@@ -178,9 +179,8 @@ pub struct ExplorerApp {
     list: FileListView,
     load: DirLoad,
     address: AddressBar,
-    history: History,
-    /// 현재 **표시 중인** 폴더 (열거가 성공해 커밋된 것)
-    dir: PathBuf,
+    /// 탭 목록 — 탭마다 커밋된 경로와 독립 히스토리를 갖는다 (FR-3)
+    tabs: TabsModel,
     /// 열거 중인 대상 — 성공해야 `dir`로 커밋된다.
     /// 실패해도 현 위치를 유지하려는 것이다(삭제된 폴더로 이동을 시도해도 화면이 비지 않는다)
     pending_dir: PathBuf,
@@ -211,13 +211,17 @@ impl ExplorerApp {
             list: FileListView::new(),
             load: DirLoad::new(),
             address: AddressBar::new(),
-            history: History::new(start.clone()),
-            dir: start.clone(),
+            tabs: TabsModel::new(TabState::new(start.clone())),
             pending_dir: PathBuf::new(),
             pending_nav: PendingNav::None,
             status: String::new(),
             deferred_start: Some(start),
         }
+    }
+
+    /// 현재 표시 중인 폴더 — 활성 탭이 커밋한 경로가 정본이다
+    fn dir(&self) -> &std::path::Path {
+        &self.tabs.active().committed
     }
 
     /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다
@@ -240,21 +244,51 @@ impl ExplorerApp {
         self.load.start(path, ctx);
     }
 
+    /// 탭 스트립에서 올라온 조작 처리
+    fn handle_tab(&mut self, action: TabAction, ctx: &egui::Context) {
+        match action {
+            TabAction::Switch(index) => {
+                if self.tabs.switch(index) {
+                    // 탭마다 폴더가 다르므로 전환하면 그 탭의 폴더를 다시 읽는다.
+                    // 히스토리는 이미 그 탭의 것이라 손대지 않는다
+                    let path = self.tabs.active().committed.clone();
+                    self.start_load(path, PendingNav::None, ctx);
+                }
+            }
+            TabAction::Close(index) => {
+                // 모델은 활성 탭만 닫으므로 대상 탭으로 옮긴 뒤 닫는다
+                self.tabs.switch(index);
+                if let CloseOutcome::Removed(_) = self.tabs.close_active() {
+                    let path = self.tabs.active().committed.clone();
+                    self.start_load(path, PendingNav::None, ctx);
+                }
+                // LastTab이면 아무것도 하지 않는다 — 패널의 마지막 탭은 남는다.
+                // (패널 자체를 닫는 것은 T7 분할 레이아웃의 몫이다)
+            }
+            TabAction::New => {
+                // 새 탭은 현재 폴더를 복제해 연다 (탐색기 관례)
+                let path = self.dir().to_path_buf();
+                self.tabs.add(TabState::new(path.clone()));
+                self.start_load(path, PendingNav::None, ctx);
+            }
+        }
+    }
+
     /// 주소창에서 올라온 탐색 요청 처리
     fn handle_nav(&mut self, action: NavAction, ctx: &egui::Context) {
         match action {
             NavAction::Back => {
-                if let Some(path) = self.history.peek_back().map(PathBuf::from) {
+                if let Some(path) = self.tabs.active().history.peek_back().map(PathBuf::from) {
                     self.start_load(path, PendingNav::Back, ctx);
                 }
             }
             NavAction::Forward => {
-                if let Some(path) = self.history.peek_forward().map(PathBuf::from) {
+                if let Some(path) = self.tabs.active().history.peek_forward().map(PathBuf::from) {
                     self.start_load(path, PendingNav::Forward, ctx);
                 }
             }
             NavAction::Up => {
-                if let Some(parent) = self.dir.parent().map(PathBuf::from) {
+                if let Some(parent) = self.dir().parent().map(PathBuf::from) {
                     self.navigate(parent, ctx);
                 }
             }
@@ -273,7 +307,7 @@ impl ExplorerApp {
                 let Some(entry) = self.list.entry_at(index) else {
                     return;
                 };
-                let target = self.dir.join(entry.name_string());
+                let target = self.dir().join(entry.name_string());
                 if entry.is_dir {
                     self.navigate(target, ctx);
                 } else {
@@ -294,7 +328,7 @@ impl ExplorerApp {
                 // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
                 let scale = ctx.pixels_per_point();
                 let (x, y) = shell.to_screen((pos.x * scale) as i32, (pos.y * scale) as i32);
-                shell.popup(&self.dir, &items, x, y);
+                shell.popup(self.dir(), &items, x, y);
             }
         }
     }
@@ -307,19 +341,20 @@ impl ExplorerApp {
         match outcome {
             EnumOutcome::Ok(entries) => {
                 // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
-                self.dir = std::mem::take(&mut self.pending_dir);
+                let dir = std::mem::take(&mut self.pending_dir);
+                let tab = self.tabs.active_mut();
+                tab.committed = dir.clone();
                 match self.pending_nav {
                     PendingNav::None => {}
-                    PendingNav::Push => self.history.push(self.dir.clone()),
+                    PendingNav::Push => tab.history.push(dir.clone()),
                     PendingNav::Back => {
-                        self.history.back();
+                        tab.history.back();
                     }
                     PendingNav::Forward => {
-                        self.history.forward();
+                        tab.history.forward();
                     }
                 }
-                self.list
-                    .set_entries(self.dir.clone(), entries, &mut self.icons);
+                self.list.set_entries(dir, entries, &mut self.icons);
             }
             // 실패해도 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋)
             EnumOutcome::AccessDenied => {
@@ -387,9 +422,12 @@ impl eframe::App for ExplorerApp {
         let ctx = ui.ctx().clone();
         let mut action = FileListAction::None;
         let mut nav: Option<NavAction> = None;
+        let mut tab_action: Option<TabAction> = None;
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
         egui::CentralPanel::default().show(ui, |ui| {
-            nav = self.address.show(ui, &self.dir, &self.history);
+            tab_action = crate::ui::tabs::show_tab_strip(ui, &self.tabs);
+            let tab = self.tabs.active();
+            nav = self.address.show(ui, &tab.committed, &tab.history);
             ui.horizontal(|ui| {
                 if self.load.is_loading() {
                     ui.spinner();
@@ -413,6 +451,9 @@ impl eframe::App for ExplorerApp {
             ui.separator();
             action = self.list.show(ui, &mut self.icons, &mut self.textures);
         });
+        if let Some(tab_action) = tab_action {
+            self.handle_tab(tab_action, &ctx);
+        }
         if let Some(nav) = nav {
             self.handle_nav(nav, &ctx);
         }

@@ -7,4 +7,5 @@ pub mod app;
 pub mod file_list;
 pub mod icon_tex;
 pub mod shell_host;
+pub mod tabs;
 pub mod theme;
