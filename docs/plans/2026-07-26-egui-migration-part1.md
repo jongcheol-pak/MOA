@@ -107,7 +107,7 @@
 - [x] T2 파일 목록 위젯 — 가상 스크롤·정렬·선택·아이콘 (Type C)
 - [x] T3 셸 연동 — 컨텍스트 메뉴·파일 실행 (Type C)
 - [x] T4 주소창·히스토리 + 슬래시 경로 버그 수정 (Type C)
-- [ ] T5 탭 스트립 (Type C)
+- [x] T5 탭 스트립 (Type C)
 - [ ] T6 패널 조립 (Type C)
 - [ ] T7 자유 분할 레이아웃·스플리터 (Type D)
 
@@ -333,7 +333,7 @@
 
 ## Phase Ledger
 
-- T1~T4 완료 (전부 Type C — V-1~V-8 수행, spec·quality 리뷰 통과)
+- T1~T5 완료 (전부 Type C — V-1~V-8 수행, spec·quality 리뷰 통과)
 
 ## Progress Log
 

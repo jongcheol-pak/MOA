@@ -117,7 +117,10 @@ impl TabsModel {
     ///
     /// `close_active`는 "활성 탭 자신을 닫는" 경우만 상정한 인덱스 보정을 하므로,
     /// 배경 탭을 닫으려고 `switch` 후 `close_active`를 부르면 활성 탭이 옆으로 튄다.
-    /// 임의 탭에 닫기 버튼이 달린 UI(egui 탭 스트립)는 이 함수를 쓴다
+    /// 임의 탭에 닫기 버튼이 달린 UI(egui 탭 스트립)는 이 함수를 쓴다.
+    ///
+    /// 주의: **범위 밖 인덱스는 아무것도 제거하지 않고** 현재 활성 인덱스를 그대로 담아
+    /// `Removed`를 돌려준다 — 반환값만 보고 "탭이 하나 줄었다"고 단정하면 안 된다
     pub fn close(&mut self, index: usize) -> CloseOutcome {
         if self.tabs.len() <= 1 {
             return CloseOutcome::LastTab;
