@@ -370,13 +370,18 @@ impl FileListView {
             }
         });
 
-        // 빈 영역 우클릭 → 폴더 배경 메뉴. 행에서 이미 메뉴를 요청했으면 덮지 않는다
-        if action == FileListAction::None {
-            let below = egui::Rect::from_min_max(
-                egui::pos2(output.inner_rect.left(), output.inner_rect.top()),
+        // 목록 아래 빈 공간 우클릭 → 폴더 배경 메뉴.
+        // 대상은 **콘텐츠가 끝난 지점부터** 뷰포트 바닥까지다 — 뷰포트 전체를 잡으면 이 위젯이
+        // 행보다 나중에 등록돼 행 클릭을 통째로 가로챈다(egui 히트 테스트는 겹칠 때 나중에
+        // 등록된 위젯을 위로 본다). 항목이 화면을 채우면 빈 공간이 없어 배경 메뉴도 열리지
+        // 않는데, 이는 Windows 탐색기와 같은 동작이다
+        let content_bottom = output.inner_rect.top() + output.content_size.y;
+        if content_bottom < output.inner_rect.bottom() {
+            let empty = egui::Rect::from_min_max(
+                egui::pos2(output.inner_rect.left(), content_bottom),
                 output.inner_rect.max,
             );
-            let resp = ui.interact(below, ui.id().with("list_bg"), egui::Sense::click());
+            let resp = ui.interact(empty, ui.id().with("list_bg"), egui::Sense::click());
             if resp.secondary_clicked()
                 && let Some(pos) = resp.interact_pointer_pos()
             {
