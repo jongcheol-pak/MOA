@@ -156,36 +156,75 @@ impl ExplorerApp {
         }
     }
 
-    /// 활성 패널을 닫는다. 마지막 하나는 닫히지 않는다 (FR-2)
-    fn close_active(&mut self) {
+    /// 활성 패널을 닫는다. 마지막 하나는 닫히지 않는다 (FR-2).
+    ///
+    /// 닫은 **자리를 흡수한 패널**을 다음 활성으로 삼는다 — 트리 순서상 첫 패널을 고르면
+    /// 포커스가 화면 반대편으로 튀어 방금 조작한 위치와 멀어진다
+    fn close_active(&mut self, area: LayoutRect) {
+        let closed = self
+            .layout
+            .compute_rects(area)
+            .panes
+            .iter()
+            .find(|(id, _)| *id == self.active)
+            .map(|(_, rect)| *rect);
         if self.layout.close(self.active).is_err() {
             return;
         }
         self.panels.remove(&self.active);
-        // 트리에 남은 패널 중 하나를 활성으로 삼는다
-        if let Some(next) = self.layout.panel_ids().first().copied() {
+        let next = closed
+            .and_then(|closed| {
+                self.layout
+                    .compute_rects(area)
+                    .panes
+                    .into_iter()
+                    .max_by_key(|(_, rect)| overlap_area(*rect, closed))
+                    .map(|(id, _)| id)
+            })
+            .or_else(|| self.layout.panel_ids().first().copied());
+        if let Some(next) = next {
             self.active = next;
         }
     }
 
-    /// 분할·닫기 명령 줄 — part2 T3에서 메뉴 바·단축키로 대체된다
-    fn command_bar(&mut self, ui: &mut egui::Ui, area: LayoutRect) {
+    /// 분할·닫기 명령 줄 — part2 T3에서 메뉴 바·단축키로 대체된다.
+    /// 명령을 **값으로 반환**한다: 실행에 필요한 분할 영역은 이 줄을 그린 뒤에야 확정되기 때문
+    fn command_bar(&self, ui: &mut egui::Ui) -> Option<LayoutCommand> {
+        let mut command = None;
         ui.horizontal(|ui| {
             if ui.button("좌우 분할").clicked() {
-                self.split_active(SplitDir::Horizontal, area);
+                command = Some(LayoutCommand::Split(SplitDir::Horizontal));
             }
             if ui.button("상하 분할").clicked() {
-                self.split_active(SplitDir::Vertical, area);
+                command = Some(LayoutCommand::Split(SplitDir::Vertical));
             }
             let can_close = self.layout.panel_count() > 1;
             if ui
                 .add_enabled(can_close, egui::Button::new("패널 닫기"))
                 .clicked()
             {
-                self.close_active();
+                command = Some(LayoutCommand::ClosePanel);
             }
         });
+        command
     }
+}
+
+/// 명령 줄이 돌려주는 레이아웃 조작
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LayoutCommand {
+    Split(SplitDir),
+    ClosePanel,
+}
+
+/// 두 사각형이 겹치는 넓이 — 닫힌 자리를 누가 이어받았는지 고르는 데 쓴다
+fn overlap_area(a: LayoutRect, b: LayoutRect) -> i64 {
+    let w = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+    let h = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
+    if w <= 0 || h <= 0 {
+        return 0;
+    }
+    w as i64 * h as i64
 }
 
 impl eframe::App for ExplorerApp {
@@ -216,10 +255,16 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
-            // 명령 줄이 차지한 뒤 남는 영역이 분할 대상이다
-            let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
-            self.command_bar(ui, area);
+            // 명령 줄·구분선을 먼저 그린 **뒤** 남는 영역이 실제 분할 대상이다.
+            // 그리기 전 영역으로 판정하면 최소 패널 크기 검사가 명령 줄 높이만큼 느슨해진다
+            let command = self.command_bar(ui);
             ui.separator();
+            let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
+            match command {
+                Some(LayoutCommand::Split(dir)) => self.split_active(dir, area),
+                Some(LayoutCommand::ClosePanel) => self.close_active(area),
+                None => {}
+            }
             splitter::show_layout(
                 ui,
                 &ctx,
@@ -247,4 +292,34 @@ fn start_dir() -> PathBuf {
     std::env::var("USERPROFILE")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(r"C:\"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: i32, y: i32, w: i32, h: i32) -> LayoutRect {
+        LayoutRect { x, y, w, h }
+    }
+
+    #[test]
+    fn 겹치지_않으면_0이다() {
+        assert_eq!(overlap_area(rect(0, 0, 10, 10), rect(20, 20, 10, 10)), 0);
+        // 변끼리 맞닿기만 한 경우도 넓이는 0
+        assert_eq!(overlap_area(rect(0, 0, 10, 10), rect(10, 0, 10, 10)), 0);
+    }
+
+    #[test]
+    fn 부분_겹침은_교집합_넓이다() {
+        assert_eq!(overlap_area(rect(0, 0, 10, 10), rect(5, 5, 10, 10)), 25);
+    }
+
+    #[test]
+    fn 닫힌_자리를_더_많이_덮는_쪽이_크다() {
+        // 닫힌 패널이 오른쪽 절반이었다면, 그 자리를 흡수한 패널의 겹침이 더 커야 한다
+        let closed = rect(500, 0, 500, 600);
+        let absorbed = rect(0, 0, 1000, 600);
+        let far = rect(0, 0, 200, 600);
+        assert!(overlap_area(absorbed, closed) > overlap_area(far, closed));
+    }
 }
