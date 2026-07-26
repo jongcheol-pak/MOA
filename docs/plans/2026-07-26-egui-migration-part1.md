@@ -102,7 +102,7 @@
 
 ## Tasks
 
-- [ ] T1 의존성 정리·앱 골격·다크 팔레트 (Type C)
+- [x] T1 의존성 정리·앱 골격·다크 팔레트 (Type C)
 - [ ] T2 파일 목록 위젯 — 가상 스크롤·정렬·선택·아이콘 (Type C)
 - [ ] T3 셸 연동 — 컨텍스트 메뉴·파일 실행 (Type C)
 - [ ] T4 주소창·히스토리 + 슬래시 경로 버그 수정 (Type C)
@@ -153,6 +153,7 @@
   - 폴더·`.exe`·`.txt`가 각각 다른 시스템 아이콘으로 표시되고, 같은 확장자 수백 행을 스크롤해도 텍스처 수가 **아이콘 종류 수만큼**만 는다
   - 단일 클릭 선택 / Ctrl+클릭 토글 / Shift+클릭 범위 선택이 동작한다
   - GDI 개체 수가 10만 파일 스크롤 후에도 안정적(누수 없음 — PoC 60→60)
+  - **정렬 단위 테스트**: 폴더 우선·자연 정렬(숫자 인지)·빈 목록 + 열별 정렬(크기·수정일) — PoC 삭제로 `sort_entries` 테스트 3개가 함께 없어졌으므로 이번에 순수 로직으로 되살린다
 - **Edge Cases**: 빈 폴더(행 0) / 접근 거부(`EnumOutcome::AccessDenied` → 목록 비우고 사유 표시) / 260자 초과·유니코드 파일명(NFR-5) / 열거 중 폴더 이동 → 세대 불일치 결과 폐기 / 정렬 중 항목 0 / `ImageList_GetIcon` 실패(null HICON) → 아이콘 생략 / Shift 범위 선택 중 목록이 갱신됨 → 선택 인덱스 클램프
 - **Halt Forecast**: `compare_entries` 가시성 승격(→ 사전 승인) / 10만 파일 테스트 폴더 생성(→ 사전 승인, 시스템 임시 폴더) / release에서 p95가 16ms를 넘으면 원인(아이콘·텍스트 레이아웃)을 분리 측정해 기록하고 계속 진행(자동 기각하지 않음 — PoC와 같은 보고 원칙)
 
@@ -311,7 +312,15 @@
 
 ## Phase Ledger
 
-- (미시작)
+- T1 완료 (Type C — V-1~V-8 전부 수행, spec·quality 리뷰 OK)
+
+## Progress Log
+
+- **T1 완료** (커밋: checkpoint start `3b60111` → pre-review `fc34a33` → review-fix `4de059c` → 완료): `src/ui/` 신규 UI 계층 + `file_explorer_egui` 진입점. PoC 자산(`icon_tex`·`shell_host`) 이관 후 `src/bin/egui_poc/` 삭제. 현행 Win32 앱 무변경 확인(diff 0).
+  - **실측 성과**: wgpu를 빌드에서 빼자 exe가 **10.1MB → 3.87MB**(-62%). 메모리는 131→130MB로 거의 불변 — PoC에서 본 "wgpu 359MB vs glow 131MB"는 **런타임 백엔드 선택**이 만든 차이지 빌드 포함 여부가 아니었다.
+  - **리뷰 지적 (실제 결함)**: `eframe::App::ui`가 주는 `Ui`는 배경이 없고, 창 배경은 `App::clear_color`가 결정한다(기본 구현이 `rgba(12,12,12,180)` 하드코딩). `theme::apply_dark`의 `panel_fill`만으로는 배경이 칠해지지 않아 acceptance가 미충족이었다 → `clear_color` 오버라이드 + `CentralPanel::show`로 해소. **이후 모든 UI task가 이 구조를 전제로 한다.**
+  - **API 메모**: egui 0.35에서 `CentralPanel::show_inside`는 deprecated이고 `show(ui, ..)`가 정식. `App` trait은 `update`가 아니라 `logic`+`ui` 2메서드.
+  - **T2 인계**: PoC 삭제로 `sort_entries` 단위 테스트 3개가 함께 사라졌다 → T2 acceptance에 정렬 테스트를 명시적으로 추가했다.
 
 ## Next Steps
 
