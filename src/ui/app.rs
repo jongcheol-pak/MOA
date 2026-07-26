@@ -256,9 +256,11 @@ impl ExplorerApp {
                 }
             }
             TabAction::Close(index) => {
-                // 모델은 활성 탭만 닫으므로 대상 탭으로 옮긴 뒤 닫는다
-                self.tabs.switch(index);
-                if let CloseOutcome::Removed(_) = self.tabs.close_active() {
+                // 보고 있던 탭을 닫을 때만 화면이 바뀐다 — 배경 탭을 닫으면 그대로 유지된다
+                let was_active = index == self.tabs.active_index();
+                if let CloseOutcome::Removed(_) = self.tabs.close(index)
+                    && was_active
+                {
                     let path = self.tabs.active().committed.clone();
                     self.start_load(path, PendingNav::None, ctx);
                 }

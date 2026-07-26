@@ -113,6 +113,30 @@ impl TabsModel {
         CloseOutcome::Removed(self.active)
     }
 
+    /// 지정한 탭 닫기 — **보고 있던 탭은 그대로 유지**한다 (마지막 1개면 LastTab).
+    ///
+    /// `close_active`는 "활성 탭 자신을 닫는" 경우만 상정한 인덱스 보정을 하므로,
+    /// 배경 탭을 닫으려고 `switch` 후 `close_active`를 부르면 활성 탭이 옆으로 튄다.
+    /// 임의 탭에 닫기 버튼이 달린 UI(egui 탭 스트립)는 이 함수를 쓴다
+    pub fn close(&mut self, index: usize) -> CloseOutcome {
+        if self.tabs.len() <= 1 {
+            return CloseOutcome::LastTab;
+        }
+        if index >= self.tabs.len() {
+            return CloseOutcome::Removed(self.active);
+        }
+        self.tabs.remove(index);
+        self.active = match self.active.cmp(&index) {
+            // 닫힌 탭보다 앞이면 인덱스가 그대로다
+            std::cmp::Ordering::Less => self.active,
+            // 활성 탭 자신을 닫았으면 그 자리를 이어받되 끝을 넘지 않는다
+            std::cmp::Ordering::Equal => self.active.min(self.tabs.len() - 1),
+            // 닫힌 탭보다 뒤면 한 칸 당겨진다 — 보던 탭이 그대로 유지된다
+            std::cmp::Ordering::Greater => self.active - 1,
+        };
+        CloseOutcome::Removed(self.active)
+    }
+
     /// 탭 전환 (범위 밖 인덱스는 무시)
     pub fn switch(&mut self, index: usize) -> bool {
         if index < self.tabs.len() && index != self.active {
@@ -359,6 +383,52 @@ mod tests {
         assert_eq!(m.close_active(), CloseOutcome::Removed(0)); // b 제거 → a 활성
         assert_eq!(m.close_active(), CloseOutcome::LastTab); // 마지막 — 제거 안 됨
         assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn 배경_탭을_닫아도_보던_탭이_유지된다() {
+        let mut m = TabsModel::new(tab("C:\\a"));
+        m.add(tab("C:\\b"));
+        m.add(tab("C:\\c"));
+        m.add(tab("C:\\d")); // [a, b, c, d], 활성 = 3 (d)
+
+        // 활성보다 앞의 배경 탭(b)을 닫아도 계속 d를 보고 있어야 한다
+        assert_eq!(m.close(1), CloseOutcome::Removed(2));
+        assert_eq!(m.active().committed, PathBuf::from("C:\\d"));
+
+        // 활성보다 뒤는 없지만, 앞쪽(a)을 하나 더 닫아도 마찬가지
+        assert_eq!(m.close(0), CloseOutcome::Removed(1));
+        assert_eq!(m.active().committed, PathBuf::from("C:\\d"));
+    }
+
+    #[test]
+    fn 활성_탭을_인덱스로_닫으면_옆_탭이_활성된다() {
+        let mut m = TabsModel::new(tab("C:\\a"));
+        m.add(tab("C:\\b"));
+        m.add(tab("C:\\c")); // 활성 = 2 (c)
+
+        assert_eq!(m.close(2), CloseOutcome::Removed(1));
+        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+
+        // 활성(1=b)보다 뒤가 없으니 앞의 a를 닫으면 b가 0번으로 당겨진다
+        assert_eq!(m.close(0), CloseOutcome::Removed(0));
+        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+    }
+
+    #[test]
+    fn 마지막_탭은_인덱스로도_닫히지_않는다() {
+        let mut m = TabsModel::new(tab("C:\\a"));
+        assert_eq!(m.close(0), CloseOutcome::LastTab);
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn 범위_밖_인덱스_닫기는_무시된다() {
+        let mut m = TabsModel::new(tab("C:\\a"));
+        m.add(tab("C:\\b")); // 활성 = 1
+        assert_eq!(m.close(9), CloseOutcome::Removed(1));
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
     }
 
     #[test]
