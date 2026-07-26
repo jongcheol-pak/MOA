@@ -161,9 +161,12 @@ fn push_entry(data: &WIN32_FIND_DATAW, out: &mut Vec<FileEntry>) {
 
 /// 검색 패턴 `\\?\<절대경로>\*` 생성 (이미 확장 접두가 있으면 유지)
 fn to_extended_pattern(path: &Path) -> String {
-    let s = path.to_string_lossy();
+    // `\\?\` 접두사는 Win32의 경로 정규화를 **건너뛰게** 한다 — 그래서 이 접두사가 붙은 경로에서는
+    // `/`가 디렉터리 구분자로 인식되지 않는다. 주소창에 `C:/Users`처럼 입력하면 열거가 실패하므로
+    // 접두사를 붙이기 전에 구분자를 통일한다
+    let s = path.to_string_lossy().replace('/', r"\");
     let base = if s.starts_with(r"\\?\") {
-        s.into_owned()
+        s
     } else if s.starts_with(r"\\") {
         // UNC 경로: \\server\share → \\?\UNC\server\share
         format!(r"\\?\UNC{}", &s[1..])
@@ -186,6 +189,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn 확장_패턴은_슬래시를_백슬래시로_바꾼다() {
+        // `\\?\` 접두사는 정규화를 건너뛰므로 슬래시가 남으면 열거가 실패한다
+        assert_eq!(
+            to_extended_pattern(Path::new("C:/Windows/System32")),
+            r"\\?\C:\Windows\System32\*"
+        );
+    }
+
+    #[test]
+    fn 확장_패턴은_경로_형태별로_접두사를_붙인다() {
+        assert_eq!(
+            to_extended_pattern(Path::new(r"C:\Users")),
+            r"\\?\C:\Users\*"
+        );
+        // 끝에 구분자가 있으면 중복해서 붙이지 않는다
+        assert_eq!(to_extended_pattern(Path::new(r"C:\")), r"\\?\C:\*");
+        // UNC는 \\?\UNC\ 형태로
+        assert_eq!(
+            to_extended_pattern(Path::new(r"\\server\share")),
+            r"\\?\UNC\server\share\*"
+        );
+        // 이미 확장 접두사가 붙었으면 그대로 둔다
+        assert_eq!(
+            to_extended_pattern(Path::new(r"\\?\D:\data")),
+            r"\\?\D:\data\*"
+        );
+    }
+
+    #[test]
+    fn 슬래시_경로도_실제로_열거된다() {
+        let dir = make_temp_dir("slash");
+        std::fs::write(dir.join("a.txt"), b"x").unwrap();
+        // 백슬래시 경로를 슬래시로 바꿔도 같은 결과가 나와야 한다
+        let slash = PathBuf::from(dir.to_string_lossy().replace('\\', "/"));
+        let outcome = enumerate_dir(&slash);
+        let EnumOutcome::Ok(entries) = outcome else {
+            panic!("슬래시 경로 열거 실패");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name_string(), "a.txt");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

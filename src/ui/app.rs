@@ -3,6 +3,8 @@
 //! 분할·탭·주소창은 이후 task에서 이 구조체에 붙는다.
 use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
+use crate::panel::history::History;
+use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::shell_host::{self, ShellHost};
@@ -152,6 +154,17 @@ impl DirLoad {
     }
 }
 
+/// 열거 성공 시 히스토리에 적용할 동작
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PendingNav {
+    /// 첫 로드 — 히스토리에 이미 시작 경로가 들어 있다
+    None,
+    /// 새 이동 — 커서 뒤를 자르고 추가
+    Push,
+    Back,
+    Forward,
+}
+
 /// 탐색기 앱 상태.
 pub struct ExplorerApp {
     com: ComStatus,
@@ -164,7 +177,16 @@ pub struct ExplorerApp {
     textures: IconTextures,
     list: FileListView,
     load: DirLoad,
+    address: AddressBar,
+    history: History,
+    /// 현재 **표시 중인** 폴더 (열거가 성공해 커밋된 것)
     dir: PathBuf,
+    /// 열거 중인 대상 — 성공해야 `dir`로 커밋된다.
+    /// 실패해도 현 위치를 유지하려는 것이다(삭제된 폴더로 이동을 시도해도 화면이 비지 않는다)
+    pending_dir: PathBuf,
+    /// 열거가 성공하면 히스토리에 무엇을 할지.
+    /// 커서 이동도 성공 후로 미뤄야 한다 — 먼저 옮기면 실패했을 때 화면과 히스토리가 어긋난다
+    pending_nav: PendingNav,
     /// 열거 실패 사유 — 성공 시 빈 문자열
     status: String,
     /// 첫 프레임을 그린 뒤 열거를 시작하기 위한 대기 경로.
@@ -179,6 +201,7 @@ impl ExplorerApp {
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
+        let start = start_dir();
         ExplorerApp {
             com,
             shell,
@@ -187,9 +210,13 @@ impl ExplorerApp {
             textures: IconTextures::new(),
             list: FileListView::new(),
             load: DirLoad::new(),
-            dir: PathBuf::new(),
+            address: AddressBar::new(),
+            history: History::new(start.clone()),
+            dir: start.clone(),
+            pending_dir: PathBuf::new(),
+            pending_nav: PendingNav::None,
             status: String::new(),
-            deferred_start: Some(start_dir()),
+            deferred_start: Some(start),
         }
     }
 
@@ -198,11 +225,41 @@ impl ExplorerApp {
         self.com.is_available() && self.shell.is_some()
     }
 
-    /// 폴더 이동 — 열거는 워커에서 진행되고 결과는 `poll`에서 받는다
+    /// 폴더 이동 (사용자 조작) — 성공하면 히스토리에 남는다.
+    ///
+    /// 경로·히스토리는 열거가 **성공한 뒤에만** 커밋한다(pending-커밋).
+    /// 실패해도 현 위치·목록이 그대로 남아 사용자가 길을 잃지 않는다
     fn navigate(&mut self, path: PathBuf, ctx: &egui::Context) {
-        self.dir = path.clone();
+        self.start_load(path, PendingNav::Push, ctx);
+    }
+
+    fn start_load(&mut self, path: PathBuf, nav: PendingNav, ctx: &egui::Context) {
+        self.pending_dir = path.clone();
+        self.pending_nav = nav;
         self.status.clear();
         self.load.start(path, ctx);
+    }
+
+    /// 주소창에서 올라온 탐색 요청 처리
+    fn handle_nav(&mut self, action: NavAction, ctx: &egui::Context) {
+        match action {
+            NavAction::Back => {
+                if let Some(path) = self.history.peek_back().map(PathBuf::from) {
+                    self.start_load(path, PendingNav::Back, ctx);
+                }
+            }
+            NavAction::Forward => {
+                if let Some(path) = self.history.peek_forward().map(PathBuf::from) {
+                    self.start_load(path, PendingNav::Forward, ctx);
+                }
+            }
+            NavAction::Up => {
+                if let Some(parent) = self.dir.parent().map(PathBuf::from) {
+                    self.navigate(parent, ctx);
+                }
+            }
+            NavAction::Goto(path) => self.navigate(path, ctx),
+        }
     }
 
     /// 목록에서 올라온 조작을 처리한다.
@@ -249,22 +306,44 @@ impl ExplorerApp {
         };
         match outcome {
             EnumOutcome::Ok(entries) => {
+                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
+                self.dir = std::mem::take(&mut self.pending_dir);
+                match self.pending_nav {
+                    PendingNav::None => {}
+                    PendingNav::Push => self.history.push(self.dir.clone()),
+                    PendingNav::Back => {
+                        self.history.back();
+                    }
+                    PendingNav::Forward => {
+                        self.history.forward();
+                    }
+                }
                 self.list
                     .set_entries(self.dir.clone(), entries, &mut self.icons);
             }
+            // 실패해도 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋)
             EnumOutcome::AccessDenied => {
-                self.list.clear();
-                self.status = "이 폴더를 열 권한이 없습니다".to_owned();
+                self.status = format!("'{}' 폴더를 열 권한이 없습니다", self.pending_name());
             }
             EnumOutcome::NotFound => {
-                self.list.clear();
-                self.status = "폴더를 찾을 수 없습니다".to_owned();
+                self.status = format!("'{}' 폴더를 찾을 수 없습니다", self.pending_name());
             }
             EnumOutcome::Error => {
-                self.list.clear();
-                self.status = "폴더를 여는 중 문제가 발생했습니다".to_owned();
+                self.status = format!(
+                    "'{}' 폴더를 여는 중 문제가 발생했습니다",
+                    self.pending_name()
+                );
             }
         }
+        self.pending_nav = PendingNav::None;
+    }
+
+    /// 실패 문구에 쓸 대상 폴더 이름 — 전체 경로는 길어 끝 이름만 보여준다
+    fn pending_name(&self) -> String {
+        self.pending_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.pending_dir.to_string_lossy().into_owned())
     }
 }
 
@@ -292,9 +371,10 @@ impl eframe::App for ExplorerApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.textures.begin_frame();
-        // 첫 프레임을 그린 뒤 열거를 시작한다 — 창이 먼저 뜨고 열거 중에도 응답한다
+        // 첫 프레임을 그린 뒤 열거를 시작한다 — 창이 먼저 뜨고 열거 중에도 응답한다.
+        // 시작 경로는 이미 히스토리에 들어 있으므로 다시 쌓지 않는다
         if let Some(path) = self.deferred_start.take() {
-            self.navigate(path, ctx);
+            self.start_load(path, PendingNav::None, ctx);
         }
         self.poll_load();
         // 열거 중에는 계속 다시 그린다(진행 표시가 갱신되고 완료를 즉시 반영한다)
@@ -306,10 +386,11 @@ impl eframe::App for ExplorerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut action = FileListAction::None;
+        let mut nav: Option<NavAction> = None;
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
         egui::CentralPanel::default().show(ui, |ui| {
+            nav = self.address.show(ui, &self.dir, &self.history);
             ui.horizontal(|ui| {
-                ui.label(self.dir.to_string_lossy().as_ref());
                 if self.load.is_loading() {
                     ui.spinner();
                     ui.colored_label(theme::TEXT_DIM, "읽는 중…");
@@ -332,6 +413,9 @@ impl eframe::App for ExplorerApp {
             ui.separator();
             action = self.list.show(ui, &mut self.icons, &mut self.textures);
         });
+        if let Some(nav) = nav {
+            self.handle_nav(nav, &ctx);
+        }
         // 셸 메뉴가 모달이라 그리기가 끝난 뒤에 처리한다 (메뉴가 뜬 동안 프레임이 멈춘다)
         self.handle_list_action(action, &ctx);
     }
