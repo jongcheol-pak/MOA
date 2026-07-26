@@ -8,5 +8,6 @@ pub mod file_list;
 pub mod icon_tex;
 pub mod panel;
 pub mod shell_host;
+pub mod splitter;
 pub mod tabs;
 pub mod theme;

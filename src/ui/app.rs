@@ -2,12 +2,15 @@
 //!
 //! 실제 탐색은 `ui::panel::PanelState`가 담당하며, 이 구조체는 그것을 담는 그릇이다.
 //! 분할 레이아웃(여러 패널)은 T7에서 이 자리에 붙는다.
+use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::panel::PanelState;
 use crate::ui::shell_host::ShellHost;
+use crate::ui::splitter;
 use crate::ui::theme;
 use eframe::egui;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
@@ -105,8 +108,11 @@ pub struct ExplorerApp {
     /// 아이콘 캐시 — 앱 전역 공유 (패널마다 두면 같은 아이콘을 중복 보관하게 된다)
     icons: IconCache,
     textures: IconTextures,
-    /// 탐색 패널. T7에서 분할 레이아웃이 이 자리를 여러 패널로 확장한다
-    panel: PanelState,
+    /// 분할 트리 — 어느 패널이 화면 어디를 차지하는지 (FR-1)
+    layout: LayoutTree,
+    /// 패널 실체. 트리는 `PanelId`만 알고 상태는 여기에 있다
+    panels: HashMap<PanelId, PanelState>,
+    active: PanelId,
 }
 
 impl ExplorerApp {
@@ -116,19 +122,69 @@ impl ExplorerApp {
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
+        let (layout, first) = LayoutTree::new();
+        let mut panels = HashMap::new();
+        panels.insert(first, PanelState::new(start_dir()));
         ExplorerApp {
             com,
             shell,
             korean_font,
             icons: IconCache::new(),
             textures: IconTextures::new(),
-            panel: PanelState::new(start_dir()),
+            layout,
+            panels,
+            active: first,
         }
     }
 
     /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다
     fn shell_available(&self) -> bool {
         self.com.is_available() && self.shell.is_some()
+    }
+
+    /// 활성 패널을 좌우/상하로 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다
+    fn split_active(&mut self, dir: SplitDir, area: LayoutRect) {
+        let start = self
+            .panels
+            .get(&self.active)
+            .map(|p| p.dir().to_path_buf())
+            .unwrap_or_else(start_dir);
+        // 공간이 부족하면 나눌 수 없다 — 조용히 무시한다(사용자는 창을 키우면 된다)
+        if let Ok(new_id) = self.layout.split(self.active, dir, area) {
+            self.panels.insert(new_id, PanelState::new(start));
+            self.active = new_id;
+        }
+    }
+
+    /// 활성 패널을 닫는다. 마지막 하나는 닫히지 않는다 (FR-2)
+    fn close_active(&mut self) {
+        if self.layout.close(self.active).is_err() {
+            return;
+        }
+        self.panels.remove(&self.active);
+        // 트리에 남은 패널 중 하나를 활성으로 삼는다
+        if let Some(next) = self.layout.panel_ids().first().copied() {
+            self.active = next;
+        }
+    }
+
+    /// 분할·닫기 명령 줄 — part2 T3에서 메뉴 바·단축키로 대체된다
+    fn command_bar(&mut self, ui: &mut egui::Ui, area: LayoutRect) {
+        ui.horizontal(|ui| {
+            if ui.button("좌우 분할").clicked() {
+                self.split_active(SplitDir::Horizontal, area);
+            }
+            if ui.button("상하 분할").clicked() {
+                self.split_active(SplitDir::Vertical, area);
+            }
+            let can_close = self.layout.panel_count() > 1;
+            if ui
+                .add_enabled(can_close, egui::Button::new("패널 닫기"))
+                .clicked()
+            {
+                self.close_active();
+            }
+        });
     }
 }
 
@@ -141,7 +197,10 @@ impl eframe::App for ExplorerApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.textures.begin_frame();
-        self.panel.poll(ctx, &mut self.icons);
+        // 패널은 서로 독립이라 각자 자기 열거 결과만 처리한다
+        for panel in self.panels.values_mut() {
+            panel.poll(ctx, &mut self.icons);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -157,9 +216,16 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
-            self.panel.show(
+            // 명령 줄이 차지한 뒤 남는 영역이 분할 대상이다
+            let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
+            self.command_bar(ui, area);
+            ui.separator();
+            splitter::show_layout(
                 ui,
                 &ctx,
+                &mut self.layout,
+                &mut self.panels,
+                &mut self.active,
                 &mut self.icons,
                 &mut self.textures,
                 self.shell.as_ref(),

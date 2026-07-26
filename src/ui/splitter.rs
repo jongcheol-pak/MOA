@@ -1,0 +1,161 @@
+//! 자유 분할 레이아웃 — 분할 트리를 화면에 배치하고 스플리터를 드래그한다 (FR-1·FR-2).
+//!
+//! 배치 계산은 `app::layout::LayoutTree`(순수 로직·단위 테스트 완비)가 그대로 하고,
+//! 이 파일은 그 결과를 egui 좌표로 옮겨 그리고 입력을 되돌려주는 일만 한다.
+//! egui의 `SidePanel`류 도킹 컨테이너는 쓰지 않는다 — 중첩 자유 분할을 표현하지 못한다.
+use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
+use crate::fs::icons::IconCache;
+use crate::ui::icon_tex::IconTextures;
+use crate::ui::panel::PanelState;
+use crate::ui::shell_host::ShellHost;
+use crate::ui::theme;
+use eframe::egui;
+use std::collections::HashMap;
+
+/// 스플리터 히트 영역을 좌우(상하)로 넓히는 여유.
+/// 4px 틈만으로는 잡기 어려워 실제 조작 영역만 넓힌다(그리기는 원래 두께 그대로)
+const SPLITTER_GRAB_PAD: f32 = 2.0;
+
+/// 활성 패널 테두리 두께
+const ACTIVE_BORDER: f32 = 1.0;
+
+pub fn to_egui_rect(r: LayoutRect) -> egui::Rect {
+    egui::Rect::from_min_size(
+        egui::pos2(r.x as f32, r.y as f32),
+        egui::vec2(r.w.max(0) as f32, r.h.max(0) as f32),
+    )
+}
+
+pub fn to_layout_rect(r: egui::Rect) -> LayoutRect {
+    LayoutRect {
+        x: r.left() as i32,
+        y: r.top() as i32,
+        w: r.width() as i32,
+        h: r.height() as i32,
+    }
+}
+
+/// 분할된 패널들을 그리고 스플리터 드래그·활성 패널 전환을 처리한다.
+///
+/// `panels`에 없는 `PanelId`가 트리에 있으면 그 자리는 비워 둔다 —
+/// 분할 직후 새 패널을 만들어 넣는 것은 호출부(`ExplorerApp`)의 몫이다
+#[allow(clippy::too_many_arguments)]
+pub fn show_layout(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    tree: &mut LayoutTree,
+    panels: &mut HashMap<PanelId, PanelState>,
+    active: &mut PanelId,
+    icons: &mut IconCache,
+    textures: &mut IconTextures,
+    shell: Option<&ShellHost>,
+) {
+    let area = ui.available_rect_before_wrap();
+    let computed = tree.compute_rects(to_layout_rect(area));
+
+    // 클릭이 일어난 패널을 활성으로 삼는다.
+    // 패널 rect에 `interact`를 걸면 그 위젯이 목록·버튼 클릭을 가로채므로
+    // (겹치는 위젯은 나중에 등록된 쪽이 이긴다) 포인터 위치로만 판정한다
+    let pressed_at = ctx
+        .input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()))
+        .flatten();
+
+    for (id, rect) in &computed.panes {
+        let pane = to_egui_rect(*rect);
+        if pane.width() <= 0.0 || pane.height() <= 0.0 {
+            continue;
+        }
+        if let Some(pos) = pressed_at
+            && pane.contains(pos)
+        {
+            *active = *id;
+        }
+        let Some(panel) = panels.get_mut(id) else {
+            continue;
+        };
+        // 패널마다 독립된 id 공간을 준다 — 같은 위젯이 여러 패널에 있어도 상태가 섞이지 않는다
+        let builder = egui::UiBuilder::new()
+            .max_rect(pane)
+            .id_salt(("pane", id.0));
+        ui.scope_builder(builder, |ui| {
+            ui.set_clip_rect(pane);
+            panel.show(ui, ctx, icons, textures, shell);
+        });
+    }
+
+    // 활성 패널 테두리 — 여러 패널이 있을 때만 의미가 있다
+    if computed.panes.len() > 1
+        && let Some((_, rect)) = computed.panes.iter().find(|(id, _)| id == active)
+    {
+        ui.painter().rect_stroke(
+            to_egui_rect(*rect),
+            0.0,
+            egui::Stroke::new(ACTIVE_BORDER, theme::CONTROL_ACTIVE),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    // id는 목록 인덱스로 만든다 — `NodePath`는 Hash를 구현하지 않고,
+    // 드래그가 진행되는 동안에는 트리 구조가 바뀌지 않아(비율만 변한다) 인덱스가 안정적이다
+    for (index, splitter) in computed.splitters.iter().enumerate() {
+        let rect = to_egui_rect(splitter.rect);
+        // 그리기는 원래 두께로, 잡기는 조금 넓게
+        ui.painter().rect_filled(rect, 0.0, theme::WINDOW_BG);
+        let grab = match splitter.dir {
+            SplitDir::Horizontal => rect.expand2(egui::vec2(SPLITTER_GRAB_PAD, 0.0)),
+            SplitDir::Vertical => rect.expand2(egui::vec2(0.0, SPLITTER_GRAB_PAD)),
+        };
+        let id = ui.id().with(("splitter", index));
+        let resp = ui.interact(grab, id, egui::Sense::drag());
+        let cursor = match splitter.dir {
+            SplitDir::Horizontal => egui::CursorIcon::ResizeHorizontal,
+            SplitDir::Vertical => egui::CursorIcon::ResizeVertical,
+        };
+        if resp.hovered() || resp.dragged() {
+            ctx.set_cursor_icon(cursor);
+        }
+        if resp.dragged()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            let node = splitter.node_area;
+            let (start, len, at) = match splitter.dir {
+                SplitDir::Horizontal => (node.x as f32, node.w, pos.x),
+                SplitDir::Vertical => (node.y as f32, node.h, pos.y),
+            };
+            if len > 0 {
+                // 최소 패널 크기 클램프는 set_ratio가 축 길이를 받아 처리한다
+                let ratio = (at - start) / len as f32;
+                let _ = tree.set_ratio(splitter.node_path, ratio, len);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 사각형_변환은_왕복해도_같다() {
+        let r = LayoutRect {
+            x: 10,
+            y: 20,
+            w: 300,
+            h: 400,
+        };
+        assert_eq!(to_layout_rect(to_egui_rect(r)), r);
+    }
+
+    #[test]
+    fn 음수_크기는_0으로_잘린다() {
+        let r = LayoutRect {
+            x: 0,
+            y: 0,
+            w: -5,
+            h: -5,
+        };
+        let e = to_egui_rect(r);
+        assert_eq!(e.width(), 0.0);
+        assert_eq!(e.height(), 0.0);
+    }
+}
