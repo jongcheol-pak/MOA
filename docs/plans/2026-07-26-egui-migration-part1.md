@@ -98,6 +98,7 @@
 - **D9 (분할 렌더)**: `LayoutTree::compute_rects(area)`가 주는 i32 픽셀 Rect를 egui `Rect`(f32)로 변환해 각 패널을 그린다. **egui의 `SidePanel`/`TopBottomPanel`은 쓰지 않는다** — 그건 고정 방향 도킹이라 중첩 자유 분할(FR-1)을 표현하지 못하고, 이미 검증된 레이아웃 트리를 버리게 된다. 스플리터는 `SPLITTER_THICKNESS`(4px) 틈을 `Sense::drag()`로 히트테스트한다(현행 Win32판과 같은 "빈 틈 히트테스트" 방식).
 - **D10 (다중 선택)**: 목록은 단일·Ctrl·Shift 선택을 지원한다. FR-8의 셸 컨텍스트 메뉴가 다중 항목을 받으므로(`show_context_menu(.., items: &[PathBuf], ..)`) 선택 모델이 먼저 있어야 T3가 성립한다. PoC는 단일 선택뿐이었다.
 - **D11 (슬래시 경로 수정 위치)**: `to_extended_pattern` 안에서 `/`를 `\`로 치환한다. 호출부(주소창)에서 고치면 트리·다른 경로 진입에는 여전히 버그가 남는다 — 확장 접두사를 붙이는 그 지점이 근본 원인 위치다. Source: 원인 분석(Investigation Log).
+- **D13 (내림차순에서도 폴더 우선 — T2 구현 중 확인)**: `compare_entries`는 폴더 우선을 정렬 방향과 무관하게 early return으로 처리하는데, 현행 `FileList::resort`는 그 결과 전체에 `.reverse()`를 걸어(`file_list.rs:316-319`) **내림차순일 때 파일이 폴더보다 위로 올라온다**. egui 판은 폴더/파일 판정을 먼저 하고 **같은 종류끼리만** reverse를 적용해 어느 방향에서도 폴더가 위에 오게 한다(Windows 탐색기 동작이자 T2 acceptance "폴더 우선 규칙이 유지된다"). `compare_entries`는 그대로 재사용하며, **현행 Win32 코드는 수정하지 않는다**(part1 불가피한 Halt — 병행 유지 전제). 두 앱의 이 동작 차이는 의도된 것이며 part2 T7에서 Win32 판이 제거되면 자연히 해소된다.
 - **D12 (part1 미포함)**: 워크스페이스·사이드바·트리·메뉴바·단축키·감시·세션 저장은 part2다. part1은 **단일 워크스페이스·시작 폴더 고정**으로 동작하며 종료 시 아무것도 저장하지 않는다(part2 T5가 배선). 이렇게 나눠야 각 part가 독립 검증된다.
 
 ## Tasks
