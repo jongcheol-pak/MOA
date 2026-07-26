@@ -24,17 +24,17 @@ pub enum ComStatus {
 }
 
 impl ComStatus {
-    /// 사용자에게 보일 사유 — STA일 때는 알릴 것이 없다
-    pub fn unavailable_reason(self) -> Option<&'static str> {
-        match self {
-            ComStatus::Sta { .. } => None,
-            ComStatus::WrongApartment => Some(
-                "시스템 메뉴를 사용할 수 없습니다 (COM 초기화 상태가 달라 마우스 오른쪽 메뉴가 열리지 않습니다)",
-            ),
-            ComStatus::Failed => Some("시스템 메뉴를 사용할 수 없습니다 (COM 초기화 실패)"),
-        }
+    /// 셸 메뉴를 띄울 수 있는 상태인가.
+    /// 실패 원인(`WrongApartment`/`Failed`)은 사용자가 취할 행동이 같아 화면에서는 구분하지 않는다
+    pub fn is_available(self) -> bool {
+        matches!(self, ComStatus::Sta { .. })
     }
 }
+
+/// 셸 메뉴를 쓸 수 없을 때 화면에 보일 문구.
+/// 원인이 무엇이든 사용자가 할 수 있는 일은 재시작뿐이라 한 문구로 통일한다
+const SHELL_UNAVAILABLE: &str =
+    "마우스 오른쪽 버튼 메뉴를 사용할 수 없습니다 (앱을 다시 시작해 주세요)";
 
 /// COM을 STA로 초기화한다. 반환을 세 갈래로 처리한다 —
 /// `S_OK`(이번에 초기화)·`S_FALSE`(이미 초기화됨) 모두 STA 확보로 보고 진행한다.
@@ -113,32 +113,35 @@ impl ExplorerApp {
         }
     }
 
-    /// 셸 메뉴를 쓸 수 없는 경우의 사유 — 없으면 정상
-    fn shell_unavailable(&self) -> Option<&'static str> {
-        if let Some(reason) = self.com.unavailable_reason() {
-            return Some(reason);
-        }
-        if self.shell.is_none() {
-            return Some("시스템 메뉴를 사용할 수 없습니다 (창 정보를 얻지 못했습니다)");
-        }
-        None
+    /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다
+    fn shell_available(&self) -> bool {
+        self.com.is_available() && self.shell.is_some()
     }
 }
 
 impl eframe::App for ExplorerApp {
+    /// 창 클리어 색 — eframe 기본값은 하드코딩된 회색이라 팔레트와 어긋난다.
+    /// 이것을 덮어써야 크기 조절 중 노출되는 여백까지 창 배경색으로 칠해진다
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        theme::WINDOW_BG.to_normalized_gamma_f32()
+    }
+
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {}
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.heading("파일 탐색기");
-        ui.separator();
-        if !self.korean_font {
-            ui.colored_label(
-                theme::TEXT_DIM,
-                "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다",
-            );
-        }
-        if let Some(reason) = self.shell_unavailable() {
-            ui.colored_label(theme::TEXT_DIM, reason);
-        }
+        // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.heading("파일 탐색기");
+            ui.separator();
+            if !self.korean_font {
+                ui.colored_label(
+                    theme::TEXT_DIM,
+                    "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다",
+                );
+            }
+            if !self.shell_available() {
+                ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
+            }
+        });
     }
 }
