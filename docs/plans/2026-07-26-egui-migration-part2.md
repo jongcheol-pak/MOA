@@ -349,6 +349,7 @@
 
 ## Phase Ledger
 
+- Phase G 통과 (Must 100% — F-7 전수 대조 재사용, 재루프 0회)
 - Phase F 통과 (F-7 2회차 BLOCKER·MAJOR 0 — MINOR 5건 전부 반영)
 - T1~T7 완료 (T7은 진입점 승격까지 — 구 Win32 삭제는 사용자 보류)
 
