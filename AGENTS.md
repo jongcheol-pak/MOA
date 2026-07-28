@@ -29,19 +29,24 @@
 ├── docs/
 │   └── prd.md               # 승인된 PRD (요구사항 정본)
 ├── src/
-│   ├── main.rs              # 진입점, 메시지 루프, COM 초기화
-│   ├── app/                 # 메인 창·분할 레이아웃·설정
-│   ├── panel/               # 패널(탭·주소창·파일 목록·트리)
+│   ├── main.rs              # 진입점 — COM 초기화, 세션 로드, egui 창 실행
+│   ├── ui/                  # egui(eframe/glow) UI 계층 — 화면·입력 전부
+│   ├── app/                 # 순수 로직 — 워크스페이스·분할 레이아웃·세션 스키마
+│   ├── panel/               # 순수 모델 — 탭·히스토리·정렬/표시 규칙
 │   └── fs/                  # 디렉터리 열거·감시·아이콘·셸 연동
 └── tests/                   # 통합 테스트
 ```
+
+> `app/{window,sidebar,menu,layout_host}.rs`·`panel/{panel,folder_tree,address_bar}.rs`와
+> `panel/{file_list,tabs}.rs`의 Win32 컨트롤 래퍼는 **egui 이식 이전 구현**이다.
+> 소스에는 남아 있지만 실행 파일에서는 쓰이지 않으므로, 새 UI 작업은 `src/ui/`에서 한다.
 
 ## 산출물·파일 관리
 - **빌드 산출물**: `target/` (gitignore)
 - **런타임 생성물**: `%APPDATA%\FileExplorer\settings.json` (설정·세션)
 
 ## Conventions
-- **아키텍처**: 계층형(단일 crate) — 모듈로만 분리 (app / panel / fs). GUI 도구로 도메인 규칙이 얇아 crate 분리는 하지 않는다.
+- **아키텍처**: 계층형(단일 crate) — 모듈로만 분리 (ui / app / panel / fs). 의존은 단방향이며 `ui`만 상위다: `app`·`panel`·`fs`는 `ui`를 모른다. GUI 도구로 도메인 규칙이 얇아 crate 분리는 하지 않는다.
 - **에러 처리**: `Result<T, E>`. Win32 호출 실패는 `windows::core::Result` 전파. `unwrap()`, `expect()` 금지 (테스트·main 진입부 제외).
 - **unsafe**: Win32 FFI 특성상 불가피 — 반드시 함수 단위로 격리하고 사유 주석 의무. 안전 래퍼를 만들어 상위 로직에서는 safe 코드만.
 - **UI 스레드 원칙**: UI 스레드에서 블로킹 I/O 금지. 디렉터리 열거·감시는 워커 스레드 → 윈도우 메시지로 결과 전달.

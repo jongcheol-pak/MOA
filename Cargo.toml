@@ -38,12 +38,6 @@ eframe = { version = "0.35", default-features = false, features = ["glow"] }
 # eframe이 재수출하지 않아 직접 의존 — 창 HWND 추출(셸 컨텍스트 메뉴)에 필요
 raw-window-handle = "0.6"
 
-# 이식 중 진입점 — 현행 Win32 앱(기본 bin)과 병행 유지된다.
-# 이식이 끝나면 src/main.rs로 승격하고 이 섹션을 제거한다 (part2 T7)
-[[bin]]
-name = "file_explorer_egui"
-path = "src/bin/egui_app/main.rs"
-
 [profile.release]
 # 경량 배포 목표(NFR-2) — 크기 최적화·심볼 제거
 opt-level = "s"
