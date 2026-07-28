@@ -327,11 +327,11 @@ mod tests {
         assert!(has(egui::Modifiers::ALT, egui::Key::ArrowLeft)); // 뒤로
         assert!(has(egui::Modifiers::ALT, egui::Key::ArrowRight)); // 앞으로
         assert!(has(egui::Modifiers::NONE, egui::Key::F5)); // 새로 고침
-        assert!(has(egui::Modifiers::CTRL, egui::Key::Backslash)); // 좌우 분할
+        assert!(has(egui::Modifiers::CTRL, egui::Key::Backslash)); // 오른쪽 분할
         assert!(has(
             egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
             egui::Key::Backslash
-        )); // 상하 분할
+        )); // 아래쪽 분할
     }
 
     #[test]
