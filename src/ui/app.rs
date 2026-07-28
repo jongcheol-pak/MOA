@@ -810,6 +810,14 @@ mod tests {
             left_before,
             "대상이 아닌 패널(활성 패널)의 자리는 그대로여야 한다"
         );
+        // 분할하면 새로 생긴 패널이 활성이 된다 — 이어서 조작할 곳이 거기이기 때문
+        let added = view
+            .layout
+            .panel_ids()
+            .into_iter()
+            .find(|id| *id != left && *id != right)
+            .expect("새 패널이 트리에 있어야 한다");
+        assert_eq!(view.active, added);
     }
 
     /// 지정 패널의 현재 사각형 — 어느 패널이 나뉘었는지 자리로 판별한다

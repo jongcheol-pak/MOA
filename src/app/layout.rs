@@ -571,6 +571,32 @@ mod tests {
     }
 
     #[test]
+    fn 중첩_노드를_앞에_분할해도_부모_비율은_그대로다() {
+        // 안쪽 리프를 나눠도 바깥 Split의 비율은 건드리지 않아야 한다
+        let (mut tree, first) = LayoutTree::new();
+        let right = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
+        let outer = tree.compute_rects(AREA).splitters[0].node_path;
+        tree.set_ratio(outer, 0.3, AREA.w).unwrap();
+        let left_before = tree
+            .compute_rects(AREA)
+            .panes
+            .iter()
+            .find(|(id, _)| *id == first)
+            .unwrap()
+            .1;
+
+        tree.split(right, SplitDir::Vertical, SplitPlace::Before, AREA)
+            .unwrap();
+
+        let after = tree.compute_rects(AREA);
+        let left_after = after.panes.iter().find(|(id, _)| *id == first).unwrap().1;
+        assert_eq!(left_before, left_after, "바깥 분할 비율이 유지돼야 한다");
+        assert_eq!(after.panes.len(), 3);
+    }
+
+    #[test]
     fn 앞에_둔_패널을_닫으면_형제가_승격된다() {
         let (mut tree, first) = LayoutTree::new();
         let added = tree

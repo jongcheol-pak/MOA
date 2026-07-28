@@ -319,7 +319,8 @@ mod tests {
     }
 
     #[test]
-    fn fr12_단축키_여섯_종이_모두_들어_있다() {
+    fn fr12_기본_단축키가_모두_들어_있다() {
+        // 네 방향 Ctrl+Alt 조합은 `네_방향_단축키가_모두_배정돼_있다`가 따로 덮는다
         let table = shortcut_table();
         let has = |modifiers, key| table.iter().any(|(m, k, _)| *m == modifiers && *k == key);
         assert!(has(egui::Modifiers::CTRL, egui::Key::T)); // 새 탭
