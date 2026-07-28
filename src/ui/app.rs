@@ -143,15 +143,15 @@ impl WorkspaceView {
         }
     }
 
-    /// 활성 패널을 좌우/상하로 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다
-    fn split_active(&mut self, dir: SplitDir, area: LayoutRect) {
+    /// 활성 패널을 네 방향 중 한쪽으로 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다
+    fn split_active(&mut self, dir: SplitDir, place: SplitPlace, area: LayoutRect) {
         let start = self
             .panels
             .get(&self.active)
             .map(|p| p.dir().to_path_buf())
             .unwrap_or_else(start_dir);
         // 공간이 부족하면 나눌 수 없다 — 조용히 무시한다(사용자는 창을 키우면 된다)
-        if let Ok(new_id) = self.layout.split(self.active, dir, SplitPlace::After, area) {
+        if let Ok(new_id) = self.layout.split(self.active, dir, place, area) {
             self.panels.insert(new_id, PanelState::new(start));
             self.active = new_id;
         }
@@ -554,12 +554,10 @@ impl ExplorerApp {
     fn apply_command(&mut self, command: Command, area: LayoutRect, ctx: &egui::Context) {
         match command {
             // 분할·닫기는 활성 워크스페이스의 뷰를 대상으로 한다(없으면 여기서 만들어진다)
-            Command::SplitH => self
-                .ensure_active_view()
-                .split_active(SplitDir::Horizontal, area),
-            Command::SplitV => self
-                .ensure_active_view()
-                .split_active(SplitDir::Vertical, area),
+            Command::Split(to) => {
+                let (dir, place) = to.to_layout();
+                self.ensure_active_view().split_active(dir, place, area);
+            }
             Command::ClosePanel => self.ensure_active_view().close_active(area),
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             Command::NewWorkspace => {
