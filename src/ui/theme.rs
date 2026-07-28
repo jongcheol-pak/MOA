@@ -25,6 +25,8 @@ pub const CONTROL_HOT: egui::Color32 = egui::Color32::from_rgb(0x38, 0x38, 0x38)
 pub const CONTROL_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x45, 0x45, 0x45);
 /// 비활성 글자색
 pub const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(0x6A, 0x6A, 0x6A);
+/// 타이틀바 닫기 버튼 hover 배경 — Windows 11 캡션 닫기 버튼과 같은 빨강 (FR-22)
+pub const CLOSE_HOT: egui::Color32 = egui::Color32::from_rgb(0xC4, 0x2B, 0x1C);
 
 /// 고정 다크 팔레트를 egui 컨텍스트에 적용한다.
 /// egui 기본 다크를 토대로, 위 상수로 현행 앱과 같은 색을 덮어쓴다.

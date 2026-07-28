@@ -14,12 +14,18 @@ use file_explorer::ui::app::{ExplorerApp, init_com, uninit_com};
 
 fn main() -> eframe::Result {
     let com = init_com();
-    // 창 제목 표시줄을 다크로 만드는 프로세스 전역 정책 — 창을 만들기 전에 켜야 적용된다
+    // 셸 팝업 메뉴를 다크로 만드는 프로세스 전역 정책 — 창을 만들기 전에 켜야 적용된다.
+    // 제목 표시줄은 앱이 직접 그리므로(FR-22) 이 정책의 대상이 아니지만,
+    // 우클릭 셸 컨텍스트 메뉴(FR-8)는 여전히 이 정책으로 다크가 된다
     app::theme::enable_dark_mode();
     // 창을 만들기 전에 세션을 읽는다 — 지난번 크기·위치로 떠야 한다 (FR-11).
     // 화면 밖으로 저장된 위치는 창이 뜬 뒤 모니터 크기를 알고 나서 앱이 보정한다
     let session = load_session();
-    let mut viewport = egui::ViewportBuilder::default().with_title("파일 탐색기");
+    // 창 장식을 끄고 제목 표시줄을 앱이 그린다 (FR-22) — 그 줄에 사이드바 토글·설정 버튼을 두기 위함.
+    // 대가로 창 그림자·둥근 모서리를 잃는다(eframe에는 winit의 무장식 그림자 확장에 닿을 길이 없다)
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("파일 탐색기")
+        .with_decorations(false);
     match session.as_ref().map(|s| &s.window) {
         Some(window) => {
             viewport = viewport

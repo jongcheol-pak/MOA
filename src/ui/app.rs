@@ -18,6 +18,7 @@ use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::splitter;
 use crate::ui::theme;
+use crate::ui::titlebar::{self, WindowRequest};
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -484,6 +485,39 @@ impl ExplorerApp {
         }
     }
 
+    /// 타이틀바를 그리고 앱 명령을 돌려준다 (FR-22).
+    /// 창 조작(최소화·최대화·닫기·끌기)은 여기서 바로 창에 전달하고,
+    /// 앱 명령(사이드바 토글)만 호출부로 넘긴다 — 분할 영역이 확정된 뒤에 실행해야 하기 때문이다
+    fn show_titlebar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> Option<Command> {
+        let state = titlebar::TitlebarState {
+            maximized: self.window.maximized,
+            sidebar_collapsed: self.sidebar_collapsed,
+        };
+        let title = self.workspaces.active().name.clone();
+        let outcome = egui::Panel::top(egui::Id::new("titlebar"))
+            .resizable(false)
+            .exact_size(titlebar::TITLEBAR_HEIGHT)
+            // 참조 화면에는 타이틀바 아래 구분선이 없다 — egui 기본값(그림)을 끈다
+            .show_separator_line(false)
+            .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
+            .show(ui, |ui| titlebar::show_titlebar(ui, &title, state))
+            .inner;
+        if let Some(request) = outcome.window {
+            let command = match request {
+                WindowRequest::Minimize => egui::ViewportCommand::Minimized(true),
+                WindowRequest::ToggleMaximize => {
+                    egui::ViewportCommand::Maximized(!self.window.maximized)
+                }
+                // 닫기는 창 닫기 요청으로 보낸다 — eframe이 종료 절차를 거치며 `on_exit`를
+                // 부르므로 세션이 저장된다(프로세스를 직접 끝내면 그 경로가 사라진다)
+                WindowRequest::Close => egui::ViewportCommand::Close,
+                WindowRequest::Drag => egui::ViewportCommand::StartDrag,
+            };
+            ctx.send_viewport_cmd(command);
+        }
+        outcome.command
+    }
+
     /// 삭제 확인 대화 (FR-18) — 워크스페이스 하나를 지우면 그 화면 구성과 탭이 함께 사라지고
     /// 되돌릴 수 없어 한 번 묻는다. 문구는 현행 Win32 판의 확인 대화와 같다
     fn show_remove_confirm(&mut self, ctx: &egui::Context) {
@@ -659,6 +693,8 @@ impl eframe::App for ExplorerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut menu = None;
+        // 타이틀바를 먼저 그린다 — 남는 영역이 아래 CentralPanel의 몫이 된다 (FR-22)
+        let titlebar_command = self.show_titlebar(ui, &ctx);
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
         egui::CentralPanel::default().show(ui, |ui| {
             if !self.korean_font {
@@ -710,7 +746,11 @@ impl eframe::App for ExplorerApp {
             } else {
                 menu::poll_shortcuts(&ctx)
             };
-            for command in menu_command.into_iter().chain(shortcut_command) {
+            for command in menu_command
+                .into_iter()
+                .chain(shortcut_command)
+                .chain(titlebar_command)
+            {
                 self.apply_command(command, area, &ctx);
             }
             // 확보와 사용을 나눈다 — 아래 호출이 `views`와 `icons`·`textures`를 동시에 빌린다
