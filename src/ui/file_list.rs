@@ -8,7 +8,7 @@ use crate::panel::file_list::{SortKey, compare_entries, format_filetime, format_
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::theme;
 use eframe::egui;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
 /// 행 높이 — 16px 시스템 아이콘이 들어갈 여유를 둔다
@@ -77,8 +77,19 @@ impl FileListView {
         }
     }
 
-    /// 새 폴더의 항목으로 교체한다. 정렬은 현재 정렬 기준을 유지한다
+    /// 새 폴더의 항목으로 교체한다. 정렬은 현재 정렬 기준을 유지한다.
+    ///
+    /// **같은 폴더를 다시 읽은 경우에는 선택을 이름 기준으로 되살린다** — 변경 감시가
+    /// 갱신할 때마다 선택이 풀리면(FR-10), 여러 파일을 고르는 동안 다른 앱이 그 폴더에
+    /// 파일 하나만 만들어도 고르던 것이 사라진다. 지워진 항목은 자연히 빠진다
     pub fn set_entries(&mut self, dir: PathBuf, entries: Vec<FileEntry>, icons: &mut IconCache) {
+        let keep: Option<HashSet<Vec<u16>>> = (dir == self.dir).then(|| {
+            self.selection
+                .iter()
+                .filter_map(|&index| self.entries.get(index))
+                .map(|entry| entry.name.clone())
+                .collect()
+        });
         self.dir = dir;
         self.type_names = entries
             .iter()
@@ -89,6 +100,11 @@ impl FileListView {
         self.selection.clear();
         self.anchor = None;
         self.resort();
+        if let Some(keep) = keep {
+            // 기준점(anchor)은 복원하지 않는다 — 다음 클릭이 새로 잡으며,
+            // 없는 상태가 엉뚱한 위치를 가리키는 것보다 낫다
+            self.selection = restore_selection(&self.entries, &keep);
+        }
     }
 
     pub fn entry_at(&self, index: usize) -> Option<&FileEntry> {
@@ -390,6 +406,17 @@ impl FileListView {
     }
 }
 
+/// 갱신 전 선택 이름들이 새 목록의 어느 자리인지 되찾는다 (정렬이 끝난 뒤의 인덱스).
+/// 목록 길이에 비례해 한 번만 훑는다 — 10만 항목에서 선택이 많아도 비용이 튀지 않는다
+fn restore_selection(entries: &[FileEntry], keep: &HashSet<Vec<u16>>) -> BTreeSet<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| keep.contains(&entry.name))
+        .map(|(index, _)| index)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,6 +446,39 @@ mod tests {
 
     fn names(v: &FileListView) -> Vec<String> {
         v.entries.iter().map(|e| e.name_string()).collect()
+    }
+
+    #[test]
+    fn 갱신_후에도_선택은_이름으로_되살아난다() {
+        // 감시 갱신(FR-10)에서 목록이 통째로 바뀌어도 고르던 파일은 그대로여야 한다
+        let entries = vec![
+            entry("사진", true, 0, 0),
+            entry("a.txt", false, 0, 0),
+            entry("b.txt", false, 0, 0),
+        ];
+        let keep: HashSet<Vec<u16>> = ["b.txt", "사진"]
+            .iter()
+            .map(|n| {
+                let mut w: Vec<u16> = n.encode_utf16().collect();
+                w.push(0);
+                w
+            })
+            .collect();
+        let selection = restore_selection(&entries, &keep);
+        assert_eq!(selection.into_iter().collect::<Vec<_>>(), vec![0, 2]);
+    }
+
+    #[test]
+    fn 사라진_항목은_선택에서_빠진다() {
+        let entries = vec![entry("남은.txt", false, 0, 0)];
+        let mut keep = HashSet::new();
+        for name in ["남은.txt", "지워진.txt"] {
+            let mut w: Vec<u16> = name.encode_utf16().collect();
+            w.push(0);
+            keep.insert(w);
+        }
+        let selection = restore_selection(&entries, &keep);
+        assert_eq!(selection.into_iter().collect::<Vec<_>>(), vec![0]);
     }
 
     #[test]

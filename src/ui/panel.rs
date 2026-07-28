@@ -7,6 +7,7 @@
 //! 실패(삭제·권한)하면 사유만 표시하고 현 위치·목록을 그대로 둔다.
 use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
+use crate::fs::watcher::DirWatcher;
 use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
@@ -122,6 +123,15 @@ pub struct PanelState {
     tree: FolderTreeView,
     /// 트리 표시 여부. 현행 판과 같이 숨김으로 시작한다
     tree_visible: bool,
+    /// 표시 중인 폴더의 변경 감시 (FR-10). 폴더가 바뀌면 통째로 교체된다
+    watch: Option<DirWatch>,
+}
+
+/// 감시자와 그 통지 채널 — 둘의 수명이 같아야 해서 함께 둔다
+struct DirWatch {
+    watcher: DirWatcher,
+    /// 변경 통지 (내용 없음 — 받으면 폴더를 통째로 다시 읽는다)
+    rx: Receiver<()>,
 }
 
 impl PanelState {
@@ -137,6 +147,7 @@ impl PanelState {
             deferred_start: Some(start),
             tree: FolderTreeView::new(),
             tree_visible: false,
+            watch: None,
         }
     }
 
@@ -145,14 +156,49 @@ impl PanelState {
         &self.tabs.active().committed
     }
 
-    /// 프레임마다 호출 — 지연 시작·열거 완료를 처리하고, 열거 중이면 다시 그리게 한다
+    /// 프레임마다 호출 — 지연 시작·열거 완료·변경 감시를 처리하고, 열거 중이면 다시 그리게 한다
     pub fn poll(&mut self, ctx: &egui::Context, icons: &mut IconCache) {
         if let Some(path) = self.deferred_start.take() {
             // 시작 경로는 이미 히스토리에 들어 있으므로 다시 쌓지 않는다
             self.start_load(path, PendingNav::None, ctx);
         }
         self.poll_load(icons);
+        self.poll_watch(ctx);
         if self.load.is_loading() {
+            ctx.request_repaint();
+        }
+    }
+
+    /// 표시 중인 폴더를 감시한다 (FR-10). 이전 폴더의 감시는 여기서 끝난다 —
+    /// 교체하면 옛 `DirWatcher`가 drop되며 그 스레드가 정지·회수된다
+    fn watch(&mut self, path: &Path) {
+        if self
+            .watch
+            .as_ref()
+            .is_some_and(|watch| watch.watcher.path() == path)
+        {
+            return;
+        }
+        let (tx, rx) = channel();
+        // 감시는 창 메시지를 쓰지 않는다 — 채널만 받아 프레임마다 확인한다 (D7)
+        let watcher = DirWatcher::start(path.to_path_buf(), tx, None);
+        self.watch = Some(DirWatch { watcher, rx });
+    }
+
+    /// 감시 통지를 확인해 변경이 있으면 폴더를 다시 읽는다.
+    /// 폴더가 열리지 않아 감시가 즉시 끝난 경우에도 통지 1회가 오며, 재열거가 사유를 표시한다
+    fn poll_watch(&mut self, ctx: &egui::Context) {
+        let Some(watch) = self.watch.as_ref() else {
+            return;
+        };
+        // 쌓인 통지가 여러 개여도 다시 읽는 것은 한 번이면 된다
+        let mut changed = false;
+        while watch.rx.try_recv().is_ok() {
+            changed = true;
+        }
+        if changed {
+            let dir = self.dir().to_path_buf();
+            self.start_load(dir, PendingNav::None, ctx);
             ctx.request_repaint();
         }
     }
@@ -190,6 +236,8 @@ impl PanelState {
                         tab.history.forward();
                     }
                 }
+                // 감시 대상도 이 시점에 맞춘다 — 커밋된 폴더만 감시한다(열거 실패한 곳은 아니다)
+                self.watch(&dir);
                 self.list.set_entries(dir, entries, icons);
             }
             // 실패해도 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋)
