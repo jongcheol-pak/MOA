@@ -95,7 +95,7 @@
 
 - [x] T1 폴더 트리 (Type C)
 - [x] T2 워크스페이스 사이드바 (Type D)
-- [ ] T3 메뉴바·단축키 (Type C)
+- [x] T3 메뉴바·단축키 (Type C)
 - [ ] T4 디렉터리 변경 감시 (Type C)
 - [ ] T5 세션 저장·복원 (Type C)
 - [ ] T6 NFR 실측·검증 (Type B)
@@ -136,7 +136,7 @@
 ### T3. 메뉴바·단축키 (Type C)
 
 - **PRD**: FR-12(단축키), FR-1·FR-2·FR-16의 명령 진입점, FR-21(메뉴 다크)
-- **Files**: `src/ui/menu.rs`(신규), `src/ui/app.rs`
+- **Files**: `src/ui/menu.rs`(신규), `src/ui/app.rs`, `src/ui/panel.rs`·`src/ui/sidebar.rs`(구현 중 추가 — 명령이 닿을 공개 진입점)
 - **Design**: ① 배치 — 메뉴 정의·단축키 처리를 `ui/menu.rs`에 ② 신규 심볼 — `ui::menu::show_menu_bar(ui, state: MenuState) -> Option<Command>` / `ui::menu::poll_shortcuts(ctx) -> Option<Command>` / `enum Command { NewTab, CloseTab, Back, Forward, Refresh, SplitH, SplitV, ClosePanel, NewWorkspace, ToggleTree, ToggleSidebar }` / `struct MenuState{ can_close_panel: bool, can_remove_workspace: bool }` ③ 의존 방향 — 명령을 값으로 반환하고 실행은 `ExplorerApp`가 한다(메뉴가 앱 상태를 직접 조작하지 않음) ④ 비추상화 — 명령 디스패처·액션 레지스트리를 만들지 않는다. `enum` + `match` 하나로 충분
 - **내용**: egui `MenuBar`로 상단 메뉴 + `ctx.input`으로 단축키 감지. 현행 `create_accels` 목록 그대로: Ctrl+T 새 탭 / Ctrl+W 탭 닫기 / Alt+← Alt+→ 히스토리 / F5 새로고침 / Ctrl+\ 좌우 분할 / Ctrl+Shift+\ 상하 분할. 마지막 패널일 때 "패널 닫기" 비활성, 워크스페이스 1개일 때 "삭제" 비활성
 - **Acceptance**:
@@ -255,6 +255,7 @@
 
 ## Deferred / Follow-up
 
+- **[SUGGEST] 전역 공유 자원 묶기 — 이번엔 묶지 않음 (T3에서 재평가)**: part1이 T3에서 정리하기로 미룬 항목이나, T3가 명령을 `ExplorerApp`에서 직접 처리해 `PanelState::show`(4개)·`splitter::show_layout`(7개)의 인자가 **하나도 늘지 않았다**. 인자가 늘지 않는 한 묶어도 호출부 표기만 줄고 내부에서 다시 필드를 분해해야 해(부분 borrow) 실익이 없다 — T4·T5에서 실제로 늘면 그때 다시 본다 (T3 quality 리뷰 소견)
 - **[MINOR] 사이드바 마지막 항목 뒤 여백** — `show_items`가 항목마다 `add_space(ITEM_GAP)`을 붙여 마지막 카드 뒤에도 4px가 남는다. 스크롤 영역이라 화면상 문제는 없으나 "항목 사이 간격"이라는 의도와 미세하게 어긋난다 (T2 quality 리뷰 m2)
 - **트리→목록 양방향 동기화** (deferred 대장 [2026-07-23]) — 이식 후에도 미해결로 유지
 - **한글 폰트 서브셋** — 메모리를 더 줄여야 할 때의 첫 후보(약 27MB 기여)
