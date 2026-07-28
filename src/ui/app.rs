@@ -7,6 +7,7 @@ use crate::app::settings::{SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::menu::{self, Command, MenuState};
 use crate::ui::panel::PanelState;
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
@@ -271,35 +272,6 @@ impl ExplorerApp {
         self.workspaces.set_subtitle(index, &dir);
     }
 
-    /// 분할·닫기·사이드바 토글 명령 줄 — part2 T3에서 메뉴 바·단축키로 대체된다.
-    /// 명령을 **값으로 반환**한다: 실행에 필요한 분할 영역은 이 줄을 그린 뒤에야 확정되기 때문
-    fn command_bar(&self, ui: &mut egui::Ui) -> Option<LayoutCommand> {
-        let mut command = None;
-        ui.horizontal(|ui| {
-            if ui.button("좌우 분할").clicked() {
-                command = Some(LayoutCommand::Split(SplitDir::Horizontal));
-            }
-            if ui.button("상하 분할").clicked() {
-                command = Some(LayoutCommand::Split(SplitDir::Vertical));
-            }
-            let can_close = self.active_panel_count() > 1;
-            if ui
-                .add_enabled(can_close, egui::Button::new("패널 닫기"))
-                .clicked()
-            {
-                command = Some(LayoutCommand::ClosePanel);
-            }
-            // 접으면 사이드바가 완전히 사라지므로(현행과 같은 동작) 되돌릴 자리가 밖에 필요하다
-            if ui
-                .selectable_label(!self.sidebar_collapsed, "워크스페이스 목록")
-                .clicked()
-            {
-                command = Some(LayoutCommand::ToggleSidebar);
-            }
-        });
-        command
-    }
-
     /// 활성 워크스페이스의 패널 수 — 아직 열지 않았으면 기본 1개 구성이 될 자리다
     fn active_panel_count(&self) -> usize {
         self.views
@@ -308,22 +280,63 @@ impl ExplorerApp {
             .unwrap_or(1)
     }
 
-    fn apply_command(&mut self, command: LayoutCommand, area: LayoutRect) {
+    /// 명령이 향하는 패널 — 활성 워크스페이스의 활성 패널
+    fn active_panel_mut(&mut self) -> Option<&mut PanelState> {
+        let view = self.ensure_active_view();
+        view.panels.get_mut(&view.active)
+    }
+
+    /// 메뉴·단축키 명령 실행 (FR-12).
+    /// `area`는 분할에 쓰이며, 메뉴 줄을 그린 **뒤에** 확정된 영역이어야 한다
+    fn apply_command(&mut self, command: Command, area: LayoutRect, ctx: &egui::Context) {
         match command {
             // 분할·닫기는 활성 워크스페이스의 뷰를 대상으로 한다(없으면 여기서 만들어진다)
-            LayoutCommand::Split(dir) => self.ensure_active_view().split_active(dir, area),
-            LayoutCommand::ClosePanel => self.ensure_active_view().close_active(area),
-            LayoutCommand::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
+            Command::SplitH => self
+                .ensure_active_view()
+                .split_active(SplitDir::Horizontal, area),
+            Command::SplitV => self
+                .ensure_active_view()
+                .split_active(SplitDir::Vertical, area),
+            Command::ClosePanel => self.ensure_active_view().close_active(area),
+            Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
+            Command::NewWorkspace => {
+                self.workspaces.add();
+                // 사이드바의 `+`와 같은 흐름으로 잇는다 — 추가 직후 이름을 고칠 수 있어야 한다
+                self.sidebar.edit_after_add();
+            }
+            Command::RenameWorkspace => {
+                // 접혀 있으면 편집칸이 보이지 않으므로 함께 펼친다
+                self.sidebar_collapsed = false;
+                self.sidebar
+                    .start_rename(self.workspaces.active_index(), &self.workspaces);
+            }
+            Command::RemoveWorkspace => {
+                self.handle_sidebar(SidebarAction::Remove(self.workspaces.active_index()));
+            }
+            Command::NewTab
+            | Command::CloseTab
+            | Command::Back
+            | Command::Forward
+            | Command::Up
+            | Command::Refresh
+            | Command::ToggleTree => {
+                let Some(panel) = self.active_panel_mut() else {
+                    return;
+                };
+                match command {
+                    Command::NewTab => panel.new_tab(ctx),
+                    Command::CloseTab => panel.close_tab(ctx),
+                    Command::Back => panel.go_back(ctx),
+                    Command::Forward => panel.go_forward(ctx),
+                    Command::Up => panel.go_up(ctx),
+                    Command::Refresh => panel.refresh(ctx),
+                    Command::ToggleTree => panel.toggle_tree(),
+                    // 위 분기에서 걸러진 명령들 — 여기 오지 않는다
+                    _ => {}
+                }
+            }
         }
     }
-}
-
-/// 명령 줄이 돌려주는 조작
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LayoutCommand {
-    Split(SplitDir),
-    ClosePanel,
-    ToggleSidebar,
 }
 
 /// 두 사각형이 겹치는 넓이 — 닫힌 자리를 누가 이어받았는지 고르는 데 쓴다
@@ -370,9 +383,15 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
-            // 명령 줄·구분선을 먼저 그린 **뒤** 남는 영역이 실제 분할 대상이다.
-            // 그리기 전 영역으로 판정하면 최소 패널 크기 검사가 명령 줄 높이만큼 느슨해진다
-            let command = self.command_bar(ui);
+            // 메뉴 줄·구분선을 먼저 그린 **뒤** 남는 영역이 실제 분할 대상이다.
+            // 그리기 전 영역으로 판정하면 최소 패널 크기 검사가 메뉴 줄 높이만큼 느슨해진다
+            let menu_command = menu::show_menu_bar(
+                ui,
+                MenuState {
+                    can_close_panel: self.active_panel_count() > 1,
+                    can_remove_workspace: self.workspaces.len() > 1,
+                },
+            );
             ui.separator();
 
             if !self.sidebar_collapsed {
@@ -396,8 +415,11 @@ impl eframe::App for ExplorerApp {
             }
 
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
-            if let Some(command) = command {
-                self.apply_command(command, area);
+            // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
+            // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
+            let shortcut_command = menu::poll_shortcuts(&ctx);
+            for command in menu_command.into_iter().chain(shortcut_command) {
+                self.apply_command(command, area, &ctx);
             }
             // `ensure_active_view`를 쓰지 않고 여기서 직접 확보한다 —
             // 아래 호출이 `views`와 `icons`·`textures`를 **동시에** 빌려야 하기 때문

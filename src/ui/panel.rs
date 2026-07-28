@@ -217,6 +217,39 @@ impl PanelState {
             .unwrap_or_else(|| self.pending_dir.to_string_lossy().into_owned())
     }
 
+    /// 메뉴·단축키에서 온 탐색 명령 (FR-12).
+    /// 탭 스트립·주소창 클릭과 **같은 경로**를 타므로 동작이 갈리지 않는다
+    pub fn new_tab(&mut self, ctx: &egui::Context) {
+        self.handle_tab(TabAction::New, ctx);
+    }
+
+    pub fn close_tab(&mut self, ctx: &egui::Context) {
+        self.handle_tab(TabAction::Close(self.tabs.active_index()), ctx);
+    }
+
+    pub fn go_back(&mut self, ctx: &egui::Context) {
+        self.handle_nav(NavAction::Back, ctx);
+    }
+
+    pub fn go_forward(&mut self, ctx: &egui::Context) {
+        self.handle_nav(NavAction::Forward, ctx);
+    }
+
+    pub fn go_up(&mut self, ctx: &egui::Context) {
+        self.handle_nav(NavAction::Up, ctx);
+    }
+
+    /// 보고 있는 폴더를 다시 읽는다 — 경로도 히스토리도 그대로다
+    pub fn refresh(&mut self, ctx: &egui::Context) {
+        let dir = self.dir().to_path_buf();
+        self.start_load(dir, PendingNav::None, ctx);
+    }
+
+    /// 폴더 트리 표시 토글 (FR-9) — 패널마다 독립이다
+    pub fn toggle_tree(&mut self) {
+        self.tree_visible = !self.tree_visible;
+    }
+
     /// 탭 스트립에서 올라온 조작 처리
     fn handle_tab(&mut self, action: TabAction, ctx: &egui::Context) {
         match action {

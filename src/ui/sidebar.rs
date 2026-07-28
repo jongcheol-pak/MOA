@@ -378,6 +378,17 @@ impl WorkspaceSidebar {
         self.editing = Some((index, buffer));
     }
 
+    /// 메뉴에서 워크스페이스를 추가했을 때도 `+` 버튼과 같이 곧바로 이름을 고치게 한다 (FR-16).
+    /// 새 항목의 인덱스는 호출부가 추가를 끝낸 다음 프레임에야 정해진다
+    pub fn edit_after_add(&mut self) {
+        self.edit_added = true;
+    }
+
+    /// 메뉴 "이름 바꾸기" 진입점 — 사이드바 안의 F2·컨텍스트 메뉴와 같은 편집을 연다
+    pub fn start_rename(&mut self, index: usize, list: &WorkspaceList) {
+        self.begin_edit(index, list);
+    }
+
     fn begin_edit(&mut self, index: usize, list: &WorkspaceList) {
         let Some(item) = list.items().get(index) else {
             return;
