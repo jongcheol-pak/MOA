@@ -266,8 +266,10 @@ pub struct ExplorerApp {
     window: WindowState,
     /// 첫 프레임에 화면 안으로 보정할 복원 위치 — 모니터 크기는 창이 뜬 뒤에야 알 수 있다
     restore_window: Option<WindowState>,
-    /// 삭제 확인을 기다리는 워크스페이스 인덱스 (FR-18)
-    pending_remove: Option<usize>,
+    /// 삭제 확인을 기다리는 워크스페이스 (FR-18).
+    /// 인덱스가 아니라 id로 잡는다 — 확인 대화는 프레임을 넘겨 살아 있는데,
+    /// 그 사이 순서가 바뀌면 인덱스는 다른 워크스페이스를 가리킨다 (D12 ①과 같은 이유)
+    pending_remove: Option<WorkspaceId>,
 }
 
 impl ExplorerApp {
@@ -413,7 +415,7 @@ impl ExplorerApp {
             }
             SidebarAction::Remove(index) => {
                 // 바로 지우지 않고 한 번 묻는다 — 되돌릴 수 없다(현행 판과 같은 규칙)
-                self.pending_remove = Some(index);
+                self.pending_remove = self.workspaces.items().get(index).map(|item| item.id);
             }
             SidebarAction::Reorder(from, to) => {
                 self.workspaces.reorder(from, to);
@@ -469,15 +471,17 @@ impl ExplorerApp {
     /// 삭제 확인 대화 (FR-18) — 워크스페이스 하나를 지우면 그 화면 구성과 탭이 함께 사라지고
     /// 되돌릴 수 없어 한 번 묻는다. 문구는 현행 Win32 판의 확인 대화와 같다
     fn show_remove_confirm(&mut self, ctx: &egui::Context) {
-        let Some(index) = self.pending_remove else {
+        let Some(id) = self.pending_remove else {
             return;
         };
-        let Some(name) = self
+        // 대화가 떠 있는 동안 순서가 바뀔 수 있으므로 자리를 매번 다시 찾는다
+        let found = self
             .workspaces
             .items()
-            .get(index)
-            .map(|item| item.name.clone())
-        else {
+            .iter()
+            .position(|item| item.id == id)
+            .map(|index| (index, self.workspaces.items()[index].name.clone()));
+        let Some((index, name)) = found else {
             // 목록이 그 사이 바뀌어 대상이 사라졌다 — 물을 것이 없다
             self.pending_remove = None;
             return;
@@ -573,7 +577,7 @@ impl ExplorerApp {
             }
             Command::RemoveWorkspace => {
                 // 사이드바 컨텍스트 메뉴와 같은 경로 — 확인 대화를 거친다
-                self.pending_remove = Some(self.workspaces.active_index());
+                self.pending_remove = Some(self.workspaces.active().id);
             }
             Command::NewTab
             | Command::CloseTab
@@ -686,7 +690,12 @@ impl eframe::App for ExplorerApp {
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
             // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
             // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
-            let shortcut_command = menu::poll_shortcuts(&ctx);
+            // 삭제를 묻는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
+            let shortcut_command = if self.pending_remove.is_some() {
+                None
+            } else {
+                menu::poll_shortcuts(&ctx)
+            };
             for command in menu_command.into_iter().chain(shortcut_command) {
                 self.apply_command(command, area, &ctx);
             }
@@ -706,8 +715,7 @@ impl eframe::App for ExplorerApp {
             }
         });
 
-        // 삭제 확인은 egui 위젯이라 그리기 안에서 처리해도 되지만, 셸 메뉴 팝업(자체 메시지 루프)
-        // 보다는 앞에 둔다 — 둘이 한 프레임에 겹치면 확인 대화가 가려진다
+        // 삭제 확인은 egui 모달이라 `CentralPanel` 밖에서 그려도 된다(자체 레이어를 쓴다)
         self.show_remove_confirm(&ctx);
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
