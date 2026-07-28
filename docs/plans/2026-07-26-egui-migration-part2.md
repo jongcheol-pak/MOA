@@ -100,7 +100,7 @@
 - [x] T4 디렉터리 변경 감시 (Type C)
 - [x] T5 세션 저장·복원 (Type C)
 - [x] T6 NFR 실측·검증 (Type B)
-- [ ] T7 구 Win32 코드 제거·진입점 승격 (Type D)
+- [x] T7 진입점 승격 (Type D) — **구 Win32 코드 제거는 사용자 결정으로 보류**(Deferred 참조)
 
 ### T1. 폴더 트리 (Type C)
 
@@ -192,6 +192,11 @@
 - **Halt Forecast**: **NFR-2(150MB) 또는 NFR-8(200MB) 미달** → T7(구 코드 제거)을 실행하지 않고 실측값·원인 분해와 함께 보고한다(D10). 되돌릴 곳을 남긴 채 사용자가 판단 — 완화폭 재조정 / 폰트 서브셋 등 절감 / 이식 중단 중 선택
 
 ### T7. 구 Win32 코드 제거·진입점 승격 (Type D)
+
+> **실행 시점 범위 조정 (2026-07-28)**: plan `## 불가피한 Halt`가 정한 대로 삭제 목록을 제시하고 승인을 요청했고,
+> 사용자가 **"진입점만 승격, 삭제는 보류"**를 선택했다. 그래서 이 task는 **진입점 승격과 문서 갱신까지만** 수행했다.
+> 구 Win32 소스 삭제(7개 파일 4,476줄 + 부분 삭제 3개)와 그에 딸린 acceptance(`grep HWND` 0)는
+> `## Deferred / Follow-up`으로 넘겼다 — 화면 동작을 확인한 뒤 판단하는 것이 사용자의 뜻이다.
 
 - **PRD**: 요구 변경 없음 — 구현 정리
 - **선행 조건**: **T6 실측 통과**(D10). 미통과 시 이 task는 실행하지 않는다
@@ -293,6 +298,8 @@
 
 ## Deferred / Follow-up
 
+- **구 Win32 UI 코드 제거 (T7 잔여 — 사용자 보류)**: 삭제 대상은 전체 삭제 7개(`app/{window,sidebar,menu,layout_host}.rs` 2,987줄 + `panel/{panel,folder_tree,address_bar}.rs` 1,461줄)와 부분 삭제 3개(`panel/file_list.rs`의 `FileList`·`apply_item_count`, `panel/tabs.rs`의 `TabStrip`·`draw_tab`, `app/theme.rs`의 COLORREF 상수·`allow_dark_for_window`). **`app::theme::enable_dark_mode`는 새 진입점이 쓰므로 존치한다.** 현재는 소스에 남아 컴파일만 되고 실행 파일에서는 쓰이지 않는다(`lib.rs`·`AGENTS.md`·`README.md`에 명시). 진행하려면 화면 동작 확인 후 다시 승인이 필요하다
+
 - **[SUGGEST] 전역 공유 자원 묶기 — 이번엔 묶지 않음 (T3에서 재평가)**: part1이 T3에서 정리하기로 미룬 항목이나, T3가 명령을 `ExplorerApp`에서 직접 처리해 `PanelState::show`(4개)·`splitter::show_layout`(7개)의 인자가 **하나도 늘지 않았다**. 인자가 늘지 않는 한 묶어도 호출부 표기만 줄고 내부에서 다시 필드를 분해해야 해(부분 borrow) 실익이 없다 — T4·T5에서 실제로 늘면 그때 다시 본다 (T3 quality 리뷰 소견)
 - **[MINOR] 사이드바 마지막 항목 뒤 여백** — `show_items`가 항목마다 `add_space(ITEM_GAP)`을 붙여 마지막 카드 뒤에도 4px가 남는다. 스크롤 영역이라 화면상 문제는 없으나 "항목 사이 간격"이라는 의도와 미세하게 어긋난다 (T2 quality 리뷰 m2)
 - **트리→목록 양방향 동기화** (deferred 대장 [2026-07-23]) — 이식 후에도 미해결로 유지
@@ -335,7 +342,7 @@
 
 ## Phase Ledger
 
-- T1~T6 완료 (D10 게이트 통과 — T7 진행 가능)
+- T1~T7 완료 (T7은 진입점 승격까지 — 구 Win32 삭제는 사용자 보류)
 
 ## Progress Log
 
