@@ -14,9 +14,16 @@ use crate::ui::icon_tex::IconTextures;
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
+use crate::ui::tree::{FolderTreeView, TREE_WIDTH};
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+
+/// 트리와 목록을 가르는 세로 선 두께 — 현행 판 트리의 테두리(`WS_EX_CLIENTEDGE`)를 대신한다
+const TREE_BORDER: f32 = 1.0;
+
+/// 트리 영역 안쪽 여백 — 항목이 패널 가장자리에 붙지 않게 한다
+const TREE_PAD: f32 = 4.0;
 
 /// 백그라운드 폴더 열거 상태.
 ///
@@ -111,6 +118,10 @@ pub struct PanelState {
     /// 첫 프레임을 그린 뒤 열거를 시작하기 위한 대기 경로.
     /// 생성자에서 바로 열거하면 창이 늦게 뜬다
     deferred_start: Option<PathBuf>,
+    /// 폴더 트리 — 패널마다 독립이다 (FR-9)
+    tree: FolderTreeView,
+    /// 트리 표시 여부. 현행 판과 같이 숨김으로 시작한다
+    tree_visible: bool,
 }
 
 impl PanelState {
@@ -124,6 +135,8 @@ impl PanelState {
             pending_nav: PendingNav::None,
             status: String::new(),
             deferred_start: Some(start),
+            tree: FolderTreeView::new(),
+            tree_visible: false,
         }
     }
 
@@ -297,7 +310,8 @@ impl PanelState {
     }
 
     /// 패널 하나를 그리고 이번 프레임의 조작을 처리한다.
-    /// 세로 구성은 탭 스트립 / 주소창 / 상태 / 파일 목록이며, 목록이 남는 공간을 채운다.
+    /// 세로 구성은 탭 스트립 / 주소창 / (폴더 트리 | 상태 · 파일 목록)이며,
+    /// 트리를 숨기면 목록이 그 폭까지 차지한다 (FR-9).
     ///
     /// 셸 메뉴 요청만은 실행하지 않고 반환한다 — 모달이라 그리기가 끝난 뒤에 띄워야 한다
     pub fn show(
@@ -310,7 +324,66 @@ impl PanelState {
         let tab_action = crate::ui::tabs::show_tab_strip(ui, &self.tabs);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, &tab.committed, &tab.history);
+
+        // 트리는 주소창 아래 좌측 고정폭을 차지한다 — 현행 Win32 판의 배치와 같다
+        let area = ui.available_rect_before_wrap();
+        let mut tree_choice = None;
+        let content = if self.tree_visible {
+            let split_x = area.left() + TREE_WIDTH.min(area.width());
+            let tree_rect = egui::Rect::from_min_max(area.min, egui::pos2(split_x, area.bottom()));
+            ui.painter().rect_filled(tree_rect, 0.0, theme::SURFACE_BG);
+            ui.painter().vline(
+                split_x,
+                area.y_range(),
+                egui::Stroke::new(TREE_BORDER, theme::TREE_LINE),
+            );
+            tree_choice = ui
+                .scope_builder(
+                    egui::UiBuilder::new().max_rect(tree_rect.shrink(TREE_PAD)),
+                    |ui| {
+                        ui.set_clip_rect(tree_rect);
+                        self.tree.show(ui, ctx)
+                    },
+                )
+                .inner;
+            egui::Rect::from_min_max(egui::pos2(split_x + TREE_BORDER, area.top()), area.max)
+        } else {
+            area
+        };
+        let action = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                ui.set_clip_rect(content);
+                self.show_content(ui, icons, textures)
+            })
+            .inner;
+
+        // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
+        if let Some(path) = tree_choice {
+            self.navigate(path, ctx);
+        }
+        if let Some(tab_action) = tab_action {
+            self.handle_tab(tab_action, ctx);
+        }
+        if let Some(nav) = nav {
+            self.handle_nav(nav, ctx);
+        }
+        self.handle_list_action(action, ctx)
+    }
+
+    /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 파일 목록
+    fn show_content(
+        &mut self,
+        ui: &mut egui::Ui,
+        icons: &mut IconCache,
+        textures: &mut IconTextures,
+    ) -> FileListAction {
         ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.tree_visible, "폴더 트리")
+                .clicked()
+            {
+                self.tree_visible = !self.tree_visible;
+            }
             if self.load.is_loading() {
                 ui.spinner();
                 ui.colored_label(theme::TEXT_DIM, "읽는 중…");
@@ -322,15 +395,6 @@ impl PanelState {
             }
         });
         ui.separator();
-        let action = self.list.show(ui, icons, textures);
-
-        // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
-        if let Some(tab_action) = tab_action {
-            self.handle_tab(tab_action, ctx);
-        }
-        if let Some(nav) = nav {
-            self.handle_nav(nav, ctx);
-        }
-        self.handle_list_action(action, ctx)
+        self.list.show(ui, icons, textures)
     }
 }

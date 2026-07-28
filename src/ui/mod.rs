@@ -11,3 +11,4 @@ pub mod shell_host;
 pub mod splitter;
 pub mod tabs;
 pub mod theme;
+pub mod tree;
