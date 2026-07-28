@@ -261,6 +261,29 @@ mod tests {
     }
 
     #[test]
+    fn 긴_경로도_열거된다() {
+        // MAX_PATH(260)를 넘는 폴더 — `\\?\` 접두사가 붙지 않으면 여기서 실패한다 (NFR-5).
+        // 만들 때는 확장 접두사를 직접 붙인다: std는 일반 경로에 그 변환을 해주지 않는다
+        let base = make_temp_dir("long");
+        let mut deep = base.clone();
+        while deep.to_string_lossy().chars().count() < 300 {
+            deep = deep.join("긴이름_폴더_레벨_구분자를_길게");
+        }
+        let verbatim = PathBuf::from(format!(r"\\?\{}", deep.to_string_lossy()));
+        std::fs::create_dir_all(&verbatim).unwrap();
+        std::fs::write(verbatim.join("깊은 파일.txt"), b"x").unwrap();
+
+        // 열거는 접두사 없는 원래 경로로 시도한다 — 앱이 다루는 형태 그대로다
+        let EnumOutcome::Ok(entries) = enumerate_dir(&deep) else {
+            panic!("긴 경로 열거 실패 ({}자)", deep.to_string_lossy().len());
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name_string(), "깊은 파일.txt");
+
+        let _ = std::fs::remove_dir_all(PathBuf::from(format!(r"\\?\{}", base.to_string_lossy())));
+    }
+
+    #[test]
     fn 유니코드_이름을_보존한다() {
         let dir = make_temp_dir("uni");
         std::fs::write(dir.join("한글 파일 😀.txt"), b"x").unwrap();
