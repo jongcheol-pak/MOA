@@ -412,6 +412,8 @@ impl ExplorerApp {
                     && let Some(id) = removed_id
                 {
                     self.views.remove(&id);
+                    // 한 번도 열지 않은 워크스페이스였다면 불러온 상태가 여기 남아 있다
+                    self.restored.remove(&id);
                 }
             }
             SidebarAction::Reorder(from, to) => {
@@ -444,9 +446,12 @@ impl ExplorerApp {
             self.window.w = rect.width() as i32;
             self.window.h = rect.height() as i32;
         }
-        if let Some(saved) = self.restore_window.take() {
-            let (monitor_w, monitor_h) =
-                monitor.map_or((0, 0), |size| (size.x as i32, size.y as i32));
+        // 모니터 크기를 아직 모르면 보정을 다음 프레임으로 미룬다 —
+        // 여기서 소비해 버리면 값이 채워진 뒤에도 다시 시도하지 않는다
+        if let Some(size) = monitor
+            && let Some(saved) = self.restore_window.take()
+        {
+            let (monitor_w, monitor_h) = (size.x as i32, size.y as i32);
             let fixed = session::clamp_window(saved.clone(), monitor_w, monitor_h);
             if fixed != saved {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
