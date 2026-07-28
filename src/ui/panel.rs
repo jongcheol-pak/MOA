@@ -151,9 +151,30 @@ impl PanelState {
         }
     }
 
+    /// 저장된 탭 구성으로 패널을 되살린다 (FR-11). 탭 목록이 비면 `None`.
+    ///
+    /// 히스토리는 복원하지 않는다 — 세션에는 경로만 저장한다(현행과 같은 규칙)
+    pub fn from_tabs(tabs: Vec<PathBuf>, active_tab: usize) -> Option<PanelState> {
+        let states: Vec<TabState> = tabs.into_iter().map(TabState::new).collect();
+        let model = TabsModel::from_tabs(states, active_tab)?;
+        let start = model.active().committed.clone();
+        let mut panel = PanelState::new(start);
+        panel.tabs = model;
+        Some(panel)
+    }
+
     /// 현재 표시 중인 폴더 — 활성 탭이 커밋한 경로가 정본이다
     pub fn dir(&self) -> &Path {
         &self.tabs.active().committed
+    }
+
+    /// 세션 저장용 — 탭들의 폴더 경로(탭 순서)와 활성 탭
+    pub fn tab_paths(&self) -> Vec<PathBuf> {
+        self.tabs.paths()
+    }
+
+    pub fn active_tab(&self) -> usize {
+        self.tabs.active_index()
     }
 
     /// 프레임마다 호출 — 지연 시작·열거 완료·변경 감시를 처리하고, 열거 중이면 다시 그리게 한다

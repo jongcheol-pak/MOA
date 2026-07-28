@@ -2,13 +2,18 @@
 //!
 //! 실제 탐색은 `ui::panel::PanelState`가 담당하고, 그 패널들을 담은 분할 화면 한 벌이
 //! `WorkspaceView`다. 이 구조체는 워크스페이스 목록(사이드바)과 뷰들을 잇는 그릇이다.
+use crate::app::layout::TreeShape;
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
-use crate::app::settings::{SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH};
+use crate::app::settings::{
+    SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, Session, SidebarSession,
+    WindowState, save_session,
+};
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{self, Command, MenuState};
 use crate::ui::panel::PanelState;
+use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::splitter;
@@ -22,6 +27,15 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 
 /// 맑은 고딕 — egui 기본 폰트에는 한글 글리프가 없어 파일명이 두부(□)로 보인다
 const KOREAN_FONT_PATH: &str = r"C:\Windows\Fonts\malgun.ttf";
+
+/// 세션이 없을 때의 창 크기·위치 (첫 실행)
+const DEFAULT_WINDOW: WindowState = WindowState {
+    x: 0,
+    y: 0,
+    w: 1100,
+    h: 700,
+    maximized: false,
+};
 
 /// 셸 메뉴를 쓸 수 없을 때 화면에 보일 문구.
 /// 원인이 무엇이든 사용자가 할 수 있는 일은 재시작뿐이라 한 문구로 통일한다
@@ -171,6 +185,51 @@ impl WorkspaceView {
         }
     }
 
+    /// 저장된 상태로 워크스페이스를 되살린다 (FR-11·FR-20).
+    /// 패널은 분할 트리 리프의 walk 순서로 짝지어진다(`settings` 스키마 계약)
+    fn from_state(state: &WorkspaceState) -> WorkspaceView {
+        let (layout, ids) = LayoutTree::from_shape(&state.shape);
+        let Some(&first) = ids.first() else {
+            return WorkspaceView::new(start_dir());
+        };
+        let mut panels = HashMap::new();
+        for (&id, tabs) in ids.iter().zip(&state.panels) {
+            let panel = PanelState::from_tabs(tabs.tabs.clone(), tabs.active_tab)
+                .unwrap_or_else(|| PanelState::new(start_dir()));
+            panels.insert(id, panel);
+        }
+        WorkspaceView {
+            layout,
+            panels,
+            active: ids.get(state.active_panel).copied().unwrap_or(first),
+        }
+    }
+
+    /// 세션 저장용 스냅숏 — 분할 구조와 패널별 탭을 리프 walk 순서로 담는다
+    fn to_state(&self, name: String) -> WorkspaceState {
+        let ids = self.layout.panel_ids();
+        let panels = ids
+            .iter()
+            .map(|id| match self.panels.get(id) {
+                Some(panel) => PanelTabs {
+                    tabs: panel.tab_paths(),
+                    active_tab: panel.active_tab(),
+                },
+                // 트리에는 있는데 상태가 없는 리프 — 분할 직후가 아니면 생기지 않는다
+                None => PanelTabs {
+                    tabs: vec![start_dir()],
+                    active_tab: 0,
+                },
+            })
+            .collect();
+        WorkspaceState {
+            name,
+            shape: self.layout.shape(),
+            panels,
+            active_panel: ids.iter().position(|id| *id == self.active).unwrap_or(0),
+        }
+    }
+
     /// 사이드바 부제에 쓸 현재 폴더 — 활성 패널의 활성 탭 경로
     fn active_dir(&self) -> Option<PathBuf> {
         self.panels.get(&self.active).map(|p| p.dir().to_path_buf())
@@ -192,20 +251,33 @@ pub struct ExplorerApp {
     /// 워크스페이스별 탐색 상태 — **방문한 것만** 들어 있다 (D1).
     /// 목록의 인덱스가 아니라 `WorkspaceId`로 잡는다: 순서 변경·삭제로 인덱스는 흔들린다
     views: HashMap<WorkspaceId, WorkspaceView>,
+    /// 세션에서 불러왔지만 **아직 열지 않은** 워크스페이스의 저장 상태 (D1 지연 생성).
+    /// 처음 선택될 때 이것으로 뷰를 만들고, 그 전에는 저장할 때 그대로 다시 내보낸다
+    restored: HashMap<WorkspaceId, WorkspaceState>,
     sidebar: WorkspaceSidebar,
-    /// 마지막으로 관측한 사이드바 폭 — 세션 저장용 (T5에서 쓴다)
+    /// 마지막으로 관측한 사이드바 폭 — 세션 저장용
     sidebar_width: f32,
     sidebar_collapsed: bool,
+    /// 마지막으로 관측한 창 위치·크기 (최대화가 아닐 때만 갱신 — 최대화 상태를 저장하면
+    /// 다음 실행에서 창을 되돌릴 "일반 크기"가 사라진다)
+    window: WindowState,
+    /// 첫 프레임에 화면 안으로 보정할 복원 위치 — 모니터 크기는 창이 뜬 뒤에야 알 수 있다
+    restore_window: Option<WindowState>,
 }
 
 impl ExplorerApp {
-    /// eframe 창 생성 직후 호출된다 — 폰트·팔레트·셸 호스트를 이 시점에 준비한다
-    pub fn new(cc: &eframe::CreationContext<'_>, com: ComStatus) -> ExplorerApp {
+    /// eframe 창 생성 직후 호출된다 — 폰트·팔레트·셸 호스트를 이 시점에 준비한다.
+    /// `session`이 있으면 지난 실행의 워크스페이스·사이드바·창 상태를 되살린다 (FR-11·FR-20)
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        com: ComStatus,
+        session: Option<Session>,
+    ) -> ExplorerApp {
         let korean_font = install_korean_font(&cc.egui_ctx);
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
-        ExplorerApp {
+        let mut app = ExplorerApp {
             com,
             shell,
             korean_font,
@@ -213,10 +285,91 @@ impl ExplorerApp {
             textures: IconTextures::new(),
             workspaces: WorkspaceList::new(),
             views: HashMap::new(),
+            restored: HashMap::new(),
             sidebar: WorkspaceSidebar::new(),
             sidebar_width: SIDEBAR_DEFAULT_WIDTH as f32,
             sidebar_collapsed: false,
+            window: DEFAULT_WINDOW,
+            restore_window: None,
+        };
+        if let Some(session) = session {
+            app.apply_session(session);
         }
+        app
+    }
+
+    /// 불러온 세션을 상태에 반영한다. 워크스페이스 **뷰는 만들지 않는다** —
+    /// 활성 워크스페이스도 첫 프레임의 `ensure_active_view`에서 비로소 만들어진다(D1)
+    fn apply_session(&mut self, session: Session) {
+        let states = session::restore(&session);
+        let names: Vec<String> = states.iter().map(|state| state.name.clone()).collect();
+        let Some(workspaces) = WorkspaceList::from_names(names, session.active_workspace) else {
+            return; // 빈 목록 — 기본 워크스페이스 1개로 시작한다
+        };
+        self.workspaces = workspaces;
+        // `from_names`는 id를 0부터 순서대로 준다 — 그 순서가 곧 저장된 순서다
+        self.restored = self
+            .workspaces
+            .items()
+            .iter()
+            .map(|item| item.id)
+            .zip(states)
+            .collect();
+        for index in 0..self.workspaces.len() {
+            if let Some(dir) = self.restored_active_dir(index) {
+                self.workspaces.set_subtitle(index, &dir);
+            }
+        }
+        self.sidebar_width = session.sidebar.width as f32;
+        self.sidebar_collapsed = session.sidebar.collapsed;
+        self.window = session.window.clone();
+        self.restore_window = Some(session.window);
+    }
+
+    /// 아직 열지 않은 워크스페이스의 활성 폴더 — 사이드바 부제를 복원 직후에도 채우기 위함
+    fn restored_active_dir(&self, index: usize) -> Option<PathBuf> {
+        let id = self.workspaces.items().get(index)?.id;
+        let state = self.restored.get(&id)?;
+        let panel = state.panels.get(state.active_panel)?;
+        panel.tabs.get(panel.active_tab).cloned()
+    }
+
+    /// 지금 상태를 세션으로 모은다 (종료 시 저장)
+    fn collect_session(&self) -> Session {
+        let workspaces: Vec<WorkspaceState> = self
+            .workspaces
+            .items()
+            .iter()
+            .map(|item| match self.views.get(&item.id) {
+                Some(view) => view.to_state(item.name.clone()),
+                // 한 번도 열지 않은 워크스페이스는 불러온 상태를 그대로 다시 내보낸다.
+                // 이름만 최신값으로 — 열지 않고도 이름은 바꿀 수 있다
+                None => match self.restored.get(&item.id) {
+                    Some(state) => WorkspaceState {
+                        name: item.name.clone(),
+                        ..state.clone()
+                    },
+                    None => WorkspaceState {
+                        name: item.name.clone(),
+                        shape: TreeShape::Leaf,
+                        panels: vec![PanelTabs {
+                            tabs: vec![start_dir()],
+                            active_tab: 0,
+                        }],
+                        active_panel: 0,
+                    },
+                },
+            })
+            .collect();
+        session::to_session(
+            self.window.clone(),
+            SidebarSession {
+                width: self.sidebar_width as i32,
+                collapsed: self.sidebar_collapsed,
+            },
+            self.workspaces.active_index(),
+            &workspaces,
+        )
     }
 
     /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다
@@ -224,12 +377,20 @@ impl ExplorerApp {
         self.com.is_available() && self.shell.is_some()
     }
 
-    /// 활성 워크스페이스의 탐색 상태를 확보한다 — 처음 열리는 워크스페이스면 여기서 만들어진다(D1)
+    /// 활성 워크스페이스의 탐색 상태를 확보한다 — 처음 열리는 워크스페이스면 여기서 만들어진다(D1).
+    /// 세션에서 불러온 것이면 저장된 분할·탭으로 되살린다
     fn ensure_active_view(&mut self) -> &mut WorkspaceView {
         let id = self.workspaces.active().id;
-        self.views
-            .entry(id)
-            .or_insert_with(|| WorkspaceView::new(start_dir()))
+        // 뷰가 이미 있으면 저장 상태를 꺼내지 않는다 — 꺼내 놓고 쓰지 않으면 그대로 버려진다
+        let restored = if self.views.contains_key(&id) {
+            None
+        } else {
+            self.restored.remove(&id)
+        };
+        self.views.entry(id).or_insert_with(|| match restored {
+            Some(state) => WorkspaceView::from_state(&state),
+            None => WorkspaceView::new(start_dir()),
+        })
     }
 
     /// 사이드바 조작 반영 — 목록 변경은 전부 여기서만 일어난다
@@ -258,6 +419,45 @@ impl ExplorerApp {
             }
             SidebarAction::ToggleCollapse => {
                 self.sidebar_collapsed = !self.sidebar_collapsed;
+            }
+        }
+    }
+
+    /// 창 위치·크기를 따라간다. 최대화 중에는 갱신하지 않는다 —
+    /// 그때의 사각형은 화면 전체라, 저장해 버리면 다음 실행에서 되돌릴 일반 크기가 사라진다.
+    /// 복원 위치가 화면 밖이면(모니터 구성 변경) 첫 프레임에 화면 안으로 옮긴다
+    fn track_window(&mut self, ctx: &egui::Context) {
+        let (rect, maximized, monitor) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.outer_rect,
+                viewport.maximized.unwrap_or(false),
+                viewport.monitor_size,
+            )
+        });
+        self.window.maximized = maximized;
+        if let Some(rect) = rect
+            && !maximized
+        {
+            self.window.x = rect.left() as i32;
+            self.window.y = rect.top() as i32;
+            self.window.w = rect.width() as i32;
+            self.window.h = rect.height() as i32;
+        }
+        if let Some(saved) = self.restore_window.take() {
+            let (monitor_w, monitor_h) =
+                monitor.map_or((0, 0), |size| (size.x as i32, size.y as i32));
+            let fixed = session::clamp_window(saved.clone(), monitor_w, monitor_h);
+            if fixed != saved {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                    fixed.x as f32,
+                    fixed.y as f32,
+                )));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                    fixed.w as f32,
+                    fixed.h as f32,
+                )));
+                self.window = fixed;
             }
         }
     }
@@ -356,7 +556,14 @@ impl eframe::App for ExplorerApp {
         theme::WINDOW_BG.to_normalized_gamma_f32()
     }
 
+    /// 종료 직전 — 지금 상태를 `%APPDATA%\FileExplorer\settings.json`에 저장한다 (FR-11·NFR-7).
+    /// 저장 실패(디스크 풀·권한)는 조용히 넘어간다 — 종료를 막을 이유가 없다
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        save_session(&self.collect_session());
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.track_window(ctx);
         self.textures.begin_frame();
         // 화면에 없는 워크스페이스는 폴링하지 않는다 — 전환하면 그때 밀린 결과가 반영된다
         let id = self.workspaces.active().id;
@@ -421,22 +628,20 @@ impl eframe::App for ExplorerApp {
             for command in menu_command.into_iter().chain(shortcut_command) {
                 self.apply_command(command, area, &ctx);
             }
-            // `ensure_active_view`를 쓰지 않고 여기서 직접 확보한다 —
-            // 아래 호출이 `views`와 `icons`·`textures`를 **동시에** 빌려야 하기 때문
+            // 확보와 사용을 나눈다 — 아래 호출이 `views`와 `icons`·`textures`를 동시에 빌린다
             let id = self.workspaces.active().id;
-            let view = self
-                .views
-                .entry(id)
-                .or_insert_with(|| WorkspaceView::new(start_dir()));
-            menu = splitter::show_layout(
-                ui,
-                &ctx,
-                &mut view.layout,
-                &mut view.panels,
-                &mut view.active,
-                &mut self.icons,
-                &mut self.textures,
-            );
+            self.ensure_active_view();
+            if let Some(view) = self.views.get_mut(&id) {
+                menu = splitter::show_layout(
+                    ui,
+                    &ctx,
+                    &mut view.layout,
+                    &mut view.panels,
+                    &mut view.active,
+                    &mut self.icons,
+                    &mut self.textures,
+                );
+            }
         });
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
