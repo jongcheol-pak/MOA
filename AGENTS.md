@@ -5,7 +5,7 @@
 ## Stack
 - **언어**: Rust stable (1.80+)
 - **에디션**: 2024
-- **주요 crates**: windows (windows-rs — Win32·COM·셸 API), serde + serde_json (설정 직렬화)
+- **주요 crates**: eframe/egui (UI — glow 백엔드), windows (windows-rs — Win32·COM·셸 API), serde + serde_json (설정 직렬화)
 - **빌드 도구**: Cargo
 - **대상 플랫폼**: Windows 11 이상, x64 전용 (GUI 앱, 콘솔 창 없음)
 
@@ -49,7 +49,7 @@
 - **아키텍처**: 계층형(단일 crate) — 모듈로만 분리 (ui / app / panel / fs). 의존은 단방향이며 `ui`만 상위다: `app`·`panel`·`fs`는 `ui`를 모른다. GUI 도구로 도메인 규칙이 얇아 crate 분리는 하지 않는다.
 - **에러 처리**: `Result<T, E>`. Win32 호출 실패는 `windows::core::Result` 전파. `unwrap()`, `expect()` 금지 (테스트·main 진입부 제외).
 - **unsafe**: Win32 FFI 특성상 불가피 — 반드시 함수 단위로 격리하고 사유 주석 의무. 안전 래퍼를 만들어 상위 로직에서는 safe 코드만.
-- **UI 스레드 원칙**: UI 스레드에서 블로킹 I/O 금지. 디렉터리 열거·감시는 워커 스레드 → 윈도우 메시지로 결과 전달.
+- **UI 스레드 원칙**: UI 스레드에서 블로킹 I/O 금지. 디렉터리 열거·감시는 워커 스레드가 하고 **결과는 채널로 받아 프레임에서 반영**한다(`ctx.request_repaint()`로 다시 그리게 한다). 윈도우 메시지 통지(`PostMessageW`)는 Win32 판의 방식이며 egui 경로에서는 쓰지 않는다.
 - **동시성**: tokio 등 async 런타임 사용 안 함 (GUI 메시지 루프 + std::thread + 채널로 충분).
 - **테스트**: 단위는 `#[cfg(test)] mod tests`, 통합은 `tests/`. UI(HWND 필요) 로직은 테스트 비대상 — 순수 로직(레이아웃 트리·정렬·히스토리·직렬화)을 UI에서 분리해 테스트.
 - **Cargo.lock**: 커밋

@@ -113,7 +113,7 @@ pub fn show_menu_bar(ui: &mut egui::Ui, state: MenuState) -> Option<Command> {
             item(
                 ui,
                 "삭제",
-                "Delete",
+                "",
                 state.can_remove_workspace,
                 Command::RemoveWorkspace,
                 &mut command,
@@ -141,8 +141,10 @@ fn item(
 
 /// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
 ///
-/// 무수식 키(F2·Delete)는 단축키로 두지 않는다 — 이름 편집 중 텍스트 입력을 가로챈다
-/// (현행 판의 같은 결정). 그래서 메뉴에 적힌 F2·Delete는 사이드바가 직접 처리한다
+/// 무수식 키는 F5 말고는 단축키로 두지 않는다 — 이름 편집 중 텍스트 입력을 가로챈다(현행 판의 같은 결정).
+/// 메뉴에 적힌 F2는 사이드바가 직접 처리한다. 삭제는 키를 배정하지 않았다 —
+/// egui에는 "사이드바에 포커스가 있을 때만"이라는 구분이 없어, Delete를 전역으로 받으면
+/// 파일 목록에서 누른 Delete까지 워크스페이스를 지운다
 pub fn poll_shortcuts(ctx: &egui::Context) -> Option<Command> {
     // 포커스를 가진 위젯이 있으면 단축키를 보지 않는다 — 주소창·이름 편집이 키를 먼저 가져간다.
     // 이 검사는 텍스트 입력뿐 아니라 포커스를 받은 위젯 전부를 덮는다(가로채기를 막는 쪽으로 넉넉하게)

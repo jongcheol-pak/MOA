@@ -28,6 +28,9 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 /// 맑은 고딕 — egui 기본 폰트에는 한글 글리프가 없어 파일명이 두부(□)로 보인다
 const KOREAN_FONT_PATH: &str = r"C:\Windows\Fonts\malgun.ttf";
 
+/// 삭제 확인 대화 폭 — 문구 두 줄이 접히지 않을 만큼
+const REMOVE_DIALOG_WIDTH: f32 = 360.0;
+
 /// 세션이 없을 때의 창 크기·위치 (첫 실행)
 const DEFAULT_WINDOW: WindowState = WindowState {
     x: 0,
@@ -263,6 +266,8 @@ pub struct ExplorerApp {
     window: WindowState,
     /// 첫 프레임에 화면 안으로 보정할 복원 위치 — 모니터 크기는 창이 뜬 뒤에야 알 수 있다
     restore_window: Option<WindowState>,
+    /// 삭제 확인을 기다리는 워크스페이스 인덱스 (FR-18)
+    pending_remove: Option<usize>,
 }
 
 impl ExplorerApp {
@@ -291,6 +296,7 @@ impl ExplorerApp {
             sidebar_collapsed: false,
             window: DEFAULT_WINDOW,
             restore_window: None,
+            pending_remove: None,
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -406,15 +412,8 @@ impl ExplorerApp {
                 self.workspaces.rename(index, &name);
             }
             SidebarAction::Remove(index) => {
-                // 워크스페이스를 지우면 그 탐색 상태(패널·탭·열거 스레드)도 함께 버린다
-                let removed_id = self.workspaces.items().get(index).map(|w| w.id);
-                if self.workspaces.remove(index).is_ok()
-                    && let Some(id) = removed_id
-                {
-                    self.views.remove(&id);
-                    // 한 번도 열지 않은 워크스페이스였다면 불러온 상태가 여기 남아 있다
-                    self.restored.remove(&id);
-                }
+                // 바로 지우지 않고 한 번 묻는다 — 되돌릴 수 없다(현행 판과 같은 규칙)
+                self.pending_remove = Some(index);
             }
             SidebarAction::Reorder(from, to) => {
                 self.workspaces.reorder(from, to);
@@ -467,6 +466,61 @@ impl ExplorerApp {
         }
     }
 
+    /// 삭제 확인 대화 (FR-18) — 워크스페이스 하나를 지우면 그 화면 구성과 탭이 함께 사라지고
+    /// 되돌릴 수 없어 한 번 묻는다. 문구는 현행 Win32 판의 확인 대화와 같다
+    fn show_remove_confirm(&mut self, ctx: &egui::Context) {
+        let Some(index) = self.pending_remove else {
+            return;
+        };
+        let Some(name) = self
+            .workspaces
+            .items()
+            .get(index)
+            .map(|item| item.name.clone())
+        else {
+            // 목록이 그 사이 바뀌어 대상이 사라졌다 — 물을 것이 없다
+            self.pending_remove = None;
+            return;
+        };
+        let mut confirmed = None;
+        egui::Modal::new(egui::Id::new("workspace_remove_confirm")).show(ctx, |ui| {
+            ui.set_width(REMOVE_DIALOG_WIDTH);
+            ui.heading("워크스페이스 삭제");
+            ui.add_space(8.0);
+            ui.label(format!("'{name}' 워크스페이스를 삭제할까요?"));
+            ui.label("이 워크스페이스의 화면 구성과 탭이 함께 사라집니다.");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("삭제").clicked() {
+                    confirmed = Some(true);
+                }
+                if ui.button("취소").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    confirmed = Some(false);
+                }
+            });
+        });
+        match confirmed {
+            Some(true) => {
+                self.pending_remove = None;
+                self.remove_workspace(index);
+            }
+            Some(false) => self.pending_remove = None,
+            None => {}
+        }
+    }
+
+    /// 워크스페이스와 그 탐색 상태(패널·탭·열거 스레드)를 함께 버린다
+    fn remove_workspace(&mut self, index: usize) {
+        let removed_id = self.workspaces.items().get(index).map(|item| item.id);
+        if self.workspaces.remove(index).is_ok()
+            && let Some(id) = removed_id
+        {
+            self.views.remove(&id);
+            // 한 번도 열지 않은 워크스페이스였다면 불러온 상태가 여기 남아 있다
+            self.restored.remove(&id);
+        }
+    }
+
     /// 활성 워크스페이스의 부제를 현재 폴더로 맞춘다 (FR-15 2줄 카드)
     fn sync_subtitle(&mut self) {
         let index = self.workspaces.active_index();
@@ -506,6 +560,8 @@ impl ExplorerApp {
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             Command::NewWorkspace => {
                 self.workspaces.add();
+                // 접혀 있으면 편집칸이 보이지 않는다 — 사이드바가 그려져야 편집이 시작된다
+                self.sidebar_collapsed = false;
                 // 사이드바의 `+`와 같은 흐름으로 잇는다 — 추가 직후 이름을 고칠 수 있어야 한다
                 self.sidebar.edit_after_add();
             }
@@ -516,7 +572,8 @@ impl ExplorerApp {
                     .start_rename(self.workspaces.active_index(), &self.workspaces);
             }
             Command::RemoveWorkspace => {
-                self.handle_sidebar(SidebarAction::Remove(self.workspaces.active_index()));
+                // 사이드바 컨텍스트 메뉴와 같은 경로 — 확인 대화를 거친다
+                self.pending_remove = Some(self.workspaces.active_index());
             }
             Command::NewTab
             | Command::CloseTab
@@ -648,6 +705,10 @@ impl eframe::App for ExplorerApp {
                 );
             }
         });
+
+        // 삭제 확인은 egui 위젯이라 그리기 안에서 처리해도 되지만, 셸 메뉴 팝업(자체 메시지 루프)
+        // 보다는 앞에 둔다 — 둘이 한 프레임에 겹치면 확인 대화가 가려진다
+        self.show_remove_confirm(&ctx);
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
         // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다
