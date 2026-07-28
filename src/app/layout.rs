@@ -21,6 +21,18 @@ pub enum SplitDir {
     Vertical,
 }
 
+/// 새 패널을 기존 패널의 어느 쪽에 둘지.
+///
+/// 트리에는 "왼쪽·위쪽" 같은 방향 개념이 없고 first/second만 있다 —
+/// 화면에서 first가 왼쪽(또는 위)이므로 이 둘의 조합이 네 방향을 만든다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPlace {
+    /// 새 패널이 앞(왼쪽/위)
+    Before,
+    /// 새 패널이 뒤(오른쪽/아래)
+    After,
+}
+
 /// windows crate 비의존 사각형 (plan T2 Design ③)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rect {
@@ -129,11 +141,12 @@ impl LayoutTree {
 
     /// `target` 리프를 지정 방향으로 분할하고 새 리프 id를 반환한다.
     /// `area`는 현재 전체 영역 — 분할 결과가 최소 크기 미만이면 거부한다.
-    /// 새 리프는 second(오른쪽/아래)에 배치된다.
+    /// `place`가 새 리프를 기존 패널의 앞(왼쪽/위)에 둘지 뒤(오른쪽/아래)에 둘지 정한다.
     pub fn split(
         &mut self,
         target: PanelId,
         dir: SplitDir,
+        place: SplitPlace,
         area: Rect,
     ) -> Result<PanelId, LayoutError> {
         // 분할 가능 검사: 현재 target 리프의 실제 사각형 기준
@@ -153,25 +166,37 @@ impl LayoutTree {
         }
 
         let new_id = PanelId(self.next_id);
-        fn replace(n: &mut Node, target: PanelId, dir: SplitDir, new_id: PanelId) -> bool {
+        fn replace(
+            n: &mut Node,
+            target: PanelId,
+            dir: SplitDir,
+            place: SplitPlace,
+            new_id: PanelId,
+        ) -> bool {
             match n {
                 Node::Leaf(id) if *id == target => {
                     let old = *id;
+                    // 앞에 두면 새 리프가 first가 된다 — 화면에서는 왼쪽/위가 된다
+                    let (first, second) = match place {
+                        SplitPlace::Before => (new_id, old),
+                        SplitPlace::After => (old, new_id),
+                    };
                     *n = Node::Split {
                         dir,
                         ratio: 0.5,
-                        first: Box::new(Node::Leaf(old)),
-                        second: Box::new(Node::Leaf(new_id)),
+                        first: Box::new(Node::Leaf(first)),
+                        second: Box::new(Node::Leaf(second)),
                     };
                     true
                 }
                 Node::Leaf(_) => false,
                 Node::Split { first, second, .. } => {
-                    replace(first, target, dir, new_id) || replace(second, target, dir, new_id)
+                    replace(first, target, dir, place, new_id)
+                        || replace(second, target, dir, place, new_id)
                 }
             }
         }
-        if !replace(&mut self.root, target, dir, new_id) {
+        if !replace(&mut self.root, target, dir, place, new_id) {
             return Err(LayoutError::NotFound);
         }
         self.next_id += 1;
@@ -428,6 +453,135 @@ mod tests {
     };
 
     #[test]
+    fn 앞에_두면_새_패널이_first가_된다() {
+        // 왼쪽·위쪽 분할 — 트리에서 새 리프가 first여야 화면 왼쪽(위)에 온다
+        let (mut tree, first) = LayoutTree::new();
+        let added = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::Before, AREA)
+            .unwrap();
+        assert_eq!(
+            tree.panel_ids(),
+            vec![added, first],
+            "walk 순서상 새 패널이 앞에 온다"
+        );
+
+        let computed = tree.compute_rects(AREA);
+        let added_rect = computed
+            .panes
+            .iter()
+            .find(|(id, _)| *id == added)
+            .unwrap()
+            .1;
+        let first_rect = computed
+            .panes
+            .iter()
+            .find(|(id, _)| *id == first)
+            .unwrap()
+            .1;
+        assert!(
+            added_rect.x < first_rect.x,
+            "새 패널이 왼쪽에 놓여야 한다 (added.x={}, first.x={})",
+            added_rect.x,
+            first_rect.x
+        );
+    }
+
+    #[test]
+    fn 뒤에_두면_새_패널이_second가_된다() {
+        let (mut tree, first) = LayoutTree::new();
+        let added = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
+        assert_eq!(tree.panel_ids(), vec![first, added]);
+
+        let computed = tree.compute_rects(AREA);
+        let added_rect = computed
+            .panes
+            .iter()
+            .find(|(id, _)| *id == added)
+            .unwrap()
+            .1;
+        let first_rect = computed
+            .panes
+            .iter()
+            .find(|(id, _)| *id == first)
+            .unwrap()
+            .1;
+        assert!(
+            added_rect.x > first_rect.x,
+            "새 패널이 오른쪽에 놓여야 한다"
+        );
+    }
+
+    #[test]
+    fn 위쪽_분할은_새_패널이_위에_온다() {
+        let (mut tree, first) = LayoutTree::new();
+        let added = tree
+            .split(first, SplitDir::Vertical, SplitPlace::Before, AREA)
+            .unwrap();
+        let computed = tree.compute_rects(AREA);
+        let added_rect = computed
+            .panes
+            .iter()
+            .find(|(id, _)| *id == added)
+            .unwrap()
+            .1;
+        let first_rect = computed
+            .panes
+            .iter()
+            .find(|(id, _)| *id == first)
+            .unwrap()
+            .1;
+        assert!(added_rect.y < first_rect.y);
+        assert_eq!(added_rect.x, first_rect.x, "상하 분할은 같은 x를 쓴다");
+    }
+
+    #[test]
+    fn 앞에_둔_분할도_구조_스냅숏을_왕복한다() {
+        // 세션 저장·복원이 이 왕복을 쓴다 — 앞/뒤 배치가 스냅숏에 보존돼야 한다
+        let (mut tree, first) = LayoutTree::new();
+        tree.split(first, SplitDir::Vertical, SplitPlace::Before, AREA)
+            .unwrap();
+        let shape = tree.shape();
+        let (restored, ids) = LayoutTree::from_shape(&shape);
+        assert_eq!(restored.shape(), shape);
+        assert_eq!(ids.len(), 2);
+        // 복원된 트리의 배치도 원본과 같아야 한다(첫 리프가 위)
+        let before = tree.compute_rects(AREA);
+        let after = restored.compute_rects(AREA);
+        assert_eq!(before.panes[0].1, after.panes[0].1);
+        assert_eq!(before.panes[1].1, after.panes[1].1);
+    }
+
+    #[test]
+    fn 앞에_둔_분할도_최소_크기를_지킨다() {
+        // 거부 조건은 배치 위치와 무관하다
+        let (mut tree, first) = LayoutTree::new();
+        let narrow = Rect {
+            x: 0,
+            y: 0,
+            w: MIN_PANE_SIZE * 2,
+            h: 800,
+        };
+        assert_eq!(
+            tree.split(first, SplitDir::Horizontal, SplitPlace::Before, narrow),
+            Err(LayoutError::TooSmall)
+        );
+        assert_eq!(tree.panel_count(), 1, "거부되면 트리가 그대로여야 한다");
+    }
+
+    #[test]
+    fn 앞에_둔_패널을_닫으면_형제가_승격된다() {
+        let (mut tree, first) = LayoutTree::new();
+        let added = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::Before, AREA)
+            .unwrap();
+        tree.close(added).unwrap();
+        assert_eq!(tree.panel_count(), 1);
+        assert_eq!(tree.compute_rects(AREA).panes[0], (first, AREA));
+    }
+
+    #[test]
     fn 단일_패널로_시작한다() {
         let (tree, first) = LayoutTree::new();
         assert_eq!(tree.panel_count(), 1);
@@ -440,7 +594,9 @@ mod tests {
     #[test]
     fn 좌우_분할하면_두_패널이_나란히_배치된다() {
         let (mut tree, first) = LayoutTree::new();
-        let second = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        let second = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
         assert_eq!(tree.panel_count(), 2);
 
         let layout = tree.compute_rects(AREA);
@@ -457,8 +613,12 @@ mod tests {
     #[test]
     fn 중첩_분할_좌우_후_상하() {
         let (mut tree, first) = LayoutTree::new();
-        let right = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
-        let right_bottom = tree.split(right, SplitDir::Vertical, AREA).unwrap();
+        let right = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
+        let right_bottom = tree
+            .split(right, SplitDir::Vertical, SplitPlace::After, AREA)
+            .unwrap();
         assert_eq!(tree.panel_count(), 3);
         assert_eq!(tree.panel_ids(), vec![first, right, right_bottom]);
 
@@ -477,7 +637,9 @@ mod tests {
     #[test]
     fn 닫으면_형제가_승격된다() {
         let (mut tree, first) = LayoutTree::new();
-        let second = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        let second = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
         tree.close(first).unwrap();
         assert_eq!(tree.panel_count(), 1);
         assert_eq!(tree.panel_ids(), vec![second]);
@@ -489,8 +651,12 @@ mod tests {
     fn 리프를_닫으면_형제_분할_서브트리가_통째로_승격된다() {
         // A | (B / C) 구조에서 A를 닫으면 (B / C) Split이 루트로 승격되어야 한다
         let (mut tree, a) = LayoutTree::new();
-        let b = tree.split(a, SplitDir::Horizontal, AREA).unwrap();
-        let c = tree.split(b, SplitDir::Vertical, AREA).unwrap();
+        let b = tree
+            .split(a, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
+        let c = tree
+            .split(b, SplitDir::Vertical, SplitPlace::After, AREA)
+            .unwrap();
         tree.close(a).unwrap();
 
         assert_eq!(tree.panel_count(), 2);
@@ -515,7 +681,7 @@ mod tests {
         let (mut tree, _first) = LayoutTree::new();
         let ghost = PanelId(99);
         assert_eq!(
-            tree.split(ghost, SplitDir::Horizontal, AREA),
+            tree.split(ghost, SplitDir::Horizontal, SplitPlace::After, AREA),
             Err(LayoutError::NotFound)
         );
         assert_eq!(tree.close(ghost), Err(LayoutError::NotFound));
@@ -531,17 +697,21 @@ mod tests {
             h: 800,
         };
         assert_eq!(
-            tree.split(first, SplitDir::Horizontal, narrow),
+            tree.split(first, SplitDir::Horizontal, SplitPlace::After, narrow),
             Err(LayoutError::TooSmall)
         );
         // 세로 분할은 높이가 충분하므로 성공
-        assert!(tree.split(first, SplitDir::Vertical, narrow).is_ok());
+        assert!(
+            tree.split(first, SplitDir::Vertical, SplitPlace::After, narrow)
+                .is_ok()
+        );
     }
 
     #[test]
     fn 비율_조절은_클램프된다() {
         let (mut tree, first) = LayoutTree::new();
-        tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        tree.split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
         let path = tree.compute_rects(AREA).splitters[0].node_path;
 
         // 극단값 → 최소 크기 유지 비율로 클램프
@@ -559,7 +729,8 @@ mod tests {
     #[test]
     fn 영_크기_영역도_패닉하지_않는다() {
         let (mut tree, first) = LayoutTree::new();
-        tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        tree.split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
         let zero = Rect {
             x: 0,
             y: 0,
@@ -576,8 +747,11 @@ mod tests {
     #[test]
     fn 구조_스냅숏_왕복은_배치가_동일하다() {
         let (mut tree, first) = LayoutTree::new();
-        let right = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
-        tree.split(right, SplitDir::Vertical, AREA).unwrap();
+        let right = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
+        tree.split(right, SplitDir::Vertical, SplitPlace::After, AREA)
+            .unwrap();
 
         let shape = tree.shape();
         assert_eq!(shape.leaf_count(), 3);
@@ -617,9 +791,13 @@ mod tests {
     #[test]
     fn 분할_후_id는_재사용되지_않는다() {
         let (mut tree, first) = LayoutTree::new();
-        let a = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        let a = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
         tree.close(a).unwrap();
-        let b = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+        let b = tree
+            .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+            .unwrap();
         assert_ne!(a, b);
     }
 }

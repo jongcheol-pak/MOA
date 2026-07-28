@@ -4,7 +4,7 @@
 //! (분할 → 비율 조절 → 중첩 분할 → 닫기)을 이어서 수행했을 때 배치가 일관적인지 본다.
 //! egui 쪽 `ui::splitter`는 이 결과를 좌표 변환만 해서 그리므로, 이 테스트가 통과하면
 //! 화면 배치의 근거가 검증된 셈이다(그리기 자체는 HUMAN-VERIFY).
-use file_explorer::app::layout::{LayoutTree, Rect, SplitDir};
+use file_explorer::app::layout::{LayoutTree, Rect, SplitDir, SplitPlace};
 
 const AREA: Rect = Rect {
     x: 0,
@@ -18,7 +18,9 @@ fn 분할_비율조절_닫기_시퀀스가_일관적이다() {
     let (mut tree, first) = LayoutTree::new();
 
     // 1) 좌우 분할 → 두 패널이 나란히
-    let right = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+    let right = tree
+        .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+        .unwrap();
     let computed = tree.compute_rects(AREA);
     assert_eq!(computed.panes.len(), 2);
     assert_eq!(computed.splitters.len(), 1);
@@ -61,7 +63,9 @@ fn 분할_비율조절_닫기_시퀀스가_일관적이다() {
     );
 
     // 3) 오른쪽을 다시 상하로 중첩 분할 → 패널 3개
-    let bottom = tree.split(right, SplitDir::Vertical, AREA).unwrap();
+    let bottom = tree
+        .split(right, SplitDir::Vertical, SplitPlace::After, AREA)
+        .unwrap();
     let computed = tree.compute_rects(AREA);
     assert_eq!(computed.panes.len(), 3);
     assert_eq!(computed.splitters.len(), 2);
@@ -109,7 +113,9 @@ fn 분할_비율조절_닫기_시퀀스가_일관적이다() {
 #[test]
 fn 창이_작아져도_배치가_패닉하지_않는다() {
     let (mut tree, first) = LayoutTree::new();
-    let second = tree.split(first, SplitDir::Horizontal, AREA).unwrap();
+    let second = tree
+        .split(first, SplitDir::Horizontal, SplitPlace::After, AREA)
+        .unwrap();
 
     // 창을 극단적으로 줄여도 계산이 성립해야 한다 (최소화 대응)
     let tiny = Rect {

@@ -3,7 +3,7 @@
 //! 실제 탐색은 `ui::panel::PanelState`가 담당하고, 그 패널들을 담은 분할 화면 한 벌이
 //! `WorkspaceView`다. 이 구조체는 워크스페이스 목록(사이드바)과 뷰들을 잇는 그릇이다.
 use crate::app::layout::TreeShape;
-use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
+use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir, SplitPlace};
 use crate::app::settings::{
     SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, Session, SidebarSession,
     WindowState, save_session,
@@ -151,7 +151,7 @@ impl WorkspaceView {
             .map(|p| p.dir().to_path_buf())
             .unwrap_or_else(start_dir);
         // 공간이 부족하면 나눌 수 없다 — 조용히 무시한다(사용자는 창을 키우면 된다)
-        if let Ok(new_id) = self.layout.split(self.active, dir, area) {
+        if let Ok(new_id) = self.layout.split(self.active, dir, SplitPlace::After, area) {
             self.panels.insert(new_id, PanelState::new(start));
             self.active = new_id;
         }
@@ -747,6 +747,7 @@ fn start_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> LayoutRect {
         LayoutRect { x, y, w, h }
@@ -771,6 +772,34 @@ mod tests {
         let absorbed = rect(0, 0, 1000, 600);
         let far = rect(0, 0, 200, 600);
         assert!(overlap_area(absorbed, closed) > overlap_area(far, closed));
+    }
+
+    #[test]
+    fn 앞에_둔_분할도_세션_왕복에서_탭이_제자리에_남는다() {
+        // 세션은 패널 배열을 리프 walk 순서로 짝지으므로, 새 리프가 앞에 들어가도
+        // 저장·복원에서 짝이 밀리면 안 된다 (왼쪽·위쪽 분할의 회귀 방지)
+        let area = rect(0, 0, 1200, 800);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let kept = view.active;
+        let added = view
+            .layout
+            .split(kept, SplitDir::Horizontal, SplitPlace::Before, area)
+            .unwrap();
+        view.panels
+            .insert(added, PanelState::new(PathBuf::from(r"D:\")));
+
+        let state = view.to_state("워크스페이스 1".into());
+        assert_eq!(
+            state.panels[0].tabs,
+            vec![PathBuf::from(r"D:\")],
+            "walk 순서상 앞에 온 새 패널이 첫 번째로 저장된다"
+        );
+        assert_eq!(state.panels[1].tabs, vec![PathBuf::from(r"C:\")]);
+
+        let restored = WorkspaceView::from_state(&state);
+        let ids = restored.layout.panel_ids();
+        assert_eq!(restored.panels[&ids[0]].dir(), Path::new(r"D:\"));
+        assert_eq!(restored.panels[&ids[1]].dir(), Path::new(r"C:\"));
     }
 
     #[test]

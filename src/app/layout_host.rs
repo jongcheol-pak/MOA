@@ -3,7 +3,8 @@
 //! 스플리터는 별도 HWND가 아니라 부모 클라이언트 영역의 빈 틈을 히트테스트한다
 //! (plan T3 Design ④ — 창 수 절약).
 use crate::app::layout::{
-    ComputedLayout, LayoutError, LayoutTree, NodePath, PanelId, Rect, SplitDir, TreeShape,
+    ComputedLayout, LayoutError, LayoutTree, NodePath, PanelId, Rect, SplitDir, SplitPlace,
+    TreeShape,
 };
 use crate::panel::panel as panel_win;
 use windows::Win32::Foundation::HWND;
@@ -155,7 +156,10 @@ impl LayoutHost {
     /// 활성 패널을 지정 방향으로 분할한다. 최소 크기 미달이면 무시(상태 유지 — plan T3 Edge).
     /// 크기 판정은 주입된 배치 영역 기준이고, `parent`는 새 패널 창 생성에만 쓰인다
     pub fn split_active(&mut self, parent: HWND, dir: SplitDir) -> Result<()> {
-        match self.tree.split(self.active, dir, self.area) {
+        match self
+            .tree
+            .split(self.active, dir, SplitPlace::After, self.area)
+        {
             Ok(new_id) => {
                 let hwnd = panel_win::create(parent)?;
                 self.panes.push((new_id, hwnd));
