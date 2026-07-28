@@ -309,15 +309,11 @@ impl ExplorerApp {
     }
 
     fn apply_command(&mut self, command: LayoutCommand, area: LayoutRect) {
-        if command == LayoutCommand::ToggleSidebar {
-            self.sidebar_collapsed = !self.sidebar_collapsed;
-            return;
-        }
-        let view = self.ensure_active_view();
         match command {
-            LayoutCommand::Split(dir) => view.split_active(dir, area),
-            LayoutCommand::ClosePanel => view.close_active(area),
-            LayoutCommand::ToggleSidebar => {}
+            // 분할·닫기는 활성 워크스페이스의 뷰를 대상으로 한다(없으면 여기서 만들어진다)
+            LayoutCommand::Split(dir) => self.ensure_active_view().split_active(dir, area),
+            LayoutCommand::ClosePanel => self.ensure_active_view().close_active(area),
+            LayoutCommand::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
         }
     }
 }
