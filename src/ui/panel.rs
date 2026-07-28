@@ -12,6 +12,7 @@ use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::menu::SplitTo;
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
@@ -91,6 +92,14 @@ enum PendingNav {
     Push,
     Back,
     Forward,
+}
+
+/// 패널이 상위(레이아웃)에 올려보내는 요청.
+/// 둘 다 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
+pub struct PanelOutcome {
+    pub menu: Option<MenuRequest>,
+    /// 분할 버튼에서 고른 방향 — 대상은 **이 패널**이다 (plan D3)
+    pub split: Option<SplitTo>,
 }
 
 /// 셸 컨텍스트 메뉴 요청 — 그리기가 모두 끝난 뒤 앱이 실행한다.
@@ -415,15 +424,16 @@ impl PanelState {
     /// 세로 구성은 탭 스트립 / 주소창 / (폴더 트리 | 상태 · 파일 목록)이며,
     /// 트리를 숨기면 목록이 그 폭까지 차지한다 (FR-9).
     ///
-    /// 셸 메뉴 요청만은 실행하지 않고 반환한다 — 모달이라 그리기가 끝난 뒤에 띄워야 한다
+    /// 셸 메뉴 요청과 분할 요청은 실행하지 않고 반환한다 — 셸 메뉴는 모달이라 그리기가 끝난 뒤에
+    /// 띄워야 하고, 분할은 트리를 바꾸므로 이 패널을 그리는 도중에 할 수 없다
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-    ) -> Option<MenuRequest> {
-        let tab_action = crate::ui::tabs::show_tab_strip(ui, &self.tabs);
+    ) -> PanelOutcome {
+        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, &tab.committed, &tab.history);
 
@@ -463,13 +473,16 @@ impl PanelState {
         if let Some(path) = tree_choice {
             self.navigate(path, ctx);
         }
-        if let Some(tab_action) = tab_action {
+        if let Some(tab_action) = strip.tab {
             self.handle_tab(tab_action, ctx);
         }
         if let Some(nav) = nav {
             self.handle_nav(nav, ctx);
         }
-        self.handle_list_action(action, ctx)
+        PanelOutcome {
+            menu: self.handle_list_action(action, ctx),
+            split: strip.split,
+        }
     }
 
     /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 파일 목록

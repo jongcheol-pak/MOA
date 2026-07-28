@@ -6,6 +6,7 @@
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::menu::SplitTo;
 use crate::ui::panel::{MenuRequest, PanelState};
 use crate::ui::theme;
 use eframe::egui;
@@ -34,6 +35,14 @@ pub fn to_layout_rect(r: egui::Rect) -> LayoutRect {
     }
 }
 
+/// 레이아웃이 상위(앱)에 올려보내는 요청 — 어느 패널에서 왔는지까지 담는다
+#[derive(Default)]
+pub struct LayoutOutcome {
+    pub menu: Option<MenuRequest>,
+    /// 분할을 요청한 패널과 방향. **활성 패널이 아니라 버튼이 속한 패널**이다 (plan D3)
+    pub split: Option<(PanelId, SplitTo)>,
+}
+
 /// 분할된 패널들을 그리고 스플리터 드래그·활성 패널 전환을 처리한다.
 ///
 /// `panels`에 없는 `PanelId`가 트리에 있으면 그 자리는 비워 둔다 —
@@ -47,8 +56,8 @@ pub fn show_layout(
     active: &mut PanelId,
     icons: &mut IconCache,
     textures: &mut IconTextures,
-) -> Option<MenuRequest> {
-    let mut menu = None;
+) -> LayoutOutcome {
+    let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
     let computed = tree.compute_rects(to_layout_rect(area));
 
@@ -83,8 +92,14 @@ pub fn show_layout(
             })
             .inner;
         // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
-        if menu.is_none() {
-            menu = requested;
+        if outcome.menu.is_none() {
+            outcome.menu = requested.menu;
+        }
+        // 분할도 한 프레임에 하나만 — 어느 패널이 요청했는지 함께 담는다
+        if outcome.split.is_none()
+            && let Some(to) = requested.split
+        {
+            outcome.split = Some((*id, to));
         }
     }
 
@@ -135,7 +150,7 @@ pub fn show_layout(
             }
         }
     }
-    menu
+    outcome
 }
 
 #[cfg(test)]

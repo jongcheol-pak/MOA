@@ -143,15 +143,22 @@ impl WorkspaceView {
         }
     }
 
-    /// 활성 패널을 네 방향 중 한쪽으로 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다
+    /// 활성 패널을 네 방향 중 한쪽으로 나눈다 — 메뉴·단축키의 대상은 언제나 활성 패널이다
     fn split_active(&mut self, dir: SplitDir, place: SplitPlace, area: LayoutRect) {
+        self.split_panel(self.active, dir, place, area);
+    }
+
+    /// 지정한 패널을 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다.
+    ///
+    /// 패널마다 있는 분할 버튼은 **자기 패널**을 대상으로 하므로 활성 패널과 다를 수 있다 (D3)
+    fn split_panel(&mut self, target: PanelId, dir: SplitDir, place: SplitPlace, area: LayoutRect) {
         let start = self
             .panels
-            .get(&self.active)
+            .get(&target)
             .map(|p| p.dir().to_path_buf())
             .unwrap_or_else(start_dir);
         // 공간이 부족하면 나눌 수 없다 — 조용히 무시한다(사용자는 창을 키우면 된다)
-        if let Ok(new_id) = self.layout.split(self.active, dir, place, area) {
+        if let Ok(new_id) = self.layout.split(target, dir, place, area) {
             self.panels.insert(new_id, PanelState::new(start));
             self.active = new_id;
         }
@@ -701,7 +708,7 @@ impl eframe::App for ExplorerApp {
             let id = self.workspaces.active().id;
             self.ensure_active_view();
             if let Some(view) = self.views.get_mut(&id) {
-                menu = splitter::show_layout(
+                let outcome = splitter::show_layout(
                     ui,
                     &ctx,
                     &mut view.layout,
@@ -710,6 +717,13 @@ impl eframe::App for ExplorerApp {
                     &mut self.icons,
                     &mut self.textures,
                 );
+                menu = outcome.menu;
+                // 분할은 그리기가 끝난 뒤에 한다 — 트리를 바꾸면 이번 프레임의 배치와 어긋난다.
+                // 대상은 버튼이 속한 패널이지 활성 패널이 아니다 (D3)
+                if let Some((target, to)) = outcome.split {
+                    let (dir, place) = to.to_layout();
+                    view.split_panel(target, dir, place, area);
+                }
             }
         });
 
@@ -770,6 +784,43 @@ mod tests {
         let absorbed = rect(0, 0, 1000, 600);
         let far = rect(0, 0, 200, 600);
         assert!(overlap_area(absorbed, closed) > overlap_area(far, closed));
+    }
+
+    #[test]
+    fn 분할은_전달받은_패널을_대상으로_한다() {
+        // 분할 버튼은 패널마다 있어 활성 패널이 아닌 곳에서도 눌린다 (D3).
+        // `split_active`를 그대로 쓰면 엉뚱한 패널이 나뉘므로 이 테스트가 그것을 막는다
+        let area = rect(0, 0, 1200, 800);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let left = view.active;
+        let right = view
+            .layout
+            .split(left, SplitDir::Horizontal, SplitPlace::After, area)
+            .unwrap();
+        view.panels
+            .insert(right, PanelState::new(PathBuf::from(r"D:\")));
+        view.active = left;
+
+        let left_before = pane_rect(&view, left, area);
+        view.split_panel(right, SplitDir::Vertical, SplitPlace::After, area);
+
+        assert_eq!(view.layout.panel_count(), 3);
+        assert_eq!(
+            pane_rect(&view, left, area),
+            left_before,
+            "대상이 아닌 패널(활성 패널)의 자리는 그대로여야 한다"
+        );
+    }
+
+    /// 지정 패널의 현재 사각형 — 어느 패널이 나뉘었는지 자리로 판별한다
+    fn pane_rect(view: &WorkspaceView, id: PanelId, area: LayoutRect) -> LayoutRect {
+        view.layout
+            .compute_rects(area)
+            .panes
+            .iter()
+            .find(|(pane_id, _)| *pane_id == id)
+            .map(|(_, r)| *r)
+            .expect("패널이 트리에 있어야 한다")
     }
 
     #[test]
