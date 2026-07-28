@@ -243,7 +243,7 @@
     - (ii-a) PRD 수정은 승인 대상 → `## 사전 승인 항목`에 등록
   - **Depends on**: -
 
-- [ ] T2. `egui-phosphor` 도입과 폰트 등록 일원화
+- [x] T2. `egui-phosphor` 도입과 폰트 등록 일원화
   - **Type**: C
   - **Design**: ① 배치 — `Cargo.toml` 의존성 + `src/ui/app.rs`의 폰트 등록 함수 ② 신규 심볼 — `install_fonts(&egui::Context) -> bool`(한글 폰트와 Phosphor 아이콘 폰트를 **한 번의 `set_fonts`로** 등록, 반환은 한글 적용 여부) ③ 의존 방향 — `ui::app` → `egui_phosphor`(단방향, 다른 모듈은 이 crate를 모른다) ④ 비추상화 — 아이콘 이름을 감싸는 자체 enum·래퍼를 만들지 않고 `egui_phosphor::regular::GEAR` 상수를 쓰는 자리에서 직접 참조한다
   - **Acceptance**: Given 앱 실행, When 어느 화면이든 Phosphor 글리프를 그릴 때, Then 두부(□) 없이 아이콘이 표시된다 / Given 맑은 고딕 파일이 없는 환경(경로 변조로 재현), When 앱 시작, Then 한글 안내 문구가 뜨면서도 **아이콘은 정상 표시**된다 / `cargo build` 경고 0

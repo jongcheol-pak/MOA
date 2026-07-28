@@ -35,6 +35,9 @@ windows = { version = "0.62.2", features = [
 # default-features를 끄고 glow(OpenGL)만 쓴다: PoC 실측에서 wgpu가 359MB, glow가 131MB로
 # 백엔드가 메모리를 2.7배 갈랐다(NFR-2). wgpu를 빌드에 포함하지 않아 exe도 함께 줄인다.
 eframe = { version = "0.35", default-features = false, features = ["glow"] }
+# 타이틀바·버튼 아이콘 글꼴 (FR-22). 글꼴이 exe에 정적으로 담기므로 시스템 글꼴에
+# 해당 글리프가 없어 두부(□)로 깨지는 일이 없다. 기본 기능(regular)만 쓴다
+egui-phosphor = "0.13"
 # eframe이 재수출하지 않아 직접 의존 — 창 HWND 추출(셸 컨텍스트 메뉴)에 필요
 raw-window-handle = "0.6"
 

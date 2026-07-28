@@ -94,29 +94,38 @@ pub unsafe fn uninit_com(com: ComStatus) {
     }
 }
 
-/// 한글 폰트를 egui에 등록한다. 폰트 파일이 없으면 기본 폰트로 진행한다(반환 false)
-pub fn install_korean_font(ctx: &egui::Context) -> bool {
-    let Ok(bytes) = std::fs::read(KOREAN_FONT_PATH) else {
-        return false;
-    };
+/// 앱이 쓰는 글꼴을 등록한다 — 한글 본문 글꼴(맑은 고딕)과 아이콘 글꼴(Phosphor).
+///
+/// 반환값은 **한글 글꼴 적용 여부**다. 맑은 고딕을 읽지 못해도 아이콘 글꼴은 등록되므로
+/// 타이틀바 버튼은 그대로 보인다(파일명만 기본 글꼴로 표시된다).
+/// 등록은 한 번에 끝낸다 — `set_fonts`를 두 번 부르면 뒤엣것이 앞엣것을 덮어쓴다
+pub fn install_fonts(ctx: &egui::Context) -> bool {
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "malgun".to_owned(),
-        Arc::new(egui::FontData::from_owned(bytes)),
-    );
-    // 기본 폰트보다 앞에 두어 한글이 우선 매칭되게 한다
-    fonts
-        .families
-        .entry(egui::FontFamily::Proportional)
-        .or_default()
-        .insert(0, "malgun".to_owned());
-    fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default()
-        .push("malgun".to_owned());
+    let korean = match std::fs::read(KOREAN_FONT_PATH) {
+        Ok(bytes) => {
+            fonts.font_data.insert(
+                "malgun".to_owned(),
+                Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            // 기본 폰트보다 앞에 두어 한글이 우선 매칭되게 한다
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "malgun".to_owned());
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .push("malgun".to_owned());
+            true
+        }
+        Err(_) => false,
+    };
+    // 아이콘 글꼴은 exe에 정적으로 담겨 있어 실패 경로가 없다 — 한글 글꼴 성공 여부와 무관하게 등록한다
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
-    true
+    korean
 }
 
 /// 워크스페이스 한 벌의 탐색 상태 — 분할 트리와 그 패널들 (FR-17).
@@ -287,7 +296,7 @@ impl ExplorerApp {
         com: ComStatus,
         session: Option<Session>,
     ) -> ExplorerApp {
-        let korean_font = install_korean_font(&cc.egui_ctx);
+        let korean_font = install_fonts(&cc.egui_ctx);
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
