@@ -24,7 +24,7 @@ pub struct TabStripOutcome {
     pub split: Option<SplitTo>,
 }
 
-/// 탭 스트립이 상위(패널)에 돌려주는 조작
+/// 탭 하나에 대한 조작 — 스트립 전체 결과는 `TabStripOutcome`이 담는다
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TabAction {
     Switch(usize),
