@@ -55,7 +55,10 @@ const COLOR_SUBTITLE: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x8A, 0x8A);
 const COLOR_HEADER: egui::Color32 = egui::Color32::from_rgb(0x9A, 0x9A, 0x9A);
 const COLOR_HEADER_HOT: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xE8, 0xE8);
 
-/// 사이드바에서 올라온 사용자 조작. 목록을 바꾸는 일은 전부 호출부의 몫이다
+/// 사이드바에서 올라온 사용자 조작. 목록을 바꾸는 일은 전부 호출부의 몫이다.
+///
+/// 폭 변경은 조작으로 올리지 않는다 — egui `Panel`이 폭을 스스로 관리하고 범위까지 클램프하므로,
+/// 호출부가 그린 뒤 `response.rect.width()`로 읽으면 된다(왕복시키면 같은 값이 두 곳에 생긴다)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarAction {
     Select(usize),
@@ -103,33 +106,37 @@ impl WorkspaceSidebar {
         }
     }
 
-    /// 사이드바를 그리고 이번 프레임의 조작 하나를 돌려준다.
-    /// 한 프레임에 여러 조작이 겹치면 마지막에 확정된 것만 남는다
+    /// 사이드바를 그리고 이번 프레임의 조작을 **발생 순서대로** 돌려준다.
+    ///
+    /// 한 프레임에 조작이 둘 이상 겹칠 수 있어 목록으로 돌려준다 —
+    /// 이름을 고치다가 다른 항목을 클릭하면 커밋(`Rename`)과 전환(`Select`)이 함께 일어나고,
+    /// 하나만 남기면 둘 중 하나가 조용히 사라진다. 각 조작이 대상 인덱스를 품고 있어
+    /// 처리 순서가 뒤바뀌어도 결과는 같다
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         list: &WorkspaceList,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-    ) -> Option<SidebarAction> {
+    ) -> Vec<SidebarAction> {
         ui.painter().rect_filled(ui.max_rect(), 0.0, COLOR_BG);
         if self.edit_added {
             // 호출부가 추가를 처리해 활성이 새 항목으로 옮겨진 뒤다
             self.edit_added = false;
             self.begin_edit(list.active_index(), list);
         }
-        let mut action = None;
-        self.show_toggle_strip(ui, &mut action);
-        self.show_header(ui, &mut action);
-        self.show_items(ui, list, icons, textures, &mut action);
-        if action == Some(SidebarAction::Add) {
+        let mut actions = Vec::new();
+        self.show_toggle_strip(ui, &mut actions);
+        self.show_header(ui, &mut actions);
+        self.show_items(ui, list, icons, textures, &mut actions);
+        if actions.contains(&SidebarAction::Add) {
             self.edit_added = true;
         }
-        action
+        actions
     }
 
     /// 접기 토글만 있는 상단 스트립
-    fn show_toggle_strip(&mut self, ui: &mut egui::Ui, action: &mut Option<SidebarAction>) {
+    fn show_toggle_strip(&mut self, ui: &mut egui::Ui, actions: &mut Vec<SidebarAction>) {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), TOGGLE_STRIP_HEIGHT),
             egui::Sense::hover(),
@@ -154,12 +161,12 @@ impl WorkspaceSidebar {
             },
         );
         if resp.clicked() {
-            *action = Some(SidebarAction::ToggleCollapse);
+            actions.push(SidebarAction::ToggleCollapse);
         }
     }
 
     /// "워크스페이스" 제목과 추가(+) 버튼
-    fn show_header(&mut self, ui: &mut egui::Ui, action: &mut Option<SidebarAction>) {
+    fn show_header(&mut self, ui: &mut egui::Ui, actions: &mut Vec<SidebarAction>) {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), HEADER_HEIGHT),
             egui::Sense::hover(),
@@ -193,7 +200,7 @@ impl WorkspaceSidebar {
             },
         );
         if resp.clicked() {
-            *action = Some(SidebarAction::Add);
+            actions.push(SidebarAction::Add);
         }
     }
 
@@ -204,7 +211,7 @@ impl WorkspaceSidebar {
         list: &WorkspaceList,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-        action: &mut Option<SidebarAction>,
+        actions: &mut Vec<SidebarAction>,
     ) {
         let can_remove = list.len() > 1;
         egui::ScrollArea::vertical()
@@ -225,13 +232,13 @@ impl WorkspaceSidebar {
                         egui::pos2((row.right() - ITEM_MARGIN_X).max(row.left()), row.bottom()),
                     );
                     if self.editing.as_ref().is_some_and(|(i, _)| *i == index) {
-                        self.show_edit(ui, card, index, action);
+                        self.show_edit(ui, card, index, actions);
                     } else {
                         draw_card(ui, card, list, index, resp.hovered(), icons, textures);
-                        self.handle_item_input(ui, &resp, index, list, can_remove, action);
+                        self.handle_item_input(ui, &resp, index, list, can_remove, actions);
                     }
                 }
-                self.finish_drag(ui, list, first_top, action);
+                self.finish_drag(ui, list, first_top, actions);
             });
     }
 
@@ -243,10 +250,10 @@ impl WorkspaceSidebar {
         index: usize,
         list: &WorkspaceList,
         can_remove: bool,
-        action: &mut Option<SidebarAction>,
+        actions: &mut Vec<SidebarAction>,
     ) {
         if resp.clicked() {
-            *action = Some(SidebarAction::Select(index));
+            actions.push(SidebarAction::Select(index));
         }
         // 선택된 항목에서 F2를 누르면 이름 편집 — 입력 중에는 텍스트 입력이 우선이라 여기서만 본다
         if index == list.active_index()
@@ -264,7 +271,7 @@ impl WorkspaceSidebar {
                 .add_enabled(can_remove, egui::Button::new("삭제"))
                 .clicked()
             {
-                *action = Some(SidebarAction::Remove(index));
+                actions.push(SidebarAction::Remove(index));
                 ui.close();
             }
         });
@@ -294,7 +301,7 @@ impl WorkspaceSidebar {
         ui: &egui::Ui,
         list: &WorkspaceList,
         first_top: Option<f32>,
-        action: &mut Option<SidebarAction>,
+        actions: &mut Vec<SidebarAction>,
     ) {
         let (Some(drag), Some(first_top)) = (self.drag.as_ref(), first_top) else {
             return;
@@ -328,7 +335,7 @@ impl WorkspaceSidebar {
         );
         if ui.input(|i| !i.pointer.any_down()) {
             if let Some(to) = reorder_target(drag.from, insert_at) {
-                *action = Some(SidebarAction::Reorder(drag.from, to));
+                actions.push(SidebarAction::Reorder(drag.from, to));
             }
             self.drag = None;
         }
@@ -340,7 +347,7 @@ impl WorkspaceSidebar {
         ui: &mut egui::Ui,
         card: egui::Rect,
         index: usize,
-        action: &mut Option<SidebarAction>,
+        actions: &mut Vec<SidebarAction>,
     ) {
         let Some((_, mut buffer)) = self.editing.take() else {
             return;
@@ -364,7 +371,7 @@ impl WorkspaceSidebar {
         if resp.lost_focus() {
             // Esc로 빠져나온 경우만 취소다 — 그 외(Enter·다른 곳 클릭)는 입력한 이름을 반영한다
             if !ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                *action = Some(SidebarAction::Rename(index, buffer));
+                actions.push(SidebarAction::Rename(index, buffer));
             }
             return;
         }

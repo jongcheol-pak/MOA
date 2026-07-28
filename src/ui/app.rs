@@ -394,7 +394,7 @@ impl eframe::App for ExplorerApp {
                             .show(ui, &self.workspaces, &mut self.icons, &mut self.textures)
                     });
                 self.sidebar_width = panel.response.rect.width();
-                if let Some(action) = panel.inner {
+                for action in panel.inner {
                     self.handle_sidebar(action);
                 }
             }
