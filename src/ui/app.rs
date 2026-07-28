@@ -1,12 +1,15 @@
 //! egui 앱 골격 — 창·폰트·팔레트·COM·셸 호스트와 전역 공유 자원을 보유한다.
 //!
-//! 실제 탐색은 `ui::panel::PanelState`가 담당하며, 이 구조체는 그것을 담는 그릇이다.
-//! 분할 레이아웃(여러 패널)은 T7에서 이 자리에 붙는다.
+//! 실제 탐색은 `ui::panel::PanelState`가 담당하고, 그 패널들을 담은 분할 화면 한 벌이
+//! `WorkspaceView`다. 이 구조체는 워크스페이스 목록(사이드바)과 뷰들을 잇는 그릇이다.
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
+use crate::app::settings::{SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH};
+use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::panel::PanelState;
 use crate::ui::shell_host::ShellHost;
+use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::splitter;
 use crate::ui::theme;
 use eframe::egui;
@@ -98,16 +101,11 @@ pub fn install_korean_font(ctx: &egui::Context) -> bool {
     true
 }
 
-/// 탐색기 앱 상태.
-pub struct ExplorerApp {
-    com: ComStatus,
-    /// 셸 메뉴용 창 핸들 — HWND를 얻지 못하면 `None`(셸 메뉴 비활성)
-    shell: Option<ShellHost>,
-    /// 한글 폰트 적용 여부 — 실패 시 화면에 알린다
-    korean_font: bool,
-    /// 아이콘 캐시 — 앱 전역 공유 (패널마다 두면 같은 아이콘을 중복 보관하게 된다)
-    icons: IconCache,
-    textures: IconTextures,
+/// 워크스페이스 한 벌의 탐색 상태 — 분할 트리와 그 패널들 (FR-17).
+///
+/// 워크스페이스마다 이것을 하나씩 갖고, **처음 선택될 때 비로소 만들어진다**(D1 지연 생성).
+/// 한 번도 열지 않은 워크스페이스는 패널도 열거 스레드도 없다
+pub struct WorkspaceView {
     /// 분할 트리 — 어느 패널이 화면 어디를 차지하는지 (FR-1)
     layout: LayoutTree,
     /// 패널 실체. 트리는 `PanelId`만 알고 상태는 여기에 있다
@@ -115,31 +113,16 @@ pub struct ExplorerApp {
     active: PanelId,
 }
 
-impl ExplorerApp {
-    /// eframe 창 생성 직후 호출된다 — 폰트·팔레트·셸 호스트를 이 시점에 준비한다
-    pub fn new(cc: &eframe::CreationContext<'_>, com: ComStatus) -> ExplorerApp {
-        let korean_font = install_korean_font(&cc.egui_ctx);
-        theme::apply_dark(&cc.egui_ctx);
-        // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
-        let shell = ShellHost::new(cc);
+impl WorkspaceView {
+    fn new(start: PathBuf) -> WorkspaceView {
         let (layout, first) = LayoutTree::new();
         let mut panels = HashMap::new();
-        panels.insert(first, PanelState::new(start_dir()));
-        ExplorerApp {
-            com,
-            shell,
-            korean_font,
-            icons: IconCache::new(),
-            textures: IconTextures::new(),
+        panels.insert(first, PanelState::new(start));
+        WorkspaceView {
             layout,
             panels,
             active: first,
         }
-    }
-
-    /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다
-    fn shell_available(&self) -> bool {
-        self.com.is_available() && self.shell.is_some()
     }
 
     /// 활성 패널을 좌우/상하로 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다
@@ -187,7 +170,108 @@ impl ExplorerApp {
         }
     }
 
-    /// 분할·닫기 명령 줄 — part2 T3에서 메뉴 바·단축키로 대체된다.
+    /// 사이드바 부제에 쓸 현재 폴더 — 활성 패널의 활성 탭 경로
+    fn active_dir(&self) -> Option<PathBuf> {
+        self.panels.get(&self.active).map(|p| p.dir().to_path_buf())
+    }
+}
+
+/// 탐색기 앱 상태.
+pub struct ExplorerApp {
+    com: ComStatus,
+    /// 셸 메뉴용 창 핸들 — HWND를 얻지 못하면 `None`(셸 메뉴 비활성)
+    shell: Option<ShellHost>,
+    /// 한글 폰트 적용 여부 — 실패 시 화면에 알린다
+    korean_font: bool,
+    /// 아이콘 캐시 — 앱 전역 공유 (패널마다 두면 같은 아이콘을 중복 보관하게 된다)
+    icons: IconCache,
+    textures: IconTextures,
+    /// 워크스페이스 목록(이름·부제·활성) — 표시 데이터의 정본 (FR-15)
+    workspaces: WorkspaceList,
+    /// 워크스페이스별 탐색 상태 — **방문한 것만** 들어 있다 (D1).
+    /// 목록의 인덱스가 아니라 `WorkspaceId`로 잡는다: 순서 변경·삭제로 인덱스는 흔들린다
+    views: HashMap<WorkspaceId, WorkspaceView>,
+    sidebar: WorkspaceSidebar,
+    /// 마지막으로 관측한 사이드바 폭 — 세션 저장용 (T5에서 쓴다)
+    sidebar_width: f32,
+    sidebar_collapsed: bool,
+}
+
+impl ExplorerApp {
+    /// eframe 창 생성 직후 호출된다 — 폰트·팔레트·셸 호스트를 이 시점에 준비한다
+    pub fn new(cc: &eframe::CreationContext<'_>, com: ComStatus) -> ExplorerApp {
+        let korean_font = install_korean_font(&cc.egui_ctx);
+        theme::apply_dark(&cc.egui_ctx);
+        // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
+        let shell = ShellHost::new(cc);
+        ExplorerApp {
+            com,
+            shell,
+            korean_font,
+            icons: IconCache::new(),
+            textures: IconTextures::new(),
+            workspaces: WorkspaceList::new(),
+            views: HashMap::new(),
+            sidebar: WorkspaceSidebar::new(),
+            sidebar_width: SIDEBAR_DEFAULT_WIDTH as f32,
+            sidebar_collapsed: false,
+        }
+    }
+
+    /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다
+    fn shell_available(&self) -> bool {
+        self.com.is_available() && self.shell.is_some()
+    }
+
+    /// 활성 워크스페이스의 탐색 상태를 확보한다 — 처음 열리는 워크스페이스면 여기서 만들어진다(D1)
+    fn ensure_active_view(&mut self) -> &mut WorkspaceView {
+        let id = self.workspaces.active().id;
+        self.views
+            .entry(id)
+            .or_insert_with(|| WorkspaceView::new(start_dir()))
+    }
+
+    /// 사이드바 조작 반영 — 목록 변경은 전부 여기서만 일어난다
+    fn handle_sidebar(&mut self, action: SidebarAction) {
+        match action {
+            SidebarAction::Select(index) => {
+                self.workspaces.set_active(index);
+            }
+            SidebarAction::Add => {
+                self.workspaces.add();
+            }
+            SidebarAction::Rename(index, name) => {
+                self.workspaces.rename(index, &name);
+            }
+            SidebarAction::Remove(index) => {
+                // 워크스페이스를 지우면 그 탐색 상태(패널·탭·열거 스레드)도 함께 버린다
+                let removed_id = self.workspaces.items().get(index).map(|w| w.id);
+                if self.workspaces.remove(index).is_ok()
+                    && let Some(id) = removed_id
+                {
+                    self.views.remove(&id);
+                }
+            }
+            SidebarAction::Reorder(from, to) => {
+                self.workspaces.reorder(from, to);
+            }
+            SidebarAction::ToggleCollapse => {
+                self.sidebar_collapsed = !self.sidebar_collapsed;
+            }
+        }
+    }
+
+    /// 활성 워크스페이스의 부제를 현재 폴더로 맞춘다 (FR-15 2줄 카드)
+    fn sync_subtitle(&mut self) {
+        let index = self.workspaces.active_index();
+        let id = self.workspaces.active().id;
+        let Some(dir) = self.views.get(&id).and_then(|v| v.active_dir()) else {
+            return;
+        };
+        self.workspaces.set_subtitle(index, &dir);
+    }
+
+    /// 분할·닫기·사이드바 토글 명령 줄 — part2 T3에서 메뉴 바·단축키로 대체된다.
     /// 명령을 **값으로 반환**한다: 실행에 필요한 분할 영역은 이 줄을 그린 뒤에야 확정되기 때문
     fn command_bar(&self, ui: &mut egui::Ui) -> Option<LayoutCommand> {
         let mut command = None;
@@ -198,23 +282,52 @@ impl ExplorerApp {
             if ui.button("상하 분할").clicked() {
                 command = Some(LayoutCommand::Split(SplitDir::Vertical));
             }
-            let can_close = self.layout.panel_count() > 1;
+            let can_close = self.active_panel_count() > 1;
             if ui
                 .add_enabled(can_close, egui::Button::new("패널 닫기"))
                 .clicked()
             {
                 command = Some(LayoutCommand::ClosePanel);
             }
+            // 접으면 사이드바가 완전히 사라지므로(현행과 같은 동작) 되돌릴 자리가 밖에 필요하다
+            if ui
+                .selectable_label(!self.sidebar_collapsed, "워크스페이스 목록")
+                .clicked()
+            {
+                command = Some(LayoutCommand::ToggleSidebar);
+            }
         });
         command
     }
+
+    /// 활성 워크스페이스의 패널 수 — 아직 열지 않았으면 기본 1개 구성이 될 자리다
+    fn active_panel_count(&self) -> usize {
+        self.views
+            .get(&self.workspaces.active().id)
+            .map(|v| v.layout.panel_count())
+            .unwrap_or(1)
+    }
+
+    fn apply_command(&mut self, command: LayoutCommand, area: LayoutRect) {
+        if command == LayoutCommand::ToggleSidebar {
+            self.sidebar_collapsed = !self.sidebar_collapsed;
+            return;
+        }
+        let view = self.ensure_active_view();
+        match command {
+            LayoutCommand::Split(dir) => view.split_active(dir, area),
+            LayoutCommand::ClosePanel => view.close_active(area),
+            LayoutCommand::ToggleSidebar => {}
+        }
+    }
 }
 
-/// 명령 줄이 돌려주는 레이아웃 조작
+/// 명령 줄이 돌려주는 조작
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LayoutCommand {
     Split(SplitDir),
     ClosePanel,
+    ToggleSidebar,
 }
 
 /// 두 사각형이 겹치는 넓이 — 닫힌 자리를 누가 이어받았는지 고르는 데 쓴다
@@ -236,10 +349,15 @@ impl eframe::App for ExplorerApp {
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.textures.begin_frame();
-        // 패널은 서로 독립이라 각자 자기 열거 결과만 처리한다
-        for panel in self.panels.values_mut() {
-            panel.poll(ctx, &mut self.icons);
+        // 화면에 없는 워크스페이스는 폴링하지 않는다 — 전환하면 그때 밀린 결과가 반영된다
+        let id = self.workspaces.active().id;
+        if let Some(view) = self.views.get_mut(&id) {
+            // 패널은 서로 독립이라 각자 자기 열거 결과만 처리한다
+            for panel in view.panels.values_mut() {
+                panel.poll(ctx, &mut self.icons);
+            }
         }
+        self.sync_subtitle();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -260,18 +378,44 @@ impl eframe::App for ExplorerApp {
             // 그리기 전 영역으로 판정하면 최소 패널 크기 검사가 명령 줄 높이만큼 느슨해진다
             let command = self.command_bar(ui);
             ui.separator();
-            let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
-            match command {
-                Some(LayoutCommand::Split(dir)) => self.split_active(dir, area),
-                Some(LayoutCommand::ClosePanel) => self.close_active(area),
-                None => {}
+
+            if !self.sidebar_collapsed {
+                // 사이드바가 자기 배경·여백을 직접 그리므로 egui 기본 프레임은 끈다
+                let panel = egui::Panel::left(egui::Id::new("workspace_sidebar"))
+                    .resizable(true)
+                    .default_size(self.sidebar_width)
+                    .size_range(egui::Rangef::new(
+                        SIDEBAR_MIN_WIDTH as f32,
+                        SIDEBAR_MAX_WIDTH as f32,
+                    ))
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        self.sidebar
+                            .show(ui, &self.workspaces, &mut self.icons, &mut self.textures)
+                    });
+                self.sidebar_width = panel.response.rect.width();
+                if let Some(action) = panel.inner {
+                    self.handle_sidebar(action);
+                }
             }
+
+            let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
+            if let Some(command) = command {
+                self.apply_command(command, area);
+            }
+            // `ensure_active_view`를 쓰지 않고 여기서 직접 확보한다 —
+            // 아래 호출이 `views`와 `icons`·`textures`를 **동시에** 빌려야 하기 때문
+            let id = self.workspaces.active().id;
+            let view = self
+                .views
+                .entry(id)
+                .or_insert_with(|| WorkspaceView::new(start_dir()));
             menu = splitter::show_layout(
                 ui,
                 &ctx,
-                &mut self.layout,
-                &mut self.panels,
-                &mut self.active,
+                &mut view.layout,
+                &mut view.panels,
+                &mut view.active,
                 &mut self.icons,
                 &mut self.textures,
             );
@@ -330,5 +474,13 @@ mod tests {
         let absorbed = rect(0, 0, 1000, 600);
         let far = rect(0, 0, 200, 600);
         assert!(overlap_area(absorbed, closed) > overlap_area(far, closed));
+    }
+
+    #[test]
+    fn 워크스페이스_뷰는_패널_하나로_시작한다() {
+        let view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        assert_eq!(view.layout.panel_count(), 1);
+        assert_eq!(view.panels.len(), 1);
+        assert_eq!(view.active_dir(), Some(PathBuf::from(r"C:\")));
     }
 }
