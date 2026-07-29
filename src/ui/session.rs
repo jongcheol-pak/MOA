@@ -188,10 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn 열_폭_필드가_없는_옛_세션도_그대로_복원된다() {
-        // 열 폭은 나중에 더한 필드다. 이것 때문에 스키마 버전을 올리면 `parse_session`이
-        // 통째로 폴백해 **기존 사용자의 워크스페이스·분할·탭이 전부 초기화된다** (plan D5).
-        // 그래서 버전을 2로 둔 채 `#[serde(default)]`로 더했고, 이 테스트가 그 계약을 지킨다
+    fn 나중에_더한_필드가_없는_옛_세션도_그대로_복원된다() {
+        // 열 폭(T3)·보기 모드(T12)는 나중에 더한 필드다. 이것 때문에 스키마 버전을 올리면
+        // `parse_session`이 통째로 폴백해 **기존 사용자의 워크스페이스·분할·탭이 전부
+        // 초기화된다** (plan D5). 그래서 버전을 2로 둔 채 `#[serde(default)]`로 더했고,
+        // 이 테스트가 그 계약을 지킨다 — 앞으로 필드를 더할 때도 여기에 함께 추가한다
         let session = to_session(window(), SidebarSession::default(), 0, &sample());
         let json = serde_json::to_string(&session).unwrap();
         let without_columns = json
@@ -216,6 +217,10 @@ mod tests {
             sample()[0].panels[0].active_tab
         );
         assert!(restored[0].panels[0].columns.is_empty(), "없던 폭이 생겼다");
+        assert!(
+            restored[0].panels[0].view_mode.is_empty(),
+            "없던 보기 모드가 생겼다"
+        );
     }
 
     #[test]

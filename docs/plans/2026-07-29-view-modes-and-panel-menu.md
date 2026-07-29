@@ -59,6 +59,8 @@
 - 열 추가·제거·열 순서 변경 — 이번 열 폭 작업으로 열 메타데이터 구조가 생기므로 후속 확장 지점이 열린다
 - 보기 모드별 마지막 정렬 기준 기억 (지금은 모드를 바꿔도 정렬은 유지)
 - [SUGGEST] 빈 영역 클릭 처리가 두 렌더 모듈에서 서로 다른 기법이다 — 자세히 보기는 콘텐츠 아래 사각형을 잡고, 격자는 항목 클릭 여부를 플래그로 사후 억제한다(격자의 잔여 여백이 사각형으로 떨어지지 않아서). `list_common`에 헬퍼로 뽑아 문서화하면 다음 보기 모드 추가 시 참조점이 된다 (T10 quality S1)
+- [SUGGEST] `PanelState::from_tabs`의 인자가 4개(tabs·active_tab·columns·view_mode)로 늘었다 — 유일한 호출부가 이미 `PanelTabs` 구조체를 갖고 있으므로 그것을 통째로 넘기면 필드가 늘어도 시그니처가 안 바뀐다 (T12 quality S1)
+- [SUGGEST] 옛 세션 호환 테스트가 JSON 문자열 replace로 필드를 걷어내 필드가 늘 때마다 목록이 길어진다 — `serde_json::Value`에서 키를 프로그램적으로 제거하면 테스트를 안 건드려도 된다. 다만 replace 누락을 잡는 자기검증 단언이 있어 조용히 통과하지는 않는다 (T12 quality S2)
 - [SUGGEST] T11 Design은 `show_tile_cell`·`show_content_row` 두 함수를 예고했으나 실제로는 `draw_multiline_cell` 하나 + 공용 `draw_stacked`로 구현했다 — 두 모드가 "아이콘 + 여러 줄 텍스트"라는 골격을 공유해 묶는 편이 단순했다. 동작·커버리지 영향 없음 (T11 spec M1)
 - [SUGGEST] `file_list::show`의 4-튜플 분해 — `DetailsOutcome`·`GridOutcome`이 `sort_click` 하나만 다르므로 공통 필드를 묶은 타입으로 정리하면 튜플 분해가 사라진다 (T10 quality S2)
 - [SUGGEST] `list_details`가 `file_list`의 `FileListAction`·`elided_galley`를 역참조한다 — plan Design의 "역방향 의존 없음"과 어긋난다. T10에서 `list_grid`가 같은 두 심볼을 필요로 하면 **3번째 사용처**가 되므로, 그 시점에 공용 모듈(`ui/list_common.rs`)로 옮긴다 (T2 spec 리뷰 M1)
@@ -417,7 +419,7 @@
   3. 폴더는 크기 칸이 비어 있다 (자세히 보기와 같은 규칙)
   4. `cargo test` 통과
 
-### [ ] T12. 보기 모드 세션 저장 (요구 8의 지속성)
+### [x] T12. 보기 모드 세션 저장 (요구 8의 지속성)
 
 - **Type**: C
 - **Files**: `src/app/settings.rs`, `src/ui/session.rs`, `src/ui/app.rs`, `src/ui/panel.rs`, `src/ui/view_mode.rs`, `src/ui/file_list.rs`
