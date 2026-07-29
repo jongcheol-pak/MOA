@@ -59,6 +59,7 @@
 - 열 추가·제거·열 순서 변경 — 이번 열 폭 작업으로 열 메타데이터 구조가 생기므로 후속 확장 지점이 열린다
 - 보기 모드별 마지막 정렬 기준 기억 (지금은 모드를 바꿔도 정렬은 유지)
 - [SUGGEST] 빈 영역 클릭 처리가 두 렌더 모듈에서 서로 다른 기법이다 — 자세히 보기는 콘텐츠 아래 사각형을 잡고, 격자는 항목 클릭 여부를 플래그로 사후 억제한다(격자의 잔여 여백이 사각형으로 떨어지지 않아서). `list_common`에 헬퍼로 뽑아 문서화하면 다음 보기 모드 추가 시 참조점이 된다 (T10 quality S1)
+- [SUGGEST] T11 Design은 `show_tile_cell`·`show_content_row` 두 함수를 예고했으나 실제로는 `draw_multiline_cell` 하나 + 공용 `draw_stacked`로 구현했다 — 두 모드가 "아이콘 + 여러 줄 텍스트"라는 골격을 공유해 묶는 편이 단순했다. 동작·커버리지 영향 없음 (T11 spec M1)
 - [SUGGEST] `file_list::show`의 4-튜플 분해 — `DetailsOutcome`·`GridOutcome`이 `sort_click` 하나만 다르므로 공통 필드를 묶은 타입으로 정리하면 튜플 분해가 사라진다 (T10 quality S2)
 - [SUGGEST] `list_details`가 `file_list`의 `FileListAction`·`elided_galley`를 역참조한다 — plan Design의 "역방향 의존 없음"과 어긋난다. T10에서 `list_grid`가 같은 두 심볼을 필요로 하면 **3번째 사용처**가 되므로, 그 시점에 공용 모듈(`ui/list_common.rs`)로 옮긴다 (T2 spec 리뷰 M1)
 - [SUGGEST] `elided_galley`가 Design 명세와 달리 `color` 인자를 받지 않고 `theme::TEXT`를 직접 참조한다 — 호출부가 항상 같은 색을 넘기던 터라 인자를 뺀 편이 단순하나, 나중에 색이 갈리는 셀(비활성 항목 등)이 생기면 인자로 되돌린다 (T1 spec 리뷰 M1)
@@ -209,6 +210,10 @@
 | 아이콘 4종 | 실제 아이콘 크기 | 256/96/48/16px | `ui/list_grid.rs` `draw_cell`이 `mode.icon_px()`로 그리고, 리스트는 `himl_for(IconSize::for_px(..))`로 고른다 (T9 인계 1-b) | ✅ 코드 경로 (T10) · ⏳ 화면은 F-8 |
 | 격자 항목 | 배치(아이콘 위·이름 아래) | 큰 아이콘 3종 | `ui/list_grid.rs` `draw_cell` 세로 분기 | ✅ (T10) |
 | 작은 아이콘 | 배치(아이콘 왼쪽·이름 오른쪽) | 한 줄 | `ui/list_grid.rs` `is_single_row` 분기 | ✅ (T10) |
+| 타일 | 셀 크기·표시 요소 | 220×64, 이름·종류·크기 3줄 | `ui/view_mode.rs` `cell_size()` + `ui/list_grid.rs` `draw_multiline_cell` | ✅ (T11) |
+| 내용 | 행 높이·표시 요소 | 48px, 이름·수정한 날짜·크기 | `ui/view_mode.rs` `cell_size()` + `draw_multiline_cell` Content 분기 | ✅ (T11) |
+| 목록 | 배치 | 세로 흐름 다열 | `ui/view_mode.rs` `flow()` → `Flow::Vertical` (렌더는 한 줄 칸 공용) | ✅ (T11) |
+| 폴더 | 크기 칸 | 비움(자리는 유지) | `ui/list_grid.rs` `draw_stacked` — 빈 줄은 그리지 않되 자리 전진 | ✅ (T11) |
 
 ## Decisions
 
@@ -398,7 +403,7 @@
   3. 항목 1만 개 폴더에서 스크롤이 멈추지 않는다 (보이는 셀만 그린다)
   4. `cargo test` 통과 (렌더는 HUMAN-VERIFY, 배치 계산은 T8 테스트가 덮는다)
 
-### [ ] T11. 목록·타일·내용 보기 렌더 (요구 8)
+### [x] T11. 목록·타일·내용 보기 렌더 (요구 8)
 
 - **Type**: D
 - **Files**: `src/ui/list_grid.rs`, `src/ui/file_list.rs`, `src/ui/view_mode.rs`(한 줄 모드가 폭 전체를 쓰도록 배치 보완)

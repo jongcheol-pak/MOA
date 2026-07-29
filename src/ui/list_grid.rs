@@ -26,7 +26,9 @@ const ROW_ICON_X: f32 = 4.0;
 const ROW_ICON_GAP: f32 = 4.0;
 /// 타일·내용의 여러 줄 텍스트 사이 간격
 const LINE_GAP: f32 = 2.0;
-/// 내용 보기에서 오른쪽에 붙는 부가 정보(수정한 날짜·크기)가 차지할 폭
+/// 내용 보기에서 오른쪽에 붙는 부가 정보(수정한 날짜·크기)가 차지할 폭.
+/// 자세히 보기의 같은 두 열(각 150px, `list_details::Columns::DEFAULT`)보다 여유를 뒀다 —
+/// 거기서는 열마다 따로 자르지만 여기서는 한 자리에 세로로 쌓기 때문이다
 const CONTENT_META_WIDTH: f32 = 240.0;
 
 /// 격자 렌더에 필요한 목록 상태 — 소유하지 않고 빌려 쓴다
@@ -182,7 +184,6 @@ fn resolve_icon(
 ///
 /// 가로로 흐르는 큰 아이콘들은 **아이콘 위·이름 아래**(가운데 정렬)로 놓고,
 /// 한 줄짜리 칸(작은 아이콘·목록)은 **아이콘 왼쪽·이름 오른쪽**으로 놓는다
-#[allow(clippy::too_many_arguments)]
 fn draw_cell(
     ui: &mut egui::Ui,
     cell: egui::Rect,
@@ -253,7 +254,6 @@ fn draw_cell(
 /// 내용은 **이름**을 왼쪽에 두고 **수정한 날짜·크기**를 오른쪽 끝에 붙인다.
 /// 폴더는 크기 칸이 비는데(자세히 보기와 같은 규칙) 그 줄을 지우지 않고 비워 둬야
 /// 항목마다 줄 위치가 흔들리지 않는다
-#[allow(clippy::too_many_arguments)]
 fn draw_multiline_cell(
     ui: &mut egui::Ui,
     cell: egui::Rect,
