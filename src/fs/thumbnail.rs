@@ -60,6 +60,10 @@ pub struct ThumbnailCache {
     order: Vec<PathBuf>,
     /// 요청을 보냈고 아직 결과가 안 온 것 — 같은 파일을 거듭 요청하지 않는다
     pending: Vec<PathBuf>,
+    /// 지금 담긴 썸네일이 속한 폴더. **호출 경로마다 판정을 흩지 않으려고 캐시가 직접 든다** —
+    /// 탐색·탭 전환·탭 닫기가 각자 다른 순서로 폴더를 바꾸므로, 바깥에서 비교하면
+    /// 한 경로만 빠뜨려도 조용히 새어나간다 (F-7 B1·m1)
+    folder: PathBuf,
     /// 폴더를 떠날 때마다 오르는 번호. 결과에 실려 돌아오며, 지금 세대와 다르면 버린다 —
     /// 폴더를 빠르게 오가면 이전 폴더의 요청이 나중에 도착해 캐시 자리를 차지한다
     /// (`ui::panel`의 `DirLoad`가 쓰는 것과 같은 방식)
@@ -77,8 +81,20 @@ impl ThumbnailCache {
             ready: HashMap::new(),
             order: Vec::new(),
             pending: Vec::new(),
+            folder: PathBuf::new(),
             generation: 0,
         }
+    }
+
+    /// 표시 폴더가 바뀌었으면 비운다 (NFR-9). 같은 폴더면 그대로 둔다 —
+    /// 감시 갱신(FR-10)마다 버리면 다른 앱이 파일 하나만 만들어도 폴더 전체를 다시 만든다
+    pub fn set_folder(&mut self, folder: &Path) -> bool {
+        if self.folder == folder {
+            return false;
+        }
+        self.clear();
+        self.folder = folder.to_path_buf();
+        true
     }
 
     /// 썸네일을 요청한다. 이미 있으면 **최근 사용으로 올리고** 끝낸다.

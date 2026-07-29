@@ -350,7 +350,6 @@ impl PanelState {
                 // **이전 경로를 커밋 전에 잡아 둔다** — 커밋한 뒤에 비교하면 항상 같아져
                 // "폴더가 바뀌었다"가 영영 성립하지 않는다
                 let dir = std::mem::take(&mut self.pending_dir);
-                let left_folder = self.tabs.active().committed != dir;
                 let tab = self.tabs.active_mut();
                 tab.committed = dir.clone();
                 match self.pending_nav {
@@ -364,11 +363,10 @@ impl PanelState {
                     }
                 }
                 // 폴더가 바뀌면 이전 폴더의 썸네일을 즉시 놓는다 (NFR-9).
-                // 같은 폴더를 다시 읽은 경우(감시 갱신)에는 그대로 두어 다시 만들지 않는다.
-                // 이 호출은 `ThumbnailCache`의 세대를 올리는 유일한 지점이기도 하다 —
-                // 여기가 죽으면 늦게 도착한 이전 폴더의 결과를 걸러낼 방법도 함께 사라진다
-                if left_folder {
-                    self.thumbs.clear();
+                // **판정은 캐시가 한다** — 탐색·탭 전환·탭 닫기가 각자 다른 순서로 폴더를
+                // 바꾸므로, 여기서 비교하면 한 경로만 빠뜨려도 조용히 새어나간다(F-7 B1·m1).
+                // 이 해제는 세대를 올리는 지점이기도 해서, 늦게 도착한 이전 폴더의 결과도 함께 걸러진다
+                if self.thumbs.set_folder(&dir) {
                     self.thumb_textures.clear();
                 }
                 // 감시 대상도 이 시점에 맞춘다 — 커밋된 폴더만 감시한다(열거 실패한 곳은 아니다)
@@ -435,11 +433,6 @@ impl PanelState {
     pub fn refresh(&mut self, ctx: &egui::Context) {
         let dir = self.dir().to_path_buf();
         self.start_load(dir, PendingNav::None, ctx);
-    }
-
-    /// 폴더 트리 표시 토글 (FR-9) — 패널마다 독립이다
-    pub fn toggle_tree(&mut self) {
-        self.tree_visible = !self.tree_visible;
     }
 
     /// 지금 쓰는 보기 모드 — 메뉴가 현재 표시를 그리는 데 쓴다 (FR-23)
@@ -666,6 +659,8 @@ impl PanelState {
                     .selectable_label(self.tree_visible, "폴더 트리")
                     .clicked()
                 {
+                    // `Sides` 클로저 안이라 `&mut self` 메서드를 부를 수 없어 필드를 직접 뒤집는다.
+                    // 토글 진입점이 이 버튼 하나뿐이라 규칙이 흩어질 여지도 없다
                     self.tree_visible = !self.tree_visible;
                 }
                 if self.load.is_loading() {
@@ -733,9 +728,7 @@ mod tests {
     fn draw_panel(tree_visible: bool) -> Vec<String> {
         let ctx = egui::Context::default();
         let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
-        if panel.tree_visible != tree_visible {
-            panel.toggle_tree();
-        }
+        panel.tree_visible = tree_visible;
         let mut icons = crate::fs::icons::IconCache::new();
         let mut textures = crate::ui::icon_tex::IconTextures::new();
         let output = ctx.run_ui(Default::default(), |ui| {
@@ -782,6 +775,42 @@ mod tests {
             0,
             "폴더를 옮겼는데 이전 폴더의 썸네일이 남았다"
         );
+    }
+
+    #[test]
+    fn 탭을_바꿔_폴더가_달라져도_썸네일을_놓는다() {
+        // 탭 전환은 `tabs.switch`로 **활성 탭을 먼저 바꾼 뒤** 그 경로를 읽는다 —
+        // 커밋 직전 경로와 비교하는 방식이면 이 경로만 빠져나간다(F-7 m1).
+        // 그래서 판정을 캐시(`set_folder`)로 옮겼고, 이 테스트가 그것을 지킨다
+        let mut icons = IconCache::new();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        commit_dir(&mut panel, r"C:\Users", &mut icons);
+        panel.thumbs.accept_for_test(
+            std::path::PathBuf::from(r"C:\Users\사진.jpg"),
+            Some(sample_thumb()),
+        );
+
+        // 다른 폴더를 보는 탭을 더한다 — `add`가 그 탭을 곧바로 활성으로 만든다
+        panel
+            .tabs
+            .add(crate::panel::tabs::TabState::new(std::path::PathBuf::from(
+                r"C:\Windows",
+            )));
+        commit_dir(&mut panel, r"C:\Windows", &mut icons);
+        assert_eq!(
+            panel.thumbs.len(),
+            0,
+            "탭을 바꿔 폴더가 달라졌는데 이전 폴더의 썸네일이 남았다"
+        );
+
+        // 되돌아가는 전환도 같아야 한다 — 새 폴더 썸네일을 담아 두고 원래 탭으로 돌아간다
+        panel.thumbs.accept_for_test(
+            std::path::PathBuf::from(r"C:\Windows\그림.png"),
+            Some(sample_thumb()),
+        );
+        assert!(panel.tabs.switch(0), "첫 탭으로 되돌아가지 못했다");
+        commit_dir(&mut panel, r"C:\Users", &mut icons);
+        assert_eq!(panel.thumbs.len(), 0, "되돌아가는 전환에서 남았다");
     }
 
     #[test]
