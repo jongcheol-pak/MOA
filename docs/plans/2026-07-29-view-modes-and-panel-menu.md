@@ -208,6 +208,7 @@
 | D12 | 새 파일·새 폴더 실패는 상태 줄에 사유만 표시한다 | 기존 열거 실패 처리(`panel.rs:274-285`)와 같은 방식. 쓰기 권한 없는 폴더에서 대화 상자를 띄우면 흐름이 끊긴다 |
 | D13 | 260자를 넘는 경로에는 `\\?\` 접두를 붙여 생성하고, 그래도 실패하면 D12대로 사유를 표시한다 | NFR-5가 긴 경로 지원을 요구한다. 접두 없이 실패 처리만 하면 긴 경로 폴더에서 '새 폴더'가 통째로 막혀 NFR-5 위반이 조용히 들어온다. `\\?\`는 UNC가 아닌 절대 경로에만 유효하므로 상대·UNC 경로에는 붙이지 않는다 |
 | D14 | 세션 스키마 확장 시 `PanelSession`에 `#[derive(Default)]`를 더하고, **필드 나열 리터럴 6곳 전부**(`ui/session.rs:53`·`app/window.rs:917`·`app/settings.rs`의 테스트 픽스처 4개)를 `..Default::default()`로 보정한다 | 필드 나열 리터럴이 새 필드마다 깨진다. 기존 필드가 모두 `Default`를 가지므로(`Vec<String>`·`usize`) derive가 성립한다. 레거시 판(`window.rs`)과 픽스처는 이번 작업 대상이 아니므로 **컴파일만 통과시키는 최소 수정**에 그친다(그쪽 동작에 보기 모드·열 폭을 배선하지 않는다). 단 `ui/session.rs`의 왕복 테스트에는 새 필드가 실제로 오가는 케이스를 더한다 |
+| D17 | 저장된 열 폭의 검증(길이·NaN·최소 폭)은 `parse_session`이 아니라 `Columns::from_saved`가 한다 | T3 Design은 `parse_session`의 검증 자리를 지목했으나, T2가 이미 같은 검증을 `Columns::from_saved`에 두었다. 두 곳에 두면 규칙이 갈리므로 열 폭을 아는 쪽 한 곳에 모은다 (T3 spec 리뷰 M1) |
 | D16 | 패널 메뉴에서 온 명령은 **활성 패널이 아니라 메뉴를 연 패널**(`LayoutOutcome`이 실어 올린 `PanelId`)에 적용한다. `apply_command`에 `target: Option<PanelId>` 인자를 더하고, `None`(단축키·타이틀바에서 온 명령)이면 종전대로 활성 패널을 쓴다 | 활성 패널 판정은 **포인터가 눌린 위치**로만 이뤄진다(`splitter.rs:67-80`). 패널 메뉴 팝업은 자기 pane 밖으로 뻗을 수 있어, 그 위에서 항목을 클릭하면 팝업 아래 깔린 **다른 pane이 활성**이 된다 — 그 상태로 활성 패널에 적용하면 '닫기'·'새 파일'이 엉뚱한 패널에 간다. 기존 분할이 굳이 `PanelId`를 실어 올린 이유(D3)와 같은 위험이며, 명령을 늘리는 이번 작업에서 그 규칙을 그대로 잇는다 |
 | D15 | '닫기'의 활성 조건(패널 2개 이상)은 `splitter::show_layout`이 `computed.panes.len() > 1`로 계산해 `panel.show` → `tabs::show_tab_strip`으로 **인자로 내려준다** | 패널은 서로를 모른다는 기존 설계(`panel.rs` 모듈 주석)를 지키려면 패널 수를 밖에서 받아야 한다. `app.rs:593 active_panel_count()`는 활성 워크스페이스 기준이라 그리는 시점의 트리와 어긋날 수 있고, `splitter`는 이미 그 트리를 계산해 갖고 있다 |
 
@@ -257,7 +258,7 @@
   3. 열 경계에서 커서가 좌우 화살표로 바뀌고, 그 지점 클릭은 정렬을 바꾸지 않는다
   4. `cargo test` 통과 — `Columns::apply_drag`의 최소 폭 클램프·`content_width` 합계를 덮는 단위 테스트
 
-### [ ] T3. 열 폭 세션 저장 (요구 3의 지속성)
+### [x] T3. 열 폭 세션 저장 (요구 3의 지속성)
 
 - **Type**: C
 - **Files**: `src/app/settings.rs`, `src/ui/session.rs`, `src/ui/app.rs`, `src/ui/panel.rs`, `src/ui/file_list.rs`, `src/app/window.rs`

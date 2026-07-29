@@ -23,11 +23,13 @@ pub struct WorkspaceState {
     pub active_panel: usize,
 }
 
-/// 패널 하나의 탭 구성
-#[derive(Debug, Clone, PartialEq)]
+/// 패널 하나의 탭 구성과 목록 표시 상태
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PanelTabs {
     pub tabs: Vec<PathBuf>,
     pub active_tab: usize,
+    /// 자세히 보기 열 폭 — 비면 기본 폭으로 시작한다
+    pub columns: Vec<f32>,
 }
 
 /// 현재 상태를 저장 스키마로 옮긴다
@@ -57,6 +59,7 @@ pub fn to_session(
                             .map(|path| path.to_string_lossy().into_owned())
                             .collect(),
                         active_tab: panel.active_tab,
+                        columns: panel.columns.clone(),
                     })
                     .collect(),
                 active_panel: workspace.active_panel,
@@ -82,6 +85,7 @@ pub fn restore(session: &Session) -> Vec<WorkspaceState> {
                 .map(|panel| PanelTabs {
                     tabs: panel.tabs.iter().map(PathBuf::from).collect(),
                     active_tab: panel.active_tab,
+                    columns: panel.columns.clone(),
                 })
                 .collect(),
             active_panel: workspace.active_panel,
@@ -128,10 +132,12 @@ mod tests {
                     PanelTabs {
                         tabs: vec![PathBuf::from(r"C:\Users"), PathBuf::from(r"D:\")],
                         active_tab: 1,
+                        columns: vec![200.0, 60.0, 120.0, 90.0],
                     },
                     PanelTabs {
                         tabs: vec![PathBuf::from(r"C:\Windows")],
                         active_tab: 0,
+                        columns: Vec::new(),
                     },
                 ],
                 active_panel: 1,
@@ -142,6 +148,7 @@ mod tests {
                 panels: vec![PanelTabs {
                     tabs: vec![PathBuf::from(r"D:\작업")],
                     active_tab: 0,
+                    columns: Vec::new(),
                 }],
                 active_panel: 0,
             },
@@ -171,6 +178,47 @@ mod tests {
         let session = to_session(window(), SidebarSession::default(), 0, &sample());
         let json = serde_json::to_string(&session).unwrap();
         assert_eq!(parse_session(&json), Some(session));
+    }
+
+    #[test]
+    fn 열_폭_필드가_없는_옛_세션도_그대로_복원된다() {
+        // 열 폭은 나중에 더한 필드다. 이것 때문에 스키마 버전을 올리면 `parse_session`이
+        // 통째로 폴백해 **기존 사용자의 워크스페이스·분할·탭이 전부 초기화된다** (plan D5).
+        // 그래서 버전을 2로 둔 채 `#[serde(default)]`로 더했고, 이 테스트가 그 계약을 지킨다
+        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let json = serde_json::to_string(&session).unwrap();
+        let without_columns = json
+            .replace(",\"columns\":[200.0,60.0,120.0,90.0]", "")
+            .replace(",\"columns\":[]", "");
+        assert!(
+            !without_columns.contains("columns"),
+            "테스트가 열 폭 필드를 실제로 걷어내지 못했다"
+        );
+
+        let parsed = parse_session(&without_columns).expect("옛 세션이 거부됐다");
+        let restored = restore(&parsed);
+        // 열 폭만 비고 나머지 구성은 그대로여야 한다
+        assert_eq!(restored.len(), sample().len());
+        assert_eq!(restored[0].shape, sample()[0].shape);
+        assert_eq!(restored[0].panels[0].tabs, sample()[0].panels[0].tabs);
+        assert_eq!(
+            restored[0].panels[0].active_tab,
+            sample()[0].panels[0].active_tab
+        );
+        assert!(restored[0].panels[0].columns.is_empty(), "없던 폭이 생겼다");
+    }
+
+    #[test]
+    fn 열_폭은_패널마다_따로_왕복한다() {
+        // 한 패널에서 조절한 폭이 다른 패널에 번지면 "패널마다 독립"이 깨진다
+        let states = sample();
+        let session = to_session(window(), SidebarSession::default(), 0, &states);
+        let restored = restore(&session);
+        assert_eq!(
+            restored[0].panels[0].columns,
+            vec![200.0, 60.0, 120.0, 90.0]
+        );
+        assert!(restored[0].panels[1].columns.is_empty());
     }
 
     #[test]

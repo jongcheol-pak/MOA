@@ -81,11 +81,18 @@ pub enum LayoutNode {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct PanelSession {
     /// 탭별 폴더 경로 (탭 순서)
     pub tabs: Vec<String>,
     pub active_tab: usize,
+    /// 자세히 보기 열 폭 4개 (이름·크기·종류·수정한 날짜). 패널마다 독립이다.
+    ///
+    /// **필드가 없는 옛 파일도 그대로 읽혀야 하므로 `default`를 쓴다** — 스키마 버전을 올리면
+    /// `parse_session`이 통째로 폴백해 워크스페이스·분할·탭까지 초기화된다 (plan D5).
+    /// 빈 벡터는 "저장된 폭 없음"이며 복원 시 기본 폭이 된다
+    #[serde(default)]
+    pub columns: Vec<f32>,
 }
 
 impl LayoutNode {
@@ -253,14 +260,17 @@ mod tests {
                         PanelSession {
                             tabs: vec!["C:\\Users".into(), "D:\\".into()],
                             active_tab: 1,
+                            ..Default::default()
                         },
                         PanelSession {
                             tabs: vec!["C:\\".into()],
                             active_tab: 0,
+                            ..Default::default()
                         },
                         PanelSession {
                             tabs: vec!["C:\\Windows".into()],
                             active_tab: 0,
+                            ..Default::default()
                         },
                     ],
                     active_panel: 2,
@@ -271,6 +281,7 @@ mod tests {
                     panels: vec![PanelSession {
                         tabs: vec!["D:\\작업".into()],
                         active_tab: 0,
+                        ..Default::default()
                     }],
                     active_panel: 0,
                 },

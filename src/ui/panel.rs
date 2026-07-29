@@ -160,15 +160,19 @@ impl PanelState {
         }
     }
 
-    /// 저장된 탭 구성으로 패널을 되살린다 (FR-11). 탭 목록이 비면 `None`.
+    /// 저장된 탭 구성과 열 폭으로 패널을 되살린다 (FR-11). 탭 목록이 비면 `None`.
     ///
-    /// 히스토리는 복원하지 않는다 — 세션에는 경로만 저장한다(현행과 같은 규칙)
-    pub fn from_tabs(tabs: Vec<PathBuf>, active_tab: usize) -> Option<PanelState> {
+    /// 히스토리는 복원하지 않는다 — 세션에는 경로만 저장한다(현행과 같은 규칙).
+    /// `columns`가 비면 기본 폭으로 시작한다
+    pub fn from_tabs(tabs: Vec<PathBuf>, active_tab: usize, columns: &[f32]) -> Option<PanelState> {
         let states: Vec<TabState> = tabs.into_iter().map(TabState::new).collect();
         let model = TabsModel::from_tabs(states, active_tab)?;
         let start = model.active().committed.clone();
         let mut panel = PanelState::new(start);
         panel.tabs = model;
+        if !columns.is_empty() {
+            panel.list.set_columns(columns);
+        }
         Some(panel)
     }
 
@@ -184,6 +188,11 @@ impl PanelState {
 
     pub fn active_tab(&self) -> usize {
         self.tabs.active_index()
+    }
+
+    /// 세션 저장용 — 자세히 보기 열 폭 (패널마다 독립)
+    pub fn columns(&self) -> Vec<f32> {
+        self.list.columns()
     }
 
     /// 프레임마다 호출 — 지연 시작·열거 완료·변경 감시를 처리하고, 열거 중이면 다시 그리게 한다

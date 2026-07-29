@@ -921,6 +921,9 @@ fn collect_workspace(host: &LayoutHost, name: &str) -> WorkspaceSession {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             active_tab: data.active,
+            // 열 폭은 egui 판 전용이다 — 이 Win32 판은 실행 파일에서 쓰이지 않으므로
+            // 기본값으로 두고 배선하지 않는다 (plan D14)
+            ..Default::default()
         });
     }
     // 활성 패널은 walk 순서상의 위치로 저장한다 (부제 산출 전용 — D18)

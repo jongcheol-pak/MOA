@@ -214,7 +214,7 @@ impl WorkspaceView {
         };
         let mut panels = HashMap::new();
         for (&id, tabs) in ids.iter().zip(&state.panels) {
-            let panel = PanelState::from_tabs(tabs.tabs.clone(), tabs.active_tab)
+            let panel = PanelState::from_tabs(tabs.tabs.clone(), tabs.active_tab, &tabs.columns)
                 .unwrap_or_else(|| PanelState::new(start_dir()));
             panels.insert(id, panel);
         }
@@ -234,11 +234,13 @@ impl WorkspaceView {
                 Some(panel) => PanelTabs {
                     tabs: panel.tab_paths(),
                     active_tab: panel.active_tab(),
+                    columns: panel.columns(),
                 },
                 // 트리에는 있는데 상태가 없는 리프 — 분할 직후가 아니면 생기지 않는다
                 None => PanelTabs {
                     tabs: vec![start_dir()],
                     active_tab: 0,
+                    ..Default::default()
                 },
             })
             .collect();
@@ -380,6 +382,7 @@ impl ExplorerApp {
                         panels: vec![PanelTabs {
                             tabs: vec![start_dir()],
                             active_tab: 0,
+                            ..Default::default()
                         }],
                         active_panel: 0,
                     },
