@@ -61,14 +61,28 @@ impl AddressBar {
             }
         }
         ui.horizontal(|ui| {
-            use egui_phosphor::regular::{ARROW_LEFT, ARROW_RIGHT, ARROW_UP};
-            if nav_button(ui, ARROW_LEFT, history.can_back(), "뒤로") {
+            if nav_button(
+                ui,
+                egui_phosphor::regular::ARROW_LEFT,
+                history.can_back(),
+                "뒤로",
+            ) {
                 action = Some(NavAction::Back);
             }
-            if nav_button(ui, ARROW_RIGHT, history.can_forward(), "앞으로") {
+            if nav_button(
+                ui,
+                egui_phosphor::regular::ARROW_RIGHT,
+                history.can_forward(),
+                "앞으로",
+            ) {
                 action = Some(NavAction::Forward);
             }
-            if nav_button(ui, ARROW_UP, current.parent().is_some(), "상위 폴더") {
+            if nav_button(
+                ui,
+                egui_phosphor::regular::ARROW_UP,
+                current.parent().is_some(),
+                "상위 폴더",
+            ) {
                 action = Some(NavAction::Up);
             }
 

@@ -39,6 +39,7 @@
 
 - 이전 plan(`2026-07-29-custom-titlebar`)의 Deferred 2건(설정 팝업 5개 항목 기능, 창 그림자·둥근 모서리)은 이미 `docs/plans/deferred.md` 대장에 등재돼 있어 그대로 둔다 — 이번 작업과 무관
 - 탭 폭 고정(Windows 11은 탭마다 같은 폭) — 이번에는 제목 길이에 맞추는 현행 방식을 유지한다. 분할 패널이 좁을 때 고정폭이 더 나은지는 화면을 보고 판단
+- [SUGGEST] `address_bar::nav_button`의 활성 경로가 `icon_button_styled`에 `theme::TEXT`·16px을 수동 재기술한다 — `widgets::icon_button` 래퍼를 쓰면 짧아지지만, 그러면 글꼴 크기가 `widgets`의 private 기본값에 묶여 "활성·비활성 16px 동일"이라는 제약이 코드에서 안 보이게 된다. `DEFAULT_ICON_PX`를 pub으로 올릴지와 함께 판단 (T3 quality 리뷰 S1)
 
 ## 시각 요소 분해
 
@@ -104,7 +105,11 @@
 | `+`·분할 툴팁 | "새 탭" / "분할" | `.on_hover_text("새 탭")`, `.on_hover_text("분할")` | ✅ 소스 |
 | 새 탭 `+` | 24×28px·프레임 없음 | `widgets::icon_button(…, vec2(NEW_TAB_WIDTH, STRIP_HEIGHT), …)` | ✅ 소스 |
 | 분할 버튼 | 28×28px·프레임 없음·아이콘 직접 그리기 | `widgets::icon_button(ui, "", vec2(STRIP_HEIGHT, STRIP_HEIGHT), …)` + `draw_split_icon` | ✅ 소스 |
+| 주소창 버튼 크기·프레임 | 24×24px·hover 시에만 배경 | `ui/address_bar.rs` `NAV_BUTTON_SIZE = 24.0` + `widgets.rs`의 hover 시에만 `rect_filled` | ✅ 소스 |
+| 주소창 버튼 아이콘 글꼴 | 16px·활성/비활성 동일 | `NAV_ICON_PX = 16.0`을 `nav_button`의 두 경로에 동일 전달 | ✅ 소스 |
+| 주소창 버튼 비활성 표현 | `TEXT_DIM`·hover 배경 없음·클릭 무반응·툴팁 없음 | `nav_button`의 `!enabled` 분기 — `TEXT_DIM` + `Color32::TRANSPARENT` + `on_hover_text` 미부착 + 무조건 `return false` | ✅ 소스 |
 | **탭 줄 전체의 실제 화면 결과** | 1번 이미지와 동일한 인상 | — | ⏳ 미확인 (F-8 인계) |
+| **주소창 버튼의 실제 화면 결과** | 프레임 없이 아이콘만·비활성 흐림 | — | ⏳ 미확인 (F-8 인계) |
 | **닫기 우선 규칙의 실제 조작 결과** | 비활성 탭 × 클릭 시 닫힘·전환 없음 | 배선은 `show_tab`의 `!clicked_on_close`로 확인 | ⏳ 미확인 (F-8 인계) |
 
 ## PRD Coverage
@@ -191,7 +196,7 @@
   - `cargo clippy --all-targets -- -D warnings` 통과
   - 화면 확인(HUMAN-VERIFY): ⓐ 탭이 하나의 영역으로 보이고 폴더 아이콘·제목·×가 그 안에 있다 ⓑ `+`·분할 버튼에 사각 배경이 없고 hover 시에만 배경이 뜬다 ⓒ **가운데 버튼 클릭으로 탭이 닫힌다** ⓓ **탭에 마우스를 올리면 전체 경로 툴팁이 뜬다** ⓔ 비활성 탭 사이에만 구분선이 보인다 ⓕ **비활성 탭의 ×를 누르면 그 탭이 닫히고, 그 탭으로 전환되지 않는다**(닫기 우선 규칙의 실제 배선 확인 — 활성 탭에서는 전환 여부가 드러나지 않으므로 비활성 탭으로 확인한다) ⓖ 분할 버튼을 누르면 네 방향 메뉴가 그대로 뜬다
 
-### T3. 주소창 탐색 버튼 — 프레임 제거 · 아이콘 글꼴 전환 (Type C, T1 의존)
+### [x] T3. 주소창 탐색 버튼 — 프레임 제거 · 아이콘 글꼴 전환 (Type C, T1 의존)
 
 **Design**:
 - 배치: `src/ui/address_bar.rs` 수정 — 신규 모듈 없음
