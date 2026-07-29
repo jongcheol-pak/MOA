@@ -451,7 +451,11 @@ impl PanelState {
             );
             tree_choice = ui
                 .scope_builder(
-                    egui::UiBuilder::new().max_rect(tree_rect.shrink(TREE_PAD)),
+                    // 이름을 붙이지 않으면 형제 영역과 같은 id를 갖게 되고, 그 안의 위젯 id까지
+                    // 함께 겹친다(egui는 이름 없는 하위 영역에 전부 같은 이름을 준다)
+                    egui::UiBuilder::new()
+                        .id_salt("tree")
+                        .max_rect(tree_rect.shrink(TREE_PAD)),
                     |ui| {
                         ui.set_clip_rect(tree_rect);
                         self.tree.show(ui, ctx)
@@ -463,10 +467,13 @@ impl PanelState {
             area
         };
         let action = ui
-            .scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
-                ui.set_clip_rect(content);
-                self.show_content(ui, icons, textures)
-            })
+            .scope_builder(
+                egui::UiBuilder::new().id_salt("content").max_rect(content),
+                |ui| {
+                    ui.set_clip_rect(content);
+                    self.show_content(ui, icons, textures)
+                },
+            )
             .inner;
 
         // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
@@ -511,5 +518,70 @@ impl PanelState {
         });
         ui.separator();
         self.list.show(ui, icons, textures)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// egui는 같은 ID가 한 프레임에 두 번 쓰이면 화면에 경고 텍스트를 그린다.
+    /// 그 텍스트를 그려진 도형에서 찾아 ID 충돌 여부를 판정한다
+    fn id_clash_warnings(output: &eframe::egui::FullOutput) -> Vec<String> {
+        fn collect(shape: &egui::Shape, found: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => {
+                    let body = text.galley.text();
+                    if body.contains("use of") {
+                        found.push(body.to_owned());
+                    }
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    /// 패널을 한 프레임 그리고 ID 충돌 경고를 모은다
+    fn draw_panel(tree_visible: bool) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        if panel.tree_visible != tree_visible {
+            panel.toggle_tree();
+        }
+        let mut icons = crate::fs::icons::IconCache::new();
+        let mut textures = crate::ui::icon_tex::IconTextures::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let ctx = ui.ctx().clone();
+                panel.show(ui, &ctx, &mut icons, &mut textures);
+            });
+        });
+        id_clash_warnings(&output)
+    }
+
+    #[test]
+    fn 패널_안에서_같은_위젯_id가_두_번_쓰이지_않는다() {
+        // 탭 스트립·폴더 트리·파일 목록이 각자 스크롤 영역을 갖는데, 이들이 같은 id를 쓰면
+        // 스크롤 위치가 서로 섞인다(화면에는 빨간 경고로 드러난다)
+        assert!(
+            draw_panel(false).is_empty(),
+            "위젯 ID 충돌(트리 숨김): {:?}",
+            draw_panel(false)
+        );
+        assert!(
+            draw_panel(true).is_empty(),
+            "위젯 ID 충돌(트리 표시): {:?}",
+            draw_panel(true)
+        );
     }
 }
