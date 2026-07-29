@@ -366,8 +366,7 @@ impl FileListView {
                     if text.is_empty() || width <= 0.0 {
                         continue;
                     }
-                    // 셀 폭을 넘는 글자는 잘라 그린다 — 다음 열을 침범하지 않게
-                    let galley = painter.layout(text, font.clone(), theme::TEXT, width.max(0.0));
+                    let galley = elided_galley(painter, text, font.clone(), width);
                     painter.galley(
                         egui::pos2(x, y - galley.size().y / 2.0),
                         galley,
@@ -404,6 +403,24 @@ impl FileListView {
         }
         action
     }
+}
+
+/// 셀 텍스트를 **한 줄로만** 배치하고, 폭을 넘으면 끝을 `…`로 줄인 갤리를 만든다.
+///
+/// `Painter::layout`을 쓰면 안 된다 — 그 함수의 폭 인자는 자르는 폭이 아니라 **줄바꿈 폭**이라
+/// 긴 이름이 여러 줄이 된다. 행 높이는 `ROW_HEIGHT` 고정이므로 2줄이 되는 순간 아래 행과 겹쳐
+/// 글자가 포개져 보인다(사용자 보고 4번). `max_rows: 1`이 그 겹침과 말줄임을 함께 해결한다
+fn elided_galley(
+    painter: &egui::Painter,
+    text: String,
+    font: egui::FontId,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text, font, theme::TEXT, max_width);
+    // max_rows=1 + break_anywhere + overflow_character('…')를 한 번에 준다.
+    // 파일 이름은 공백 없는 긴 토큰이 흔해 단어 단위로만 끊으면 폭을 넘는 채로 잘린다
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
+    painter.layout_job(job)
 }
 
 /// 갱신 전 선택 이름들이 새 목록의 어느 자리인지 되찾는다 (정렬이 끝난 뒤의 인덱스).
@@ -537,6 +554,57 @@ mod tests {
         ]);
         v.apply_sort(SortKey::Modified);
         assert_eq!(names(&v), vec!["old.txt", "new.txt"]);
+    }
+
+    /// 폭 하나로 셀 텍스트를 배치해 (줄 수, 말줄임 여부)를 돌려준다.
+    ///
+    /// **앱과 같은 글꼴을 설치한 뒤 배치한다** — 이 crate는 egui 기본 글꼴 기능을 끄고
+    /// (`eframe` default-features 해제) 맑은 고딕을 직접 등록하므로, 글꼴 없이 배치하면
+    /// 모든 글자 폭이 0이 되어 말줄임이 일어나지 않는다(폭 기준 검증이 무의미해진다)
+    fn layout_rows(text: &str, width: f32) -> (usize, bool) {
+        let ctx = egui::Context::default();
+        let has_font = crate::ui::app::install_fonts(&ctx);
+        let mut result = (0, false);
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let galley = elided_galley(ui.painter(), text.to_owned(), font, width);
+            result = (galley.rows.len(), galley.elided);
+        });
+        // 글꼴을 못 읽는 환경에서는 폭이 0이라 말줄임 판정이 성립하지 않는다
+        assert!(has_font, "맑은 고딕을 읽지 못해 폭 기준 검증을 할 수 없다");
+        result
+    }
+
+    #[test]
+    fn 긴_이름은_한_줄로_줄어든다() {
+        // 2줄이 되면 행 높이(ROW_HEIGHT)를 넘어 아래 행과 글자가 겹친다 — 사용자 보고 4번
+        let long = "NTUSER.DAT{71e7eeb8-8e0f-11f0-80fa-000d3aa7ca88}.TM.blf";
+        let (rows, elided) = layout_rows(long, 100.0);
+        assert_eq!(rows, 1, "긴 이름이 여러 줄로 배치됐다");
+        assert!(elided, "폭을 넘었는데 말줄임되지 않았다");
+    }
+
+    #[test]
+    fn 짧은_이름은_줄이지_않는다() {
+        let (rows, elided) = layout_rows("a.txt", 300.0);
+        assert_eq!(rows, 1);
+        assert!(!elided, "폭에 들어가는 이름까지 말줄임됐다");
+    }
+
+    #[test]
+    fn 아주_좁은_폭에서도_패닉하지_않는다() {
+        // 열을 최소까지 좁히거나(T2) 마지막 열이 음수 폭이 되는 경우 — 그려지지 않더라도 죽으면 안 된다
+        for width in [0.0, 1.0, 3.0, -10.0] {
+            let (rows, _) = layout_rows("아주긴한글파일이름.txt", width);
+            assert!(rows <= 1, "폭 {width}: 한 줄을 넘겼다");
+        }
+    }
+
+    #[test]
+    fn 한글도_폭_기준으로_줄어든다() {
+        // 문자 수가 아니라 픽셀 폭 기준이어야 한다 — 한글은 영문보다 넓다
+        let (_, elided) = layout_rows("가나다라마바사아자차카타파하", 40.0);
+        assert!(elided);
     }
 
     #[test]
