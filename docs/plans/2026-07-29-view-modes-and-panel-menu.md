@@ -189,6 +189,9 @@
 | 자세히 열 | 최소 폭 | 40px | `ui/list_details.rs:28` `MIN_COL_WIDTH = 40.0` | ✅ (T2) |
 | 자세히 열 | 기본 폭 | 320 / 90 / 150 / 150 | `ui/list_details.rs:52` `DEFAULT = [320.0, 90.0, 150.0, 150.0]` | ✅ (T2) |
 | 열 드래그 핸들 | 폭 | 6px | `ui/list_details.rs:30` `HANDLE_WIDTH = 6.0` | ✅ (T2) |
+| 항목 수 문구 | 정렬 | 줄의 오른쪽 끝 | `ui/panel.rs:530` `egui::Sides` 오른쪽 클로저 | ✅ (T4) |
+| 항목 수 문구 | 형식 | `폴더 {N} 파일 {M}` | `ui/panel.rs:534` `format!("폴더 {dirs} 파일 {files}")` | ✅ (T4) |
+| 항목 수 문구 | 색 | `theme::TEXT_DIM` | `ui/panel.rs:534` | ✅ (T4) |
 
 ## Decisions
 
@@ -271,7 +274,7 @@
   2. **필드가 없는 기존 `settings.json`으로 실행해도 워크스페이스·분할·탭이 그대로 복원된다** (초기화되지 않는다)
   3. `cargo test` 통과 — 왕복 테스트에 열 폭 포함, 그리고 열 폭 필드가 빠진 JSON이 파싱되는 테스트 추가
 
-### [ ] T4. 항목 수 표시 — `폴더 N 파일 M` 오른쪽 정렬 (요구 7)
+### [x] T4. 항목 수 표시 — `폴더 N 파일 M` 오른쪽 정렬 (요구 7)
 
 - **Type**: C
 - **Files**: `src/ui/panel.rs`, `src/ui/file_list.rs`
@@ -466,6 +469,10 @@
 - T1-T2 완료 (커밋 c3f2089, 다음 커밋): 목록 셀 말줄임(행 겹침 해소) + 열 폭 드래그·가로 스크롤. 자세히 보기 렌더를 `ui/list_details.rs`로 분리했다. 빌드/테스트/clippy OK, 리뷰 spec MINOR 2·quality OK.
   - 결정: 테스트가 폭을 재려면 앱과 같은 글꼴이 필요하다 — 이 crate는 egui 내장 글꼴을 끄고 맑은 고딕을 직접 등록하므로, 글꼴 없이 배치하면 모든 글자 폭이 0이 되어 말줄임 검증이 무의미해진다. `install_fonts`를 테스트에서 재사용하고 실패 시 assert로 드러낸다.
   - 결정: 렌더 분리로 `list_details → file_list` 역참조가 생겼다(`FileListAction`·`elided_galley`). T10에서 3번째 사용처가 생기면 공용 모듈로 뽑기로 하고 이번에는 두지 않았다(3회 규칙).
+- T3-T4 완료 (커밋 a8e99ba, 다음 커밋): 열 폭 세션 저장 + 항목 수를 `폴더 N 파일 M`으로 오른쪽 정렬. 리뷰 T3 spec MINOR 1·T4 지적 0.
+  - 결정: 세션 스키마는 버전을 올리지 않고 `#[serde(default)]` 필드만 더한다(D5) — 버전을 올리면 `parse_session`이 통째로 폴백해 기존 사용자의 워크스페이스·분할·탭이 초기화된다. 필드 나열 리터럴이 6곳(테스트 픽스처 4곳 포함)이라 `cargo build`만으로는 누락이 안 드러난다.
+  - 결정: 폴더/파일 집계는 `resort()`에서 센다 — 항목이 바뀌는 경로가 반드시 이 함수를 지나므로 집계가 목록과 어긋날 수 없다. `set_entries`에 두면 테스트 헬퍼처럼 그 함수를 안 지나는 경로에서 0이 된다.
+  - 고아 후보: `FileListView::len()`이 호출부를 잃었다(상태 줄이 `counts()`로 옮겨감). T10·T11 격자 배치가 총 개수를 쓰므로 주석과 함께 남겨뒀다.
   - 주의: 레포에 rustfmt 미적용 파일(`ui/address_bar.rs`)이 있어 `cargo fmt --check`가 원래부터 실패한다. `cargo fmt`는 경로 인자를 무시하고 전체를 포맷하므로, 변경 파일만 `rustfmt --edition 2024 <파일>`로 다루고 커밋도 경로를 명시해야 무관한 변경이 섞이지 않는다.
 
 ## Phase Ledger

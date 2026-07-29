@@ -44,6 +44,9 @@ pub struct FileListView {
     anchor: Option<usize>,
     /// 자세히 보기 열 폭 — 패널마다 독립이며 세션에 저장된다 (plan D3)
     columns: Columns,
+    /// 폴더 개수 — 항목이 바뀔 때(`resort`) 한 번만 센다.
+    /// 프레임마다 다시 세면 10만 항목 폴더에서 그 비용이 매 프레임 붙는다 (NFR-3)
+    dir_count: usize,
 }
 
 impl Default for FileListView {
@@ -64,6 +67,7 @@ impl FileListView {
             selection: BTreeSet::new(),
             anchor: None,
             columns: Columns::new(),
+            dir_count: 0,
         }
     }
 
@@ -111,12 +115,19 @@ impl FileListView {
         self.entries.get(index)
     }
 
+    /// 항목 총 개수. 상태 줄이 `counts()`로 옮겨가 지금은 호출부가 없지만,
+    /// 격자 보기(T10·T11)가 배치 계산에 총 개수를 쓰므로 남겨둔다
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// 폴더 수와 파일 수 — 목록 위 상태 줄에 쓴다
+    pub fn counts(&self) -> (usize, usize) {
+        (self.dir_count, self.entries.len() - self.dir_count)
     }
 
     /// 선택된 항목들의 전체 경로 — 셸 컨텍스트 메뉴 대상 (FR-8)
@@ -154,6 +165,10 @@ impl FileListView {
             self.type_names.push(t);
             self.icon_indices.push(i);
         }
+        // 폴더 수는 여기서 센다 — 항목이 바뀌는 경로(`set_entries`)가 반드시 이 함수를 지나므로
+        // 집계가 목록과 어긋날 수 없다. 정렬 때마다 다시 세지만 정렬은 사용자 클릭 시에만
+        // 일어나고 비용도 이미 정렬(O(n log n))에 묻힌다
+        self.dir_count = self.entries.iter().filter(|entry| entry.is_dir).count();
         // 정렬로 인덱스가 바뀌므로 선택·기준점을 유지할 수 없다
         self.selection.clear();
         self.anchor = None;
@@ -400,6 +415,27 @@ mod tests {
         // 글꼴을 못 읽는 환경에서는 폭이 0이라 말줄임 판정이 성립하지 않는다
         assert!(has_font, "맑은 고딕을 읽지 못해 폭 기준 검증을 할 수 없다");
         result
+    }
+
+    #[test]
+    fn 폴더와_파일을_따로_센다() {
+        let v = view(vec![
+            (entry("문서", true, 0, 0), "폴더"),
+            (entry("사진", true, 0, 0), "폴더"),
+            (entry("a.txt", false, 10, 0), "텍스트"),
+        ]);
+        assert_eq!(v.counts(), (2, 1));
+    }
+
+    #[test]
+    fn 빈_폴더는_둘_다_0이다() {
+        assert_eq!(view(Vec::new()).counts(), (0, 0));
+    }
+
+    #[test]
+    fn 파일만_있으면_폴더는_0이다() {
+        let v = view(vec![(entry("a.txt", false, 10, 0), "텍스트")]);
+        assert_eq!(v.counts(), (0, 1));
     }
 
     #[test]

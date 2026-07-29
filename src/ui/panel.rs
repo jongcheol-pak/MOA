@@ -508,23 +508,33 @@ impl PanelState {
         icons: &mut IconCache,
         textures: &mut IconTextures,
     ) -> FileListAction {
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.tree_visible, "폴더 트리")
-                .clicked()
-            {
-                self.tree_visible = !self.tree_visible;
-            }
-            if self.load.is_loading() {
-                ui.spinner();
-                ui.colored_label(theme::TEXT_DIM, "읽는 중…");
-            } else {
-                ui.colored_label(theme::TEXT_DIM, format!("{}개 항목", self.list.len()));
-            }
-            if !self.status.is_empty() {
-                ui.colored_label(theme::TEXT_DIM, &self.status);
-            }
-        });
+        // 왼쪽에 트리 토글·진행 상황, 오른쪽 끝에 항목 수를 둔다 (사용자 요청 7).
+        // `Sides`는 오른쪽 것을 먼저 자리잡게 하므로, 오류 문구가 길어져도 항목 수가 밀리지 않는다
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                if ui
+                    .selectable_label(self.tree_visible, "폴더 트리")
+                    .clicked()
+                {
+                    self.tree_visible = !self.tree_visible;
+                }
+                if self.load.is_loading() {
+                    ui.spinner();
+                    ui.colored_label(theme::TEXT_DIM, "읽는 중…");
+                }
+                if !self.status.is_empty() {
+                    ui.colored_label(theme::TEXT_DIM, &self.status);
+                }
+            },
+            |ui| {
+                // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
+                if !self.load.is_loading() {
+                    let (dirs, files) = self.list.counts();
+                    ui.colored_label(theme::TEXT_DIM, format!("폴더 {dirs} 파일 {files}"));
+                }
+            },
+        );
         ui.separator();
         self.list.show(ui, icons, textures)
     }
