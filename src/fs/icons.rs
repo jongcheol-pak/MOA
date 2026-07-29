@@ -248,6 +248,39 @@ mod tests {
     }
 
     #[test]
+    fn 크기별로_서로_다른_이미지_리스트를_얻는다() {
+        // 이 획득이 실패하면 모든 단계가 16px로 폴백해 보기 모드를 바꿔도 아이콘이 그대로다.
+        // 화면 표시는 T10(격자 렌더)에서 확인하고, 여기서는 **리스트를 실제로 얻었는지**만 본다
+        let cache = IconCache::new();
+        assert_eq!(
+            cache.himl_for(IconSize::Small),
+            cache.himl(),
+            "16px 단계가 기존 핸들과 달라졌다 — 자세히 보기가 회귀한다"
+        );
+        let jumbo = cache.himl_for(IconSize::Jumbo);
+        assert!(!jumbo.is_invalid(), "256px 리스트가 유효하지 않다");
+        assert_ne!(
+            jumbo,
+            cache.himl(),
+            "256px 요청이 16px로 폴백했다 — SHGetImageList가 실패했거나 상수가 틀렸다"
+        );
+        // 네 단계가 모두 서로 다른 리스트여야 크기 구분이 성립한다
+        let mut handles: Vec<isize> = [
+            IconSize::Small,
+            IconSize::Large,
+            IconSize::ExtraLarge,
+            IconSize::Jumbo,
+        ]
+        .iter()
+        .map(|size| cache.himl_for(*size).0)
+        .collect();
+        handles.sort_unstable();
+        let before = handles.len();
+        handles.dedup();
+        assert_eq!(handles.len(), before, "같은 리스트를 가리키는 단계가 있다");
+    }
+
+    #[test]
     fn 셸_상수는_서로_겹치지_않는다() {
         // 겹치면 두 단계가 같은 리스트를 가리켜 크기 구분이 사라진다
         let mut shils: Vec<u32> = [

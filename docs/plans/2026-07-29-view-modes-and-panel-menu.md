@@ -365,13 +365,14 @@
 ### [ ] T9. 큰 아이콘 이미지 리스트 + 텍스처 캐시 키 교정 (요구 8)
 
 - **Type**: D
-- **Files**: `src/fs/icons.rs`, `src/ui/icon_tex.rs`, `src/ui/file_list.rs`, `src/ui/sidebar.rs`, `Cargo.toml`(feature 부족이 드러날 때만 — 사전 승인 항목 2)
+- **Files**: `src/fs/icons.rs`, `src/ui/icon_tex.rs`, `src/ui/view_mode.rs`(모드↔크기 매핑 테스트 — `fs`는 `ui`를 모르므로 상위에 둔다), `Cargo.toml`(feature 부족이 드러날 때만 — 사전 승인 항목 2)
+- **범위 정정 (T9 spec 리뷰 B1)**: 애초 Files에 있던 `ui/file_list.rs`·`ui/sidebar.rs`는 손대지 않는다 — 큰 아이콘을 실제로 **쓰는** 화면은 격자 보기뿐이고 그것은 T10이다. 자세히·목록·사이드바는 16px 고정이라 연결할 곳이 없다
 - **내용**: `SHGetImageList`로 32/48/256px 이미지 리스트를 얻어 `IconCache`가 크기별로 보관하고, 크기를 받아 적절한 리스트를 돌려주는 접근자를 더한다. `IconTextures`의 캐시 키를 `(himl.0, index)`로 바꾼다(D9).
 - **Design**: 배치 — 셸 호출은 `fs/icons.rs`, 텍스처 변환은 `ui/icon_tex.rs`(기존 책임 유지). 신규 심볼 — `icons::IconSize { Small, Large, ExtraLarge, Jumbo }`, `IconCache::himl_for(size) -> HIMAGELIST`. 의존 — 기존 `himl()`은 `Small`을 돌려주는 형태로 유지해 `sidebar.rs`·`panel/*`의 호출부를 건드리지 않는다. 비추상화 — 이미지 리스트를 lazy하게 얻지 않고 `IconCache::new`에서 한 번에 얻는다(4회 COM 호출이며 시작 시간 영향이 미미하다. 실측이 NFR-1을 위협하면 그때 지연 획득으로 바꾼다).
 - **Edge Cases**: `SHGetImageList` 실패(해당 크기를 못 얻으면 Small로 폴백 — 앱이 죽지 않는다) / 인덱스가 리스트마다 같은지(같은 시스템 인덱스 체계이나 **가정하지 않고** 각 리스트에서 개별 조회) / 256px 아이콘의 텍스처 메모리(256KB/장 — 프레임당 생성 상한 8이 그대로 적용되는지) / 기존 16px 아이콘이 큰 리스트로 잘못 조회되는 회귀
 - **Halt Forecast**: `SHGetImageList`가 `IImageList` 인터페이스를 요구하는데 windows crate feature가 모자라 컴파일되지 않을 수 있다 → **사전 해소**: `Win32_UI_Shell`에 이미 포함됨을 확인했고, 부족하면 **사전 승인 항목 2**(feature 추가)로 처리한다.
 - **Acceptance**:
-  1. 48px·256px 아이콘이 실제로 큰 그림으로 표시된다 (16px을 늘린 흐린 그림이 아니다)
+  1. 48px·256px 이미지 리스트를 **실제로 얻는다** — 네 단계가 서로 다른 핸들이고 16px 폴백이 아니다(단위 테스트로 확인). **화면에 큰 그림으로 보이는지는 T10에서 확인한다** — 큰 아이콘을 쓰는 화면이 격자 보기뿐이라 T9 단독으로는 검증할 대상이 없다(원래 acceptance 문구가 T9/T10 경계와 어긋나 정정, T9 spec 리뷰 B1)
   2. 작은 아이콘(자세히 보기)이 이전과 **동일하게** 표시된다 (캐시 키 변경 회귀 없음)
   3. 사이드바 폴더 아이콘도 이전과 동일하다
   4. `cargo build` 경고 0 · `cargo test` 통과
@@ -386,6 +387,7 @@
 - **Halt Forecast**: 없음 — T8·T9가 만든 배치 계산과 이미지 리스트를 쓰는 렌더 작업이라 새 외부 의존이 없다
 - **Acceptance**:
   1. 네 모드가 각각 인벤토리 표의 아이콘 크기·시각 속성 표의 셀 크기로 그려진다
+  1-b. **48px·256px 아이콘이 흐리지 않게 표시된다** (16px을 늘린 그림이 아니다 — T9에서 인계받은 확인 항목)
   2. 클릭 선택·Ctrl/Shift 선택·더블클릭 열기·우클릭 셸 메뉴가 자세히 보기와 동일하게 동작한다
   3. 항목 1만 개 폴더에서 스크롤이 멈추지 않는다 (보이는 셀만 그린다)
   4. `cargo test` 통과 (렌더는 HUMAN-VERIFY, 배치 계산은 T8 테스트가 덮는다)
