@@ -380,7 +380,7 @@
 ### [ ] T10. 아이콘 격자 보기 4종 렌더 (요구 8)
 
 - **Type**: D
-- **Files**: `src/ui/list_grid.rs`(신규), `src/ui/file_list.rs`
+- **Files**: `src/ui/list_grid.rs`(신규), `src/ui/list_common.rs`(신규 — 두 렌더 모듈의 공용 조각), `src/ui/mod.rs`, `src/ui/file_list.rs`, `src/ui/list_details.rs`(공용 모듈 참조로 전환)
 - **내용**: 아주 큰·큰·보통·작은 아이콘 모드를 그린다. 가상 스크롤(보이는 셀만)·선택·더블클릭 열기·우클릭 메뉴를 자세히 보기와 **같은 규칙**으로 처리한다.
 - **Design**: 배치 — `ui/list_grid.rs`. 신규 심볼 — `list_grid::show(ui, mode, entries, selection, icons, textures) -> FileListAction`. 의존 — `view_mode`의 배치 계산을 쓰고, 선택 상태는 `file_list`가 소유한 것을 참조로 받는다. `list_grid`는 `file_list`를 모른다(단방향). 비추상화 — 셀 안 그리기(아이콘+이름)를 `list_details`와 공유하는 추상 셀 렌더러로 묶지 않는다(자세히는 열 4개, 격자는 아이콘 위·이름 아래라 공통부가 galley 생성뿐이다).
 - **Edge Cases**: 이름 2줄 초과(`…`) / 셀 폭보다 긴 한 단어(`break_anywhere`) / 선택 사각형이 셀 경계를 넘는지 / 빈 영역 우클릭(폴더 배경 메뉴 — 자세히 보기와 같은 동작) / Shift 범위 선택이 격자에서도 인덱스 순서를 따르는가 / 아주 큰 아이콘에서 한 화면에 셀이 2개뿐일 때 가상 스크롤 경계 / 스크롤 중 텍스처 생성 상한(8/프레임)에 걸려 아이콘이 늦게 뜨는 것이 자연스러운가

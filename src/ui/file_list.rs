@@ -8,26 +8,15 @@ use crate::fs::icons::IconCache;
 use crate::panel::file_list::{SortKey, compare_entries};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_details::{self, Columns, DetailsInput};
-use crate::ui::theme;
+use crate::ui::list_grid::{self, GridInput};
 use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
-/// 목록이 상위(패널)에 돌려주는 사용자 조작.
-/// 즉시 모드라 콜백을 등록하지 않고 이번 프레임의 조작을 값으로 반환한다
-#[derive(Clone, PartialEq, Debug, Default)]
-pub enum FileListAction {
-    #[default]
-    None,
-    /// 항목 실행 — 폴더면 진입, 파일이면 연결 프로그램 (호출부가 판정)
-    Open(usize),
-    /// 컨텍스트 메뉴 요청 — `index`가 `None`이면 빈 영역(폴더 배경 메뉴)
-    Context {
-        index: Option<usize>,
-        pos: egui::Pos2,
-    },
-}
+// 조작 타입은 보기 모드별 렌더 모듈이 함께 쓰므로 공용 모듈에 둔다.
+// 호출부(`ui::panel`)가 종전 경로를 그대로 쓰도록 여기서 다시 내보낸다
+pub use crate::ui::list_common::FileListAction;
 
 /// 파일 목록 뷰 — 항목·종류 문자열·아이콘 인덱스·선택 상태를 함께 소유한다.
 /// 셋은 인덱스로 짝지어지므로 따로 두면 정렬 시 어긋난다
@@ -231,52 +220,62 @@ impl FileListView {
         icons: &mut IconCache,
         textures: &mut IconTextures,
     ) -> FileListAction {
-        let outcome = list_details::show(
-            ui,
-            DetailsInput {
-                dir: &self.dir,
-                entries: &self.entries,
-                type_names: &self.type_names,
-                icon_indices: &mut self.icon_indices,
-                selection: &self.selection,
-                sort_key: self.sort_key,
-                ascending: self.ascending,
-                columns: &mut self.columns,
-            },
-            icons,
-            textures,
-        );
+        // 자세히 보기만 열·머리글을 갖는다 — 나머지는 격자 렌더가 맡는다 (FR-23)
+        let (action, sort_click, select_request, clear_selection) = if self.view_mode.is_details() {
+            let outcome = list_details::show(
+                ui,
+                DetailsInput {
+                    dir: &self.dir,
+                    entries: &self.entries,
+                    type_names: &self.type_names,
+                    icon_indices: &mut self.icon_indices,
+                    selection: &self.selection,
+                    sort_key: self.sort_key,
+                    ascending: self.ascending,
+                    columns: &mut self.columns,
+                },
+                icons,
+                textures,
+            );
+            (
+                outcome.action,
+                outcome.sort_click,
+                outcome.select_request,
+                outcome.clear_selection,
+            )
+        } else {
+            let outcome = list_grid::show(
+                ui,
+                GridInput {
+                    dir: &self.dir,
+                    entries: &self.entries,
+                    icon_indices: &mut self.icon_indices,
+                    selection: &self.selection,
+                    mode: self.view_mode,
+                },
+                icons,
+                textures,
+            );
+            (
+                outcome.action,
+                None,
+                outcome.select_request,
+                outcome.clear_selection,
+            )
+        };
         // 상태 변경은 그리기가 끝난 뒤에 한다 — 그리는 동안에는 목록이 빌려진 상태다
-        if let Some(key) = outcome.sort_click {
+        if let Some(key) = sort_click {
             self.apply_sort(key);
-        } else if let Some((index, modifiers)) = outcome.select_request {
+        } else if let Some((index, modifiers)) = select_request {
             // 정렬이 일어나면 인덱스가 통째로 바뀌므로 같은 프레임의 선택은 버린다
             self.select(index, modifiers);
         }
-        if outcome.clear_selection {
+        if clear_selection {
             self.selection.clear();
             self.anchor = None;
         }
-        outcome.action
+        action
     }
-}
-
-/// 셀 텍스트를 **한 줄로만** 배치하고, 폭을 넘으면 끝을 `…`로 줄인 갤리를 만든다.
-///
-/// `Painter::layout`을 쓰면 안 된다 — 그 함수의 폭 인자는 자르는 폭이 아니라 **줄바꿈 폭**이라
-/// 긴 이름이 여러 줄이 된다. 행 높이는 `ROW_HEIGHT` 고정이므로 2줄이 되는 순간 아래 행과 겹쳐
-/// 글자가 포개져 보인다(사용자 보고 4번). `max_rows: 1`이 그 겹침과 말줄임을 함께 해결한다
-pub(crate) fn elided_galley(
-    painter: &egui::Painter,
-    text: String,
-    font: egui::FontId,
-    max_width: f32,
-) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple(text, font, theme::TEXT, max_width);
-    // max_rows=1 + break_anywhere + overflow_character('…')를 한 번에 준다.
-    // 파일 이름은 공백 없는 긴 토큰이 흔해 단어 단위로만 끊으면 폭을 넘는 채로 잘린다
-    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width);
-    painter.layout_job(job)
 }
 
 /// 갱신 전 선택 이름들이 새 목록의 어느 자리인지 되찾는다 (정렬이 끝난 뒤의 인덱스).
@@ -412,25 +411,6 @@ mod tests {
         assert_eq!(names(&v), vec!["old.txt", "new.txt"]);
     }
 
-    /// 폭 하나로 셀 텍스트를 배치해 (줄 수, 말줄임 여부)를 돌려준다.
-    ///
-    /// **앱과 같은 글꼴을 설치한 뒤 배치한다** — 이 crate는 egui 기본 글꼴 기능을 끄고
-    /// (`eframe` default-features 해제) 맑은 고딕을 직접 등록하므로, 글꼴 없이 배치하면
-    /// 모든 글자 폭이 0이 되어 말줄임이 일어나지 않는다(폭 기준 검증이 무의미해진다)
-    fn layout_rows(text: &str, width: f32) -> (usize, bool) {
-        let ctx = egui::Context::default();
-        let has_font = crate::ui::app::install_fonts(&ctx);
-        let mut result = (0, false);
-        let _ = ctx.run_ui(Default::default(), |ui| {
-            let font = egui::TextStyle::Body.resolve(ui.style());
-            let galley = elided_galley(ui.painter(), text.to_owned(), font, width);
-            result = (galley.rows.len(), galley.elided);
-        });
-        // 글꼴을 못 읽는 환경에서는 폭이 0이라 말줄임 판정이 성립하지 않는다
-        assert!(has_font, "맑은 고딕을 읽지 못해 폭 기준 검증을 할 수 없다");
-        result
-    }
-
     #[test]
     fn 보기_모드는_기본이_자세히고_바꾸면_남는다() {
         // 메뉴에서 고른 모드가 상태에 반영되지 않으면 화면이 그대로다 (FR-23)
@@ -480,38 +460,6 @@ mod tests {
     fn 파일만_있으면_폴더는_0이다() {
         let v = view(vec![(entry("a.txt", false, 10, 0), "텍스트")]);
         assert_eq!(v.counts(), (0, 1));
-    }
-
-    #[test]
-    fn 긴_이름은_한_줄로_줄어든다() {
-        // 2줄이 되면 행 높이(ROW_HEIGHT)를 넘어 아래 행과 글자가 겹친다 — 사용자 보고 4번
-        let long = "NTUSER.DAT{71e7eeb8-8e0f-11f0-80fa-000d3aa7ca88}.TM.blf";
-        let (rows, elided) = layout_rows(long, 100.0);
-        assert_eq!(rows, 1, "긴 이름이 여러 줄로 배치됐다");
-        assert!(elided, "폭을 넘었는데 말줄임되지 않았다");
-    }
-
-    #[test]
-    fn 짧은_이름은_줄이지_않는다() {
-        let (rows, elided) = layout_rows("a.txt", 300.0);
-        assert_eq!(rows, 1);
-        assert!(!elided, "폭에 들어가는 이름까지 말줄임됐다");
-    }
-
-    #[test]
-    fn 아주_좁은_폭에서도_패닉하지_않는다() {
-        // 열을 최소까지 좁히거나(T2) 마지막 열이 음수 폭이 되는 경우 — 그려지지 않더라도 죽으면 안 된다
-        for width in [0.0, 1.0, 3.0, -10.0] {
-            let (rows, _) = layout_rows("아주긴한글파일이름.txt", width);
-            assert!(rows <= 1, "폭 {width}: 한 줄을 넘겼다");
-        }
-    }
-
-    #[test]
-    fn 한글도_폭_기준으로_줄어든다() {
-        // 문자 수가 아니라 픽셀 폭 기준이어야 한다 — 한글은 영문보다 넓다
-        let (_, elided) = layout_rows("가나다라마바사아자차카타파하", 40.0);
-        assert!(elided);
     }
 
     #[test]

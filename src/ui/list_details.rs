@@ -6,8 +6,8 @@
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{SortKey, format_filetime, format_size_kb};
-use crate::ui::file_list::{FileListAction, elided_galley};
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::list_common::{FileListAction, elided_galley};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::BTreeSet;
