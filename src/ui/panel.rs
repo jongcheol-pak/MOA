@@ -84,6 +84,61 @@ impl DirLoad {
     }
 }
 
+/// 새 폴더·새 파일 생성 상태 (FR-25).
+///
+/// 생성도 열거와 같이 **워커 스레드에서** 한다 — `CreateDirectoryW`·`CreateFileW`는 로컬
+/// 디스크에서는 순식간이지만 네트워크 드라이브에서는 수 초가 걸릴 수 있고, 이름이 겹치면
+/// 그만큼 재시도가 이어진다. UI 스레드에서 부르면 그동안 창이 멈춘다
+/// (AGENTS: UI 스레드 블로킹 I/O 금지 — `DirLoad`와 같은 규칙)
+struct CreateOp {
+    /// (무엇을 만들었는지, 결과) — 실패 문구에 종류를 넣기 위해 함께 보낸다
+    pending: Option<Receiver<(&'static str, std::io::Result<PathBuf>)>>,
+}
+
+impl CreateOp {
+    fn new() -> CreateOp {
+        CreateOp { pending: None }
+    }
+
+    /// 워커에서 생성을 시작한다. 이미 진행 중이면 무시한다 —
+    /// 메뉴를 연달아 눌러도 한 번에 하나만 만든다
+    fn start(
+        &mut self,
+        dir: PathBuf,
+        kind: &'static str,
+        make: fn(&Path) -> std::io::Result<PathBuf>,
+        ctx: &egui::Context,
+    ) {
+        if self.pending.is_some() {
+            return;
+        }
+        let (tx, rx) = channel();
+        self.pending = Some(rx);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            // 수신부가 이미 버려졌으면(패널 닫힘·앱 종료) 전송 실패는 무해하다
+            let _ = tx.send((kind, make(&dir)));
+            ctx.request_repaint();
+        });
+    }
+
+    /// 완료된 결과를 꺼낸다. 아직이면 `None`
+    fn poll(&mut self) -> Option<(&'static str, std::io::Result<PathBuf>)> {
+        let rx = self.pending.as_ref()?;
+        match rx.try_recv() {
+            Ok(done) => {
+                self.pending = None;
+                Some(done)
+            }
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.pending = None;
+                None
+            }
+        }
+    }
+}
+
 /// 열거 성공 시 히스토리에 적용할 동작
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PendingNav {
@@ -135,6 +190,8 @@ pub struct PanelState {
     tree_visible: bool,
     /// 표시 중인 폴더의 변경 감시 (FR-10). 폴더가 바뀌면 통째로 교체된다
     watch: Option<DirWatch>,
+    /// 진행 중인 새 폴더·새 파일 생성 (FR-25)
+    create: CreateOp,
 }
 
 /// 감시자와 그 통지 채널 — 둘의 수명이 같아야 해서 함께 둔다
@@ -158,6 +215,7 @@ impl PanelState {
             tree: FolderTreeView::new(),
             tree_visible: false,
             watch: None,
+            create: CreateOp::new(),
         }
     }
 
@@ -204,6 +262,7 @@ impl PanelState {
         }
         self.poll_load(icons);
         self.poll_watch(ctx);
+        self.poll_create(ctx);
         if self.load.is_loading() {
             ctx.request_repaint();
         }
@@ -341,26 +400,29 @@ impl PanelState {
     /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25)
     pub fn new_folder(&mut self, ctx: &egui::Context) {
         let dir = self.dir().to_path_buf();
-        self.after_create(create::new_folder(&dir).map(|_| ()), "폴더", ctx);
+        self.create.start(dir, "폴더", create::new_folder, ctx);
     }
 
     /// 표시 중인 폴더에 빈 텍스트 문서를 만든다 (FR-25)
     pub fn new_file(&mut self, ctx: &egui::Context) {
         let dir = self.dir().to_path_buf();
-        self.after_create(create::new_text_file(&dir).map(|_| ()), "파일", ctx);
+        self.create.start(dir, "파일", create::new_text_file, ctx);
     }
 
-    /// 생성 결과 처리 — 실패하면 사유만 상태 줄에 보인다 (plan D12).
+    /// 생성 결과를 반영한다 — 실패하면 사유만 상태 줄에 보인다 (plan D12).
     ///
-    /// 성공해도 목록을 직접 건드리지 않는다: 변경 감시(FR-10)가 새 항목을 알려 다시 읽는다.
-    /// 다만 감시가 붙지 않는 위치에서는 통지가 오지 않으므로 그때만 직접 다시 읽는다
-    fn after_create(&mut self, result: std::io::Result<()>, kind: &str, ctx: &egui::Context) {
+    /// 성공하면 **감시 여부와 무관하게** 폴더를 다시 읽는다. 감시(FR-10)가 살아 있으면 통지로도
+    /// 갱신되지만, `DirWatcher`는 폴더 열기에 실패해도 조용히 끝나 그 실패가 밖으로 드러나지
+    /// 않는다 — 감시 객체가 있다는 것만으로 통지를 믿으면, 감시가 죽은 위치에서 방금 만든
+    /// 항목이 목록에 나타나지 않는다. 재열거 한 번이 그 침묵보다 싸다
+    fn poll_create(&mut self, ctx: &egui::Context) {
+        let Some((kind, result)) = self.create.poll() else {
+            return;
+        };
         match result {
-            Ok(()) => {
-                if self.watch.is_none() {
-                    let dir = self.dir().to_path_buf();
-                    self.start_load(dir, PendingNav::None, ctx);
-                }
+            Ok(_) => {
+                let dir = self.dir().to_path_buf();
+                self.start_load(dir, PendingNav::None, ctx);
             }
             Err(error) => {
                 self.status = format!("새 {kind}을(를) 만들지 못했습니다 — {error}");

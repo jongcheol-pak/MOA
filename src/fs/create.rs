@@ -158,6 +158,33 @@ mod tests {
     }
 
     #[test]
+    fn 이름이_모두_겹치면_상한에서_멈춘다() {
+        // 상한이 없으면 이름이 끝없이 겹치는 상황에서 무한히 돈다.
+        // 실제 파일을 1000개 만들지 않고, 항상 "이미 있음"을 돌려주는 생성기로 상한만 확인한다
+        let tried = std::cell::Cell::new(0usize);
+        let result = create_unique(Path::new(r"C:\"), "무엇이든", None, |_| {
+            tried.set(tried.get() + 1);
+            Err(io::Error::new(io::ErrorKind::AlreadyExists, "이미 있음"))
+        });
+        assert!(result.is_err(), "상한을 넘겼는데 성공으로 보고됐다");
+        assert_eq!(tried.get(), MAX_ATTEMPTS, "상한만큼만 시도해야 한다");
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn 겹치지_않으면_한_번만_시도한다() {
+        // 첫 이름이 비어 있으면 곧장 성공해야 한다 — 상한 루프가 매번 도는 것이 아니다
+        let tried = std::cell::Cell::new(0usize);
+        let made = create_unique(Path::new(r"C:\"), "무엇이든", None, |_| {
+            tried.set(tried.get() + 1);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(tried.get(), 1);
+        assert!(made.ends_with("무엇이든"));
+    }
+
+    #[test]
     fn 없는_폴더에서는_사유를_그대로_돌려준다() {
         // 번호를 바꿔도 해결되지 않는 실패는 즉시 돌려줘야 한다(무한 재시도 금지)
         let missing = std::env::temp_dir().join("fe_create_absent_dir_xyz");
