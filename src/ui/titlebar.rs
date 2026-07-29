@@ -9,6 +9,7 @@
 //! 실행은 `ui::app`이 한다(`ui::menu`·`ui::tabs`와 같은 규약).
 use crate::ui::menu::Command;
 use crate::ui::theme;
+use crate::ui::widgets::icon_button;
 use eframe::egui;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
@@ -24,7 +25,6 @@ const RIGHT_GROUP_WIDTH: f32 = BUTTON_SIZE + CAPTION_WIDTH * 3.0;
 const LEFT_MARGIN: f32 = 2.0;
 /// 좌측 버튼군 전체 폭 — 여백 + 사이드바 토글 1개
 const LEFT_GROUP_WIDTH: f32 = LEFT_MARGIN + BUTTON_SIZE;
-const ICON_FONT_PX: f32 = 16.0;
 const TITLE_FONT_PX: f32 = 14.0;
 
 /// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
@@ -134,7 +134,7 @@ fn show_left(ui: &mut egui::Ui, state: TitlebarState) -> Option<Command> {
     icon_button(
         ui,
         egui_phosphor::regular::SIDEBAR_SIMPLE,
-        BUTTON_SIZE,
+        egui::vec2(BUTTON_SIZE, TITLEBAR_HEIGHT),
         theme::CONTROL_HOT,
     )
     .on_hover_text(hint)
@@ -184,7 +184,7 @@ fn show_settings_menu(ui: &mut egui::Ui) {
     let response = icon_button(
         ui,
         egui_phosphor::regular::GEAR,
-        BUTTON_SIZE,
+        egui::vec2(BUTTON_SIZE, TITLEBAR_HEIGHT),
         theme::CONTROL_HOT,
     )
     .on_hover_text("설정");
@@ -280,29 +280,12 @@ fn resize_cursor(direction: egui::ResizeDirection) -> egui::CursorIcon {
 
 /// 캡션 버튼 하나 — 최소화·최대화·닫기가 같은 폭·같은 그리기 규칙을 쓴다
 fn caption_button(ui: &mut egui::Ui, icon: &str, hover_fill: egui::Color32) -> egui::Response {
-    icon_button(ui, icon, CAPTION_WIDTH, hover_fill)
-}
-
-/// 타이틀바 버튼 공통 그리기 — 평소에는 배경 없이 아이콘만, 마우스가 올라오면 배경을 칠한다
-fn icon_button(
-    ui: &mut egui::Ui,
-    icon: &str,
-    width: f32,
-    hover_fill: egui::Color32,
-) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, TITLEBAR_HEIGHT), egui::Sense::click());
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, hover_fill);
-    }
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
+    icon_button(
+        ui,
         icon,
-        egui::FontId::proportional(ICON_FONT_PX),
-        theme::TEXT,
-    );
-    response
+        egui::vec2(CAPTION_WIDTH, TITLEBAR_HEIGHT),
+        hover_fill,
+    )
 }
 
 #[cfg(test)]
