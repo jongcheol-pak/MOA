@@ -27,6 +27,12 @@ pub const CONTROL_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x45, 0x45, 0x
 pub const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(0x6A, 0x6A, 0x6A);
 /// 타이틀바 닫기 버튼 hover 배경 — Windows 11 캡션 닫기 버튼과 같은 빨강 (FR-22)
 pub const CLOSE_HOT: egui::Color32 = egui::Color32::from_rgb(0xC4, 0x2B, 0x1C);
+/// 분할 패널 경계선 — 패널마다 두르는 기본 테두리 (FR-1·FR-2)
+pub const PANE_BORDER: egui::Color32 = egui::Color32::from_rgb(0x33, 0x33, 0x33);
+/// 활성 패널 경계선 — 지금 입력을 받는 패널만 한 단계 밝게 두른다.
+/// 버튼 상태색(`CONTROL_ACTIVE`)을 빌려 쓰지 않는 이유: 경계선과 버튼은 쓰임이 달라
+/// 한쪽을 조정하면 다른 쪽이 함께 바뀐다
+pub const PANE_BORDER_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x5A, 0x5A, 0x5A);
 /// 탭의 폴더 아이콘 노랑 — 무채색이 아닌 두 상수 중 하나다(다른 하나는 위 `CLOSE_HOT`).
 /// 탐색기 탭은 폴더를 가리키므로 색으로 종류가 드러나는 편이 낫고, 무채색 단계로는 표현할 수 없다
 pub const FOLDER_ICON: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xB3, 0x4D);

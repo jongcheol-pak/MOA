@@ -16,8 +16,8 @@ use std::collections::HashMap;
 /// 4px 틈만으로는 잡기 어려워 실제 조작 영역만 넓힌다(그리기는 원래 두께 그대로)
 const SPLITTER_GRAB_PAD: f32 = 2.0;
 
-/// 활성 패널 테두리 두께
-const ACTIVE_BORDER: f32 = 1.0;
+/// 패널 테두리 두께 — 일반 경계와 활성 강조가 같은 두께를 쓴다
+const PANE_BORDER_WIDTH: f32 = 1.0;
 
 pub fn to_egui_rect(r: LayoutRect) -> egui::Rect {
     egui::Rect::from_min_size(
@@ -103,16 +103,31 @@ pub fn show_layout(
         }
     }
 
-    // 활성 패널 테두리 — 여러 패널이 있을 때만 의미가 있다
-    if computed.panes.len() > 1
-        && let Some((_, rect)) = computed.panes.iter().find(|(id, _)| id == active)
-    {
-        ui.painter().rect_stroke(
-            to_egui_rect(*rect),
-            0.0,
-            egui::Stroke::new(ACTIVE_BORDER, theme::CONTROL_ACTIVE),
-            egui::StrokeKind::Inside,
-        );
+    // 패널 경계 — 여러 패널이 있을 때만 의미가 있다(하나뿐이면 창 가장자리와 겹친다).
+    //
+    // 패널 내용을 **모두 그린 뒤** 여기서 두른다 — egui는 나중에 그린 도형이 위에 오므로
+    // 먼저 그으면 목록·트리에 덮여 보이지 않는다.
+    // 스플리터 틈(4px)이 배경색이라 패널끼리 경계가 눈에 띄지 않던 것을 이 테두리가 대신한다
+    if computed.panes.len() > 1 {
+        for (id, rect) in &computed.panes {
+            let pane = to_egui_rect(*rect);
+            // 그리기 루프의 0크기 가드는 이 패스에 이어지지 않는다 — 여기서 다시 거른다
+            if pane.width() <= 0.0 || pane.height() <= 0.0 {
+                continue;
+            }
+            // 활성 패널만 한 단계 밝게 — 어디에 입력이 가는지 눈으로 알 수 있어야 한다
+            let color = if id == active {
+                theme::PANE_BORDER_ACTIVE
+            } else {
+                theme::PANE_BORDER
+            };
+            ui.painter().rect_stroke(
+                pane,
+                0.0,
+                egui::Stroke::new(PANE_BORDER_WIDTH, color),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
 
     // id는 목록 인덱스로 만든다 — `NodePath`는 Hash를 구현하지 않기 때문이다.
