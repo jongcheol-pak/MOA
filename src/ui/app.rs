@@ -440,9 +440,6 @@ impl ExplorerApp {
             SidebarAction::Reorder(from, to) => {
                 self.workspaces.reorder(from, to);
             }
-            SidebarAction::ToggleCollapse => {
-                self.sidebar_collapsed = !self.sidebar_collapsed;
-            }
         }
     }
 

@@ -12,12 +12,6 @@ use crate::ui::icon_tex::IconTextures;
 use eframe::egui;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
-/// 사이드바 상단 접기 토글 영역
-const TOGGLE_STRIP_HEIGHT: f32 = 28.0;
-const TOGGLE_SIZE: f32 = 24.0;
-const TOGGLE_MARGIN: f32 = 8.0;
-/// 접기 토글 아이콘 — 좌측 패널 표시를 뜻하는 반쪽 사각형 기호
-const TOGGLE_GLYPH: &str = "◧";
 const HEADER_HEIGHT: f32 = 36.0;
 const HEADER_LABEL: &str = "워크스페이스";
 const HEADER_FONT_PX: f32 = 14.0;
@@ -67,7 +61,6 @@ pub enum SidebarAction {
     Remove(usize),
     /// `from` 항목을 목록의 `to` 자리로 옮긴다 (`WorkspaceList::reorder`와 같은 계약)
     Reorder(usize, usize),
-    ToggleCollapse,
 }
 
 /// 드래그 정렬 진행 상태
@@ -126,43 +119,12 @@ impl WorkspaceSidebar {
             self.begin_edit(list.active_index(), list);
         }
         let mut actions = Vec::new();
-        self.show_toggle_strip(ui, &mut actions);
         self.show_header(ui, &mut actions);
         self.show_items(ui, list, icons, textures, &mut actions);
         if actions.contains(&SidebarAction::Add) {
             self.edit_added = true;
         }
         actions
-    }
-
-    /// 접기 토글만 있는 상단 스트립
-    fn show_toggle_strip(&mut self, ui: &mut egui::Ui, actions: &mut Vec<SidebarAction>) {
-        let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), TOGGLE_STRIP_HEIGHT),
-            egui::Sense::hover(),
-        );
-        let button = egui::Rect::from_min_size(
-            egui::pos2(
-                rect.left() + TOGGLE_MARGIN,
-                rect.top() + (TOGGLE_STRIP_HEIGHT - TOGGLE_SIZE) / 2.0,
-            ),
-            egui::Vec2::splat(TOGGLE_SIZE),
-        );
-        let resp = ui.interact(button, ui.id().with("collapse"), egui::Sense::click());
-        ui.painter().text(
-            button.center(),
-            egui::Align2::CENTER_CENTER,
-            TOGGLE_GLYPH,
-            egui::FontId::proportional(HEADER_FONT_PX),
-            if resp.hovered() {
-                COLOR_HEADER_HOT
-            } else {
-                COLOR_HEADER
-            },
-        );
-        if resp.clicked() {
-            actions.push(SidebarAction::ToggleCollapse);
-        }
     }
 
     /// "워크스페이스" 제목과 추가(+) 버튼
