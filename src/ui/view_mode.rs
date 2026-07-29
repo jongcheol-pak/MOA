@@ -151,6 +151,16 @@ pub struct GridMetrics {
 /// `Rows`는 한 줄에 하나씩 폭 전체를 쓴다
 pub fn grid_metrics(mode: ViewMode, viewport: egui::Vec2, item_count: usize) -> GridMetrics {
     let cell = mode.cell_size();
+    if item_count == 0 {
+        // 빈 폴더는 두 축 모두 0이어야 한다 — 한쪽만 0으로 두면 그릴 것이 없는데도
+        // 콘텐츠 크기가 남아 스크롤 막대가 허공을 가리킨다
+        return GridMetrics {
+            mode,
+            columns: 0,
+            rows: 0,
+            cell,
+        };
+    }
     let (columns, rows) = match mode.flow() {
         Flow::Rows => (1, item_count),
         Flow::Horizontal => {
@@ -334,11 +344,20 @@ mod tests {
     }
 
     #[test]
-    fn 항목이_없으면_줄도_없다() {
-        let metrics = grid_metrics(ViewMode::MediumIcons, egui::vec2(800.0, 600.0), 0);
-        assert_eq!(metrics.rows, 0);
-        assert_eq!(metrics.content_size().y, 0.0);
-        assert_eq!(metrics.visible_range(0.0, 600.0, 0), 0..0);
+    fn 항목이_없으면_어느_흐름이든_빈_격자다() {
+        // 세로 흐름(목록)은 줄 수를 뷰포트 높이로 정하므로, 0개 처리를 따로 하지 않으면
+        // 그릴 것이 없는데도 콘텐츠 높이가 남아 스크롤 막대가 허공을 가리킨다
+        for mode in [ViewMode::MediumIcons, ViewMode::List, ViewMode::Details] {
+            let metrics = grid_metrics(mode, egui::vec2(800.0, 600.0), 0);
+            assert_eq!(metrics.rows, 0, "{mode:?}: 줄이 남았다");
+            assert_eq!(metrics.columns, 0, "{mode:?}: 열이 남았다");
+            assert_eq!(
+                metrics.content_size(),
+                egui::vec2(0.0, 0.0),
+                "{mode:?}: 콘텐츠 크기가 0이 아니다"
+            );
+            assert_eq!(metrics.visible_range(0.0, 600.0, 0), 0..0, "{mode:?}");
+        }
     }
 
     #[test]
