@@ -6,13 +6,13 @@
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::{IconCache, IconSize};
 use crate::panel::file_list::{format_filetime, format_size_kb};
-use crate::ui::icon_tex::IconTextures;
+use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_common::{FileListAction, elided_galley_rows};
 use crate::ui::theme;
 use crate::ui::view_mode::{GRID_NAME_ROWS, ViewMode, grid_metrics};
 use eframe::egui;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 아이콘과 이름 사이 간격 (세로 배치)
 const ICON_TEXT_GAP: f32 = 4.0;
@@ -41,6 +41,11 @@ pub struct GridInput<'a> {
     /// 종류 열 문자열 (entries와 같은 인덱스) — 타일 보기가 함께 보인다
     pub type_names: &'a [String],
     pub mode: ViewMode,
+    /// 준비된 썸네일 텍스처 (FR-24). 없으면 형식 아이콘으로 그린다 (plan D7)
+    pub thumbnails: &'a ThumbnailTextures,
+    /// 이번 프레임에 화면에 보인 파일들 — 호출부가 썸네일을 요청할 대상이다.
+    /// 보이는 것만 요청해야 큰 폴더에서 요청이 폭주하지 않는다
+    pub visible: &'a mut Vec<PathBuf>,
 }
 
 /// 이번 프레임에 일어난 조작 — 목록 상태 변경은 호출부가 한다
@@ -70,7 +75,10 @@ pub fn show(
         selection,
         type_names,
         mode,
+        thumbnails,
+        visible,
     } = input;
+    let wants_thumbnails = mode.uses_thumbnails();
     let count = entries.len();
     // 모드가 요구하는 크기보다 작지 않은 이미지 리스트를 고른다 — 늘린 아이콘은 뭉개진다 (T9)
     let himl = icons.himl_for(IconSize::for_px(mode.icon_px()));
@@ -122,8 +130,26 @@ pub fn show(
             }
 
             let entry = &entries[index];
-            let icon_index = resolve_icon(dir, entry, index, icon_indices, icons);
-            let texture = textures.get(&ctx, himl, icon_index).map(|tex| tex.id());
+            // 썸네일은 파일만 — 폴더는 폴더 아이콘이 맞다
+            let thumb = if wants_thumbnails && !entry.is_dir {
+                let path = dir.join(entry.name_string());
+                let ready = thumbnails.get(&path).map(|tex| tex.id());
+                if ready.is_none() {
+                    // 아직 없으면 요청 대상으로 올린다 — 준비되면 다음 프레임에 바뀐다
+                    visible.push(path);
+                }
+                ready
+            } else {
+                None
+            };
+            // 준비된 썸네일이 있으면 그것을, 아니면 형식 아이콘을 그린다 (plan D7)
+            let texture = match thumb {
+                Some(id) => Some(id),
+                None => {
+                    let icon_index = resolve_icon(dir, entry, index, icon_indices, icons);
+                    textures.get(&ctx, himl, icon_index).map(|tex| tex.id())
+                }
+            };
             draw_cell(
                 ui,
                 cell,

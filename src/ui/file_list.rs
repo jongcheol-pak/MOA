@@ -6,7 +6,7 @@
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{SortKey, compare_entries};
-use crate::ui::icon_tex::IconTextures;
+use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_details::{self, Columns, DetailsInput};
 use crate::ui::list_grid::{self, GridInput};
 use crate::ui::view_mode::ViewMode;
@@ -219,6 +219,8 @@ impl FileListView {
         ui: &mut egui::Ui,
         icons: &mut IconCache,
         textures: &mut IconTextures,
+        thumbnails: &ThumbnailTextures,
+        visible: &mut Vec<PathBuf>,
     ) -> FileListAction {
         // 자세히 보기만 열·머리글을 갖는다 — 나머지는 격자 렌더가 맡는다 (FR-23)
         let (action, sort_click, select_request, clear_selection) = if self.view_mode.is_details() {
@@ -253,6 +255,8 @@ impl FileListView {
                     selection: &self.selection,
                     type_names: &self.type_names,
                     mode: self.view_mode,
+                    thumbnails,
+                    visible,
                 },
                 icons,
                 textures,

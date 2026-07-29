@@ -8,11 +8,12 @@
 use crate::fs::create;
 use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
+use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
 use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
-use crate::ui::icon_tex::IconTextures;
+use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
@@ -193,6 +194,10 @@ pub struct PanelState {
     watch: Option<DirWatch>,
     /// 진행 중인 새 폴더·새 파일 생성 (FR-25)
     create: CreateOp,
+    /// 썸네일 픽셀 캐시 (FR-24) — 상한이 패널당이라 패널이 소유한다 (NFR-9)
+    thumbs: ThumbnailCache,
+    /// 올라간 썸네일 텍스처 — 픽셀 캐시와 함께 비워진다
+    thumb_textures: ThumbnailTextures,
 }
 
 /// 감시자와 그 통지 채널 — 둘의 수명이 같아야 해서 함께 둔다
@@ -217,6 +222,8 @@ impl PanelState {
             tree_visible: false,
             watch: None,
             create: CreateOp::new(),
+            thumbs: ThumbnailCache::new(),
+            thumb_textures: ThumbnailTextures::new(),
         }
     }
 
@@ -272,6 +279,7 @@ impl PanelState {
         self.poll_load(icons);
         self.poll_watch(ctx);
         self.poll_create(ctx);
+        self.poll_thumbnails(ctx);
         if self.load.is_loading() {
             ctx.request_repaint();
         }
@@ -344,6 +352,12 @@ impl PanelState {
                         tab.history.forward();
                     }
                 }
+                // 폴더가 바뀌면 이전 폴더의 썸네일을 즉시 놓는다 (NFR-9).
+                // 같은 폴더를 다시 읽은 경우(감시 갱신)에는 그대로 두어 다시 만들지 않는다
+                if self.list_dir_changed(&dir) {
+                    self.thumbs.clear();
+                    self.thumb_textures.clear();
+                }
                 // 감시 대상도 이 시점에 맞춘다 — 커밋된 폴더만 감시한다(열거 실패한 곳은 아니다)
                 self.watch(&dir);
                 self.list.set_entries(dir, entries, icons);
@@ -363,6 +377,22 @@ impl PanelState {
             }
         }
         self.pending_nav = PendingNav::None;
+    }
+
+    /// 표시 중인 폴더가 바뀌는가 — 썸네일을 놓을지 판단한다
+    fn list_dir_changed(&self, next: &Path) -> bool {
+        self.tabs.active().committed != next
+    }
+
+    /// 도착한 썸네일을 텍스처로 올린다 (FR-24).
+    /// 픽셀은 워커가 만들고 여기서는 GPU로 올리기만 한다 — 프레임당 상한은 텍스처 쪽이 건다
+    fn poll_thumbnails(&mut self, ctx: &egui::Context) {
+        self.thumb_textures.begin_frame();
+        for path in self.thumbs.poll() {
+            if let Some(image) = self.thumbs.get(&path) {
+                self.thumb_textures.upload(ctx, &path, image);
+            }
+        }
     }
 
     /// 실패 문구에 쓸 대상 폴더 이름 — 전체 경로는 길어 끝 이름만 보여준다
@@ -649,7 +679,16 @@ impl PanelState {
             },
         );
         ui.separator();
-        self.list.show(ui, icons, textures)
+        // 이번 프레임에 화면에 보인 파일들을 받아 썸네일을 요청한다 —
+        // 보이는 것만 요청해야 큰 폴더에서 요청이 폭주하지 않는다
+        let mut visible = Vec::new();
+        let action = self
+            .list
+            .show(ui, icons, textures, &self.thumb_textures, &mut visible);
+        for path in visible {
+            self.thumbs.request(&path);
+        }
+        action
     }
 }
 
@@ -705,6 +744,18 @@ mod tests {
             });
         });
         id_clash_warnings(&output)
+    }
+
+    #[test]
+    fn 폴더가_바뀔_때만_썸네일을_놓는다() {
+        // 감시 갱신(FR-10)은 같은 폴더를 다시 읽는다 — 그때마다 썸네일을 버리면
+        // 다른 앱이 파일 하나만 만들어도 폴더 전체를 다시 만들게 된다 (NFR-9)
+        let panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        assert!(
+            !panel.list_dir_changed(std::path::Path::new(r"C:\Users")),
+            "같은 폴더인데 바뀐 것으로 봤다"
+        );
+        assert!(panel.list_dir_changed(std::path::Path::new(r"C:\Windows")));
     }
 
     #[test]

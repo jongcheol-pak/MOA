@@ -3,8 +3,10 @@
 //! `IconCache`는 **시스템 이미지 리스트의 인덱스**만 들고 있다(ListView 전용 설계).
 //! egui는 이미지 리스트를 그릴 수 없으므로 인덱스를 HICON으로 꺼내 RGBA 픽셀로 바꾼 뒤
 //! 텍스처로 올린다. 변환·해제에 필요한 unsafe는 전부 이 파일에 격리한다.
+use crate::fs::thumbnail::ThumbnailImage;
 use eframe::egui;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
     DeleteObject, GetDIBits, GetObjectW, HBITMAP, HDC,
@@ -23,6 +25,10 @@ pub struct IconTextures {
     /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(PoC 실측 3096ms)
     created_this_frame: usize,
 }
+
+/// 한 프레임에 새로 올릴 썸네일 텍스처 수 상한.
+/// 256×256짜리라 아이콘보다 무겁다 — 한꺼번에 올리면 스크롤이 끊긴다
+const MAX_NEW_THUMBS_PER_FRAME: usize = 4;
 
 /// 한 프레임에 새로 만들 텍스처 수 상한.
 /// 실측에서 텍스처 다수가 한 프레임에 생성되며 3초급 스파이크가 났다 —
@@ -73,6 +79,70 @@ impl IconTextures {
             self.by_key.insert(key, handle);
         }
         self.by_key.get(&key).and_then(|h| h.as_ref())
+    }
+}
+
+/// 경로별 썸네일 텍스처 (FR-24).
+///
+/// 픽셀은 `fs::thumbnail`이 만들고 여기서는 **텍스처로 올리기만** 한다.
+/// 캐시 상한(NFR-9)은 픽셀 쪽에서 걸리므로 여기서는 그 캐시가 비워질 때 함께 비운다
+pub struct ThumbnailTextures {
+    by_path: HashMap<PathBuf, egui::TextureHandle>,
+    created_this_frame: usize,
+}
+
+impl Default for ThumbnailTextures {
+    fn default() -> ThumbnailTextures {
+        ThumbnailTextures::new()
+    }
+}
+
+impl ThumbnailTextures {
+    pub fn new() -> ThumbnailTextures {
+        ThumbnailTextures {
+            by_path: HashMap::new(),
+            created_this_frame: 0,
+        }
+    }
+
+    /// 프레임 시작 시 호출 — 프레임당 생성 상한을 초기화한다
+    pub fn begin_frame(&mut self) {
+        self.created_this_frame = 0;
+    }
+
+    /// 준비된 썸네일을 텍스처로 올린다. 상한을 넘으면 이번 프레임에는 건너뛴다 —
+    /// 캐시에 남아 있으므로 다음 프레임에 다시 시도된다
+    pub fn upload(&mut self, ctx: &egui::Context, path: &Path, image: &ThumbnailImage) {
+        if self.by_path.contains_key(path) || self.created_this_frame >= MAX_NEW_THUMBS_PER_FRAME {
+            return;
+        }
+        let color =
+            egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.rgba);
+        let handle = ctx.load_texture(
+            format!("thumb{}", path.to_string_lossy()),
+            color,
+            egui::TextureOptions::LINEAR,
+        );
+        self.created_this_frame += 1;
+        self.by_path.insert(path.to_path_buf(), handle);
+    }
+
+    pub fn get(&self, path: &Path) -> Option<&egui::TextureHandle> {
+        self.by_path.get(path)
+    }
+
+    /// 폴더를 떠날 때 — 픽셀 캐시와 함께 비운다 (NFR-9)
+    pub fn clear(&mut self) {
+        self.by_path.clear();
+    }
+
+    /// 올라간 텍스처 수 — 상한 검증용
+    pub fn len(&self) -> usize {
+        self.by_path.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_path.is_empty()
     }
 }
 

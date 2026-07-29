@@ -131,6 +131,14 @@ impl ViewMode {
     pub fn is_details(self) -> bool {
         self == ViewMode::Details
     }
+
+    /// 실제 썸네일을 보이는 모드인가 (FR-24).
+    ///
+    /// 자세히·목록은 16px 형식 아이콘을 유지한다 — 그 크기에서는 미리보기가 알아볼 수 없고,
+    /// 파일마다 디스크를 읽는 비용만 남는다
+    pub fn uses_thumbnails(self) -> bool {
+        !matches!(self, ViewMode::Details | ViewMode::List)
+    }
 }
 
 /// 격자 배치 결과 — 몇 열 몇 줄인지와 콘텐츠 전체 크기
@@ -347,6 +355,23 @@ mod tests {
                 "{mode:?}({}px)",
                 mode.icon_px()
             );
+        }
+    }
+
+    #[test]
+    fn 썸네일은_자세히와_목록을_뺀_모드에서만_쓴다() {
+        // 16px 자리에 미리보기를 넣어도 알아볼 수 없고 디스크만 읽는다 (FR-24)
+        assert!(!ViewMode::Details.uses_thumbnails());
+        assert!(!ViewMode::List.uses_thumbnails());
+        for mode in [
+            ViewMode::ExtraLargeIcons,
+            ViewMode::LargeIcons,
+            ViewMode::MediumIcons,
+            ViewMode::SmallIcons,
+            ViewMode::Tiles,
+            ViewMode::Content,
+        ] {
+            assert!(mode.uses_thumbnails(), "{mode:?}");
         }
     }
 
