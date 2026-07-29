@@ -7,6 +7,7 @@
 //! 이 모듈은 상태를 바꾸지 않는다 — 무엇을 하라는 **명령만 값으로 돌려주고**,
 //! 실행은 `ui::app`이 한다(패널·워크스페이스 소유자가 거기이기 때문).
 use crate::app::layout::{SplitDir, SplitPlace};
+use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 
 /// 분할 방향 — 새 패널이 놓일 자리를 사용자 관점으로 나타낸다.
@@ -50,6 +51,8 @@ pub enum Command {
     NewFile,
     /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25)
     NewFolder,
+    /// 파일 목록 보기 모드를 바꾼다 (FR-23)
+    SetViewMode(ViewMode),
     ToggleTree,
     ToggleSidebar,
 }
@@ -59,6 +62,8 @@ pub enum Command {
 pub struct PanelMenuState {
     /// 패널이 2개 이상인가 — 마지막 하나는 닫을 수 없다 (FR-2)
     pub can_close_panel: bool,
+    /// 지금 이 패널이 쓰는 보기 모드 — 하위 메뉴에서 점으로 표시한다 (FR-23)
+    pub view_mode: ViewMode,
 }
 
 impl PanelMenuState {
@@ -67,9 +72,10 @@ impl PanelMenuState {
     /// 패널은 서로를 모르므로 이 판정은 트리를 아는 쪽(`ui::splitter`)이 내려준다 (plan D15).
     /// 그 계산을 여기 두는 이유는 "마지막 하나는 닫을 수 없다"는 규칙(FR-2)이 갈리지 않게
     /// 한 곳에 모으기 위해서다
-    pub fn for_panes(pane_count: usize) -> PanelMenuState {
+    pub fn for_panes(pane_count: usize, view_mode: ViewMode) -> PanelMenuState {
         PanelMenuState {
             can_close_panel: pane_count > 1,
+            view_mode,
         }
     }
 }
@@ -79,9 +85,9 @@ impl PanelMenuState {
 /// 항목 순서·구분선 위치는 plan `## 시각 요소 분해`의 인벤토리 표 13행 그대로다.
 /// 진입점이 이 메뉴 하나뿐이므로, 여기서 빠진 기능은 마우스로 닿을 수 없게 된다
 pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Option<Command>) {
-    // '보기'는 T8에서 하위 메뉴(보기 모드 8종)로 채운다. 그전까지는 자리만 잡아 두고
-    // 비활성으로 둔다 — 눌러도 아무 일이 없는 항목을 활성으로 보이게 하지 않는다
-    ui.add_enabled(false, egui::Button::new("보기"));
+    // 마우스를 올리기만 해도 펼쳐진다 — 메뉴 안에서 부른 `menu_button`은 egui가
+    // `SubMenuButton`으로 바꾸고, 그것이 hover로 열린다 (사용자 요청 8번)
+    ui.menu_button("보기", |ui| view_items(ui, state.view_mode, out));
     ui.separator();
     split_items(ui, out);
     ui.separator();
@@ -98,6 +104,22 @@ pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Opti
         Command::ClosePanel,
         out,
     );
+}
+
+/// 보기 모드 8종 (FR-23) — 지금 쓰는 모드 왼쪽에 점을 찍는다.
+///
+/// 문구·순서는 plan `### 참조 정합 인벤토리 — '보기' 하위 메뉴` 8행 그대로다.
+/// 모드를 나타내는 아이콘은 넣지 않는다 — phosphor에 대응 글리프가 없어 두부가 될 위험이
+/// 있고(사이드바 `◧` 사례), 점만으로도 지금 모드가 드러난다
+fn view_items(ui: &mut egui::Ui, current: ViewMode, out: &mut Option<Command>) {
+    for mode in ViewMode::ALL {
+        let mark = if mode == current { "•" } else { " " };
+        let button = egui::Button::new(format!("{mark} {}", mode.label()));
+        if ui.add(button).clicked() {
+            *out = Some(Command::SetViewMode(mode));
+            ui.close();
+        }
+    }
 }
 
 /// 네 방향 분할 항목 (FR-1) — 패널 메뉴 안에 놓인다
@@ -335,7 +357,7 @@ mod tests {
         // plan `## 시각 요소 분해`의 인벤토리 표 13행 중 글자가 있는 항목들.
         // 메뉴 바를 없앤 뒤 이 메뉴가 유일한 마우스 진입점이라, 항목이 빠지면 그 기능에
         // 마우스로 닿을 수 없게 된다
-        let labels = menu_labels(PanelMenuState::for_panes(2));
+        let labels = menu_labels(PanelMenuState::for_panes(2, ViewMode::Details));
         let expected = [
             "보기",
             "오른쪽 분할",
@@ -361,11 +383,12 @@ mod tests {
     #[test]
     fn 마지막_패널_하나는_닫을_수_없다() {
         // FR-2 — 이 조건이 뒤집히면 마지막 패널을 닫아 빈 화면이 된다
-        assert!(!PanelMenuState::for_panes(1).can_close_panel);
-        assert!(PanelMenuState::for_panes(2).can_close_panel);
-        assert!(PanelMenuState::for_panes(4).can_close_panel);
+        let mode = ViewMode::Details;
+        assert!(!PanelMenuState::for_panes(1, mode).can_close_panel);
+        assert!(PanelMenuState::for_panes(2, mode).can_close_panel);
+        assert!(PanelMenuState::for_panes(4, mode).can_close_panel);
         // 패널이 0개인 상태는 정상 흐름에 없지만, 그때도 닫기를 열어주면 안 된다
-        assert!(!PanelMenuState::for_panes(0).can_close_panel);
+        assert!(!PanelMenuState::for_panes(0, mode).can_close_panel);
     }
 
     #[test]

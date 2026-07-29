@@ -64,8 +64,9 @@ pub fn show_layout(
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
     let computed = tree.compute_rects(to_layout_rect(area));
-    // 패널은 서로를 모르므로(모듈 주석) 닫기 가능 여부는 트리를 아는 이곳에서 정해 내려준다 (plan D15)
-    let menu_state = PanelMenuState::for_panes(computed.panes.len());
+    // 패널은 서로를 모르므로(모듈 주석) 닫기 가능 여부는 트리를 아는 이곳에서 정해 내려준다 (plan D15).
+    // 보기 모드는 패널마다 다르므로 아래 루프에서 각자의 것을 싣는다
+    let pane_count = computed.panes.len();
 
     // 클릭이 일어난 패널을 활성으로 삼는다.
     // 패널 rect에 `interact`를 걸면 그 위젯이 목록·버튼 클릭을 가로채므로
@@ -91,6 +92,7 @@ pub fn show_layout(
         let builder = egui::UiBuilder::new()
             .max_rect(pane)
             .id_salt(("pane", id.0));
+        let menu_state = PanelMenuState::for_panes(pane_count, panel.view_mode());
         let requested = ui
             .scope_builder(builder, |ui| {
                 ui.set_clip_rect(pane);

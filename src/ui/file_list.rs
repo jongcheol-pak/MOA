@@ -9,6 +9,7 @@ use crate::panel::file_list::{SortKey, compare_entries};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_details::{self, Columns, DetailsInput};
 use crate::ui::theme;
+use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -47,6 +48,8 @@ pub struct FileListView {
     /// 폴더 개수 — 항목이 바뀔 때(`resort`) 한 번만 센다.
     /// 프레임마다 다시 세면 10만 항목 폴더에서 그 비용이 매 프레임 붙는다 (NFR-3)
     dir_count: usize,
+    /// 보기 모드 — 패널마다 독립이며 세션에 저장된다 (FR-23)
+    view_mode: ViewMode,
 }
 
 impl Default for FileListView {
@@ -68,7 +71,18 @@ impl FileListView {
             anchor: None,
             columns: Columns::new(),
             dir_count: 0,
+            view_mode: ViewMode::default(),
         }
+    }
+
+    /// 지금 쓰는 보기 모드 — 메뉴의 현재 표시와 세션 저장에 쓴다
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
+    }
+
+    /// 보기 모드를 바꾼다 (FR-23)
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        self.view_mode = mode;
     }
 
     /// 저장된 열 폭을 되살린다 (FR-11)

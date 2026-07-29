@@ -620,7 +620,8 @@ impl ExplorerApp {
             | Command::Refresh
             | Command::ToggleTree
             | Command::NewFile
-            | Command::NewFolder => {
+            | Command::NewFolder
+            | Command::SetViewMode(_) => {
                 let Some(panel) = self.command_panel_mut(target) else {
                     return;
                 };
@@ -634,6 +635,7 @@ impl ExplorerApp {
                     Command::ToggleTree => panel.toggle_tree(),
                     Command::NewFile => panel.new_file(ctx),
                     Command::NewFolder => panel.new_folder(ctx),
+                    Command::SetViewMode(mode) => panel.set_view_mode(mode),
                     // 위 분기에서 걸러진 명령들 — 여기 오지 않는다
                     _ => {}
                 }

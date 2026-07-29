@@ -18,6 +18,7 @@ use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
 use crate::ui::tree::{FolderTreeView, TREE_WIDTH};
+use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -397,6 +398,16 @@ impl PanelState {
         self.tree_visible = !self.tree_visible;
     }
 
+    /// 지금 쓰는 보기 모드 — 메뉴가 현재 표시를 그리는 데 쓴다 (FR-23)
+    pub fn view_mode(&self) -> ViewMode {
+        self.list.view_mode()
+    }
+
+    /// 보기 모드를 바꾼다 (FR-23)
+    pub fn set_view_mode(&mut self, mode: ViewMode) {
+        self.list.set_view_mode(mode);
+    }
+
     /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25)
     pub fn new_folder(&mut self, ctx: &egui::Context) {
         let dir = self.dir().to_path_buf();
@@ -681,9 +692,7 @@ mod tests {
                     &ctx,
                     &mut icons,
                     &mut textures,
-                    PanelMenuState {
-                        can_close_panel: false,
-                    },
+                    PanelMenuState::for_panes(1, ViewMode::Details),
                 );
             });
         });

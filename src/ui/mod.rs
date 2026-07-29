@@ -17,4 +17,5 @@ pub mod tabs;
 pub mod theme;
 pub mod titlebar;
 pub mod tree;
+pub mod view_mode;
 pub mod widgets;
