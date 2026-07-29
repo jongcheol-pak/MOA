@@ -624,7 +624,6 @@ impl ExplorerApp {
             | Command::Forward
             | Command::Up
             | Command::Refresh
-            | Command::ToggleTree
             | Command::NewFile
             | Command::NewFolder
             | Command::SetViewMode(_) => {
@@ -638,7 +637,6 @@ impl ExplorerApp {
                     Command::Forward => panel.go_forward(ctx),
                     Command::Up => panel.go_up(ctx),
                     Command::Refresh => panel.refresh(ctx),
-                    Command::ToggleTree => panel.toggle_tree(),
                     Command::NewFile => panel.new_file(ctx),
                     Command::NewFolder => panel.new_folder(ctx),
                     Command::SetViewMode(mode) => panel.set_view_mode(mode),

@@ -84,7 +84,11 @@ pub fn show(
     // 모드가 요구하는 크기보다 작지 않은 이미지 리스트를 고른다 — 늘린 아이콘은 뭉개진다 (T9)
     let himl = icons.himl_for(IconSize::for_px(mode.icon_px()));
 
-    let scroll = egui::ScrollArea::both().auto_shrink([false, false]);
+    // 모드마다 스크롤 상태를 따로 둔다 — 셀 높이가 20px↔320px로 달라지는데 오프셋을
+    // 공유하면 모드를 바꿨을 때 엉뚱한 위치가 보인다 (T8 Edge Case)
+    let scroll = egui::ScrollArea::both()
+        .id_salt(mode.as_key())
+        .auto_shrink([false, false]);
     let output = scroll.show_viewport(ui, |ui, viewport| {
         let metrics = grid_metrics(mode, viewport.size(), count);
         let content = metrics.content_size();
@@ -101,6 +105,12 @@ pub fn show(
         let sel_bg = ui.visuals().selection.bg_fill;
         for index in metrics.visible_range(viewport.top(), viewport.bottom(), count) {
             let cell = metrics.item_rect(index).translate(origin);
+            // **보이지 않는 칸은 위젯 등록도 하지 않는다** — 세로 흐름(목록)은 가로로 늘어나
+            // `visible_range`가 전 범위를 돌려주므로, 여기서 거르지 않으면 10만 항목 폴더에서
+            // 프레임마다 10만 번 `interact`가 돈다 (NFR-3). 보이지 않는 것은 클릭될 일도 없다
+            if !ui.is_rect_visible(cell) {
+                continue;
+            }
             let resp = ui.interact(cell, ui.id().with(("cell", index)), egui::Sense::click());
             if resp.clicked() {
                 outcome.select_request = Some((index, ui.input(|i| i.modifiers)));
@@ -120,10 +130,6 @@ pub fn show(
                     pos,
                 };
             }
-            if !ui.is_rect_visible(cell) {
-                continue;
-            }
-
             if selection.contains(&index) {
                 ui.painter().rect_filled(cell, 2.0, sel_bg);
             } else if resp.hovered() {

@@ -336,10 +336,21 @@ impl PanelState {
         let Some(outcome) = self.load.poll() else {
             return;
         };
+        self.apply_enumerated(outcome, icons);
+    }
+
+    /// 열거 결과 하나를 상태에 반영한다.
+    ///
+    /// `poll_load`에서 갈라낸 이유는 **테스트가 이 경로를 실제로 지나게** 하기 위해서다 —
+    /// 판정 헬퍼만 직접 부르는 테스트는 호출부가 죽어도 통과한다(F-7 B1이 그렇게 새어나갔다)
+    fn apply_enumerated(&mut self, outcome: EnumOutcome, icons: &mut IconCache) {
         match outcome {
             EnumOutcome::Ok(entries) => {
-                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
+                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다.
+                // **이전 경로를 커밋 전에 잡아 둔다** — 커밋한 뒤에 비교하면 항상 같아져
+                // "폴더가 바뀌었다"가 영영 성립하지 않는다
                 let dir = std::mem::take(&mut self.pending_dir);
+                let left_folder = self.tabs.active().committed != dir;
                 let tab = self.tabs.active_mut();
                 tab.committed = dir.clone();
                 match self.pending_nav {
@@ -353,8 +364,10 @@ impl PanelState {
                     }
                 }
                 // 폴더가 바뀌면 이전 폴더의 썸네일을 즉시 놓는다 (NFR-9).
-                // 같은 폴더를 다시 읽은 경우(감시 갱신)에는 그대로 두어 다시 만들지 않는다
-                if self.list_dir_changed(&dir) {
+                // 같은 폴더를 다시 읽은 경우(감시 갱신)에는 그대로 두어 다시 만들지 않는다.
+                // 이 호출은 `ThumbnailCache`의 세대를 올리는 유일한 지점이기도 하다 —
+                // 여기가 죽으면 늦게 도착한 이전 폴더의 결과를 걸러낼 방법도 함께 사라진다
+                if left_folder {
                     self.thumbs.clear();
                     self.thumb_textures.clear();
                 }
@@ -377,11 +390,6 @@ impl PanelState {
             }
         }
         self.pending_nav = PendingNav::None;
-    }
-
-    /// 표시 중인 폴더가 바뀌는가 — 썸네일을 놓을지 판단한다
-    fn list_dir_changed(&self, next: &Path) -> bool {
-        self.tabs.active().committed != next
     }
 
     /// 도착한 썸네일을 텍스처로 올린다 (FR-24).
@@ -745,16 +753,59 @@ mod tests {
         id_clash_warnings(&output)
     }
 
+    /// 열거 결과가 도착한 상황을 만들어 `poll_load`를 실제로 지나게 한다.
+    /// **헬퍼만 직접 부르면 안 된다** — 호출부가 죽어 있어도 통과하기 때문이다(F-7 B1)
+    fn commit_dir(panel: &mut PanelState, dir: &str, icons: &mut IconCache) {
+        panel.pending_dir = std::path::PathBuf::from(dir);
+        panel.pending_nav = PendingNav::None;
+        panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), icons);
+    }
+
     #[test]
-    fn 폴더가_바뀔_때만_썸네일을_놓는다() {
-        // 감시 갱신(FR-10)은 같은 폴더를 다시 읽는다 — 그때마다 썸네일을 버리면
-        // 다른 앱이 파일 하나만 만들어도 폴더 전체를 다시 만들게 된다 (NFR-9)
-        let panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
-        assert!(
-            !panel.list_dir_changed(std::path::Path::new(r"C:\Users")),
-            "같은 폴더인데 바뀐 것으로 봤다"
+    fn 폴더를_옮기면_썸네일을_놓는다() {
+        // 이 해제는 `ThumbnailCache`의 세대를 올리는 유일한 지점이기도 하다 —
+        // 죽으면 떠난 폴더의 썸네일이 계속 남고(NFR-9), 늦게 도착한 결과도 못 거른다.
+        // 커밋을 먼저 하고 비교하면 항상 같아져 이 경로가 통째로 죽는다(F-7 B1)
+        let mut icons = IconCache::new();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        commit_dir(&mut panel, r"C:\Users", &mut icons);
+
+        panel.thumbs.accept_for_test(
+            std::path::PathBuf::from(r"C:\Users\사진.jpg"),
+            Some(sample_thumb()),
         );
-        assert!(panel.list_dir_changed(std::path::Path::new(r"C:\Windows")));
+        assert_eq!(panel.thumbs.len(), 1, "사전 준비 실패");
+
+        commit_dir(&mut panel, r"C:\Windows", &mut icons);
+        assert_eq!(
+            panel.thumbs.len(),
+            0,
+            "폴더를 옮겼는데 이전 폴더의 썸네일이 남았다"
+        );
+    }
+
+    #[test]
+    fn 같은_폴더를_다시_읽으면_썸네일을_지킨다() {
+        // 감시 갱신(FR-10)은 같은 폴더를 다시 읽는다 — 그때마다 버리면
+        // 다른 앱이 파일 하나만 만들어도 폴더 전체를 다시 만들게 된다
+        let mut icons = IconCache::new();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        commit_dir(&mut panel, r"C:\Users", &mut icons);
+        panel.thumbs.accept_for_test(
+            std::path::PathBuf::from(r"C:\Users\사진.jpg"),
+            Some(sample_thumb()),
+        );
+
+        commit_dir(&mut panel, r"C:\Users", &mut icons); // 감시 갱신
+        assert_eq!(panel.thumbs.len(), 1, "같은 폴더인데 썸네일을 버렸다");
+    }
+
+    fn sample_thumb() -> crate::fs::thumbnail::ThumbnailImage {
+        crate::fs::thumbnail::ThumbnailImage {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+        }
     }
 
     #[test]

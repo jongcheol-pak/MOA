@@ -16,13 +16,17 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Shell::{
-    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT,
+    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
 };
 use windows::core::HSTRING;
 
 /// 패널 하나가 들고 있을 썸네일 수 상한 (NFR-9 — 약 50MB).
 /// 넘으면 가장 오래 안 쓴 것부터 버린다
 pub const MAX_CACHED: usize = 200;
+
+/// 캐시가 쥘 수 있는 픽셀 바이트 상한 (NFR-9 — 200장 × 256×256×4).
+/// 장수 상한과 함께 걸어, 셸이 요청보다 큰 그림을 줘도 총량이 넘지 않게 한다
+pub const MAX_CACHED_BYTES: usize = MAX_CACHED * (THUMB_PX * THUMB_PX * 4) as usize;
 
 /// 만들 썸네일의 한 변 — 아주 큰 아이콘(256px)에 맞춘다.
 /// 더 작은 보기 모드는 이 한 장을 줄여 쓴다(작게 만들어 두면 큰 모드에서 뭉개진다)
@@ -211,9 +215,14 @@ impl ThumbnailCache {
         }
     }
 
-    /// 상한을 넘으면 가장 오래 안 쓴 것부터 버린다
+    /// 상한을 넘으면 가장 오래 안 쓴 것부터 버린다.
+    ///
+    /// **장수와 바이트를 함께 본다** — 셸이 요청보다 큰 그림을 주는 경우를 대비한 이중 안전이다.
+    /// 장수만 세면 한 장이 커질 때 전체 메모리가 상한을 넘는다 (NFR-9)
     fn evict(&mut self) {
-        while self.order.len() > MAX_CACHED {
+        while self.order.len() > MAX_CACHED
+            || (self.memory_bytes() > MAX_CACHED_BYTES && self.order.len() > 1)
+        {
             let oldest = self.order.remove(0);
             self.ready.remove(&oldest);
         }
@@ -272,11 +281,11 @@ fn make_thumbnail(path: &Path) -> Option<ThumbnailImage> {
             cx: THUMB_PX,
             cy: THUMB_PX,
         };
-        // RESIZETOFIT은 비율을 지키며 맞추고, BIGGERSIZEOK은 원본이 더 크면 큰 것을 받아
-        // 축소 품질을 지킨다. ICONONLY를 주지 않으므로 썸네일이 있으면 그것이 온다
-        let bitmap = factory
-            .GetImage(size, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK)
-            .ok()?;
+        // RESIZETOFIT만 준다 — 비율을 지키며 요청 크기 **안으로** 맞춘다.
+        // `BIGGERSIZEOK`을 함께 주면 셸이 요청보다 큰 그림을 돌려줄 수 있어 한 장이
+        // 256×256×4를 넘고, 그러면 장수로만 거는 상한(NFR-9)이 바이트를 보장하지 못한다.
+        // ICONONLY를 주지 않으므로 썸네일이 있으면 그것이 온다
+        let bitmap = factory.GetImage(size, SIIGBF_RESIZETOFIT).ok()?;
         let image = bitmap_to_rgba(bitmap);
         let _ = DeleteObject(bitmap.into());
         image

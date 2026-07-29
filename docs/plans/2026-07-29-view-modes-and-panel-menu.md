@@ -64,7 +64,7 @@
 - [SUGGEST] 옛 세션 호환 테스트가 JSON 문자열 replace로 필드를 걷어내 필드가 늘 때마다 목록이 길어진다 — `serde_json::Value`에서 키를 프로그램적으로 제거하면 테스트를 안 건드려도 된다. 다만 replace 누락을 잡는 자기검증 단언이 있어 조용히 통과하지는 않는다 (T12 quality S2)
 - [SUGGEST] T11 Design은 `show_tile_cell`·`show_content_row` 두 함수를 예고했으나 실제로는 `draw_multiline_cell` 하나 + 공용 `draw_stacked`로 구현했다 — 두 모드가 "아이콘 + 여러 줄 텍스트"라는 골격을 공유해 묶는 편이 단순했다. 동작·커버리지 영향 없음 (T11 spec M1)
 - [SUGGEST] `file_list::show`의 4-튜플 분해 — `DetailsOutcome`·`GridOutcome`이 `sort_click` 하나만 다르므로 공통 필드를 묶은 타입으로 정리하면 튜플 분해가 사라진다 (T10 quality S2)
-- [SUGGEST] `list_details`가 `file_list`의 `FileListAction`·`elided_galley`를 역참조한다 — plan Design의 "역방향 의존 없음"과 어긋난다. T10에서 `list_grid`가 같은 두 심볼을 필요로 하면 **3번째 사용처**가 되므로, 그 시점에 공용 모듈(`ui/list_common.rs`)로 옮긴다 (T2 spec 리뷰 M1)
+- ~~[SUGGEST] `list_details`가 `file_list`를 역참조한다 — 3번째 사용처가 생기면 공용 모듈로 옮긴다 (T2 spec 리뷰 M1)~~ → **T10에서 이행 완료** (`ui/list_common.rs` 신설, 순환 해소 확인)
 - [SUGGEST] `elided_galley`가 Design 명세와 달리 `color` 인자를 받지 않고 `theme::TEXT`를 직접 참조한다 — 호출부가 항상 같은 색을 넘기던 터라 인자를 뺀 편이 단순하나, 나중에 색이 갈리는 셀(비활성 항목 등)이 생기면 인자로 되돌린다 (T1 spec 리뷰 M1)
 - **자세히 보기의 고정 헤더** — 지금은 헤더가 스크롤 밖이라 세로 스크롤에도 고정돼 있는데, T2에서 가로 스크롤을 위해 헤더를 본문과 같은 `ScrollArea` 안에 넣으면 세로 스크롤 시 헤더가 함께 올라간다. 가로는 같이 움직이고 세로만 고정하려면 두 영역의 스크롤 오프셋을 수동 동기화해야 해 이번 범위를 넘는다
 - 이전 plan의 Deferred 2건(`nav_button`의 `DEFAULT_ICON_PX` 노출, 탭 폭 고정)은 `docs/plans/deferred.md` 대장에 그대로 둔다 — 이번 작업과 무관
@@ -488,6 +488,9 @@
 8. 보기 모드 8종이 각각 Windows 탐색기와 비슷하게 보이는가 (요구 8)
 9. 사진 폴더에서 실제 썸네일이 뜨는가 (요구 8)
 10. 새 폴더·새 파일이 만들어지는가 (요구 1)
+11. **48px·256px 아이콘이 흐리지 않은가** (16px을 늘린 그림이 아니다 — T9→T10 인계 항목의 종착점)
+12. **10만 파일 폴더를 `목록`·`작은 아이콘`으로 열어 스크롤이 끊기지 않는가** (NFR-3 — 세로 흐름은 세로 범위로 거를 수 없어 `is_rect_visible`이 유일한 컷이다)
+13. **사진 폴더를 아주 큰 아이콘으로 끝까지 스크롤한 뒤 Working Set 증가** (NFR-9 — 픽셀 캐시는 자동 검증되지만 GPU 텍스처·총 사용량은 화면에서만 확인된다)
 
 ## Open Questions
 
@@ -521,6 +524,11 @@
   - 결정: T9 acceptance 1을 정정했다 — "48px·256px가 화면에 큰 그림으로 표시된다"는 큰 아이콘을 **쓰는** 화면(격자 보기)이 T10이라 T9 단독으로 검증할 수 없었다. T9는 "리스트를 실제로 얻었는가"(네 단계가 서로 다른 핸들·16px 폴백 아님)를 단위 테스트로 실증하고, **화면 확인은 T10 acceptance 1-b로 명시 이관**했다. plan Files의 `ui/file_list.rs`·`ui/sidebar.rs`도 계획 시점 오류라 뺐다.
   - 주의: `fs`는 `ui`를 모른다(AGENTS 단방향 의존). 모드↔아이콘 크기 매핑 테스트를 처음에 `fs/icons.rs`에 뒀다가 방향 위반이라 `ui/view_mode.rs`로 옮겼다.
   - 주의: 테스트를 추가한 뒤 `cargo build --lib`로만 확인하면 `#[cfg(test)]` 코드가 컴파일되지 않아 타입 오류를 놓친다 — 반드시 `cargo test`로 확인한다.
+- T10-T14 완료 (커밋 de2649e, 9b08d7b, 69e940e, 42637f9, 9b68e9b): 격자·목록·타일·내용 렌더 + 보기 모드 세션 저장 + 썸네일 워커·LRU·UI 연결. 리뷰 T13 BLOCKER 1·T14 BLOCKER 1+MAJOR 3을 반영 후 전부 OK.
+  - 결정: T2가 예고한 순환 참조를 T10에서 해소했다 — `FileListAction`·말줄임 헬퍼가 세 번째 사용처를 갖게 돼 `ui/list_common.rs`로 옮기고 `file_list`가 재노출한다(호출부 무변경).
+  - 결정: 썸네일 텍스처는 매 프레임 픽셀 캐시와 **동기화**한다 — "방금 도착한 것"만 올리면 프레임 상한(4)에 걸린 경로가 영영 못 올라가고, 픽셀이 축출된 텍스처도 GPU에 남는다. 화면에 보이는 항목을 매 프레임 `request`해 LRU를 갱신하는 것도 같은 맥락이다(그리기는 텍스처만 보므로 그곳이 유일한 갱신 지점).
+  - 결정: 썸네일은 `SIIGBF_RESIZETOFIT`만 준다 — `BIGGERSIZEOK`을 함께 주면 셸이 요청보다 큰 그림을 돌려줄 수 있어, 장수로만 거는 상한이 바이트를 보장하지 못한다(F-7 M3). 축출도 장수 AND 바이트로 이중화했다.
+  - Phase F에서 잡힌 것: **썸네일 해제가 한 번도 실행되지 않았다**(F-7 B1) — 폴더를 커밋한 **뒤에** 이전 경로와 비교해 항상 같았다. 단위 테스트가 판정 헬퍼만 직접 불러 통과했던 것이 원인이라, 이제 `apply_enumerated`를 지나는 회귀 테스트로 바꾸고 버그를 일부러 되살려 테스트가 잡는지 역검증했다.
   - 주의: 레포에 rustfmt 미적용 파일(`ui/address_bar.rs`)이 있어 `cargo fmt --check`가 원래부터 실패한다. `cargo fmt`는 경로 인자를 무시하고 전체를 포맷하므로, 변경 파일만 `rustfmt --edition 2024 <파일>`로 다루고 커밋도 경로를 명시해야 무관한 변경이 섞이지 않는다.
 
 ## Phase Ledger

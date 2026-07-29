@@ -53,7 +53,6 @@ pub enum Command {
     NewFolder,
     /// 파일 목록 보기 모드를 바꾼다 (FR-23)
     SetViewMode(ViewMode),
-    ToggleTree,
     ToggleSidebar,
 }
 
