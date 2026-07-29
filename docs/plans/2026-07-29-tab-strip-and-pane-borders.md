@@ -101,6 +101,7 @@
 | 활성 탭 배경 | `CONTROL_BG` 채움 | `if active { rect_filled(rect, 0.0, theme::CONTROL_BG) }` | ✅ 소스 |
 | 비활성 탭 배경 | 없음 | 위 `if active` 밖에 배경 그리기 없음 | ✅ 소스 |
 | 탭 사이 구분선 | 둘 다 비활성일 때만·`TREE_LINE`·60% | `draw_separator` + `!active && next != active_index` 조건 + `SEPARATOR_RATIO = 0.6` | ✅ 소스 |
+| 탭 닫기 × 프레임 | 없음·hover 시에만 `CONTROL_HOT` | `close.hovered()`일 때만 `rect_filled(parts.close, 0.0, theme::CONTROL_HOT)` — 상시 배경 없음 | ✅ 소스 |
 | 탭·닫기 툴팁 | 전체 경로 / "탭 닫기" | `response.on_hover_text(path…)`, `close.on_hover_text("탭 닫기")` | ✅ 소스 |
 | `+`·분할 툴팁 | "새 탭" / "분할" | `.on_hover_text("새 탭")`, `.on_hover_text("분할")` | ✅ 소스 |
 | 새 탭 `+` | 24×28px·프레임 없음 | `widgets::icon_button(…, vec2(NEW_TAB_WIDTH, STRIP_HEIGHT), …)` | ✅ 소스 |
@@ -304,6 +305,10 @@
   - 결정: 탭 제목 폭 측정은 `ui.fonts(...)`가 `&Fonts`를 주어 `layout_no_wrap`(`&mut self`)을 부를 수 없다 — `Painter::layout_no_wrap`(`&self`, `egui-0.35.0/src/painter.rs:503`)로 대체했다.
   - 결정: 닫기 우선 규칙을 `ui.interact` 등록 순서와 `is_close_hit` 좌표 검사 두 겹으로 뒀다. quality 리뷰가 "누른 곳과 뗀 곳이 어긋나는 경계에서 좌표 검사가 추가로 막는다"고 정당성을 확인.
   - V-9: T2 귀속 시각 행은 전부 소스 대조 ✅, 실제 화면 결과 2행은 `⏳ 미확인`으로 F-8 인계.
+- T3-T4 완료 (커밋 c117ec4, cba38b7): 주소창 버튼 프레임 제거 + 분할 패널 테두리. 빌드·clippy·테스트(전체 145) 전부 통과.
+  - 결정(T3): `add_enabled`를 걷어내면 그것이 주던 표현이 함께 사라진다 — 흐린 색·클릭 차단만이 아니라 **툴팁 억제**까지다(`egui/src/response.rs:703·707`의 `Tooltip::for_enabled`). `nav_button`에서 셋을 모두 재현했고, 툴팁을 되살리지 않은 것은 그게 곧 동작 변경이기 때문이다(D10).
+  - 결정(T4): 테두리를 패널 그리기 루프에 합치지 않고 **별도 패스**로 뒀다. 그 루프는 `panels`에 실체가 없으면 `continue`하는데, 빈 자리도 레이아웃상 한 칸이라 경계는 보여야 하기 때문이다. 대신 그 루프의 0크기 가드가 이어지지 않아 새 패스에서 다시 검사한다.
+  - F-7 지적 반영: README 모듈 목록에 `widgets.rs` 누락(MAJOR), V-9 표에 "닫기 × 프레임" 행 누락, Progress Log T3·T4 미기록 — 전부 문서 수정으로 해소. 더불어 `tabs.rs`에 이전 plan 결정 번호를 가리키던 `(plan D3/D6/D8)` 주석을 `(split-4way plan …)`으로 출처를 명시해 현행 plan 번호와의 혼동을 없앴다.
 
 ## Phase Ledger
 

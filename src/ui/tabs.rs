@@ -37,7 +37,7 @@ const NEW_TAB_WIDTH: f32 = 24.0;
 /// 탭 사이 구분선이 차지하는 높이 비율 — 위아래를 띄워 선이 스트립을 가르지 않게 한다
 const SEPARATOR_RATIO: f32 = 0.6;
 
-/// 분할 버튼 아이콘(사각형) 한 변 — 글리프가 아니라 직접 그린다 (plan D8)
+/// 분할 버튼 아이콘(사각형) 한 변 — 글리프가 아니라 직접 그린다 (split-4way plan D8)
 const SPLIT_ICON_SIZE: f32 = 12.0;
 
 /// 분할 버튼 아이콘 선 두께
@@ -48,7 +48,7 @@ const SPLIT_ICON_STROKE: f32 = 1.0;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct TabStripOutcome {
     pub tab: Option<TabAction>,
-    /// 분할 버튼 메뉴에서 고른 방향 — 대상은 **이 스트립이 속한 패널**이다 (plan D3)
+    /// 분할 버튼 메뉴에서 고른 방향 — 대상은 **이 스트립이 속한 패널**이다 (split-4way plan D3)
     pub split: Option<SplitTo>,
 }
 
@@ -80,7 +80,7 @@ struct TabHit {
 /// 탭 스트립을 그리고 이번 프레임의 조작을 반환한다.
 ///
 /// 탭이 많으면 왼쪽 영역이 가로로 스크롤되고, **분할 버튼은 오른쪽 끝에 고정**된다 —
-/// 버튼까지 스크롤되면 탭이 늘어날수록 분할이 어려워진다 (plan D6)
+/// 버튼까지 스크롤되면 탭이 늘어날수록 분할이 어려워진다 (split-4way plan D6)
 pub fn show_tab_strip(ui: &mut egui::Ui, model: &TabsModel) -> TabStripOutcome {
     let mut outcome = TabStripOutcome::default();
     egui::Sides::new().shrink_left().height(STRIP_HEIGHT).show(
@@ -274,7 +274,7 @@ fn show_split_button(ui: &mut egui::Ui, split: &mut Option<SplitTo>) {
 
 /// 분할 아이콘 — 사각형 테두리와 세로 중앙선.
 /// 글리프(`◫`)를 쓰지 않는 이유: 폰트에 그 문자가 없으면 두부(□)로 보이는데,
-/// 폰트 지원 여부는 화면을 띄우기 전에는 알 수 없다 (plan D8)
+/// 폰트 지원 여부는 화면을 띄우기 전에는 알 수 없다 (split-4way plan D8)
 fn draw_split_icon(painter: &egui::Painter, rect: egui::Rect) {
     let icon = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(SPLIT_ICON_SIZE));
     let stroke = egui::Stroke::new(SPLIT_ICON_STROKE, theme::TEXT);
