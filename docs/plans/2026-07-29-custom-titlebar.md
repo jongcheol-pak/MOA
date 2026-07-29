@@ -89,7 +89,7 @@
 | `ExplorerApp` 필드 | `src/ui/app.rs:250~280` | 필드 추가 없음 — 최대화 여부는 `ctx.input().viewport()`에서 매 프레임 읽는다(`track_window`와 같은 출처) |
 | `Command::ToggleSidebar` | `src/ui/menu.rs:50`, `src/ui/app.rs:569` | **변경 없이 재사용** — 타이틀바 버튼이 같은 명령을 낸다 |
 | `theme` 팔레트 | `src/ui/theme.rs` | 상수 추가(`CLOSE_HOT`) — 기존 상수 변경 없음. **T3 구현에서 정정**: 계획 단계에는 `TITLEBAR_BG`도 적었으나, 시각 요소 분해가 타이틀바 배경을 기존 `WINDOW_BG`(#1B1B1B)로 지정하므로 값이 같은 별칭 상수를 만들지 않았다 |
-| `app::theme::apply_dark_titlebar` | `src/app/theme.rs:85` | **호출부 조사 결과 현재 호출 0곳**(egui 이식 후 이미 미사용) — 이번 변경으로 의미도 사라지나, Win32 판 잔재 정리는 Deferred 대장 소관이라 **건드리지 않는다** |
+| `app::theme::apply_dark_titlebar` | `src/app/theme.rs:85` | **건드리지 않는다**. **F-3에서 정정**: 계획 단계에 "호출 0곳"으로 적었으나 실제로는 `src/app/window.rs:183`에 호출이 있다 — 다만 그 파일은 egui 이식 이전의 Win32 UI로 **진입점(`main.rs`)이 쓰지 않는 코드**라 실행 경로에는 없다(AGENTS.md 모듈 지도 참조). 지우면 그 파일이 깨지므로 더더욱 손대지 않으며, Win32 잔재 정리는 Deferred 대장 소관이다 |
 | `ShellHost::to_screen` | `src/ui/shell_host.rs:53` | 변경 없음 — `ClientToScreen` 기반이라 클라이언트 영역 확대와 무관 |
 
 ### 4-B. 계약·직렬화 변경
@@ -122,7 +122,7 @@
 - `grep "install_korean_font\|korean_font"` → 5 hits(정의 1·호출 1·플래그 3), 모두 `src/ui/app.rs`. 위 표에 포함
 - `grep "Command::"` → 60 hits, `Command::ToggleSidebar`는 정의(`menu.rs:50`)·메뉴 항목(`menu.rs:84`)·단축키(`menu.rs:222`)·실행(`app.rs:569`) 4곳. 전부 변경 없이 재사용
 - `grep "title_bar|titlebar|캡션"` → `src/app/window.rs`·`src/app/theme.rs`(Win32 이식 이전 코드, 실행 파일 미사용)만 매칭 — egui 경로에 기존 타이틀바 구현 없음
-- `grep "apply_dark_titlebar"` → 정의(`src/app/theme.rs:85`) 1건, 호출 0건
+- `grep "apply_dark_titlebar"` → 정의(`src/app/theme.rs:85`) 1건, 호출 1건(`src/app/window.rs:183` — 진입점이 쓰지 않는 Win32 이식 이전 코드. **F-3에서 정정**: 계획 단계의 "호출 0건"은 잘못된 기록이었다)
 
 ## Decisions
 
@@ -185,7 +185,7 @@
 ### D11. `app::theme::apply_dark_titlebar` 처리
 - **Chosen**: **건드리지 않는다**(호출 0곳이므로 동작 영향 없음)
 - **Rationale**: Win32 이식 잔재 정리는 Deferred 대장의 "구 Win32 UI 코드 제거"가 통째로 다루기로 보류된 항목이다. 여기서 일부만 지우면 그 판단이 쪼개진다
-- **Source**: `grep apply_dark_titlebar` → 호출 0건, `docs/plans/deferred.md:7`
+- **Source**: `src/app/window.rs:183`(호출 1건 — 단 진입점이 쓰지 않는 Win32 이식 이전 코드), `docs/plans/deferred.md:7`
 
 ### D12. 기존 세션 창 크기 호환
 - **Chosen**: 마이그레이션하지 않는다. 저장된 `w/h`를 그대로 쓴다
