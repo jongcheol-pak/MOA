@@ -700,6 +700,30 @@ mod tests {
     }
 
     #[test]
+    fn 보기_모드는_패널을_거쳐_목록까지_전달된다() {
+        // `Command::SetViewMode`가 닿는 지점이다 — 여기서 끊기면 메뉴에서 골라도
+        // 목록은 이전 모드로 그려진다 (FR-23)
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        assert_eq!(panel.view_mode(), ViewMode::Details);
+        panel.set_view_mode(ViewMode::SmallIcons);
+        assert_eq!(panel.view_mode(), ViewMode::SmallIcons);
+    }
+
+    #[test]
+    fn 보기_모드는_패널마다_독립이다() {
+        // 한 패널에서 바꾼 모드가 다른 패널에 번지면 "패널마다 독립"(FR-23)이 깨진다
+        let mut first = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        let second = PanelState::new(std::path::PathBuf::from(r"D:\"));
+        first.set_view_mode(ViewMode::Tiles);
+        assert_eq!(first.view_mode(), ViewMode::Tiles);
+        assert_eq!(
+            second.view_mode(),
+            ViewMode::Details,
+            "다른 패널까지 바뀌었다"
+        );
+    }
+
+    #[test]
     fn 패널_안에서_같은_위젯_id가_두_번_쓰이지_않는다() {
         // 탭 스트립·폴더 트리·파일 목록이 각자 스크롤 영역을 갖는데, 이들이 같은 id를 쓰면
         // 스크롤 위치가 서로 섞인다(화면에는 빨간 경고로 드러난다)

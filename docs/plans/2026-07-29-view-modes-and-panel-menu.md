@@ -343,7 +343,7 @@
 ### [ ] T8. 보기 모드 모델 + '보기' 하위 메뉴 (요구 8)
 
 - **Type**: D
-- **Files**: `src/ui/view_mode.rs`(신규), `src/ui/menu.rs`, `src/ui/tabs.rs`, `src/ui/file_list.rs`, `src/ui/panel.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/view_mode.rs`(신규), `src/ui/mod.rs`(모듈 등록), `src/ui/menu.rs`, `src/ui/tabs.rs`, `src/ui/file_list.rs`, `src/ui/panel.rs`, `src/ui/splitter.rs`(`for_panes` 호출부), `src/ui/app.rs`
 - **내용**: 8개 모드 enum과 모드별 배치 계산(아이콘 크기·셀 크기·흐름 방향·열 수)을 만들고, T6이 비활성 한 줄로 잡아둔 '보기'를 인벤토리 표 8행을 담은 하위 메뉴로 바꾼다. 현재 모드에 점 표시를 붙인다. 아직 렌더는 자세히 보기만 동작하고 나머지는 T10·T11에서 채운다.
 - **Design**: 배치 — `ui/view_mode.rs`(순수 로직, D4). 신규 심볼 — `ViewMode`(8개 variant + `label()`·`icon_px()`·`cell_size()`·`flow()`), `Flow { Horizontal, Vertical, Rows }`, `grid_metrics(mode, viewport_width, item_count) -> GridMetrics { columns, rows, cell, spacing }`, `item_rect(metrics, index) -> Rect`. 의존 — egui의 `Vec2`·`Rect`만 참조하고 앱 상태를 모른다. `menu.rs`·`file_list.rs`가 이것을 참조하며 역방향은 없다. T6이 만든 경로를 그대로 잇는다 — `menu::PanelMenuState`에 `view_mode: ViewMode`를 **이 시점에 추가**하고(M1), 선택 결과는 `Command::SetViewMode(ViewMode)`로 `TabStripOutcome` → `PanelOutcome` → `LayoutOutcome` 경로를 탄다. 비추상화 — 모드별 렌더러를 트레이트로 만들지 않고 `match`로 분기한다(8개 고정이고, 트레이트로 감싸면 어느 모드가 어떻게 그려지는지 추적에 파일을 오가야 한다).
 - **Edge Cases**: 뷰포트 폭 < 셀 1개 폭(열 수 최소 1 보장 — 0으로 나누기 금지) / 항목 0개(행 수 0) / 아주 큰 아이콘 + 좁은 패널(가로 스크롤 대신 1열로 접기) / 10만 항목의 행 수 계산(정수 오버플로 없이) / 모드 전환 시 스크롤 위치(맨 위로 되돌린다 — 셀 크기가 달라 같은 오프셋이 다른 위치를 가리킨다)

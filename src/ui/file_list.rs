@@ -432,6 +432,36 @@ mod tests {
     }
 
     #[test]
+    fn 보기_모드는_기본이_자세히고_바꾸면_남는다() {
+        // 메뉴에서 고른 모드가 상태에 반영되지 않으면 화면이 그대로다 (FR-23)
+        let mut view = FileListView::new();
+        assert_eq!(
+            view.view_mode(),
+            ViewMode::Details,
+            "기본값이 자세히가 아니다"
+        );
+        view.set_view_mode(ViewMode::Tiles);
+        assert_eq!(view.view_mode(), ViewMode::Tiles);
+        // 다른 모드로 다시 바꿔도 마지막 것이 남는다
+        view.set_view_mode(ViewMode::List);
+        assert_eq!(view.view_mode(), ViewMode::List);
+    }
+
+    #[test]
+    fn 보기_모드를_바꿔도_항목과_정렬은_그대로다() {
+        // 모드는 표시 방식일 뿐이다 — 목록이 다시 읽히거나 정렬이 풀리면 안 된다
+        let mut view = view(vec![
+            (entry("문서", true, 0, 0), "폴더"),
+            (entry("a.txt", false, 10, 0), "텍스트"),
+        ]);
+        let before = names(&view);
+        let counts = view.counts();
+        view.set_view_mode(ViewMode::ExtraLargeIcons);
+        assert_eq!(names(&view), before);
+        assert_eq!(view.counts(), counts);
+    }
+
+    #[test]
     fn 폴더와_파일을_따로_센다() {
         let v = view(vec![
             (entry("문서", true, 0, 0), "폴더"),

@@ -325,9 +325,9 @@ mod tests {
         )); // 아래쪽 분할
     }
 
-    /// 패널 메뉴를 한 번 그리고 **그려진 텍스트를 순서대로** 모은다.
+    /// 주어진 그리기를 한 번 실행하고 **그려진 텍스트를 순서대로** 모은다.
     /// 구분선은 글자가 없어 잡히지 않으므로 항목 문구만 남는다
-    fn menu_labels(state: PanelMenuState) -> Vec<String> {
+    fn drawn_labels(draw: impl FnMut(&mut egui::Ui)) -> Vec<String> {
         fn collect(shape: &egui::Shape, found: &mut Vec<String>) {
             match shape {
                 egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
@@ -341,15 +341,29 @@ mod tests {
         }
         let ctx = egui::Context::default();
         crate::ui::app::install_fonts(&ctx);
-        let output = ctx.run_ui(Default::default(), |ui| {
-            let mut command = None;
-            panel_menu_items(ui, state, &mut command);
-        });
+        let output = ctx.run_ui(Default::default(), draw);
         let mut labels = Vec::new();
         for clipped in &output.shapes {
             collect(&clipped.shape, &mut labels);
         }
         labels
+    }
+
+    /// 패널 메뉴 본문을 그려 라벨을 모은다
+    fn menu_labels(state: PanelMenuState) -> Vec<String> {
+        drawn_labels(|ui| {
+            let mut command = None;
+            panel_menu_items(ui, state, &mut command);
+        })
+    }
+
+    /// '보기' 하위 메뉴를 그려 라벨을 모은다 — 호버로 열리는 팝업이라
+    /// 패널 메뉴를 그리는 것만으로는 잡히지 않아 직접 부른다
+    fn view_labels(current: ViewMode) -> Vec<String> {
+        drawn_labels(|ui| {
+            let mut command = None;
+            view_items(ui, current, &mut command);
+        })
     }
 
     #[test]
@@ -378,6 +392,45 @@ mod tests {
             expected.iter().collect::<Vec<_>>(),
             "메뉴 항목의 문구나 순서가 인벤토리와 다르다: {labels:?}"
         );
+    }
+
+    #[test]
+    fn 보기_하위_메뉴는_여덟_모드를_순서대로_그린다() {
+        // plan `### 참조 정합 인벤토리 — '보기' 하위 메뉴` 8행 그대로여야 한다
+        let labels = view_labels(ViewMode::Details);
+        let expected: Vec<String> = ViewMode::ALL
+            .iter()
+            .map(|mode| mode.label().to_owned())
+            .collect();
+        let found: Vec<String> = labels
+            .iter()
+            .map(|label| label.trim_start_matches(['•', ' ']).to_owned())
+            .filter(|label| expected.contains(label))
+            .collect();
+        assert_eq!(
+            found, expected,
+            "보기 항목의 문구나 순서가 다르다: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn 지금_쓰는_모드에만_점이_붙는다() {
+        // 점이 없거나 여러 개면 어느 모드로 보고 있는지 알 수 없다 (4번 이미지의 표시 방식)
+        for current in [ViewMode::Details, ViewMode::Tiles, ViewMode::List] {
+            let marked: Vec<String> = view_labels(current)
+                .into_iter()
+                .filter(|label| label.starts_with('•'))
+                .collect();
+            assert_eq!(
+                marked.len(),
+                1,
+                "{current:?}: 점이 하나가 아니다 — {marked:?}"
+            );
+            assert!(
+                marked[0].contains(current.label()),
+                "{current:?}: 점이 엉뚱한 항목에 붙었다 — {marked:?}"
+            );
+        }
     }
 
     #[test]
