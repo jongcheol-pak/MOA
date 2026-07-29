@@ -88,7 +88,7 @@
 | `app::theme::enable_dark_mode` | `src/main.rs:18`(호출), `src/app/theme.rs:45` | **유지**(D13). 호출은 그대로 두고 `main.rs:17`의 주석 문구만 갱신 — 이 함수는 타이틀바뿐 아니라 **Win32 셸 컨텍스트 메뉴(FR-8)의 다크 테마**도 담당한다 |
 | `ExplorerApp` 필드 | `src/ui/app.rs:250~280` | 필드 추가 없음 — 최대화 여부는 `ctx.input().viewport()`에서 매 프레임 읽는다(`track_window`와 같은 출처) |
 | `Command::ToggleSidebar` | `src/ui/menu.rs:50`, `src/ui/app.rs:569` | **변경 없이 재사용** — 타이틀바 버튼이 같은 명령을 낸다 |
-| `theme` 팔레트 | `src/ui/theme.rs` | 상수 추가(`TITLEBAR_BG`, `CLOSE_HOT`) — 기존 상수 변경 없음 |
+| `theme` 팔레트 | `src/ui/theme.rs` | 상수 추가(`CLOSE_HOT`) — 기존 상수 변경 없음. **T3 구현에서 정정**: 계획 단계에는 `TITLEBAR_BG`도 적었으나, 시각 요소 분해가 타이틀바 배경을 기존 `WINDOW_BG`(#1B1B1B)로 지정하므로 값이 같은 별칭 상수를 만들지 않았다 |
 | `app::theme::apply_dark_titlebar` | `src/app/theme.rs:85` | **호출부 조사 결과 현재 호출 0곳**(egui 이식 후 이미 미사용) — 이번 변경으로 의미도 사라지나, Win32 판 잔재 정리는 Deferred 대장 소관이라 **건드리지 않는다** |
 | `ShellHost::to_screen` | `src/ui/shell_host.rs:53` | 변경 없음 — `ClientToScreen` 기반이라 클라이언트 영역 확대와 무관 |
 
@@ -112,6 +112,7 @@
 | `TitlebarOutcome`(버튼 결과 묶음) | `TabStripOutcome`(`tabs.rs:21`) | **신규**(패턴은 재사용) — 같은 "그리고 결과만 값으로 반환" 규약을 따르되 담는 내용이 다르다 |
 | 설정 팝업 | `MenuButton::from_button`(`tabs.rs:93`), `ui.menu_button`(`menu.rs:66`) | **재사용** — 분할 버튼과 같은 방식으로 낸다 |
 | 아이콘 그리기 | `draw_split_icon`(`tabs.rs:106`, painter 직접 그리기) | **미재사용 — 신규 방식**: 사용자 지시로 `egui-phosphor` 폰트 글리프를 쓴다. 기존 painter 아이콘(분할 버튼)은 그대로 두고 이번 것만 폰트로 그린다 |
+| `TITLEBAR_BG` 상수 | `theme::WINDOW_BG`(`theme.rs:9`) | **재사용 — 신규 만들지 않음**(T3에서 확정): 시각 분해가 지정한 값(#1B1B1B)이 `WINDOW_BG`와 같아, 별칭 상수는 중복일 뿐이다 |
 | 사이드바 토글 명령 | `Command::ToggleSidebar`(`menu.rs:50`) | **재사용** — 새 명령을 만들지 않는다 |
 | 좌/중앙/우 3분할 배치 | `egui::Sides`(`tabs.rs:41`) | **재사용** — 좌·우 고정 배치는 `Sides`, 중앙 제목은 타이틀바 rect 기준 중앙 정렬로 그린다 |
 | 다크 팔레트 | `ui::theme`(`theme.rs`) | **재사용 + 상수 2개 추가**(`TITLEBAR_BG`·`CLOSE_HOT`) — 색을 파일 안에 흩지 않는다 |

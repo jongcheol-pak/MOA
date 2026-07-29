@@ -22,6 +22,8 @@ const CAPTION_WIDTH: f32 = 46.0;
 const RIGHT_GROUP_WIDTH: f32 = BUTTON_SIZE + CAPTION_WIDTH * 3.0;
 /// 좌측 토글 버튼 앞 여백
 const LEFT_MARGIN: f32 = 2.0;
+/// 좌측 버튼군 전체 폭 — 여백 + 사이드바 토글 1개
+const LEFT_GROUP_WIDTH: f32 = LEFT_MARGIN + BUTTON_SIZE;
 const ICON_FONT_PX: f32 = 16.0;
 const TITLE_FONT_PX: f32 = 14.0;
 
@@ -59,10 +61,19 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
     let mut outcome = TitlebarOutcome::default();
     let bar = ui.max_rect();
 
-    // 배경 끌기 판정을 **먼저** 등록한다 — egui는 나중에 등록된 위젯이 위에 오므로,
-    // 이 순서라야 뒤이어 그리는 버튼들이 클릭을 먼저 가져간다
+    // 끌기 판정은 버튼이 놓인 좌·우 끝을 **뺀 빈 영역**에서만 한다.
+    // 바 전체를 잡으면 버튼을 누른 순간에도 끌기 신호가 함께 나간다 — egui는 클릭 위젯과
+    // 끌기 위젯을 동시에 히트로 잡고(`hit_test`), `is_pointer_button_down_on()`은 둘 중
+    // 하나만 걸려도 참이기 때문이다(`context.rs`). 그러면 OS 창 이동 루프가 열리면서
+    // 그 프레임의 버튼 클릭이 삼켜진다
+    let drag_left = bar.min.x + LEFT_GROUP_WIDTH;
+    let drag_right = (bar.max.x - RIGHT_GROUP_WIDTH).max(drag_left);
+    let drag_area = egui::Rect::from_min_max(
+        egui::pos2(drag_left, bar.min.y),
+        egui::pos2(drag_right, bar.max.y),
+    );
     let drag = ui.interact(
-        bar,
+        drag_area,
         ui.id().with("titlebar_drag"),
         egui::Sense::click_and_drag(),
     );
