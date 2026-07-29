@@ -320,6 +320,32 @@ mod tests {
     }
 
     #[test]
+    fn 보기_모드마다_쓸_아이콘_단계가_정해진다() {
+        // 모드의 아이콘 크기와 시스템 이미지 리스트 단계를 잇는 계약이다 —
+        // 어긋나면 모드를 바꿔도 아이콘 크기가 그대로다.
+        // (이 대조는 상위 계층인 `ui`에 둔다 — `fs`는 `ui`를 모른다는 의존 방향 때문)
+        use crate::fs::icons::IconSize;
+        let mapping = [
+            (ViewMode::Details, IconSize::Small),
+            (ViewMode::List, IconSize::Small),
+            (ViewMode::SmallIcons, IconSize::Small),
+            (ViewMode::Content, IconSize::Large),
+            (ViewMode::MediumIcons, IconSize::ExtraLarge),
+            (ViewMode::Tiles, IconSize::ExtraLarge),
+            (ViewMode::LargeIcons, IconSize::Jumbo),
+            (ViewMode::ExtraLargeIcons, IconSize::Jumbo),
+        ];
+        for (mode, expected) in mapping {
+            assert_eq!(
+                IconSize::for_px(mode.icon_px()),
+                expected,
+                "{mode:?}({}px)",
+                mode.icon_px()
+            );
+        }
+    }
+
+    #[test]
     fn 작은_아이콘과_목록은_흐름이_다르다() {
         // 사용자 요청 8번의 핵심 구분 — 둘 다 16px이지만 채우는 방향이 반대다
         assert_eq!(ViewMode::SmallIcons.flow(), Flow::Horizontal);

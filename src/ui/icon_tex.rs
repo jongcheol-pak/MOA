@@ -12,10 +12,14 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::Controls::{HIMAGELIST, ILD_TRANSPARENT, ImageList_GetIcon};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 
-/// 이미지 리스트 인덱스 → egui 텍스처 캐시.
+/// (이미지 리스트, 인덱스) → egui 텍스처 캐시.
 /// 같은 확장자 행이 수천 개여도 텍스처는 아이콘 종류 수만큼만 만들어진다.
+///
+/// **키에 이미지 리스트를 포함한다** — 아이콘 인덱스는 크기와 무관하게 같은 체계라
+/// 인덱스만 키로 쓰면 16px 텍스처가 256px 자리에 그대로 나온다(그 반대도 마찬가지).
+/// 보기 모드마다 다른 크기를 쓰므로 이 구분이 없으면 모드를 바꿔도 아이콘 크기가 안 바뀐다
 pub struct IconTextures {
-    by_index: HashMap<i32, Option<egui::TextureHandle>>,
+    by_key: HashMap<(isize, i32), Option<egui::TextureHandle>>,
     /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(PoC 실측 3096ms)
     created_this_frame: usize,
 }
@@ -34,7 +38,7 @@ impl Default for IconTextures {
 impl IconTextures {
     pub fn new() -> IconTextures {
         IconTextures {
-            by_index: HashMap::new(),
+            by_key: HashMap::new(),
             created_this_frame: 0,
         }
     }
@@ -51,7 +55,8 @@ impl IconTextures {
         himl: HIMAGELIST,
         index: i32,
     ) -> Option<&egui::TextureHandle> {
-        if !self.by_index.contains_key(&index) {
+        let key = (himl.0, index);
+        if !self.by_key.contains_key(&key) {
             // 상한을 넘으면 이번 프레임에는 만들지 않는다 — 캐시에 넣지도 않으므로 다음 프레임에 재시도된다
             if self.created_this_frame >= MAX_NEW_TEXTURES_PER_FRAME {
                 return None;
@@ -59,11 +64,15 @@ impl IconTextures {
             let image = icon_to_image(himl, index);
             let handle = image.map(|img| {
                 self.created_this_frame += 1;
-                ctx.load_texture(format!("icon{index}"), img, egui::TextureOptions::LINEAR)
+                ctx.load_texture(
+                    format!("icon{}_{index}", key.0),
+                    img,
+                    egui::TextureOptions::LINEAR,
+                )
             });
-            self.by_index.insert(index, handle);
+            self.by_key.insert(key, handle);
         }
-        self.by_index.get(&index).and_then(|h| h.as_ref())
+        self.by_key.get(&key).and_then(|h| h.as_ref())
     }
 }
 
