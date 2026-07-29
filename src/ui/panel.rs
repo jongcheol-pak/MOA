@@ -5,6 +5,7 @@
 //!
 //! 탐색은 **pending-커밋** 모델이다: 열거가 성공했을 때만 경로·히스토리를 커밋한다.
 //! 실패(삭제·권한)하면 사유만 표시하고 현 위치·목록을 그대로 둔다.
+use crate::fs::create;
 use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
 use crate::fs::watcher::DirWatcher;
@@ -335,6 +336,36 @@ impl PanelState {
     /// 폴더 트리 표시 토글 (FR-9) — 패널마다 독립이다
     pub fn toggle_tree(&mut self) {
         self.tree_visible = !self.tree_visible;
+    }
+
+    /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25)
+    pub fn new_folder(&mut self, ctx: &egui::Context) {
+        let dir = self.dir().to_path_buf();
+        self.after_create(create::new_folder(&dir).map(|_| ()), "폴더", ctx);
+    }
+
+    /// 표시 중인 폴더에 빈 텍스트 문서를 만든다 (FR-25)
+    pub fn new_file(&mut self, ctx: &egui::Context) {
+        let dir = self.dir().to_path_buf();
+        self.after_create(create::new_text_file(&dir).map(|_| ()), "파일", ctx);
+    }
+
+    /// 생성 결과 처리 — 실패하면 사유만 상태 줄에 보인다 (plan D12).
+    ///
+    /// 성공해도 목록을 직접 건드리지 않는다: 변경 감시(FR-10)가 새 항목을 알려 다시 읽는다.
+    /// 다만 감시가 붙지 않는 위치에서는 통지가 오지 않으므로 그때만 직접 다시 읽는다
+    fn after_create(&mut self, result: std::io::Result<()>, kind: &str, ctx: &egui::Context) {
+        match result {
+            Ok(()) => {
+                if self.watch.is_none() {
+                    let dir = self.dir().to_path_buf();
+                    self.start_load(dir, PendingNav::None, ctx);
+                }
+            }
+            Err(error) => {
+                self.status = format!("새 {kind}을(를) 만들지 못했습니다 — {error}");
+            }
+        }
     }
 
     /// 탭 스트립에서 올라온 조작 처리

@@ -632,9 +632,8 @@ impl ExplorerApp {
                     Command::Up => panel.go_up(ctx),
                     Command::Refresh => panel.refresh(ctx),
                     Command::ToggleTree => panel.toggle_tree(),
-                    // 새 파일·새 폴더는 T7에서 구현한다 — 메뉴 항목은 이미 보이지만
-                    // 아직 아무 일도 하지 않는다
-                    Command::NewFile | Command::NewFolder => {}
+                    Command::NewFile => panel.new_file(ctx),
+                    Command::NewFolder => panel.new_folder(ctx),
                     // 위 분기에서 걸러진 명령들 — 여기 오지 않는다
                     _ => {}
                 }
