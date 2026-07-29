@@ -59,6 +59,7 @@
 - 열 추가·제거·열 순서 변경 — 이번 열 폭 작업으로 열 메타데이터 구조가 생기므로 후속 확장 지점이 열린다
 - 보기 모드별 마지막 정렬 기준 기억 (지금은 모드를 바꿔도 정렬은 유지)
 - [SUGGEST] 빈 영역 클릭 처리가 두 렌더 모듈에서 서로 다른 기법이다 — 자세히 보기는 콘텐츠 아래 사각형을 잡고, 격자는 항목 클릭 여부를 플래그로 사후 억제한다(격자의 잔여 여백이 사각형으로 떨어지지 않아서). `list_common`에 헬퍼로 뽑아 문서화하면 다음 보기 모드 추가 시 참조점이 된다 (T10 quality S1)
+- [SUGGEST] `list_grid::show`가 `visible: &mut Vec<PathBuf>`로 "이번 프레임에 보인 파일"을 부수 출력한다 — 즉시 모드에서 렌더 도중 `&mut PanelState`를 잡을 수 없어 택한 절충이다. 렌더와 수집을 나누는 더 나은 구조가 있으면 검토 (T14 quality m1)
 - [SUGGEST] `PanelState::from_tabs`의 인자가 4개(tabs·active_tab·columns·view_mode)로 늘었다 — 유일한 호출부가 이미 `PanelTabs` 구조체를 갖고 있으므로 그것을 통째로 넘기면 필드가 늘어도 시그니처가 안 바뀐다 (T12 quality S1)
 - [SUGGEST] 옛 세션 호환 테스트가 JSON 문자열 replace로 필드를 걷어내 필드가 늘 때마다 목록이 길어진다 — `serde_json::Value`에서 키를 프로그램적으로 제거하면 테스트를 안 건드려도 된다. 다만 replace 누락을 잡는 자기검증 단언이 있어 조용히 통과하지는 않는다 (T12 quality S2)
 - [SUGGEST] T11 Design은 `show_tile_cell`·`show_content_row` 두 함수를 예고했으나 실제로는 `draw_multiline_cell` 하나 + 공용 `draw_stacked`로 구현했다 — 두 모드가 "아이콘 + 여러 줄 텍스트"라는 골격을 공유해 묶는 편이 단순했다. 동작·커버리지 영향 없음 (T11 spec M1)
@@ -454,9 +455,9 @@
 ### [ ] T14. 썸네일을 보기 모드에 연결 (요구 8)
 
 - **Type**: C
-- **Files**: `src/ui/list_grid.rs`, `src/ui/file_list.rs`, `src/ui/panel.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/list_grid.rs`, `src/ui/file_list.rs`, `src/ui/panel.rs`, `src/ui/icon_tex.rs`(썸네일 텍스처 캐시), `src/ui/view_mode.rs`(`uses_thumbnails` 판정), `src/fs/thumbnail.rs`(동기화용 조회 추가)
 - **내용**: 아이콘 4종·타일·내용 보기가 썸네일을 요청·표시하도록 잇는다(사용자 확정 범위). 자세히·목록 보기는 16px 형식 아이콘을 유지한다.
-- **Design**: 배치 — 기존 파일만 수정. 신규 심볼 — 없음. 의존 — `panel.rs`가 `ThumbnailCache`를 소유하고(패널당 200장이므로 패널 소유가 맞다) `show`에 참조로 넘긴다. 비추상화 — 아이콘과 썸네일을 하나의 "그림 제공자"로 통합하지 않는다(폴백 순서가 명시적으로 보이는 편이 낫다).
+- **Design**: 배치 — 픽셀은 `fs::thumbnail`, **텍스처는 `ui::icon_tex`**(아이콘 텍스처와 같은 자리). 신규 심볼 — `ThumbnailTextures { sync, get, clear, len }`(계획 시점에 "없음"이라 적었으나 실제로 필요했다 — T13 Design이 "텍스처 업로드는 UI 몫"이라 예고한 부분이 여기서 구체화됐다. T14 spec 리뷰 M1). 의존 — `panel.rs`가 `ThumbnailCache`를 소유하고(패널당 200장이므로 패널 소유가 맞다) `show`에 참조로 넘긴다. 비추상화 — 아이콘과 썸네일을 하나의 "그림 제공자"로 통합하지 않는다(폴백 순서가 명시적으로 보이는 편이 낫다).
 - **Edge Cases**: 보기 모드를 자세히로 바꿨을 때 썸네일 요청이 멈추는지 / 썸네일 대상 모드로 되돌아왔을 때 캐시가 살아 있는지 / 폴더 이동 시 이전 폴더 썸네일 해제(NFR-9) / 패널을 닫으면 그 캐시가 함께 해제되는지 / 같은 폴더를 두 패널에서 열었을 때 각자 캐시(중복 메모리)를 갖는 것이 상한 안인지
 - **Halt Forecast**: 없음 — T13이 만든 캐시를 기존 렌더에 잇는 배선 작업이며 새 셸 호출·스키마 변경이 없다
 - **Acceptance**:

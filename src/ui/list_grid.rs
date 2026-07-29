@@ -43,8 +43,9 @@ pub struct GridInput<'a> {
     pub mode: ViewMode,
     /// 준비된 썸네일 텍스처 (FR-24). 없으면 형식 아이콘으로 그린다 (plan D7)
     pub thumbnails: &'a ThumbnailTextures,
-    /// 이번 프레임에 화면에 보인 파일들 — 호출부가 썸네일을 요청할 대상이다.
-    /// 보이는 것만 요청해야 큰 폴더에서 요청이 폭주하지 않는다
+    /// 이번 프레임에 화면에 보인 파일들. 호출부가 이것으로 썸네일을 **요청하고 동시에
+    /// 최근 사용으로 올린다** — 보이는 것만 담아야 큰 폴더에서 요청이 폭주하지 않고,
+    /// 이미 준비된 것까지 담아야 보고 있는 썸네일이 축출되지 않는다
     pub visible: &'a mut Vec<PathBuf>,
 }
 
@@ -134,10 +135,10 @@ pub fn show(
             let thumb = if wants_thumbnails && !entry.is_dir {
                 let path = dir.join(entry.name_string());
                 let ready = thumbnails.get(&path).map(|tex| tex.id());
-                if ready.is_none() {
-                    // 아직 없으면 요청 대상으로 올린다 — 준비되면 다음 프레임에 바뀐다
-                    visible.push(path);
-                }
+                // **텍스처가 이미 있어도 담는다** — 이 목록은 "요청 대상"이자 "지금 화면에
+                // 보인다"는 신호다. 없을 때만 담으면 텍스처가 올라간 뒤로는 최근 사용
+                // 갱신이 멈춰, 화면에 떠 있는 썸네일이 축출됐다 다시 만들어지길 반복한다
+                visible.push(path);
                 ready
             } else {
                 None
@@ -370,6 +371,141 @@ fn is_single_row(mode: ViewMode) -> bool {
 mod tests {
     use super::*;
     use crate::ui::view_mode::Flow;
+
+    use crate::fs::enumerate::FileEntry;
+    use crate::fs::thumbnail::{ThumbnailCache, ThumbnailImage};
+    use std::collections::BTreeSet;
+
+    fn entry(name: &str, is_dir: bool) -> FileEntry {
+        let mut wide: Vec<u16> = name.encode_utf16().collect();
+        wide.push(0);
+        FileEntry {
+            name: wide,
+            is_dir,
+            size: 10,
+            modified: 0,
+        }
+    }
+
+    /// 격자를 한 프레임 그리고 이번 프레임에 "보인 파일"로 수집된 목록을 돌려준다.
+    /// `preloaded`에 담긴 이름은 텍스처가 이미 올라간 상태로 만든다
+    fn visible_after_draw(mode: ViewMode, names: &[&str], preloaded: &[&str]) -> Vec<PathBuf> {
+        let dir = PathBuf::from(r"C:\테스트");
+        let ctx = egui::Context::default();
+        crate::ui::app::install_fonts(&ctx);
+
+        // 텍스처를 미리 올려 둔다 — 픽셀 캐시에 넣고 sync로 승격시킨다
+        let mut cache = ThumbnailCache::new();
+        for name in preloaded {
+            cache.accept_for_test(
+                dir.join(name),
+                Some(ThumbnailImage {
+                    width: 2,
+                    height: 2,
+                    rgba: vec![255; 16],
+                }),
+            );
+        }
+        let mut textures = ThumbnailTextures::new();
+        textures.sync(&ctx, &cache);
+        assert_eq!(
+            textures.len(),
+            preloaded.len(),
+            "사전 준비한 텍스처가 올라가지 않았다"
+        );
+
+        let entries: Vec<FileEntry> = names.iter().map(|name| entry(name, false)).collect();
+        let mut icon_indices = vec![None; entries.len()];
+        let type_names: Vec<String> = names.iter().map(|_| "파일".to_owned()).collect();
+        let selection = BTreeSet::new();
+        let mut visible = Vec::new();
+        let mut icons = IconCache::new();
+        let mut icon_textures = IconTextures::new();
+
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            visible.clear();
+            show(
+                ui,
+                GridInput {
+                    dir: &dir,
+                    entries: &entries,
+                    icon_indices: &mut icon_indices,
+                    selection: &selection,
+                    type_names: &type_names,
+                    mode,
+                    thumbnails: &textures,
+                    visible: &mut visible,
+                },
+                &mut icons,
+                &mut icon_textures,
+            );
+        });
+        visible
+    }
+
+    #[test]
+    fn 텍스처가_이미_있어도_보이는_것으로_보고한다() {
+        // 이 목록이 곧 "최근 사용" 갱신 대상이다 — 텍스처가 없을 때만 담으면, 텍스처가
+        // 올라간 뒤로 갱신이 멈춰 **화면에 떠 있는 썸네일이 축출됐다 다시 만들어지길
+        // 반복한다**(200장 넘는 폴더에서 재현). T14 quality 리뷰 M2
+        let visible = visible_after_draw(
+            ViewMode::MediumIcons,
+            &["사진1.jpg", "사진2.jpg"],
+            &["사진1.jpg"], // 첫 장은 텍스처가 이미 올라간 상태
+        );
+        assert!(
+            visible.iter().any(|p| p.ends_with("사진1.jpg")),
+            "텍스처가 있다는 이유로 보고에서 빠졌다 — LRU 갱신이 멈춘다: {visible:?}"
+        );
+        assert!(visible.iter().any(|p| p.ends_with("사진2.jpg")));
+    }
+
+    #[test]
+    fn 자세히와_목록에서는_썸네일을_요청하지_않는다() {
+        // 16px 자리에 미리보기는 알아볼 수 없고 디스크만 읽는다 (FR-24)
+        let visible = visible_after_draw(ViewMode::List, &["사진1.jpg"], &[]);
+        assert!(
+            visible.is_empty(),
+            "목록 보기가 썸네일을 요청했다: {visible:?}"
+        );
+    }
+
+    #[test]
+    fn 폴더는_썸네일을_요청하지_않는다() {
+        // 폴더는 폴더 아이콘이 맞다 — 셸에 물어도 의미가 없다
+        let dir = PathBuf::from(r"C:\테스트");
+        let ctx = egui::Context::default();
+        crate::ui::app::install_fonts(&ctx);
+        let entries = vec![entry("문서", true), entry("사진.jpg", false)];
+        let mut icon_indices = vec![None; entries.len()];
+        let type_names = vec!["폴더".to_owned(), "파일".to_owned()];
+        let selection = BTreeSet::new();
+        let mut visible = Vec::new();
+        let textures = ThumbnailTextures::new();
+        let mut icons = IconCache::new();
+        let mut icon_textures = IconTextures::new();
+
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            visible.clear();
+            show(
+                ui,
+                GridInput {
+                    dir: &dir,
+                    entries: &entries,
+                    icon_indices: &mut icon_indices,
+                    selection: &selection,
+                    type_names: &type_names,
+                    mode: ViewMode::MediumIcons,
+                    thumbnails: &textures,
+                    visible: &mut visible,
+                },
+                &mut icons,
+                &mut icon_textures,
+            );
+        });
+        assert_eq!(visible.len(), 1, "폴더까지 요청했다: {visible:?}");
+        assert!(visible[0].ends_with("사진.jpg"));
+    }
 
     #[test]
     fn 한_줄_칸은_작은_아이콘과_목록뿐이다() {
