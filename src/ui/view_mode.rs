@@ -150,7 +150,12 @@ pub struct GridMetrics {
 /// `Vertical`은 높이에 맞춰 줄 수를 정하고 열이 늘어난다(가로 스크롤).
 /// `Rows`는 한 줄에 하나씩 폭 전체를 쓴다
 pub fn grid_metrics(mode: ViewMode, viewport: egui::Vec2, item_count: usize) -> GridMetrics {
-    let cell = mode.cell_size();
+    let mut cell = mode.cell_size();
+    if mode.flow() == Flow::Rows {
+        // 한 줄에 하나씩 **폭 전체**를 쓰는 모드다 — `cell_size`의 가로값은 뜻이 없으므로
+        // 여기서 뷰포트 폭으로 채운다. 그래야 행 배경·선택 표시가 오른쪽 끝까지 간다
+        cell.x = viewport.x.max(0.0);
+    }
     if item_count == 0 {
         // 빈 폴더는 두 축 모두 0이어야 한다 — 한쪽만 0으로 두면 그릴 것이 없는데도
         // 콘텐츠 크기가 남아 스크롤 막대가 허공을 가리킨다
@@ -468,5 +473,22 @@ mod tests {
             assert_eq!(metrics.columns, 1, "{mode:?}");
             assert_eq!(metrics.rows, 5, "{mode:?}");
         }
+    }
+
+    #[test]
+    fn 한_줄_모드의_칸은_뷰포트_폭을_채운다() {
+        // 셀 가로값이 0인 채로 두면 행 배경·선택 표시가 폭 0이 되어 보이지 않는다
+        for mode in [ViewMode::Details, ViewMode::Content] {
+            let metrics = grid_metrics(mode, egui::vec2(800.0, 600.0), 3);
+            assert_eq!(metrics.cell.x, 800.0, "{mode:?}");
+            assert_eq!(metrics.item_rect(0).width(), 800.0, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn 한_줄_모드의_행은_세로로만_쌓인다() {
+        let metrics = grid_metrics(ViewMode::Content, egui::vec2(800.0, 600.0), 3);
+        assert_eq!(metrics.item_rect(0).min.x, metrics.item_rect(2).min.x);
+        assert!(metrics.item_rect(1).min.y > metrics.item_rect(0).min.y);
     }
 }

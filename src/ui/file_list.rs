@@ -251,6 +251,7 @@ impl FileListView {
                     entries: &self.entries,
                     icon_indices: &mut self.icon_indices,
                     selection: &self.selection,
+                    type_names: &self.type_names,
                     mode: self.view_mode,
                 },
                 icons,
