@@ -122,13 +122,27 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
     outcome
 }
 
-/// 좌측 — 워크스페이스 사이드바 표시 토글 (T5에서 채운다)
-fn show_left(ui: &mut egui::Ui, _state: TitlebarState) -> Option<Command> {
+/// 좌측 — 워크스페이스 목록 표시 토글.
+/// 사이드바가 접히면 그 안의 접기 버튼도 함께 사라지므로, 다시 펼 수 있는 자리가 여기다
+fn show_left(ui: &mut egui::Ui, state: TitlebarState) -> Option<Command> {
     ui.add_space(LEFT_MARGIN);
-    None
+    let hint = if state.sidebar_collapsed {
+        "워크스페이스 목록 보이기"
+    } else {
+        "워크스페이스 목록 숨기기"
+    };
+    icon_button(
+        ui,
+        egui_phosphor::regular::SIDEBAR_SIMPLE,
+        BUTTON_SIZE,
+        theme::CONTROL_HOT,
+    )
+    .on_hover_text(hint)
+    .clicked()
+    .then_some(Command::ToggleSidebar)
 }
 
-/// 우측 — 설정 버튼(T5)과 최소화·최대화·닫기.
+/// 우측 — 설정 버튼과 최소화·최대화·닫기.
 /// `Sides`의 오른쪽 영역은 오른쪽부터 채워지므로 **닫기를 먼저** 추가해야
 /// 화면에서 왼→오 순서가 설정·최소화·최대화·닫기가 된다
 fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> Option<WindowRequest> {
@@ -157,7 +171,37 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> Option<WindowRequest> 
     {
         request = Some(WindowRequest::Minimize);
     }
+    show_settings_menu(ui);
     request
+}
+
+/// 설정 메뉴 — 항목은 **표시만** 하고 각 기능은 아직 만들지 않았다.
+/// 고를 수 있는 것이 없으므로 돌려줄 결과도 없다.
+///
+/// 다섯 항목을 배열+반복으로 묶지 않은 이유: 각 항목이 곧 서로 다른 화면·동작으로 갈라질
+/// 자리라, 지금 묶으면 채우는 순간 다시 풀어야 한다
+fn show_settings_menu(ui: &mut egui::Ui) {
+    let response = icon_button(
+        ui,
+        egui_phosphor::regular::GEAR,
+        BUTTON_SIZE,
+        theme::CONTROL_HOT,
+    )
+    .on_hover_text("설정");
+    egui::Popup::menu(&response).show(|ui| {
+        pending_item(ui, "설정");
+        pending_item(ui, "업데이트");
+        pending_item(ui, "릴리즈 노트");
+        ui.separator();
+        pending_item(ui, "오픈소스 라이선스");
+        pending_item(ui, "정보");
+    });
+}
+
+/// 아직 기능이 없는 메뉴 항목 — 비활성으로 두어 준비 중임을 눈으로 알린다.
+/// 활성처럼 보이면서 눌러도 반응이 없으면 고장으로 오인된다
+fn pending_item(ui: &mut egui::Ui, label: &str) {
+    ui.add_enabled(false, egui::Button::new(label));
 }
 
 /// 창 가장자리 크기 조절 (FR-22) — 매 프레임 포인터 위치를 보고 커서를 바꾸며,
