@@ -452,7 +452,7 @@
   4. 캐시 상한이 자료구조로 강제된다 — 항목 200장(`MAX_CACHED`), 한 장은 256×256 RGBA(`THUMB_PX`)라 **이론 상한 약 50MB**(200 × 256KB)이며 단위 테스트가 축출 경계를 덮는다. **실제 Working Set 측정은 T14로 인계한다** — 썸네일을 화면에 띄우려면 UI 배선이 끝나야 하고, 그 전에는 스크롤할 대상이 없다 (T9 acceptance 1과 같은 성격의 정정, T13 spec 리뷰 B1)
   5. `cargo test` 통과 — LRU 축출 경계·세대 폐기 단위 테스트
 
-### [ ] T14. 썸네일을 보기 모드에 연결 (요구 8)
+### [x] T14. 썸네일을 보기 모드에 연결 (요구 8)
 
 - **Type**: C
 - **Files**: `src/ui/list_grid.rs`, `src/ui/file_list.rs`, `src/ui/panel.rs`, `src/ui/icon_tex.rs`(썸네일 텍스처 캐시), `src/ui/view_mode.rs`(`uses_thumbnails` 판정), `src/fs/thumbnail.rs`(동기화용 조회 추가)
