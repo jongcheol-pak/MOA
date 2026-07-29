@@ -134,6 +134,17 @@ impl ThumbnailCache {
         self.ready.len()
     }
 
+    /// 캐시가 쥐고 있는 픽셀 바이트 합 — NFR-9 상한이 실제로 지켜지는지 재는 데 쓴다.
+    /// 이론값(200 × 256KB)이 아니라 **실제 담긴 이미지**의 크기다 —
+    /// 썸네일은 비율을 지켜 만들어져 원본이 정사각형이 아니면 256×256보다 작다
+    pub fn memory_bytes(&self) -> usize {
+        self.ready
+            .values()
+            .filter_map(|image| image.as_ref())
+            .map(|image| image.rgba.len())
+            .sum()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.ready.is_empty()
     }
@@ -485,6 +496,62 @@ mod tests {
         assert!(
             image.rgba.chunks_exact(4).any(|px| px[3] > 0),
             "모든 픽셀이 투명하다"
+        );
+    }
+
+    #[test]
+    fn 캐시가_가득_차도_상한_안에_머문다() {
+        // NFR-9의 실질 — 상한이 "장수"로만 걸려 있으면 한 장이 커질 때 메모리가 함께 는다.
+        // 여기서는 **실제 담긴 바이트**로 잰다(장당 최대 256×256×4 = 256KB)
+        const PER_IMAGE: usize = (THUMB_PX * THUMB_PX * 4) as usize;
+        let mut cache = cache();
+        for index in 0..MAX_CACHED + 50 {
+            cache.insert(
+                PathBuf::from(format!("f{index}.jpg")),
+                Some(ThumbnailImage {
+                    width: THUMB_PX as usize,
+                    height: THUMB_PX as usize,
+                    rgba: vec![0; PER_IMAGE],
+                }),
+            );
+        }
+        let bytes = cache.memory_bytes();
+        assert_eq!(cache.len(), MAX_CACHED, "장수 상한이 깨졌다");
+        assert_eq!(
+            bytes,
+            MAX_CACHED * PER_IMAGE,
+            "가득 찬 캐시의 실제 크기가 예상과 다르다"
+        );
+        // 약 50MB — NFR-9가 정한 패널당 상한
+        assert!(
+            bytes <= 55 * 1024 * 1024,
+            "가득 찬 캐시가 {}MB로 상한을 넘는다",
+            bytes / (1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn 실제_썸네일의_장당_크기를_잰다() {
+        // 실측 — 이 값이 plan의 메모리 기록 근거다. 썸네일은 비율을 지켜 만들어지므로
+        // 정사각형이 아닌 원본은 256×256보다 작게 나온다
+        let dir = std::env::temp_dir().join(format!("fe_thumb_mem_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("샘플.txt");
+        std::fs::write(&file, b"hello").unwrap();
+
+        let mut cache = ThumbnailCache::new();
+        let arrived = wait_for(&mut cache, &file, 20_000);
+        let bytes = cache.memory_bytes();
+        let size = cache.get(&file).map(|i| (i.width, i.height));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(arrived, "결과가 오지 않았다");
+        println!("MEASURED 장당 {bytes} bytes, 크기 {size:?}");
+        assert!(bytes > 0);
+        assert!(
+            bytes <= (THUMB_PX * THUMB_PX * 4) as usize,
+            "한 장이 256×256 RGBA보다 크다 — 상한 산정이 어긋난다"
         );
     }
 
