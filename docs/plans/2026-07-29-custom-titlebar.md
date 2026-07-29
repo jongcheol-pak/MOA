@@ -211,26 +211,30 @@
 
 ### 시각 속성
 
-| 요소 | 속성 | 디자인 값 | 확인 방법 |
-|------|------|----------|-----------|
-| 타이틀바 | 높이 | 36px | 이미지 비율(제목 글자 높이 대비 약 2.6배) + 기존 토큰 `sidebar.rs:21` HEADER_HEIGHT 36 통일 |
-| 타이틀바 | 배경색 | `#1B1B1B` (`theme::WINDOW_BG`) | 이미지 육안(거의 검정) + 기존 팔레트 재사용 `theme.rs:9` |
-| 타이틀바 | 아래 경계 | 구분선 없음 (메뉴 바가 바로 이어짐) | 이미지 육안 |
-| 제목 | 문구 | 활성 워크스페이스 이름 (예: "워크스페이스 1") | 이미지 육안 (D8) |
-| 제목 | 정렬 | 타이틀바 가로 중앙 (좌우 버튼군 배치와 무관하게 바 중심) | 이미지 육안 |
-| 제목 | 최대 폭 | 타이틀바 폭 − 2 × 174px(우측 버튼군 폭) | D14 — 가로 중앙과 버튼 비침범을 동시에 만족하는 유일한 폭 |
-| 제목 | 글자 크기·색 | 14px, `#E8E8E8`(`theme::TEXT`) | 기존 토큰 `sidebar.rs:23` HEADER_FONT_PX 14 통일 |
-| 제목 | 넘침 처리 | 좌우 버튼을 뺀 가용 폭에서 말줄임(…) | 이미지에 없음 — egui `Label::truncate()`로 폭 기준 처리 (D14) |
-| 좌측 토글 버튼 | 위치·크기 | 타이틀바 왼쪽 끝, 36×36px, 좌측 여백 2px | 이미지 육안(왼쪽 끝에 거의 붙음) |
-| 좌측 토글 버튼 | 아이콘 | Phosphor `SIDEBAR_SIMPLE`, 16px | D6 |
-| 우측 버튼군 | 순서 | (왼→오) 설정 → 최소화 → 최대화 → 닫기 | 이미지 육안 + 요청문("최소화 버튼 옆에 설정") |
-| 설정 버튼 | 크기·아이콘 | 36×36px, Phosphor `GEAR` 16px | D6 |
-| 캡션 버튼 3종 | 크기 | 46×36px (Windows 캡션 버튼 관례 폭) | 이미지 육안(정사각보다 가로로 넓음) |
-| 캡션 버튼 3종 | 아이콘 | `MINUS` / `SQUARE`(최대화 시 `CORNERS_IN`) / `X`, 16px | D6 |
-| 버튼 공통 | 기본 배경 | 투명(타이틀바와 동일) | 이미지 육안 |
-| 버튼 공통 | hover 배경 | `#383838` (`theme::CONTROL_HOT`) | 기존 팔레트 재사용 `theme.rs:23` |
-| 닫기 버튼 | hover 배경 | `#C42B1C` (신규 `theme::CLOSE_HOT`) | Windows 11 표준 닫기 hover 색 |
-| 아이콘 색 | 기본 | `#E8E8E8` (`theme::TEXT`) | 이미지 육안 |
+> `구현 근거`·`판정`은 V-9(구현 후 대조)에서 채운다. 이 앱은 데스크톱 UI라 자율 루프에서 창을 띄워
+> 캡처할 수단이 없으므로, **코드 값이 디자인 값과 같음은 소스로 확인**하되 화면에 그려진 최종 모습은
+> `⏳ 미확인`으로 두고 F-8(완료 선언 직전 관문)이 사용자 확인을 받는다.
+
+| 요소 | 속성 | 디자인 값 | 확인 방법 | 구현 근거 | 판정 |
+|------|------|----------|-----------|----------|------|
+| 타이틀바 | 높이 | 36px | 이미지 비율(제목 글자 높이 대비 약 2.6배) + 기존 토큰 `sidebar.rs:21` HEADER_HEIGHT 36 통일 | `titlebar.rs:16` TITLEBAR_HEIGHT 36.0 / `app.rs:499` exact_size | ⏳ 미확인 (코드 값 일치) |
+| 타이틀바 | 배경색 | `#1B1B1B` (`theme::WINDOW_BG`) | 이미지 육안(거의 검정) + 기존 팔레트 재사용 `theme.rs:9` | `app.rs:502` `Frame::NONE.fill(theme::WINDOW_BG)` | ⏳ 미확인 (코드 값 일치) |
+| 타이틀바 | 아래 경계 | 구분선 없음 (메뉴 바가 바로 이어짐) | 이미지 육안 | `app.rs:501` `show_separator_line(false)` | ⏳ 미확인 (코드 값 일치) |
+| 제목 | 문구 | 활성 워크스페이스 이름 (예: "워크스페이스 1") | 이미지 육안 (D8) | `app.rs:496` `workspaces.active().name` | ⏳ 미확인 (코드 값 일치) |
+| 제목 | 정렬 | 타이틀바 가로 중앙 (좌우 버튼군 배치와 무관하게 바 중심) | 이미지 육안 | `titlebar.rs:101~113` `Rect::from_center_size(bar.center(), …)` + `ui.put` | ⏳ 미확인 (코드 값 일치) |
+| 제목 | 최대 폭 | 타이틀바 폭 − 2 × 174px(우측 버튼군 폭) | D14 — 가로 중앙과 버튼 비침범을 동시에 만족하는 유일한 폭 | `titlebar.rs:102` `bar.width() - 2.0 * RIGHT_GROUP_WIDTH` | ⏳ 미확인 (코드 값 일치) |
+| 제목 | 글자 크기·색 | 14px, `#E8E8E8`(`theme::TEXT`) | 기존 토큰 `sidebar.rs:23` HEADER_FONT_PX 14 통일 | `titlebar.rs:26` TITLE_FONT_PX 14.0 / `titlebar.rs:107~109` | ⏳ 미확인 (코드 값 일치) |
+| 제목 | 넘침 처리 | 좌우 버튼을 뺀 가용 폭에서 말줄임(…) | 이미지에 없음 — egui `Label::truncate()`로 폭 기준 처리 (D14) | `titlebar.rs:111` `.truncate()` | ⏳ 미확인 (코드 값 일치) |
+| 좌측 토글 버튼 | 위치·크기 | 타이틀바 왼쪽 끝, 36×36px, 좌측 여백 2px | 이미지 육안(왼쪽 끝에 거의 붙음) | (T5) | — T5 |
+| 좌측 토글 버튼 | 아이콘 | Phosphor `SIDEBAR_SIMPLE`, 16px | D6 | (T5) | — T5 |
+| 우측 버튼군 | 순서 | (왼→오) 설정 → 최소화 → 최대화 → 닫기 | 이미지 육안 + 요청문("최소화 버튼 옆에 설정") | `titlebar.rs:120~149` (`Sides` 우측은 오른쪽부터 채우므로 닫기→최대화→최소화 순으로 추가) | ⏳ 미확인 (코드 값 일치, 설정 버튼은 T5) |
+| 설정 버튼 | 크기·아이콘 | 36×36px, Phosphor `GEAR` 16px | D6 | (T5) | — T5 |
+| 캡션 버튼 3종 | 크기 | 46×36px (Windows 캡션 버튼 관례 폭) | 이미지 육안(정사각보다 가로로 넓음) | `titlebar.rs:20` CAPTION_WIDTH 46.0 / `titlebar.rs:152` | ⏳ 미확인 (코드 값 일치) |
+| 캡션 버튼 3종 | 아이콘 | `MINUS` / `SQUARE`(최대화 시 `CORNERS_IN`) / `X`, 16px | D6 | `titlebar.rs:120·131~137·143` + `titlebar.rs:25` ICON_FONT_PX 16.0 | ⏳ 미확인 (코드 값 일치) |
+| 버튼 공통 | 기본 배경 | 투명(타이틀바와 동일) | 이미지 육안 | `titlebar.rs:166~168` (hover일 때만 `rect_filled`) | ⏳ 미확인 (코드 값 일치) |
+| 버튼 공통 | hover 배경 | `#383838` (`theme::CONTROL_HOT`) | 기존 팔레트 재사용 `theme.rs:23` | `titlebar.rs:131·137` (`theme::CONTROL_HOT` 전달) | ⏳ 미확인 (코드 값 일치) |
+| 닫기 버튼 | hover 배경 | `#C42B1C` (신규 `theme::CLOSE_HOT`) | Windows 11 표준 닫기 hover 색 | `theme.rs:29` CLOSE_HOT / `titlebar.rs:120` | ⏳ 미확인 (코드 값 일치) |
+| 아이콘 색 | 기본 | `#E8E8E8` (`theme::TEXT`) | 이미지 육안 | `titlebar.rs:174` `theme::TEXT` | ⏳ 미확인 (코드 값 일치) |
 
 ## Tasks
 
@@ -258,7 +262,7 @@
     - (ii-a) 의존성 추가(`egui-phosphor 0.13.0`) → `## 사전 승인 항목`에 등록
   - **Depends on**: -
 
-- [ ] T3. 창 장식 제거와 타이틀바 골격 (제목 · 드래그 이동 · 더블클릭 최대화 · 캡션 버튼 3종)
+- [x] T3. 창 장식 제거와 타이틀바 골격 (제목 · 드래그 이동 · 더블클릭 최대화 · 캡션 버튼 3종)
   - **Type**: D
   - **Design**: ① 배치 — 신규 파일 `src/ui/titlebar.rs`(`ui::mod`에 등록), 창 설정은 `src/main.rs`. 타이틀바는 `egui::Panel::top(egui::Id::new("titlebar"))`에 `show_separator_line(false)`로 그린다(D2) ② 신규 심볼 — `show_titlebar(&mut egui::Ui, &str, TitlebarState) -> TitlebarOutcome`(타이틀바 한 줄을 그리고 이번 프레임의 요청만 값으로 반환) / `TitlebarState{maximized: bool, sidebar_collapsed: bool}`(그리기에 필요한 현재 상태) / `TitlebarOutcome{command: Option<Command>, window: Option<WindowRequest>}` / `WindowRequest{Minimize, ToggleMaximize, Close, Drag}`. 제목 말줄임 함수는 만들지 않는다(D14 — `Label::truncate()`) ③ 의존 방향 — `ui::titlebar` → `ui::theme`·`ui::menu::Command`·`egui_phosphor`. 상태 변경은 하지 않고 `ui::app`이 결과를 실행한다(`ui::menu`·`ui::tabs`와 같은 규약) ④ 비추상화 — 창 명령을 감싸는 트레이트·추상 레이어를 만들지 않는다. `ViewportCommand`는 `ui::app`에서 직접 보낸다
   - **Acceptance**: Given 앱 실행, When 창이 뜸, Then OS 기본 제목 표시줄이 없고 다크 타이틀바에 활성 워크스페이스 이름이 중앙에 보인다 / Given 타이틀바 빈 영역, When 드래그, Then 창이 따라 움직이고 화면 가장자리로 끌면 Windows 스냅이 동작한다 / Given 타이틀바 빈 영역, When 더블클릭, Then 최대화·복원이 토글되고 **드래그로 오인되지 않는다** / Given 최대화 상태, When 최대화 버튼 확인, Then 아이콘이 `CORNERS_IN`으로 바뀐다 / Given 최소화·닫기 버튼, When 클릭, Then 각각 창이 최소화되고 종료되며 **종료 시 세션이 저장된다**(`on_exit` 경로 유지) / Given 최대화 후 복원, When 재시작, Then 이전 크기·위치로 복원된다(FR-11 회귀 없음) / Given 파일 목록, When 우클릭, Then Win32 셸 컨텍스트 메뉴가 **여전히 다크로** 뜬다(D13 — `enable_dark_mode` 존치 확인) / `cargo test` 통과(기존 테스트 회귀 없음)
@@ -346,6 +350,12 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- **T1~T3 완료** (커밋 `5977c39`·`326b440`·T3는 pre-review `8ffb061` → review-fix `c40e848`): PRD FR-22 신설, egui-phosphor 도입, 커스텀 타이틀바 골격.
+  - **품질 리뷰가 잡은 BLOCKER가 이번 task의 핵심 교훈**: 타이틀바 배경을 `Sense::click_and_drag()`로 잡고 그 위에 버튼을 그리면, "나중에 그린 버튼이 클릭을 가져간다"는 통념과 달리 **버튼을 누른 프레임에 배경의 끌기 신호도 함께 나간다.** egui는 클릭 위젯과 끌기 위젯을 각각 독립으로 히트 판정하고(`hit_test.rs`), `is_pointer_button_down_on()`은 둘 중 하나만 걸려도 참이기 때문이다(`context.rs:1422~1426`). 그 결과 `StartDrag`로 OS 창 이동 루프가 열려 캡션 버튼 클릭이 삼켜질 수 있었다 — **끌기 판정 영역에서 버튼 자리를 아예 빼는 것**이 해법이었다.
+  - `clicked()` 해소(어느 위젯이 클릭을 받나)와 `is_pointer_button_down_on()`(눌리자마자 나오는 신호)은 규칙이 다르다 — 겹쳐 놓고 전자로 후자를 기대하면 안 된다.
+  - 좌측 38px(`LEFT_GROUP_WIDTH`)는 T5의 사이드바 토글 자리라 지금부터 끌기 영역에서 제외했다. T5에서 버튼을 넣을 때 같은 겹침 문제를 다시 겪지 않기 위함이다.
+  - `TITLEBAR_BG` 상수는 만들지 않았다 — 시각 분해가 지정한 값이 기존 `WINDOW_BG`와 같아 별칭이 될 뿐이다(4-A·4-D에 정정 기록).
 
 ## Next Steps
 
