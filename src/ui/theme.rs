@@ -27,6 +27,9 @@ pub const CONTROL_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x45, 0x45, 0x
 pub const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(0x6A, 0x6A, 0x6A);
 /// 타이틀바 닫기 버튼 hover 배경 — Windows 11 캡션 닫기 버튼과 같은 빨강 (FR-22)
 pub const CLOSE_HOT: egui::Color32 = egui::Color32::from_rgb(0xC4, 0x2B, 0x1C);
+/// 탭의 폴더 아이콘 노랑 — 이 팔레트에서 무채색이 아닌 유일한 예외다.
+/// 탐색기 탭은 폴더를 가리키므로 색으로 종류가 드러나는 편이 낫고, 무채색 단계로는 표현할 수 없다
+pub const FOLDER_ICON: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xB3, 0x4D);
 
 /// 고정 다크 팔레트를 egui 컨텍스트에 적용한다.
 /// egui 기본 다크를 토대로, 위 상수로 현행 앱과 같은 색을 덮어쓴다.
