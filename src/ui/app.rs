@@ -211,8 +211,13 @@ impl WorkspaceView {
         };
         let mut panels = HashMap::new();
         for (&id, tabs) in ids.iter().zip(&state.panels) {
-            let panel = PanelState::from_tabs(tabs.tabs.clone(), tabs.active_tab, &tabs.columns)
-                .unwrap_or_else(|| PanelState::new(start_dir()));
+            let panel = PanelState::from_tabs(
+                tabs.tabs.clone(),
+                tabs.active_tab,
+                &tabs.columns,
+                &tabs.view_mode,
+            )
+            .unwrap_or_else(|| PanelState::new(start_dir()));
             panels.insert(id, panel);
         }
         WorkspaceView {
@@ -232,6 +237,7 @@ impl WorkspaceView {
                     tabs: panel.tab_paths(),
                     active_tab: panel.active_tab(),
                     columns: panel.columns(),
+                    view_mode: panel.view_mode().as_key().to_owned(),
                 },
                 // 트리에는 있는데 상태가 없는 리프 — 분할 직후가 아니면 생기지 않는다
                 None => PanelTabs {

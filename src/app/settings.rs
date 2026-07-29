@@ -93,6 +93,10 @@ pub struct PanelSession {
     /// 빈 벡터는 "저장된 폭 없음"이며 복원 시 기본 폭이 된다
     #[serde(default)]
     pub columns: Vec<f32>,
+    /// 보기 모드 키 (FR-23). 빈 문자열은 "저장 안 됨"이며 복원 시 기본값(자세히)이 된다.
+    /// 열 폭과 같은 이유로 `default`를 쓴다 — 스키마 버전을 올리면 옛 세션이 통째로 버려진다
+    #[serde(default)]
+    pub view_mode: String,
 }
 
 impl LayoutNode {

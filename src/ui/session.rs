@@ -30,6 +30,8 @@ pub struct PanelTabs {
     pub active_tab: usize,
     /// 자세히 보기 열 폭 — 비면 기본 폭으로 시작한다
     pub columns: Vec<f32>,
+    /// 보기 모드 키 — 비면 기본값(자세히)으로 시작한다
+    pub view_mode: String,
 }
 
 /// 현재 상태를 저장 스키마로 옮긴다
@@ -60,6 +62,7 @@ pub fn to_session(
                             .collect(),
                         active_tab: panel.active_tab,
                         columns: panel.columns.clone(),
+                        view_mode: panel.view_mode.clone(),
                     })
                     .collect(),
                 active_panel: workspace.active_panel,
@@ -86,6 +89,7 @@ pub fn restore(session: &Session) -> Vec<WorkspaceState> {
                     tabs: panel.tabs.iter().map(PathBuf::from).collect(),
                     active_tab: panel.active_tab,
                     columns: panel.columns.clone(),
+                    view_mode: panel.view_mode.clone(),
                 })
                 .collect(),
             active_panel: workspace.active_panel,
@@ -133,11 +137,13 @@ mod tests {
                         tabs: vec![PathBuf::from(r"C:\Users"), PathBuf::from(r"D:\")],
                         active_tab: 1,
                         columns: vec![200.0, 60.0, 120.0, 90.0],
+                        view_mode: "tiles".into(),
                     },
                     PanelTabs {
                         tabs: vec![PathBuf::from(r"C:\Windows")],
                         active_tab: 0,
                         columns: Vec::new(),
+                        view_mode: String::new(),
                     },
                 ],
                 active_panel: 1,
@@ -149,6 +155,7 @@ mod tests {
                     tabs: vec![PathBuf::from(r"D:\작업")],
                     active_tab: 0,
                     columns: Vec::new(),
+                    view_mode: "large_icons".into(),
                 }],
                 active_panel: 0,
             },
@@ -189,10 +196,13 @@ mod tests {
         let json = serde_json::to_string(&session).unwrap();
         let without_columns = json
             .replace(",\"columns\":[200.0,60.0,120.0,90.0]", "")
-            .replace(",\"columns\":[]", "");
+            .replace(",\"columns\":[]", "")
+            .replace(",\"view_mode\":\"tiles\"", "")
+            .replace(",\"view_mode\":\"large_icons\"", "")
+            .replace(",\"view_mode\":\"\"", "");
         assert!(
-            !without_columns.contains("columns"),
-            "테스트가 열 폭 필드를 실제로 걷어내지 못했다"
+            !without_columns.contains("columns") && !without_columns.contains("view_mode"),
+            "테스트가 새 필드를 실제로 걷어내지 못했다"
         );
 
         let parsed = parse_session(&without_columns).expect("옛 세션이 거부됐다");
@@ -219,6 +229,38 @@ mod tests {
             vec![200.0, 60.0, 120.0, 90.0]
         );
         assert!(restored[0].panels[1].columns.is_empty());
+    }
+
+    #[test]
+    fn 보기_모드는_패널마다_따로_왕복한다() {
+        // 한 패널에서 고른 모드가 다른 패널에 번지면 "패널마다 독립"(FR-23)이 깨진다
+        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let restored = restore(&session);
+        assert_eq!(restored[0].panels[0].view_mode, "tiles");
+        assert!(restored[0].panels[1].view_mode.is_empty());
+        assert_eq!(restored[1].panels[0].view_mode, "large_icons");
+    }
+
+    #[test]
+    fn 저장된_보기_모드_키는_실제_모드로_되살아난다() {
+        // 세션에 담기는 것은 문자열이라, 그것이 모드로 되돌아오는지까지 확인해야
+        // "재시작하면 모드가 유지된다"가 성립한다
+        use crate::ui::view_mode::ViewMode;
+        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let restored = restore(&session);
+        assert_eq!(
+            ViewMode::from_key(&restored[0].panels[0].view_mode),
+            ViewMode::Tiles
+        );
+        assert_eq!(
+            ViewMode::from_key(&restored[1].panels[0].view_mode),
+            ViewMode::LargeIcons
+        );
+        // 빈 문자열은 기본값으로 — 저장된 적 없는 패널이다
+        assert_eq!(
+            ViewMode::from_key(&restored[0].panels[1].view_mode),
+            ViewMode::Details
+        );
     }
 
     #[test]

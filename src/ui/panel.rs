@@ -224,7 +224,12 @@ impl PanelState {
     ///
     /// 히스토리는 복원하지 않는다 — 세션에는 경로만 저장한다(현행과 같은 규칙).
     /// `columns`가 비면 기본 폭으로 시작한다
-    pub fn from_tabs(tabs: Vec<PathBuf>, active_tab: usize, columns: &[f32]) -> Option<PanelState> {
+    pub fn from_tabs(
+        tabs: Vec<PathBuf>,
+        active_tab: usize,
+        columns: &[f32],
+        view_mode: &str,
+    ) -> Option<PanelState> {
         let states: Vec<TabState> = tabs.into_iter().map(TabState::new).collect();
         let model = TabsModel::from_tabs(states, active_tab)?;
         let start = model.active().committed.clone();
@@ -232,6 +237,9 @@ impl PanelState {
         panel.tabs = model;
         if !columns.is_empty() {
             panel.list.set_columns(columns);
+        }
+        if !view_mode.is_empty() {
+            panel.set_view_mode(ViewMode::from_key(view_mode));
         }
         Some(panel)
     }
