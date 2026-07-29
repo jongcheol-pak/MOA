@@ -115,7 +115,7 @@
 | `TITLEBAR_BG` 상수 | `theme::WINDOW_BG`(`theme.rs:9`) | **재사용 — 신규 만들지 않음**(T3에서 확정): 시각 분해가 지정한 값(#1B1B1B)이 `WINDOW_BG`와 같아, 별칭 상수는 중복일 뿐이다 |
 | 사이드바 토글 명령 | `Command::ToggleSidebar`(`menu.rs:50`) | **재사용** — 새 명령을 만들지 않는다 |
 | 좌/중앙/우 3분할 배치 | `egui::Sides`(`tabs.rs:41`) | **재사용** — 좌·우 고정 배치는 `Sides`, 중앙 제목은 타이틀바 rect 기준 중앙 정렬로 그린다 |
-| 다크 팔레트 | `ui::theme`(`theme.rs`) | **재사용 + 상수 2개 추가**(`TITLEBAR_BG`·`CLOSE_HOT`) — 색을 파일 안에 흩지 않는다 |
+| 다크 팔레트 | `ui::theme`(`theme.rs`) | **재사용 + 상수 1개 추가**(`CLOSE_HOT`) — 색을 파일 안에 흩지 않는다. `TITLEBAR_BG`는 만들지 않았다(위 행 참조) |
 
 ### Verified by
 
@@ -352,7 +352,9 @@
 ## Phase Ledger
 
 - T1~T5 완료
-- Phase F 통과 (F-7 1회차 MAJOR 2·MINOR 4 반영 후 재검토)
+- Phase F 통과 (F-7 1회차 MAJOR 2·MINOR 4 반영 후 재검토 — 2회차 BLOCKER·MAJOR 0)
+- Phase G 통과 (Must 100% — F-7 전수 대조 재사용, 재루프 0회. 커버 대상 FR-22·21·19·11 전부 충족, active Must FR은 `## PRD Coverage`에서 이번 범위 외로 선언한 기구현 항목)
+- F-8 대기 — 시각 요소 분해 20행이 `⏳ 미확인`(데스크톱 앱이라 자율 루프에서 화면 캡처 불가) → 완료 선언 보류, 사용자 화면 확인 필요
 
 ## Retry Ledger
 
