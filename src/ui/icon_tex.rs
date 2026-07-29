@@ -3,7 +3,7 @@
 //! `IconCache`는 **시스템 이미지 리스트의 인덱스**만 들고 있다(ListView 전용 설계).
 //! egui는 이미지 리스트를 그릴 수 없으므로 인덱스를 HICON으로 꺼내 RGBA 픽셀로 바꾼 뒤
 //! 텍스처로 올린다. 변환·해제에 필요한 unsafe는 전부 이 파일에 격리한다.
-use crate::fs::thumbnail::ThumbnailImage;
+use crate::fs::thumbnail::{ThumbnailCache, ThumbnailImage};
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -85,7 +85,9 @@ impl IconTextures {
 /// 경로별 썸네일 텍스처 (FR-24).
 ///
 /// 픽셀은 `fs::thumbnail`이 만들고 여기서는 **텍스처로 올리기만** 한다.
-/// 캐시 상한(NFR-9)은 픽셀 쪽에서 걸리므로 여기서는 그 캐시가 비워질 때 함께 비운다
+/// 매 프레임 `sync`가 픽셀 캐시와 항목 집합을 맞춘다 — 픽셀이 LRU로 축출되면 그 텍스처도
+/// 함께 버려야 NFR-9 상한이 GPU 쪽에서도 지켜지고, 프레임 상한에 걸려 못 올린 것도
+/// 다음 프레임에 실제로 다시 시도된다
 pub struct ThumbnailTextures {
     by_path: HashMap<PathBuf, egui::TextureHandle>,
     created_this_frame: usize,
@@ -105,15 +107,28 @@ impl ThumbnailTextures {
         }
     }
 
-    /// 프레임 시작 시 호출 — 프레임당 생성 상한을 초기화한다
-    pub fn begin_frame(&mut self) {
+    /// 픽셀 캐시와 항목 집합을 맞춘다 — 프레임마다 한 번 부른다.
+    ///
+    /// ① 픽셀이 사라진(축출된) 텍스처를 버리고 ② 아직 안 올라간 것을 상한까지 올린다.
+    /// **`poll`이 돌려준 "방금 도착한 것"만 보면 안 된다** — 상한에 걸려 건너뛴 경로는
+    /// 그 목록에 다시 나오지 않아 영영 형식 아이콘으로 남는다
+    pub fn sync(&mut self, ctx: &egui::Context, cache: &ThumbnailCache) {
         self.created_this_frame = 0;
+        // 픽셀이 축출된 텍스처는 GPU에서도 놓는다 (NFR-9)
+        self.by_path.retain(|path, _| cache.has_image(path));
+        for path in cache.ready_paths() {
+            if self.created_this_frame >= MAX_NEW_THUMBS_PER_FRAME {
+                break;
+            }
+            if let Some(image) = cache.peek(&path) {
+                self.upload(ctx, &path, image);
+            }
+        }
     }
 
-    /// 준비된 썸네일을 텍스처로 올린다. 상한을 넘으면 이번 프레임에는 건너뛴다 —
-    /// 캐시에 남아 있으므로 다음 프레임에 다시 시도된다
-    pub fn upload(&mut self, ctx: &egui::Context, path: &Path, image: &ThumbnailImage) {
-        if self.by_path.contains_key(path) || self.created_this_frame >= MAX_NEW_THUMBS_PER_FRAME {
+    /// 준비된 썸네일을 텍스처로 올린다. 이미 있으면 아무 일도 하지 않는다
+    fn upload(&mut self, ctx: &egui::Context, path: &Path, image: &ThumbnailImage) {
+        if self.by_path.contains_key(path) {
             return;
         }
         let color =
@@ -294,5 +309,81 @@ unsafe fn read_raw_bgra(hbm: HBITMAP, width: usize, height: usize) -> Option<Vec
         );
         let _ = DeleteDC(hdc);
         if lines == 0 { None } else { Some(raw) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::thumbnail::ThumbnailImage;
+
+    fn image() -> ThumbnailImage {
+        ThumbnailImage {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 2 * 2 * 4],
+        }
+    }
+
+    /// 픽셀 캐시에 `count`개를 채운 상태를 만든다 (워커를 거치지 않는다)
+    fn filled_cache(count: usize) -> ThumbnailCache {
+        let mut cache = ThumbnailCache::new();
+        for index in 0..count {
+            cache.accept_for_test(PathBuf::from(format!("f{index}.jpg")), Some(image()));
+        }
+        cache
+    }
+
+    #[test]
+    fn 상한을_넘긴_썸네일도_다음_프레임에_올라간다() {
+        // 프레임 상한(4)에 걸린 경로가 영영 안 올라가면 폴더 진입 직후 일부가
+        // 형식 아이콘인 채로 남는다 — 이 회귀를 막는다
+        let ctx = egui::Context::default();
+        let cache = filled_cache(10);
+        let mut textures = ThumbnailTextures::new();
+
+        textures.sync(&ctx, &cache);
+        assert_eq!(
+            textures.len(),
+            MAX_NEW_THUMBS_PER_FRAME,
+            "첫 프레임에 상한만큼만 올라가야 한다"
+        );
+        textures.sync(&ctx, &cache);
+        assert_eq!(
+            textures.len(),
+            MAX_NEW_THUMBS_PER_FRAME * 2,
+            "다음 프레임에 이어 올라가지 않았다"
+        );
+        // 몇 프레임 더 돌면 전부 올라간다
+        for _ in 0..3 {
+            textures.sync(&ctx, &cache);
+        }
+        assert_eq!(textures.len(), 10, "끝내 전부 올라가지 않았다");
+    }
+
+    #[test]
+    fn 픽셀이_축출되면_텍스처도_버린다() {
+        // 픽셀은 LRU로 줄어드는데 텍스처만 남으면 같은 폴더에서 스크롤만 해도
+        // GPU 메모리가 무제한 는다 (NFR-9가 텍스처 쪽에서 깨진다)
+        let ctx = egui::Context::default();
+        let mut cache = filled_cache(4);
+        let mut textures = ThumbnailTextures::new();
+        textures.sync(&ctx, &cache);
+        assert_eq!(textures.len(), 4);
+
+        cache.clear(); // 폴더 이동 — 픽셀이 통째로 사라진다
+        textures.sync(&ctx, &cache);
+        assert!(textures.is_empty(), "픽셀이 사라졌는데 텍스처가 남았다");
+    }
+
+    #[test]
+    fn 같은_썸네일을_두_번_올리지_않는다() {
+        let ctx = egui::Context::default();
+        let cache = filled_cache(2);
+        let mut textures = ThumbnailTextures::new();
+        textures.sync(&ctx, &cache);
+        textures.sync(&ctx, &cache);
+        textures.sync(&ctx, &cache);
+        assert_eq!(textures.len(), 2, "중복으로 올라갔다");
     }
 }

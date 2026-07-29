@@ -385,14 +385,12 @@ impl PanelState {
     }
 
     /// 도착한 썸네일을 텍스처로 올린다 (FR-24).
-    /// 픽셀은 워커가 만들고 여기서는 GPU로 올리기만 한다 — 프레임당 상한은 텍스처 쪽이 건다
+    ///
+    /// 채널을 비운 뒤 **픽셀 캐시 전체와 동기화**한다 — 방금 도착한 것만 올리면
+    /// 프레임 상한에 걸린 경로가 영영 올라가지 못하고, 축출된 픽셀의 텍스처도 남는다
     fn poll_thumbnails(&mut self, ctx: &egui::Context) {
-        self.thumb_textures.begin_frame();
-        for path in self.thumbs.poll() {
-            if let Some(image) = self.thumbs.get(&path) {
-                self.thumb_textures.upload(ctx, &path, image);
-            }
-        }
+        self.thumbs.poll();
+        self.thumb_textures.sync(ctx, &self.thumbs);
     }
 
     /// 실패 문구에 쓸 대상 폴더 이름 — 전체 경로는 길어 끝 이름만 보여준다

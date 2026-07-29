@@ -77,9 +77,16 @@ impl ThumbnailCache {
         }
     }
 
-    /// 썸네일을 요청한다. 이미 있거나 요청 중이면 아무 일도 하지 않는다
+    /// 썸네일을 요청한다. 이미 있으면 **최근 사용으로 올리고** 끝낸다.
+    ///
+    /// 화면에 보이는 항목마다 매 프레임 불리므로, 여기서 올려야 보이는 것이 축출되지 않는다 —
+    /// 그리기는 텍스처만 보고 픽셀 캐시를 건드리지 않아 이 경로가 유일한 갱신 지점이다
     pub fn request(&mut self, path: &Path) {
-        if self.ready.contains_key(path) || self.pending.iter().any(|p| p == path) {
+        if self.ready.contains_key(path) {
+            self.touch(path);
+            return;
+        }
+        if self.pending.iter().any(|p| p == path) {
             return;
         }
         self.pending.push(path.to_path_buf());
@@ -132,6 +139,34 @@ impl ThumbnailCache {
     /// 캐시에 든 항목 수 (실패로 기억한 것 포함) — 상한 검증용
     pub fn len(&self) -> usize {
         self.ready.len()
+    }
+
+    /// 테스트에서 워커를 거치지 않고 결과를 넣는다 —
+    /// 텍스처 캐시 동기화처럼 셸 호출과 무관한 로직을 검증하는 데 쓴다
+    #[cfg(test)]
+    pub fn accept_for_test(&mut self, path: PathBuf, image: Option<ThumbnailImage>) {
+        self.insert(path, image);
+    }
+
+    /// 만들어진 썸네일이 있는 경로들 — 텍스처 캐시가 동기화에 쓴다.
+    /// 실패로 기억한 것(`None`)은 올릴 그림이 없으므로 뺀다
+    pub fn ready_paths(&self) -> Vec<PathBuf> {
+        self.ready
+            .iter()
+            .filter(|(_, image)| image.is_some())
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// 이 경로의 썸네일이 캐시에 있는가 (실패 기억은 제외).
+    /// 텍스처 캐시가 "픽셀이 사라진 텍스처"를 찾아내는 데 쓴다
+    pub fn has_image(&self, path: &Path) -> bool {
+        self.ready.get(path).is_some_and(|image| image.is_some())
+    }
+
+    /// 최근 사용 순서를 바꾸지 않고 들여다본다 — 동기화 중에는 순서를 흔들면 안 된다
+    pub fn peek(&self, path: &Path) -> Option<&ThumbnailImage> {
+        self.ready.get(path)?.as_ref()
     }
 
     /// 캐시가 쥐고 있는 픽셀 바이트 합 — NFR-9 상한이 실제로 지켜지는지 재는 데 쓴다.
@@ -401,6 +436,55 @@ mod tests {
         cache.request(&path);
         cache.request(&path);
         assert_eq!(cache.pending.len(), 1, "같은 요청이 쌓였다");
+    }
+
+    #[test]
+    fn 보이는_항목을_다시_요청하면_최근으로_올라간다() {
+        // 그리기는 텍스처만 보고 픽셀 캐시를 건드리지 않는다 — 화면에 보이는 항목마다
+        // 매 프레임 불리는 `request`가 유일한 LRU 갱신 지점이다.
+        // 이것이 없으면 지금 보고 있는 썸네일이 축출돼 스크롤할 때마다 다시 만든다
+        let mut cache = cache();
+        for index in 0..MAX_CACHED {
+            cache.insert(PathBuf::from(format!("f{index}.jpg")), Some(image(1)));
+        }
+        let oldest = PathBuf::from("f0.jpg");
+        cache.request(&oldest); // 화면에 보여서 다시 요청됐다
+        cache.insert(PathBuf::from("new.jpg"), Some(image(1)));
+        assert!(
+            cache.has_image(&oldest),
+            "보이는 항목인데 축출됐다 — request가 LRU를 갱신하지 않는다"
+        );
+        assert!(
+            !cache.has_image(Path::new("f1.jpg")),
+            "그다음이 밀려야 한다"
+        );
+    }
+
+    #[test]
+    fn 준비된_경로만_동기화_대상이다() {
+        // 실패로 기억한 것(None)은 올릴 그림이 없다 — 텍스처 캐시가 헛돌면 안 된다
+        let mut cache = cache();
+        cache.insert(PathBuf::from("사진.jpg"), Some(image(1)));
+        cache.insert(PathBuf::from("문서.txt"), None);
+        let paths = cache.ready_paths();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("사진.jpg"));
+        assert!(cache.has_image(Path::new("사진.jpg")));
+        assert!(!cache.has_image(Path::new("문서.txt")));
+        assert!(cache.peek(Path::new("문서.txt")).is_none());
+    }
+
+    #[test]
+    fn 들여다보기는_순서를_바꾸지_않는다() {
+        // 동기화 중에 순서가 흔들리면 축출 대상이 프레임마다 달라진다
+        let mut cache = cache();
+        for index in 0..3 {
+            cache.insert(PathBuf::from(format!("f{index}.jpg")), Some(image(1)));
+        }
+        let before = cache.order.clone();
+        let _ = cache.peek(Path::new("f0.jpg"));
+        let _ = cache.ready_paths();
+        assert_eq!(cache.order, before, "들여다보기가 순서를 바꿨다");
     }
 
     #[test]
