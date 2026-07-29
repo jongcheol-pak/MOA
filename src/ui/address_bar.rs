@@ -4,8 +4,16 @@
 use crate::panel::address_bar::normalize_input;
 use crate::panel::history::History;
 use crate::ui::theme;
+use crate::ui::widgets;
 use eframe::egui;
 use std::path::{Path, PathBuf};
+
+// ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
+/// 탐색 버튼 한 변
+const NAV_BUTTON_SIZE: f32 = 24.0;
+/// 탐색 버튼 아이콘 글꼴 — 타이틀바 버튼과 같은 크기다.
+/// 활성·비활성이 이 한 값을 함께 쓴다(상태에 따라 아이콘 크기가 변하면 안 된다)
+const NAV_ICON_PX: f32 = 16.0;
 
 /// 주소창이 상위(패널)에 돌려주는 탐색 요청
 #[derive(Clone, PartialEq, Debug)]
@@ -53,26 +61,14 @@ impl AddressBar {
             }
         }
         ui.horizontal(|ui| {
-            // 갈 수 없는 방향은 눌리지 않게 한다 — 버튼이 회색으로 보인다
-            if ui
-                .add_enabled(history.can_back(), egui::Button::new("←"))
-                .on_hover_text("뒤로")
-                .clicked()
-            {
+            use egui_phosphor::regular::{ARROW_LEFT, ARROW_RIGHT, ARROW_UP};
+            if nav_button(ui, ARROW_LEFT, history.can_back(), "뒤로") {
                 action = Some(NavAction::Back);
             }
-            if ui
-                .add_enabled(history.can_forward(), egui::Button::new("→"))
-                .on_hover_text("앞으로")
-                .clicked()
-            {
+            if nav_button(ui, ARROW_RIGHT, history.can_forward(), "앞으로") {
                 action = Some(NavAction::Forward);
             }
-            if ui
-                .add_enabled(current.parent().is_some(), egui::Button::new("↑"))
-                .on_hover_text("상위 폴더")
-                .clicked()
-            {
+            if nav_button(ui, ARROW_UP, current.parent().is_some(), "상위 폴더") {
                 action = Some(NavAction::Up);
             }
 
@@ -99,4 +95,34 @@ impl AddressBar {
         });
         action
     }
+}
+
+/// 탐색 버튼 하나 — 프레임 없이 아이콘만 그리고, 눌렸으면 참을 돌려준다.
+///
+/// 갈 수 없는 방향은 흐린 글자색으로 그리고 hover 배경·툴팁·클릭을 모두 막는다.
+/// `add_enabled`를 쓰지 않는 이유: 그것은 버튼 프레임까지 함께 그려 사각 배경이 남는다.
+/// 대신 그 함수가 주던 비활성 표현(흐린 색·클릭 차단·툴팁 억제)을 여기서 직접 재현한다
+fn nav_button(ui: &mut egui::Ui, icon: &str, enabled: bool, hint: &str) -> bool {
+    let size = egui::vec2(NAV_BUTTON_SIZE, NAV_BUTTON_SIZE);
+    if !enabled {
+        widgets::icon_button_styled(
+            ui,
+            icon,
+            size,
+            egui::Color32::TRANSPARENT,
+            theme::TEXT_DIM,
+            NAV_ICON_PX,
+        );
+        return false;
+    }
+    widgets::icon_button_styled(
+        ui,
+        icon,
+        size,
+        theme::CONTROL_HOT,
+        theme::TEXT,
+        NAV_ICON_PX,
+    )
+    .on_hover_text(hint)
+    .clicked()
 }
