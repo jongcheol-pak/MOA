@@ -212,30 +212,31 @@
 ### 시각 속성
 
 > `구현 근거`·`판정`은 V-9(구현 후 대조)에서 채운다. 이 앱은 데스크톱 UI라 자율 루프에서 창을 띄워
-> 캡처할 수단이 없으므로, **코드 값이 디자인 값과 같음은 소스로 확인**하되 화면에 그려진 최종 모습은
-> `⏳ 미확인`으로 두고 F-8(완료 선언 직전 관문)이 사용자 확인을 받는다.
+> 캡처할 수단이 없어, 코드 값이 디자인 값과 같음은 소스로 확인하고 화면에 그려진 최종 모습은
+> 미확인으로 두었다. **2026-07-29 F-8에서 사용자가 실행 화면을 보고 "잘됨"으로 확인**했다
+> (항목별 정밀 대조가 아니라 화면 전체를 보고 이상 없음을 확인한 것).
 
 | 요소 | 속성 | 디자인 값 | 확인 방법 | 구현 근거 | 판정 |
 |------|------|----------|-----------|----------|------|
-| 타이틀바 | 높이 | 36px | 이미지 비율(제목 글자 높이 대비 약 2.6배) + 기존 토큰 `sidebar.rs:21` HEADER_HEIGHT 36 통일 | `titlebar.rs:16` TITLEBAR_HEIGHT 36.0 / `app.rs:499` exact_size | ⏳ 미확인 (코드 값 일치) |
-| 타이틀바 | 배경색 | `#1B1B1B` (`theme::WINDOW_BG`) | 이미지 육안(거의 검정) + 기존 팔레트 재사용 `theme.rs:9` | `app.rs:502` `Frame::NONE.fill(theme::WINDOW_BG)` | ⏳ 미확인 (코드 값 일치) |
-| 타이틀바 | 아래 경계 | 구분선 없음 (메뉴 바가 바로 이어짐) | 이미지 육안 | `app.rs:501` `show_separator_line(false)` | ⏳ 미확인 (코드 값 일치) |
-| 제목 | 문구 | 활성 워크스페이스 이름 (예: "워크스페이스 1") | 이미지 육안 (D8) | `app.rs:496` `workspaces.active().name` | ⏳ 미확인 (코드 값 일치) |
-| 제목 | 정렬 | 타이틀바 가로 중앙 (좌우 버튼군 배치와 무관하게 바 중심) | 이미지 육안 | `titlebar.rs:101~113` `Rect::from_center_size(bar.center(), …)` + `ui.put` | ⏳ 미확인 (코드 값 일치) |
-| 제목 | 최대 폭 | 타이틀바 폭 − 2 × 174px(우측 버튼군 폭) | D14 — 가로 중앙과 버튼 비침범을 동시에 만족하는 유일한 폭 | `titlebar.rs:102` `bar.width() - 2.0 * RIGHT_GROUP_WIDTH` | ⏳ 미확인 (코드 값 일치) |
-| 제목 | 글자 크기·색 | 14px, `#E8E8E8`(`theme::TEXT`) | 기존 토큰 `sidebar.rs:23` HEADER_FONT_PX 14 통일 | `titlebar.rs:26` TITLE_FONT_PX 14.0 / `titlebar.rs:107~109` | ⏳ 미확인 (코드 값 일치) |
-| 제목 | 넘침 처리 | 좌우 버튼을 뺀 가용 폭에서 말줄임(…) | 이미지에 없음 — egui `Label::truncate()`로 폭 기준 처리 (D14) | `titlebar.rs:111` `.truncate()` | ⏳ 미확인 (코드 값 일치) |
-| 좌측 토글 버튼 | 위치·크기 | 타이틀바 왼쪽 끝, 36×36px, 좌측 여백 2px | 이미지 육안(왼쪽 끝에 거의 붙음) | `titlebar.rs:128` `add_space(LEFT_MARGIN=2.0)` + `titlebar.rs:134~140` `icon_button(…, BUTTON_SIZE=36.0, …)` | ⏳ 미확인 (코드 값 일치) |
-| 좌측 토글 버튼 | 아이콘 | Phosphor `SIDEBAR_SIMPLE`, 16px | D6 | `titlebar.rs:135` `SIDEBAR_SIMPLE` + `titlebar.rs:25` ICON_FONT_PX 16.0 | ⏳ 미확인 (코드 값 일치) |
-| 우측 버튼군 | 순서 | (왼→오) 설정 → 최소화 → 최대화 → 닫기 | 이미지 육안 + 요청문("최소화 버튼 옆에 설정") | `titlebar.rs:120~149` (`Sides` 우측은 오른쪽부터 채우므로 닫기→최대화→최소화 순으로 추가) | ⏳ 미확인 (코드 값 일치, 설정 버튼은 T5) |
-| 설정 버튼 | 크기·아이콘 | 36×36px, Phosphor `GEAR` 16px | D6 | `titlebar.rs:184~189` `icon_button(GEAR, BUTTON_SIZE, …)` | ⏳ 미확인 (코드 값 일치) |
-| 설정 팝업 | 항목·순서 | 설정 / 업데이트 / 릴리즈 노트 / (구분선) / 오픈소스 라이선스 / 정보, 전부 비활성 | 사용자 지시 (D9) | `titlebar.rs:191~198` (`pending_item` = `add_enabled(false, …)`) | ⏳ 미확인 (코드 값 일치) |
-| 캡션 버튼 3종 | 크기 | 46×36px (Windows 캡션 버튼 관례 폭) | 이미지 육안(정사각보다 가로로 넓음) | `titlebar.rs:20` CAPTION_WIDTH 46.0 / `titlebar.rs:152` | ⏳ 미확인 (코드 값 일치) |
-| 캡션 버튼 3종 | 아이콘 | `MINUS` / `SQUARE`(최대화 시 `CORNERS_IN`) / `X`, 16px | D6 | `titlebar.rs:120·131~137·143` + `titlebar.rs:25` ICON_FONT_PX 16.0 | ⏳ 미확인 (코드 값 일치) |
-| 버튼 공통 | 기본 배경 | 투명(타이틀바와 동일) | 이미지 육안 | `titlebar.rs:166~168` (hover일 때만 `rect_filled`) | ⏳ 미확인 (코드 값 일치) |
-| 버튼 공통 | hover 배경 | `#383838` (`theme::CONTROL_HOT`) | 기존 팔레트 재사용 `theme.rs:23` | `titlebar.rs:131·137` (`theme::CONTROL_HOT` 전달) | ⏳ 미확인 (코드 값 일치) |
-| 닫기 버튼 | hover 배경 | `#C42B1C` (신규 `theme::CLOSE_HOT`) | Windows 11 표준 닫기 hover 색 | `theme.rs:29` CLOSE_HOT / `titlebar.rs:120` | ⏳ 미확인 (코드 값 일치) |
-| 아이콘 색 | 기본 | `#E8E8E8` (`theme::TEXT`) | 이미지 육안 | `titlebar.rs:174` `theme::TEXT` | ⏳ 미확인 (코드 값 일치) |
+| 타이틀바 | 높이 | 36px | 이미지 비율(제목 글자 높이 대비 약 2.6배) + 기존 토큰 `sidebar.rs:21` HEADER_HEIGHT 36 통일 | `titlebar.rs:16` TITLEBAR_HEIGHT 36.0 / `app.rs:499` exact_size | ✅ 사용자 확인 (코드 값 일치) |
+| 타이틀바 | 배경색 | `#1B1B1B` (`theme::WINDOW_BG`) | 이미지 육안(거의 검정) + 기존 팔레트 재사용 `theme.rs:9` | `app.rs:502` `Frame::NONE.fill(theme::WINDOW_BG)` | ✅ 사용자 확인 (코드 값 일치) |
+| 타이틀바 | 아래 경계 | 구분선 없음 (메뉴 바가 바로 이어짐) | 이미지 육안 | `app.rs:501` `show_separator_line(false)` | ✅ 사용자 확인 (코드 값 일치) |
+| 제목 | 문구 | 활성 워크스페이스 이름 (예: "워크스페이스 1") | 이미지 육안 (D8) | `app.rs:496` `workspaces.active().name` | ✅ 사용자 확인 (코드 값 일치) |
+| 제목 | 정렬 | 타이틀바 가로 중앙 (좌우 버튼군 배치와 무관하게 바 중심) | 이미지 육안 | `titlebar.rs:101~113` `Rect::from_center_size(bar.center(), …)` + `ui.put` | ✅ 사용자 확인 (코드 값 일치) |
+| 제목 | 최대 폭 | 타이틀바 폭 − 2 × 174px(우측 버튼군 폭) | D14 — 가로 중앙과 버튼 비침범을 동시에 만족하는 유일한 폭 | `titlebar.rs:102` `bar.width() - 2.0 * RIGHT_GROUP_WIDTH` | ✅ 사용자 확인 (코드 값 일치) |
+| 제목 | 글자 크기·색 | 14px, `#E8E8E8`(`theme::TEXT`) | 기존 토큰 `sidebar.rs:23` HEADER_FONT_PX 14 통일 | `titlebar.rs:26` TITLE_FONT_PX 14.0 / `titlebar.rs:107~109` | ✅ 사용자 확인 (코드 값 일치) |
+| 제목 | 넘침 처리 | 좌우 버튼을 뺀 가용 폭에서 말줄임(…) | 이미지에 없음 — egui `Label::truncate()`로 폭 기준 처리 (D14) | `titlebar.rs:111` `.truncate()` | ✅ 사용자 확인 (코드 값 일치) |
+| 좌측 토글 버튼 | 위치·크기 | 타이틀바 왼쪽 끝, 36×36px, 좌측 여백 2px | 이미지 육안(왼쪽 끝에 거의 붙음) | `titlebar.rs:128` `add_space(LEFT_MARGIN=2.0)` + `titlebar.rs:134~140` `icon_button(…, BUTTON_SIZE=36.0, …)` | ✅ 사용자 확인 (코드 값 일치) |
+| 좌측 토글 버튼 | 아이콘 | Phosphor `SIDEBAR_SIMPLE`, 16px | D6 | `titlebar.rs:135` `SIDEBAR_SIMPLE` + `titlebar.rs:25` ICON_FONT_PX 16.0 | ✅ 사용자 확인 (코드 값 일치) |
+| 우측 버튼군 | 순서 | (왼→오) 설정 → 최소화 → 최대화 → 닫기 | 이미지 육안 + 요청문("최소화 버튼 옆에 설정") | `titlebar.rs:120~149` (`Sides` 우측은 오른쪽부터 채우므로 닫기→최대화→최소화 순으로 추가) | ✅ 사용자 확인 (코드 값 일치) |
+| 설정 버튼 | 크기·아이콘 | 36×36px, Phosphor `GEAR` 16px | D6 | `titlebar.rs:184~189` `icon_button(GEAR, BUTTON_SIZE, …)` | ✅ 사용자 확인 (코드 값 일치) |
+| 설정 팝업 | 항목·순서 | 설정 / 업데이트 / 릴리즈 노트 / (구분선) / 오픈소스 라이선스 / 정보, 전부 비활성 | 사용자 지시 (D9) | `titlebar.rs:191~198` (`pending_item` = `add_enabled(false, …)`) | ✅ 사용자 확인 (코드 값 일치) |
+| 캡션 버튼 3종 | 크기 | 46×36px (Windows 캡션 버튼 관례 폭) | 이미지 육안(정사각보다 가로로 넓음) | `titlebar.rs:20` CAPTION_WIDTH 46.0 / `titlebar.rs:152` | ✅ 사용자 확인 (코드 값 일치) |
+| 캡션 버튼 3종 | 아이콘 | `MINUS` / `SQUARE`(최대화 시 `CORNERS_IN`) / `X`, 16px | D6 | `titlebar.rs:120·131~137·143` + `titlebar.rs:25` ICON_FONT_PX 16.0 | ✅ 사용자 확인 (코드 값 일치) |
+| 버튼 공통 | 기본 배경 | 투명(타이틀바와 동일) | 이미지 육안 | `titlebar.rs:166~168` (hover일 때만 `rect_filled`) | ✅ 사용자 확인 (코드 값 일치) |
+| 버튼 공통 | hover 배경 | `#383838` (`theme::CONTROL_HOT`) | 기존 팔레트 재사용 `theme.rs:23` | `titlebar.rs:131·137` (`theme::CONTROL_HOT` 전달) | ✅ 사용자 확인 (코드 값 일치) |
+| 닫기 버튼 | hover 배경 | `#C42B1C` (신규 `theme::CLOSE_HOT`) | Windows 11 표준 닫기 hover 색 | `theme.rs:29` CLOSE_HOT / `titlebar.rs:120` | ✅ 사용자 확인 (코드 값 일치) |
+| 아이콘 색 | 기본 | `#E8E8E8` (`theme::TEXT`) | 이미지 육안 | `titlebar.rs:174` `theme::TEXT` | ✅ 사용자 확인 (코드 값 일치) |
 
 ## Tasks
 
@@ -354,7 +355,7 @@
 - T1~T5 완료
 - Phase F 통과 (F-7 1회차 MAJOR 2·MINOR 4 반영 후 재검토 — 2회차 BLOCKER·MAJOR 0)
 - Phase G 통과 (Must 100% — F-7 전수 대조 재사용, 재루프 0회. 커버 대상 FR-22·21·19·11 전부 충족, active Must FR은 `## PRD Coverage`에서 이번 범위 외로 선언한 기구현 항목)
-- F-8 대기 — 시각 요소 분해 20행이 `⏳ 미확인`(데스크톱 앱이라 자율 루프에서 화면 캡처 불가) → 완료 선언 보류, 사용자 화면 확인 필요
+- F-8 통과 (2026-07-29 — 사용자가 실행 화면 확인 후 "잘됨". 시각 요소 분해 20행 판정을 사용자 확인으로 갱신)
 
 ## Retry Ledger
 
@@ -379,6 +380,10 @@
 - **패널 안 스크롤 영역 ID 충돌** (커밋 `41e90ef` 계열): 화면에 빨간 `First/Second use of ScrollArea ID` 경고가 떴다. egui가 이름 없는 하위 영역에 모두 같은 id를 주는 탓에 탭 스트립 스크롤과 파일 목록 스크롤의 ID가 겹친 것 — **이번 작업의 회귀가 아니라 기존 결함**(관련 파일 무변경을 `git diff`로 확인). `panel.rs`의 두 하위 영역에 이름을 부여해 해소하고, 헤드리스 egui로 경고 텍스트를 잡는 회귀 테스트를 추가했다(수정 전 RED 확인).
 
 ## Next Steps
+
+- **완료** (2026-07-29) — 사용자 화면 확인까지 마쳤다. 브랜치 `task/custom-titlebar`에 로컬 커밋만 있고 push·병합은 하지 않았다.
+- 권장 다음 액션: `master` 병합·push 전략 결정 (Deferred 대장의 "master 미병합 커밋 다수" 항목과 함께)
+- 후속 작업: 설정 팝업 5개 항목의 실제 기능 (`docs/plans/deferred.md` 등록됨)
 
 ## Open Questions
 
