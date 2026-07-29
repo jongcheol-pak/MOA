@@ -192,6 +192,10 @@
 | 항목 수 문구 | 정렬 | 줄의 오른쪽 끝 | `ui/panel.rs:530` `egui::Sides` 오른쪽 클로저 | ✅ (T4) |
 | 항목 수 문구 | 형식 | `폴더 {N} 파일 {M}` | `ui/panel.rs:534` `format!("폴더 {dirs} 파일 {files}")` | ✅ (T4) |
 | 항목 수 문구 | 색 | `theme::TEXT_DIM` | `ui/panel.rs:534` | ✅ (T4) |
+| 패널 메뉴 | 항목 13행(문구·순서·구분선 위치) | 인벤토리 표 그대로 | `ui/menu.rs:68-89` `panel_menu_items` + 테스트 `패널_메뉴는_요청한_순서와_문구를_그린다` | ✅ (T6) |
+| 패널 메뉴 `닫기` | 활성 조건 | 패널 2개 이상 | `ui/menu.rs` `PanelMenuState::for_panes` + 테스트 `마지막_패널_하나는_닫을_수_없다` | ✅ (T6) |
+| 패널 메뉴 `보기` | 상태 | T8 전까지 비활성 | `ui/menu.rs:70` `add_enabled(false, ..)` | ✅ (T6 — T8에서 하위 메뉴로 교체) |
+| 메뉴 버튼 | 아이콘 | 분할 도형 유지 (D10) | `ui/tabs.rs` `draw_split_icon` 유지, 툴팁만 "메뉴" | ✅ (T6) |
 
 ## Decisions
 
@@ -300,7 +304,7 @@
   2. 타이틀바 좌측 토글과 `Ctrl+B`로 사이드바를 접고 펼 수 있다
   3. `cargo build` 경고 0 (미사용 상수·변형 잔여 없음)
 
-### [ ] T6. 패널 메뉴 신설 + 상단 메뉴 바 제거 (요구 1·6)
+### [x] T6. 패널 메뉴 신설 + 상단 메뉴 바 제거 (요구 1·6)
 
 - **Type**: D
 - **Files**: `src/ui/menu.rs`, `src/ui/tabs.rs`, `src/ui/panel.rs`, `src/ui/splitter.rs`, `src/ui/app.rs`
