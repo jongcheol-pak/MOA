@@ -18,6 +18,16 @@
 - [2026-07-29] `ui/address_bar.rs`의 `nav_button` 활성 경로가 `theme::TEXT`·16px을 수동 재기술 — `widgets::icon_button` 래퍼를 쓰면 짧아지나 "활성·비활성 글꼴 동일" 제약이 코드에서 안 보이게 된다. `DEFAULT_ICON_PX`를 pub으로 올릴지와 함께 판단 (출처: 2026-07-29-tab-strip-and-pane-borders T3 quality S1)
 - [2026-07-28] T6 측정 재현 절차 — 워크스페이스 5개 메모리는 임시 측정 빌드로 얻었고 스크립트를 레포에 남기지 않아 재현에 같은 패치가 필요하다 (출처: 2026-07-26-egui-migration-part2 F-7 m5)
 
+- [2026-07-29] 자세히 보기의 고정 헤더 — 가로 스크롤을 위해 헤더를 본문과 같은 `ScrollArea`에 넣어, 세로 스크롤 시 머리글이 함께 올라간다. 세로만 고정하려면 두 영역의 오프셋을 수동 동기화해야 한다 (출처: 2026-07-29-view-modes-and-panel-menu T2)
+- [2026-07-29] 보기 모드별 마지막 정렬 기준 기억 — 지금은 모드를 바꿔도 정렬이 유지된다 (출처: 같은 plan)
+- [2026-07-29] 자세히 보기 열 추가·제거·순서 변경 — 이번에 열 메타데이터 구조가 생겨 확장 지점이 열렸다 (출처: 같은 plan)
+- [2026-07-29] `list_grid::show`의 `visible` 부수 출력 — 즉시 모드에서 렌더 도중 `&mut PanelState`를 잡을 수 없어 택한 절충. 렌더와 수집을 나누는 구조가 있으면 검토 (출처: 같은 plan T14 quality m1)
+- [2026-07-29] `PanelState::from_tabs` 인자 증가(4개) — 호출부가 이미 `PanelTabs`를 갖고 있어 그것을 넘기면 필드가 늘어도 시그니처가 안 바뀐다 (출처: 같은 plan T12 quality S1)
+- [2026-07-29] 옛 세션 호환 테스트의 JSON 문자열 replace — 필드가 늘 때마다 목록이 길어진다. `serde_json::Value`에서 키를 제거하면 테스트를 안 건드려도 된다 (출처: 같은 plan T12 quality S2)
+- [2026-07-29] 빈 영역 클릭 처리가 두 렌더 모듈에서 다른 기법 — 자세히는 콘텐츠 아래 사각형, 격자는 플래그 사후 억제. `list_common`에 헬퍼로 뽑을지 검토 (출처: 같은 plan T10 quality S1)
+- [2026-07-29] `file_list::show`의 4-튜플 분해 — `DetailsOutcome`·`GridOutcome`이 `sort_click` 하나만 달라 공통 타입으로 묶을 여지 (출처: 같은 plan T10 quality S2)
+- [2026-07-29] `ui/address_bar.rs`의 rustfmt 드리프트 — 이번 작업 전부터 있던 것으로 `cargo fmt --check`가 원래 실패한다. 별도 정리 필요 (출처: 같은 plan)
+
 ## 종결
 - [2026-07-23 → 2026-07-26] shell_menu items_menu의 pidls[0] "items 비지 않음" 암묵 계약 — 반영 (doc 주석 + debug_assert, egui 이식 part1 T3)
 - [2026-07-23 → 2026-07-23] part2 실행 — 트리·셸 메뉴·감시·세션·성능 — 반영 (part2 T1~T5 완료, v1 완성)
