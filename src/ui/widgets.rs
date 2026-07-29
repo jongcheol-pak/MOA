@@ -39,7 +39,8 @@ pub fn icon_button_styled(
     if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, hover_fill);
     }
-    // 아이콘 없이 부르는 호출부가 있다 — 영역과 hover 배경만 받고 그림은 직접 그리는 경우다
+    // 아이콘 문자열이 비면 영역과 hover 배경만 내준다 — 아이콘을 글리프가 아니라
+    // 직접 그리는 버튼(탭 스트립의 분할 버튼)이 이 경로를 쓴다
     if !icon.is_empty() {
         ui.painter().text(
             rect.center(),
