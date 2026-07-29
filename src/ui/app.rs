@@ -11,7 +11,7 @@ use crate::app::settings::{
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::menu::{self, Command, MenuState};
+use crate::ui::menu::{self, Command};
 use crate::ui::panel::PanelState;
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
@@ -153,11 +153,6 @@ impl WorkspaceView {
         }
     }
 
-    /// 활성 패널을 네 방향 중 한쪽으로 나눈다 — 메뉴·단축키의 대상은 언제나 활성 패널이다
-    fn split_active(&mut self, dir: SplitDir, place: SplitPlace, area: LayoutRect) {
-        self.split_panel(self.active, dir, place, area);
-    }
-
     /// 지정한 패널을 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다.
     ///
     /// 패널마다 있는 분할 버튼은 **자기 패널**을 대상으로 하므로 활성 패널과 다를 수 있다 (D3)
@@ -174,22 +169,24 @@ impl WorkspaceView {
         }
     }
 
-    /// 활성 패널을 닫는다. 마지막 하나는 닫히지 않는다 (FR-2).
+    /// 지정한 패널을 닫는다. 마지막 하나는 닫히지 않는다 (FR-2).
     ///
     /// 닫은 **자리를 흡수한 패널**을 다음 활성으로 삼는다 — 트리 순서상 첫 패널을 고르면
-    /// 포커스가 화면 반대편으로 튀어 방금 조작한 위치와 멀어진다
-    fn close_active(&mut self, area: LayoutRect) {
+    /// 포커스가 화면 반대편으로 튀어 방금 조작한 위치와 멀어진다.
+    ///
+    /// 대상이 활성 패널과 다를 수 있다 — 패널 메뉴는 자기 패널을 가리키기 때문이다 (plan D16)
+    fn close_panel(&mut self, target: PanelId, area: LayoutRect) {
         let closed = self
             .layout
             .compute_rects(area)
             .panes
             .iter()
-            .find(|(id, _)| *id == self.active)
+            .find(|(id, _)| *id == target)
             .map(|(_, rect)| *rect);
-        if self.layout.close(self.active).is_err() {
+        if self.layout.close(target).is_err() {
             return;
         }
-        self.panels.remove(&self.active);
+        self.panels.remove(&target);
         let next = closed
             .and_then(|closed| {
                 self.layout
@@ -589,56 +586,42 @@ impl ExplorerApp {
         self.workspaces.set_subtitle(index, &dir);
     }
 
-    /// 활성 워크스페이스의 패널 수 — 아직 열지 않았으면 기본 1개 구성이 될 자리다
-    fn active_panel_count(&self) -> usize {
-        self.views
-            .get(&self.workspaces.active().id)
-            .map(|v| v.layout.panel_count())
-            .unwrap_or(1)
-    }
-
-    /// 명령이 향하는 패널 — 활성 워크스페이스의 활성 패널
-    fn active_panel_mut(&mut self) -> Option<&mut PanelState> {
-        let view = self.ensure_active_view();
-        view.panels.get_mut(&view.active)
-    }
-
-    /// 메뉴·단축키 명령 실행 (FR-12).
-    /// `area`는 분할에 쓰이며, 메뉴 줄을 그린 **뒤에** 확정된 영역이어야 한다
-    fn apply_command(&mut self, command: Command, area: LayoutRect, ctx: &egui::Context) {
+    /// 메뉴·단축키 명령 실행 (FR-12·FR-26).
+    ///
+    /// `target`은 명령이 향할 패널이다 — 패널 메뉴에서 온 명령은 **메뉴를 연 패널**을 담아
+    /// 오고(plan D16), 단축키·타이틀바에서 온 명령은 `None`이라 활성 패널이 대상이 된다.
+    /// `area`는 분할·닫기에 쓰이며 레이아웃을 그리기 전에 확정된 영역이어야 한다
+    fn apply_command(
+        &mut self,
+        command: Command,
+        target: Option<PanelId>,
+        area: LayoutRect,
+        ctx: &egui::Context,
+    ) {
         match command {
             // 분할·닫기는 활성 워크스페이스의 뷰를 대상으로 한다(없으면 여기서 만들어진다)
             Command::Split(to) => {
                 let (dir, place) = to.to_layout();
-                self.ensure_active_view().split_active(dir, place, area);
+                let view = self.ensure_active_view();
+                let panel = target.unwrap_or(view.active);
+                view.split_panel(panel, dir, place, area);
             }
-            Command::ClosePanel => self.ensure_active_view().close_active(area),
+            Command::ClosePanel => {
+                let view = self.ensure_active_view();
+                let panel = target.unwrap_or(view.active);
+                view.close_panel(panel, area);
+            }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
-            Command::NewWorkspace => {
-                self.workspaces.add();
-                // 접혀 있으면 편집칸이 보이지 않는다 — 사이드바가 그려져야 편집이 시작된다
-                self.sidebar_collapsed = false;
-                // 사이드바의 `+`와 같은 흐름으로 잇는다 — 추가 직후 이름을 고칠 수 있어야 한다
-                self.sidebar.edit_after_add();
-            }
-            Command::RenameWorkspace => {
-                // 접혀 있으면 편집칸이 보이지 않으므로 함께 펼친다
-                self.sidebar_collapsed = false;
-                self.sidebar
-                    .start_rename(self.workspaces.active_index(), &self.workspaces);
-            }
-            Command::RemoveWorkspace => {
-                // 사이드바 컨텍스트 메뉴와 같은 경로 — 확인 대화를 거친다
-                self.pending_remove = Some(self.workspaces.active().id);
-            }
             Command::NewTab
             | Command::CloseTab
             | Command::Back
             | Command::Forward
             | Command::Up
             | Command::Refresh
-            | Command::ToggleTree => {
-                let Some(panel) = self.active_panel_mut() else {
+            | Command::ToggleTree
+            | Command::NewFile
+            | Command::NewFolder => {
+                let Some(panel) = self.command_panel_mut(target) else {
                     return;
                 };
                 match command {
@@ -649,11 +632,21 @@ impl ExplorerApp {
                     Command::Up => panel.go_up(ctx),
                     Command::Refresh => panel.refresh(ctx),
                     Command::ToggleTree => panel.toggle_tree(),
+                    // 새 파일·새 폴더는 T7에서 구현한다 — 메뉴 항목은 이미 보이지만
+                    // 아직 아무 일도 하지 않는다
+                    Command::NewFile | Command::NewFolder => {}
                     // 위 분기에서 걸러진 명령들 — 여기 오지 않는다
                     _ => {}
                 }
             }
         }
+    }
+
+    /// 명령이 향하는 패널 — 대상이 지정되면 그 패널, 아니면 활성 패널
+    fn command_panel_mut(&mut self, target: Option<PanelId>) -> Option<&mut PanelState> {
+        let view = self.ensure_active_view();
+        let id = target.unwrap_or(view.active);
+        view.panels.get_mut(&id)
     }
 }
 
@@ -697,6 +690,7 @@ impl eframe::App for ExplorerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut menu = None;
+        let mut panel_command = None;
         // 타이틀바를 먼저 그린다 — 남는 영역이 아래 CentralPanel의 몫이 된다 (FR-22)
         let titlebar_command = self.show_titlebar(ui, &ctx);
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
@@ -710,17 +704,6 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
-            // 메뉴 줄·구분선을 먼저 그린 **뒤** 남는 영역이 실제 분할 대상이다.
-            // 그리기 전 영역으로 판정하면 최소 패널 크기 검사가 메뉴 줄 높이만큼 느슨해진다
-            let menu_command = menu::show_menu_bar(
-                ui,
-                MenuState {
-                    can_close_panel: self.active_panel_count() > 1,
-                    can_remove_workspace: self.workspaces.len() > 1,
-                },
-            );
-            ui.separator();
-
             if !self.sidebar_collapsed {
                 // 사이드바가 자기 배경·여백을 직접 그리므로 egui 기본 프레임은 끈다
                 let panel = egui::Panel::left(egui::Id::new("workspace_sidebar"))
@@ -750,12 +733,9 @@ impl eframe::App for ExplorerApp {
             } else {
                 menu::poll_shortcuts(&ctx)
             };
-            for command in menu_command
-                .into_iter()
-                .chain(shortcut_command)
-                .chain(titlebar_command)
-            {
-                self.apply_command(command, area, &ctx);
+            // 단축키·타이틀바 명령은 대상을 지정하지 않는다 — 활성 패널에 적용된다
+            for command in shortcut_command.into_iter().chain(titlebar_command) {
+                self.apply_command(command, None, area, &ctx);
             }
             // 확보와 사용을 나눈다 — 아래 호출이 `views`와 `icons`·`textures`를 동시에 빌린다
             let id = self.workspaces.active().id;
@@ -771,12 +751,13 @@ impl eframe::App for ExplorerApp {
                     &mut self.textures,
                 );
                 menu = outcome.menu;
-                // 분할은 그리기가 끝난 뒤에 한다 — 트리를 바꾸면 이번 프레임의 배치와 어긋난다.
-                // 대상은 버튼이 속한 패널이지 활성 패널이 아니다 (D3)
-                if let Some((target, to)) = outcome.split {
-                    let (dir, place) = to.to_layout();
-                    view.split_panel(target, dir, place, area);
-                }
+                panel_command = outcome.command;
+            }
+            // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
+            // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
+            // 대상은 메뉴를 연 패널이지 활성 패널이 아니다 (D16)
+            if let Some((target, command)) = panel_command {
+                self.apply_command(command, Some(target), area, &ctx);
             }
         });
 
@@ -819,6 +800,33 @@ mod tests {
     }
 
     #[test]
+    fn 닫기는_전달받은_패널을_대상으로_한다() {
+        // 패널 메뉴 팝업은 자기 패널 밖으로 뻗을 수 있고, 그 위에서 고르면 아래 깔린 패널이
+        // 활성이 된다(활성 판정이 포인터 위치 기반). 그 상태로 활성 패널을 닫으면 사용자가
+        // 누른 것과 다른 패널이 사라진다 — 이 테스트가 그것을 막는다 (D16)
+        let area = rect(0, 0, 1200, 800);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let left = view.active;
+        let right = view
+            .layout
+            .split(left, SplitDir::Horizontal, SplitPlace::After, area)
+            .unwrap();
+        view.panels
+            .insert(right, PanelState::new(PathBuf::from(r"D:\")));
+        // 활성은 왼쪽인데, 닫으라고 지시받은 것은 오른쪽이다
+        view.active = left;
+
+        view.close_panel(right, area);
+
+        assert_eq!(view.layout.panel_count(), 1);
+        assert!(
+            view.layout.panel_ids().contains(&left),
+            "대상이 아닌 활성 패널이 닫혔다"
+        );
+        assert!(!view.panels.contains_key(&right), "닫힌 패널 상태가 남았다");
+    }
+
+    #[test]
     fn 겹치지_않으면_0이다() {
         assert_eq!(overlap_area(rect(0, 0, 10, 10), rect(20, 20, 10, 10)), 0);
         // 변끼리 맞닿기만 한 경우도 넓이는 0
@@ -841,8 +849,8 @@ mod tests {
 
     #[test]
     fn 분할은_전달받은_패널을_대상으로_한다() {
-        // 분할 버튼은 패널마다 있어 활성 패널이 아닌 곳에서도 눌린다 (D3).
-        // `split_active`를 그대로 쓰면 엉뚱한 패널이 나뉘므로 이 테스트가 그것을 막는다
+        // 패널 메뉴는 패널마다 있어 활성 패널이 아닌 곳에서도 열린다 (D3·D16).
+        // 활성 패널을 대상으로 삼으면 엉뚱한 패널이 나뉘므로 이 테스트가 그것을 막는다
         let area = rect(0, 0, 1200, 800);
         let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
         let left = view.active;

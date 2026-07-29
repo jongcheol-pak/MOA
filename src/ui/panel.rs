@@ -12,7 +12,7 @@ use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::menu::SplitTo;
+use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
@@ -98,8 +98,8 @@ enum PendingNav {
 /// 둘 다 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
 pub struct PanelOutcome {
     pub menu: Option<MenuRequest>,
-    /// 분할 버튼에서 고른 방향 — 대상은 **이 패널**이다 (plan D3)
-    pub split: Option<SplitTo>,
+    /// 패널 메뉴에서 고른 명령 — 대상은 **이 패널**이다 (plan D16)
+    pub command: Option<Command>,
 }
 
 /// 셸 컨텍스트 메뉴 요청 — 그리기가 모두 끝난 뒤 앱이 실행한다.
@@ -441,8 +441,9 @@ impl PanelState {
         ctx: &egui::Context,
         icons: &mut IconCache,
         textures: &mut IconTextures,
+        menu_state: PanelMenuState,
     ) -> PanelOutcome {
-        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs);
+        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, menu_state);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, &tab.committed, &tab.history);
 
@@ -497,7 +498,7 @@ impl PanelState {
         }
         PanelOutcome {
             menu: self.handle_list_action(action, ctx),
-            split: strip.split,
+            command: strip.command,
         }
     }
 
@@ -582,7 +583,15 @@ mod tests {
         let output = ctx.run_ui(Default::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let ctx = ui.ctx().clone();
-                panel.show(ui, &ctx, &mut icons, &mut textures);
+                panel.show(
+                    ui,
+                    &ctx,
+                    &mut icons,
+                    &mut textures,
+                    PanelMenuState {
+                        can_close_panel: false,
+                    },
+                );
             });
         });
         id_clash_warnings(&output)

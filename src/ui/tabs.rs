@@ -6,7 +6,7 @@
 //! 저마다 프레임·여백을 그려 두 개의 사각형으로 보인다(Windows 11 탐색기는 한 탭 안에
 //! 아이콘·제목·닫기가 들어 있다). 그래서 영역만 잡고 내용은 직접 그린다.
 use crate::panel::tabs::{TabsModel, tab_title};
-use crate::ui::menu::{self, Command, SplitTo};
+use crate::ui::menu::{self, Command, PanelMenuState};
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -44,12 +44,12 @@ const SPLIT_ICON_SIZE: f32 = 12.0;
 const SPLIT_ICON_STROKE: f32 = 1.0;
 
 /// 탭 스트립이 상위(패널)에 돌려주는 조작.
-/// 탭 조작과 분할 요청은 서로 독립이라 한 프레임에 함께 나올 수 있다
+/// 탭 조작과 메뉴 명령은 서로 독립이라 한 프레임에 함께 나올 수 있다
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct TabStripOutcome {
     pub tab: Option<TabAction>,
-    /// 분할 버튼 메뉴에서 고른 방향 — 대상은 **이 스트립이 속한 패널**이다 (split-4way plan D3)
-    pub split: Option<SplitTo>,
+    /// 패널 메뉴에서 고른 명령 — 대상은 **이 스트립이 속한 패널**이다 (plan D16)
+    pub command: Option<Command>,
 }
 
 /// 탭 하나에 대한 조작 — 스트립 전체 결과는 `TabStripOutcome`이 담는다
@@ -79,14 +79,18 @@ struct TabHit {
 
 /// 탭 스트립을 그리고 이번 프레임의 조작을 반환한다.
 ///
-/// 탭이 많으면 왼쪽 영역이 가로로 스크롤되고, **분할 버튼은 오른쪽 끝에 고정**된다 —
-/// 버튼까지 스크롤되면 탭이 늘어날수록 분할이 어려워진다 (split-4way plan D6)
-pub fn show_tab_strip(ui: &mut egui::Ui, model: &TabsModel) -> TabStripOutcome {
+/// 탭이 많으면 왼쪽 영역이 가로로 스크롤되고, **메뉴 버튼은 오른쪽 끝에 고정**된다 —
+/// 버튼까지 스크롤되면 탭이 늘어날수록 메뉴에 닿기 어려워진다 (split-4way plan D6)
+pub fn show_tab_strip(
+    ui: &mut egui::Ui,
+    model: &TabsModel,
+    menu_state: PanelMenuState,
+) -> TabStripOutcome {
     let mut outcome = TabStripOutcome::default();
     egui::Sides::new().shrink_left().height(STRIP_HEIGHT).show(
         ui,
         |ui| show_tabs(ui, model, &mut outcome.tab),
-        |ui| show_split_button(ui, &mut outcome.split),
+        |ui| show_menu_button(ui, menu_state, &mut outcome.command),
     );
     outcome
 }
@@ -250,29 +254,27 @@ fn draw_separator(painter: &egui::Painter, tab: egui::Rect) {
     );
 }
 
-/// 분할 버튼 — 누르면 네 방향 메뉴가 뜬다. 항목은 보기 메뉴와 같은 목록을 쓴다.
+/// 패널 메뉴 버튼 — 누르면 보기·분할·새로 고침·새 파일/폴더·닫기 메뉴가 뜬다 (FR-26).
 ///
 /// `MenuButton`을 쓰지 않는 이유: 그것은 `Button` 위젯을 요구해 프레임을 함께 그린다.
-/// 타이틀바 설정 버튼과 같이 아이콘 버튼에 팝업만 붙인다
-fn show_split_button(ui: &mut egui::Ui, split: &mut Option<SplitTo>) {
+/// 타이틀바 설정 버튼과 같이 아이콘 버튼에 팝업만 붙인다.
+/// **아이콘은 분할 도형 그대로 둔다** — 사용자가 이미 이 자리를 메뉴 진입점으로 쓰고 있어
+/// 모양이 바뀌면 찾지 못한다 (plan D10)
+fn show_menu_button(ui: &mut egui::Ui, state: PanelMenuState, command: &mut Option<Command>) {
     let response = widgets::icon_button(
         ui,
         "",
         egui::vec2(STRIP_HEIGHT, STRIP_HEIGHT),
         theme::CONTROL_HOT,
     )
-    .on_hover_text("분할");
+    .on_hover_text("메뉴");
     draw_split_icon(ui.painter(), response.rect);
-    let mut command = None;
     egui::Popup::menu(&response).show(|ui| {
-        menu::split_items(ui, &mut command);
+        menu::panel_menu_items(ui, state, command);
     });
-    if let Some(Command::Split(to)) = command {
-        *split = Some(to);
-    }
 }
 
-/// 분할 아이콘 — 사각형 테두리와 세로 중앙선.
+/// 메뉴 버튼 아이콘 — 사각형 테두리와 세로 중앙선(분할을 뜻하던 도형을 그대로 쓴다).
 /// 글리프(`◫`)를 쓰지 않는 이유: 폰트에 그 문자가 없으면 두부(□)로 보이는데,
 /// 폰트 지원 여부는 화면을 띄우기 전에는 알 수 없다 (split-4way plan D8)
 fn draw_split_icon(painter: &egui::Painter, rect: egui::Rect) {

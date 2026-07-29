@@ -1,8 +1,8 @@
-//! 메뉴 바와 단축키 (FR-12·FR-21).
+//! 패널 메뉴와 단축키 (FR-12·FR-26).
 //!
-//! 메뉴 구성·단축키는 현행 Win32 판(`app::menu`)의 것을 그대로 옮겼다.
-//! 두 가지만 다르다 — ① `(&V)` 같은 니모닉은 egui에 대응 기능이 없어 표기하지 않는다
-//! ② 팝업 배경이 시스템 메뉴가 아니라 앱 팔레트를 따른다(FR-21이 현행에서 못 지키던 부분).
+//! **상단 메뉴 바는 두지 않는다.** 종전의 보기·이동·탭·워크스페이스 네 메뉴는 항목이 모두
+//! 다른 진입점(주소창 버튼·탭 스트립·사이드바 `+`·컨텍스트 메뉴)에 있었고, 유일하게 겹치지
+//! 않던 '패널 닫기'는 이 패널 메뉴로 옮겼다.
 //!
 //! 이 모듈은 상태를 바꾸지 않는다 — 무엇을 하라는 **명령만 값으로 돌려주고**,
 //! 실행은 `ui::app`이 한다(패널·워크스페이스 소유자가 거기이기 때문).
@@ -32,7 +32,10 @@ impl SplitTo {
     }
 }
 
-/// 메뉴·단축키가 요청하는 동작
+/// 메뉴·단축키가 요청하는 동작.
+///
+/// 워크스페이스 생성·이름 변경·삭제는 여기 없다 — 메뉴 바를 없애면서 생성처가 사라졌고,
+/// 그 기능들은 사이드바의 `+`·컨텍스트 메뉴가 `SidebarAction`으로 직접 처리한다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     NewTab,
@@ -43,97 +46,49 @@ pub enum Command {
     Refresh,
     Split(SplitTo),
     ClosePanel,
-    NewWorkspace,
-    RenameWorkspace,
-    RemoveWorkspace,
+    /// 표시 중인 폴더에 빈 텍스트 문서를 만든다 (FR-25)
+    NewFile,
+    /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25)
+    NewFolder,
     ToggleTree,
     ToggleSidebar,
 }
 
-/// 메뉴 항목의 활성/비활성을 가르는 현재 상태
+/// 패널 메뉴 항목의 활성/비활성을 가르는 현재 상태
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MenuState {
+pub struct PanelMenuState {
     /// 패널이 2개 이상인가 — 마지막 하나는 닫을 수 없다 (FR-2)
     pub can_close_panel: bool,
-    /// 워크스페이스가 2개 이상인가 — 마지막 하나는 지울 수 없다 (FR-18)
-    pub can_remove_workspace: bool,
 }
 
-/// 메뉴 바를 그리고 고른 항목을 돌려준다
-pub fn show_menu_bar(ui: &mut egui::Ui, state: MenuState) -> Option<Command> {
-    let mut command = None;
-    egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("보기", |ui| {
-            split_items(ui, &mut command);
-            item(
-                ui,
-                "패널 닫기",
-                "Ctrl+Shift+W",
-                state.can_close_panel,
-                Command::ClosePanel,
-                &mut command,
-            );
-            ui.separator();
-            item(ui, "폴더 트리", "", true, Command::ToggleTree, &mut command);
-            item(ui, "새로 고침", "F5", true, Command::Refresh, &mut command);
-            item(
-                ui,
-                "워크스페이스 사이드바",
-                "Ctrl+B",
-                true,
-                Command::ToggleSidebar,
-                &mut command,
-            );
-        });
-        ui.menu_button("이동", |ui| {
-            item(ui, "뒤로", "Alt+←", true, Command::Back, &mut command);
-            item(ui, "앞으로", "Alt+→", true, Command::Forward, &mut command);
-            item(ui, "상위 폴더", "Alt+↑", true, Command::Up, &mut command);
-        });
-        ui.menu_button("탭", |ui| {
-            item(ui, "새 탭", "Ctrl+T", true, Command::NewTab, &mut command);
-            item(
-                ui,
-                "탭 닫기",
-                "Ctrl+W",
-                true,
-                Command::CloseTab,
-                &mut command,
-            );
-        });
-        ui.menu_button("워크스페이스", |ui| {
-            item(
-                ui,
-                "새 워크스페이스",
-                "",
-                true,
-                Command::NewWorkspace,
-                &mut command,
-            );
-            item(
-                ui,
-                "이름 바꾸기",
-                "F2",
-                true,
-                Command::RenameWorkspace,
-                &mut command,
-            );
-            item(
-                ui,
-                "삭제",
-                "",
-                state.can_remove_workspace,
-                Command::RemoveWorkspace,
-                &mut command,
-            );
-        });
-    });
-    command
+/// 패널 메뉴를 그리고 고른 항목을 돌려준다 (FR-26).
+///
+/// 항목 순서·구분선 위치는 plan `## 시각 요소 분해`의 인벤토리 표 13행 그대로다.
+/// 진입점이 이 메뉴 하나뿐이므로, 여기서 빠진 기능은 마우스로 닿을 수 없게 된다
+pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Option<Command>) {
+    // '보기'는 T8에서 하위 메뉴(보기 모드 8종)로 채운다. 그전까지는 자리만 잡아 두고
+    // 비활성으로 둔다 — 눌러도 아무 일이 없는 항목을 활성으로 보이게 하지 않는다
+    ui.add_enabled(false, egui::Button::new("보기"));
+    ui.separator();
+    split_items(ui, out);
+    ui.separator();
+    item(ui, "새로 고침", "F5", true, Command::Refresh, out);
+    ui.separator();
+    item(ui, "새 파일", "", true, Command::NewFile, out);
+    item(ui, "새 폴더", "", true, Command::NewFolder, out);
+    ui.separator();
+    item(
+        ui,
+        "닫기",
+        "Ctrl+Shift+W",
+        state.can_close_panel,
+        Command::ClosePanel,
+        out,
+    );
 }
 
-/// 네 방향 분할 항목 — 보기 메뉴와 패널 분할 버튼 팝업이 **같은 목록**을 쓴다.
-/// 두 진입점의 문구·순서·단축키 표기가 갈리지 않게 한 곳에 둔다
-pub fn split_items(ui: &mut egui::Ui, out: &mut Option<Command>) {
+/// 네 방향 분할 항목 (FR-1) — 패널 메뉴 안에 놓인다
+fn split_items(ui: &mut egui::Ui, out: &mut Option<Command>) {
     for (label, shortcut, to) in [
         ("오른쪽 분할", "Ctrl+Alt+→", SplitTo::Right),
         ("왼쪽 분할", "Ctrl+Alt+←", SplitTo::Left),
@@ -333,6 +288,28 @@ mod tests {
             egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
             egui::Key::Backslash
         )); // 아래쪽 분할
+    }
+
+    #[test]
+    fn 메뉴_바가_없어도_단축키는_모두_살아_있다() {
+        // 메뉴 바를 지우면서 잃은 것이 없어야 한다 — 이동·탭 명령은 이제 단축키와
+        // 주소창·탭 스트립 버튼으로만 닿는다
+        let table = shortcut_table();
+        for command in [
+            Command::NewTab,
+            Command::CloseTab,
+            Command::Back,
+            Command::Forward,
+            Command::Up,
+            Command::Refresh,
+            Command::ClosePanel,
+            Command::ToggleSidebar,
+        ] {
+            assert!(
+                table.iter().any(|(_, _, c)| *c == command),
+                "{command:?}의 단축키가 사라졌다"
+            );
+        }
     }
 
     #[test]

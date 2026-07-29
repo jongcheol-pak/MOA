@@ -6,7 +6,7 @@
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::menu::SplitTo;
+use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::panel::{MenuRequest, PanelState};
 use crate::ui::theme;
 use eframe::egui;
@@ -39,8 +39,12 @@ pub fn to_layout_rect(r: egui::Rect) -> LayoutRect {
 #[derive(Default)]
 pub struct LayoutOutcome {
     pub menu: Option<MenuRequest>,
-    /// 분할을 요청한 패널과 방향. **활성 패널이 아니라 버튼이 속한 패널**이다 (plan D3)
-    pub split: Option<(PanelId, SplitTo)>,
+    /// 패널 메뉴에서 고른 명령과 그 패널. **활성 패널이 아니라 메뉴를 연 패널**이다.
+    ///
+    /// 활성 판정은 포인터가 눌린 위치로만 이뤄지는데, 메뉴 팝업은 자기 패널 밖으로 뻗을 수
+    /// 있어 그 위에서 고르면 아래 깔린 패널이 활성이 된다 — 그대로 활성 패널에 적용하면
+    /// 닫기·새 파일이 엉뚱한 패널에 간다 (plan D16)
+    pub command: Option<(PanelId, Command)>,
 }
 
 /// 분할된 패널들을 그리고 스플리터 드래그·활성 패널 전환을 처리한다.
@@ -60,6 +64,10 @@ pub fn show_layout(
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
     let computed = tree.compute_rects(to_layout_rect(area));
+    // 패널은 서로를 모르므로(모듈 주석) 닫기 가능 여부는 트리를 아는 이곳에서 정해 내려준다 (plan D15)
+    let menu_state = PanelMenuState {
+        can_close_panel: computed.panes.len() > 1,
+    };
 
     // 클릭이 일어난 패널을 활성으로 삼는다.
     // 패널 rect에 `interact`를 걸면 그 위젯이 목록·버튼 클릭을 가로채므로
@@ -88,18 +96,18 @@ pub fn show_layout(
         let requested = ui
             .scope_builder(builder, |ui| {
                 ui.set_clip_rect(pane);
-                panel.show(ui, ctx, icons, textures)
+                panel.show(ui, ctx, icons, textures, menu_state)
             })
             .inner;
         // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
         if outcome.menu.is_none() {
             outcome.menu = requested.menu;
         }
-        // 분할도 한 프레임에 하나만 — 어느 패널이 요청했는지 함께 담는다
-        if outcome.split.is_none()
-            && let Some(to) = requested.split
+        // 명령도 한 프레임에 하나만 — 어느 패널이 요청했는지 함께 담는다
+        if outcome.command.is_none()
+            && let Some(command) = requested.command
         {
-            outcome.split = Some((*id, to));
+            outcome.command = Some((*id, command));
         }
     }
 
