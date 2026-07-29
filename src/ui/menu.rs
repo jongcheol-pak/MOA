@@ -61,6 +61,19 @@ pub struct PanelMenuState {
     pub can_close_panel: bool,
 }
 
+impl PanelMenuState {
+    /// 화면에 있는 패널 수로 활성 조건을 정한다.
+    ///
+    /// 패널은 서로를 모르므로 이 판정은 트리를 아는 쪽(`ui::splitter`)이 내려준다 (plan D15).
+    /// 그 계산을 여기 두는 이유는 "마지막 하나는 닫을 수 없다"는 규칙(FR-2)이 갈리지 않게
+    /// 한 곳에 모으기 위해서다
+    pub fn for_panes(pane_count: usize) -> PanelMenuState {
+        PanelMenuState {
+            can_close_panel: pane_count > 1,
+        }
+    }
+}
+
 /// 패널 메뉴를 그리고 고른 항목을 돌려준다 (FR-26).
 ///
 /// 항목 순서·구분선 위치는 plan `## 시각 요소 분해`의 인벤토리 표 13행 그대로다.
@@ -288,6 +301,71 @@ mod tests {
             egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
             egui::Key::Backslash
         )); // 아래쪽 분할
+    }
+
+    /// 패널 메뉴를 한 번 그리고 **그려진 텍스트를 순서대로** 모은다.
+    /// 구분선은 글자가 없어 잡히지 않으므로 항목 문구만 남는다
+    fn menu_labels(state: PanelMenuState) -> Vec<String> {
+        fn collect(shape: &egui::Shape, found: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        crate::ui::app::install_fonts(&ctx);
+        let output = ctx.run_ui(Default::default(), |ui| {
+            let mut command = None;
+            panel_menu_items(ui, state, &mut command);
+        });
+        let mut labels = Vec::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut labels);
+        }
+        labels
+    }
+
+    #[test]
+    fn 패널_메뉴는_요청한_순서와_문구를_그린다() {
+        // plan `## 시각 요소 분해`의 인벤토리 표 13행 중 글자가 있는 항목들.
+        // 메뉴 바를 없앤 뒤 이 메뉴가 유일한 마우스 진입점이라, 항목이 빠지면 그 기능에
+        // 마우스로 닿을 수 없게 된다
+        let labels = menu_labels(PanelMenuState::for_panes(2));
+        let expected = [
+            "보기",
+            "오른쪽 분할",
+            "왼쪽 분할",
+            "위쪽 분할",
+            "아래쪽 분할",
+            "새로 고침",
+            "새 파일",
+            "새 폴더",
+            "닫기",
+        ];
+        let found: Vec<&String> = labels
+            .iter()
+            .filter(|label| expected.contains(&label.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            expected.iter().collect::<Vec<_>>(),
+            "메뉴 항목의 문구나 순서가 인벤토리와 다르다: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn 마지막_패널_하나는_닫을_수_없다() {
+        // FR-2 — 이 조건이 뒤집히면 마지막 패널을 닫아 빈 화면이 된다
+        assert!(!PanelMenuState::for_panes(1).can_close_panel);
+        assert!(PanelMenuState::for_panes(2).can_close_panel);
+        assert!(PanelMenuState::for_panes(4).can_close_panel);
+        // 패널이 0개인 상태는 정상 흐름에 없지만, 그때도 닫기를 열어주면 안 된다
+        assert!(!PanelMenuState::for_panes(0).can_close_panel);
     }
 
     #[test]

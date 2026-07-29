@@ -65,9 +65,7 @@ pub fn show_layout(
     let area = ui.available_rect_before_wrap();
     let computed = tree.compute_rects(to_layout_rect(area));
     // 패널은 서로를 모르므로(모듈 주석) 닫기 가능 여부는 트리를 아는 이곳에서 정해 내려준다 (plan D15)
-    let menu_state = PanelMenuState {
-        can_close_panel: computed.panes.len() > 1,
-    };
+    let menu_state = PanelMenuState::for_panes(computed.panes.len());
 
     // 클릭이 일어난 패널을 활성으로 삼는다.
     // 패널 rect에 `interact`를 걸면 그 위젯이 목록·버튼 클릭을 가로채므로
