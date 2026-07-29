@@ -196,6 +196,14 @@
 | 패널 메뉴 `닫기` | 활성 조건 | 패널 2개 이상 | `ui/menu.rs` `PanelMenuState::for_panes` + 테스트 `마지막_패널_하나는_닫을_수_없다` | ✅ (T6) |
 | 패널 메뉴 `보기` | 상태 | T8 전까지 비활성 | `ui/menu.rs:70` `add_enabled(false, ..)` | ✅ (T6 — T8에서 하위 메뉴로 교체) |
 | 메뉴 버튼 | 아이콘 | 분할 도형 유지 (D10) | `ui/tabs.rs` `draw_split_icon` 유지, 툴팁만 "메뉴" | ✅ (T6) |
+| 보기 하위 메뉴 | 8행(문구·순서) | 인벤토리 표 그대로 | `ui/view_mode.rs` `ALL`·`label()` + 테스트 `보기_하위_메뉴는_여덟_모드를_순서대로_그린다` | ✅ (T8) |
+| 보기 하위 메뉴 | 현재 모드 표시 | 점(`•`) | `ui/menu.rs` `view_items` + 테스트 `지금_쓰는_모드에만_점이_붙는다` | ✅ (T8) |
+| 각 모드 | 아이콘 크기 | 256/96/48/16/16/16/48/32px | `ui/view_mode.rs` `icon_px()` | ✅ (T8) |
+| 작은 아이콘 vs 목록 | 배치 흐름 | 가로 흐름 vs 세로 흐름 | `ui/view_mode.rs` `flow()` + 테스트 `작은_아이콘과_목록은_흐름이_다르다` | ✅ (T8) |
+| 격자 항목 | 셀 크기 5종 | 280×320 / 120×150 / 76×100 / 220×64 / 200×20 | `ui/view_mode.rs` `cell_size()` | ✅ (T8) |
+| 내용 보기 | 행 높이 | 48px | `ui/view_mode.rs` `cell_size()` | ✅ (T8) |
+| 격자 항목 | 간격 | 8px | `ui/view_mode.rs` `GRID_SPACING` | ✅ (T8) |
+| 격자 이름 | 최대 줄 수 | 2줄 | `ui/view_mode.rs` `GRID_NAME_ROWS` (실제 2줄 렌더는 T10·T11) | ✅ 상수 (T8) |
 
 ## Decisions
 
@@ -340,7 +348,7 @@
   4. 권한 없는 폴더에서는 상태 줄에 사유가 표시되고 앱이 죽지 않는다
   5. `cargo test` 통과 — `unique_name`의 번호 부여·상한을 덮는 단위 테스트(임시 폴더 사용)
 
-### [ ] T8. 보기 모드 모델 + '보기' 하위 메뉴 (요구 8)
+### [x] T8. 보기 모드 모델 + '보기' 하위 메뉴 (요구 8)
 
 - **Type**: D
 - **Files**: `src/ui/view_mode.rs`(신규), `src/ui/mod.rs`(모듈 등록), `src/ui/menu.rs`, `src/ui/tabs.rs`, `src/ui/file_list.rs`, `src/ui/panel.rs`, `src/ui/splitter.rs`(`for_panes` 호출부), `src/ui/app.rs`
