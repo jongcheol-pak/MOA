@@ -171,7 +171,14 @@ pub fn show_resize_handles(ctx: &egui::Context, maximized: bool) -> Option<Windo
         return None;
     }
     let pointer = ctx.pointer_latest_pos()?;
-    let direction = resize_direction(pointer, ctx.viewport_rect(), RESIZE_MARGIN)?;
+    let window = ctx.viewport_rect();
+    let direction = resize_direction(pointer, window, RESIZE_MARGIN)?;
+    // 위쪽 **변**이 타이틀바 버튼과 겹치는 구간은 버튼에 양보한다 — 그러지 않으면 버튼 위쪽
+    // 4px를 누른 순간 크기 조절 루프가 열려 그 클릭이 삼켜진다(끌기 영역을 좁힌 것과 같은 이유).
+    // 모서리는 양보하지 않는다: 거기까지 내주면 대각선으로 창을 잡을 자리가 사라진다
+    if direction == egui::ResizeDirection::North && over_titlebar_button(pointer.x, window) {
+        return None;
+    }
     ctx.set_cursor_icon(resize_cursor(direction));
     // 누른 **직후**에 넘겨야 OS 크기 조절 루프가 열린다 (`BeginResize` 계약)
     let pressed = ctx.input(|input| input.pointer.primary_pressed());
@@ -206,6 +213,11 @@ fn resize_direction(
         _ => return None,
     };
     Some(direction)
+}
+
+/// 타이틀바 버튼이 놓인 좌·우 구간인가 — 위쪽 변 크기 조절이 이 구간을 비켜준다
+fn over_titlebar_button(x: f32, window: egui::Rect) -> bool {
+    x - window.min.x < LEFT_GROUP_WIDTH || window.max.x - x < RIGHT_GROUP_WIDTH
 }
 
 /// 방향에 맞는 마우스 커서
@@ -316,6 +328,16 @@ mod tests {
             resize_direction(egui::pos2(99.0, 99.0), w, m),
             Some(egui::ResizeDirection::SouthEast)
         );
+    }
+
+    #[test]
+    fn 위쪽_변은_버튼_구간을_비켜준다() {
+        // 버튼 위쪽 4px가 크기 조절에 먹히면 그 버튼을 누를 수 없다.
+        // 창 폭 100px에서 좌측 38px·우측 174px 구간이 버튼 자리이므로 여기서는 폭을 넉넉히 잡는다
+        let wide = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 100.0));
+        assert!(over_titlebar_button(10.0, wide)); // 좌측 토글 자리
+        assert!(over_titlebar_button(590.0, wide)); // 우측 캡션 버튼 자리
+        assert!(!over_titlebar_button(300.0, wide)); // 가운데 — 제목 자리
     }
 
     #[test]

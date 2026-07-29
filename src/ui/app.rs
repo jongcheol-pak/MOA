@@ -502,8 +502,8 @@ impl ExplorerApp {
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| titlebar::show_titlebar(ui, &title, state))
             .inner;
-        // 창 가장자리 크기 조절 — 타이틀바 버튼과 겹치는 최외곽 4px에서는 **크기 조절이 우선**이다.
-        // 버튼은 남은 자리로도 누를 수 있지만, 모서리를 버튼이 가져가면 창 크기를 잡을 곳이 사라진다
+        // 창 가장자리 크기 조절 — 모서리는 크기 조절이 우선이고(버튼이 가져가면 대각선으로 창을
+        // 잡을 자리가 사라진다), 버튼 위쪽 변은 버튼이 우선한다(`show_resize_handles`가 가른다)
         let resize = titlebar::show_resize_handles(ctx, self.window.maximized);
         if let Some(request) = resize.or(outcome.window) {
             let command = match request {
