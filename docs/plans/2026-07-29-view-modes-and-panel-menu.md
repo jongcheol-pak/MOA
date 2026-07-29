@@ -432,12 +432,16 @@
   2. 필드가 없는 기존 세션 파일도 정상 복원되고 자세히 보기로 시작한다
   3. `cargo test` 통과 — 모드 키 왕복·미지 키 폴백 테스트
 
-### [ ] T13. 썸네일 워커 + LRU 캐시 (요구 8)
+### [x] T13. 썸네일 워커 + LRU 캐시 (요구 8)
 
 - **Type**: D
 - **Files**: `src/fs/thumbnail.rs`(신규), `src/fs/mod.rs`, `Cargo.toml`
 - **내용**: `IShellItemImageFactory::GetImage`로 썸네일을 만드는 워커 스레드와 패널당 200장 LRU 캐시를 만든다(NFR-9, 사용자 확정). 요청은 채널로 보내고 결과도 채널로 받는다(D6). 폴더를 떠나면 그 폴더 썸네일을 해제한다.
-- **Design**: 배치 — `fs/thumbnail.rs`(셸 호출 + 캐시). 신규 심볼 — `ThumbnailCache { request(path, size), take_ready() -> Vec<(PathBuf, ColorImage)>, get(path) -> Option<&TextureHandle>, clear_folder(dir) }`, `ThumbnailWorker`(내부 스레드 + 요청 큐). 의존 — `ui/file_list.rs`·`list_grid.rs`가 쓰고, `fs`는 UI를 모른다(텍스처 업로드는 UI 쪽에서 `ColorImage`를 받아 수행). 비추상화 — 썸네일 제공자를 트레이트로 추상화하지 않는다(셸 하나뿐이다).
+- **Design**: 배치 — `fs/thumbnail.rs`(셸 호출 + 캐시). 신규 심볼 (실제 시그니처 — 구현 중 정정, T13 spec 리뷰 M1) — `ThumbnailCache { request(path), poll() -> Vec<PathBuf>, get(path) -> Option<&ThumbnailImage>, clear() }` + `ThumbnailImage { width, height, rgba }`.
+  - `size` 인자를 두지 않는다: 한 장을 가장 큰 모드(256px)에 맞춰 만들고 작은 모드는 줄여 쓴다(작게 만들면 큰 모드에서 뭉개진다).
+  - `poll`이 이미지가 아니라 **경로만** 돌려준다: 이미지는 캐시가 들고 있으므로 두 벌로 갈라지지 않게 한다. 호출부는 받은 경로로 `get`해 텍스처를 올린다.
+  - `get`이 `TextureHandle`이 아니라 `ThumbnailImage`를 돌려준다: `TextureHandle`은 egui(UI) 타입이라 `fs` 계층에 둘 수 없다(원래 Design 문장 안에서 "fs는 UI를 모른다"와 모순이었다). 텍스처 업로드는 T14의 UI 몫이다.
+  - `clear_folder(dir)` 대신 `clear()`: 캐시가 패널당 하나이고 패널은 한 번에 한 폴더만 보므로 폴더 인자가 필요 없다. 의존 — `ui/file_list.rs`·`list_grid.rs`가 쓰고, `fs`는 UI를 모른다(텍스처 업로드는 UI 쪽에서 `ColorImage`를 받아 수행). 비추상화 — 썸네일 제공자를 트레이트로 추상화하지 않는다(셸 하나뿐이다).
 - **Edge Cases**: 썸네일 없는 파일(형식 아이콘 폴백, 실패를 기억해 재요청하지 않는다) / 큰 폴더에서 요청 폭주(보이는 항목만 요청하고 큐 상한을 둔다) / 폴더를 빠르게 오갈 때 늦게 도착한 결과(세대 번호로 폐기 — `DirLoad` 방식) / 워커 스레드의 COM 초기화(스레드마다 `CoInitializeEx` 필요) / 200장 경계에서의 축출 순서 / 앱 종료 시 워커 정지 / 네트워크 드라이브의 느린 응답(타임아웃 없이 워커만 붙잡히고 UI는 계속 도는지)
 - **Halt Forecast**: 실측 메모리가 NFR-9 상한을 크게 벗어나면 → **위임 불가 Halt**(NFR 변경은 PRD 변경). 그 외 feature 추가는 사전 승인 항목 2.
 - **Acceptance**:
