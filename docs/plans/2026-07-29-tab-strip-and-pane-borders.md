@@ -77,6 +77,36 @@
 | 분할 패널 | 활성 강조 | 활성 패널만 1px 테두리, 색 `PANE_BORDER_ACTIVE`(`#5A5A5A`) | 사용자 확정 (Q3) · 현행 활성 테두리(`CONTROL_ACTIVE` 0x45)보다 한 단계 밝게 |
 | 분할 패널 | 단일 패널 | 분할이 없으면 테두리 없음 | 현행 규칙 유지 (`splitter.rs:107` `panes.len() > 1`) |
 
+### V-9 대조 결과 (구현 후 산출 — task별 누적)
+
+> 판정 축 구분: **소스 대조 가능**(상수 값·문구·구성 요소 존재·조건 분기)은 ✅/❌로 확정하고,
+> **최종 렌더 결과**(실제 픽셀 배치·정렬·색의 눈에 보이는 결과)는 데스크톱 GUI라 자율 루프에서
+> 신뢰성 있게 캡처할 수단이 없어 `⏳ 미확인`으로 F-8에 인계한다.
+
+| 요소·속성 | 디자인 값 | 구현 근거 | 판정 |
+|---|---|---|---|
+| 탭 스트립 높이 | 28px | `ui/tabs.rs` `STRIP_HEIGHT = 28.0` | ✅ 소스 |
+| 탭 구성(아이콘·제목·닫기 한 영역) | — | `ui/tabs.rs` `show_tab` — `allocate_exact_size` 1회 + `tab_parts` 3구역 painter 그리기 | ✅ 소스 |
+| 탭 좌측 여백 | 6px | `TAB_PAD_LEFT = 6.0` | ✅ 소스 |
+| 폴더 아이콘 구역 폭 | 16px | `TAB_ICON_WIDTH = 16.0` | ✅ 소스 |
+| 폴더 아이콘 글꼴 | 14px | `TAB_ICON_PX = 14.0` | ✅ 소스 |
+| 폴더 아이콘 색 | `#E8B34D` | `ui/theme.rs` `FOLDER_ICON = from_rgb(0xE8, 0xB3, 0x4D)` | ✅ 소스 |
+| 아이콘–제목 간격 | 4px | `TAB_ICON_GAP = 4.0` | ✅ 소스 |
+| 제목 정렬 | 세로 중앙·좌측·말줄임 | `Align2::LEFT_CENTER` + `parts.label.left_center()` + `elide()` | ✅ 소스 |
+| 닫기 구역 폭 | 20px | `TAB_CLOSE_WIDTH = 20.0` | ✅ 소스 |
+| 닫기 아이콘 글꼴 | 12px | `TAB_CLOSE_PX = 12.0` | ✅ 소스 |
+| 탭 우측 여백 | 4px | `TAB_PAD_RIGHT = 4.0` | ✅ 소스 |
+| 탭 최소 폭 | 50px | `TAB_MIN_WIDTH` = 6+16+4+20+4, 테스트 `최소_폭에서도_아이콘과_닫기_크기가_유지된다` | ✅ 소스 |
+| 활성 탭 배경 | `CONTROL_BG` 채움 | `if active { rect_filled(rect, 0.0, theme::CONTROL_BG) }` | ✅ 소스 |
+| 비활성 탭 배경 | 없음 | 위 `if active` 밖에 배경 그리기 없음 | ✅ 소스 |
+| 탭 사이 구분선 | 둘 다 비활성일 때만·`TREE_LINE`·60% | `draw_separator` + `!active && next != active_index` 조건 + `SEPARATOR_RATIO = 0.6` | ✅ 소스 |
+| 탭·닫기 툴팁 | 전체 경로 / "탭 닫기" | `response.on_hover_text(path…)`, `close.on_hover_text("탭 닫기")` | ✅ 소스 |
+| `+`·분할 툴팁 | "새 탭" / "분할" | `.on_hover_text("새 탭")`, `.on_hover_text("분할")` | ✅ 소스 |
+| 새 탭 `+` | 24×28px·프레임 없음 | `widgets::icon_button(…, vec2(NEW_TAB_WIDTH, STRIP_HEIGHT), …)` | ✅ 소스 |
+| 분할 버튼 | 28×28px·프레임 없음·아이콘 직접 그리기 | `widgets::icon_button(ui, "", vec2(STRIP_HEIGHT, STRIP_HEIGHT), …)` + `draw_split_icon` | ✅ 소스 |
+| **탭 줄 전체의 실제 화면 결과** | 1번 이미지와 동일한 인상 | — | ⏳ 미확인 (F-8 인계) |
+| **닫기 우선 규칙의 실제 조작 결과** | 비활성 탭 × 클릭 시 닫힘·전환 없음 | 배선은 `show_tab`의 `!clicked_on_close`로 확인 | ⏳ 미확인 (F-8 인계) |
+
 ## PRD Coverage
 
 | PRD ID | 우선순위 | 대응 task | 상태 |
@@ -124,7 +154,7 @@
   - 캡션 버튼 폭 46px·높이 36px, 토글/설정 36×36, 닫기 hover 색 `CLOSE_HOT`이 코드상 유지된다
   - 기존 타이틀바 테스트 7개 전부 통과 (`cargo test`)
 
-### T2. 탭 스트립 — 통합 탭 · 프레임 없는 버튼 · 높이 28px (Type C, T1 의존)
+### [x] T2. 탭 스트립 — 통합 탭 · 프레임 없는 버튼 · 높이 28px (Type C, T1 의존)
 
 **Design**:
 - 배치: `src/ui/tabs.rs` 수정 (그리기·입력만 담당하는 현행 역할 유지 — 상태는 `panel::tabs::TabsModel`이 계속 소유)
@@ -261,7 +291,10 @@
 
 ## Progress Log
 
-- (구현 시작 전)
+- T1-T2 완료 (커밋 a4c835b, 8445287+): `ui/widgets.rs` 추출 후 탭 스트립 전면 재작성. 빌드·clippy·테스트(lib 141) 전부 통과.
+  - 결정: 탭 제목 폭 측정은 `ui.fonts(...)`가 `&Fonts`를 주어 `layout_no_wrap`(`&mut self`)을 부를 수 없다 — `Painter::layout_no_wrap`(`&self`, `egui-0.35.0/src/painter.rs:503`)로 대체했다.
+  - 결정: 닫기 우선 규칙을 `ui.interact` 등록 순서와 `is_close_hit` 좌표 검사 두 겹으로 뒀다. quality 리뷰가 "누른 곳과 뗀 곳이 어긋나는 경계에서 좌표 검사가 추가로 막는다"고 정당성을 확인.
+  - V-9: T2 귀속 시각 행은 전부 소스 대조 ✅, 실제 화면 결과 2행은 `⏳ 미확인`으로 F-8 인계.
 
 ## Phase Ledger
 
