@@ -1,36 +1,23 @@
-//! 파일 목록 위젯 — 가상 스크롤·열 정렬·다중 선택·시스템 아이콘 (FR-4·FR-5, NFR-3).
+//! 파일 목록 — 항목·선택·정렬 상태의 소유자 (FR-4·FR-5, NFR-3).
 //!
 //! 표시 규칙(크기·날짜 문자열)과 정렬 비교는 `panel::file_list`의 순수 함수를 그대로 쓴다 —
-//! 복제하면 두 벌로 갈라진다. 이 파일은 그리기와 입력만 담당한다.
+//! 복제하면 두 벌로 갈라진다. **그리기는 보기 모드별 모듈이 맡고**(자세히 보기는
+//! `ui::list_details`) 이 파일은 상태를 들고 그 모듈에 넘긴 뒤, 돌아온 조작을 상태에 반영한다.
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
-use crate::panel::file_list::{SortKey, compare_entries, format_filetime, format_size_kb};
+use crate::panel::file_list::{SortKey, compare_entries};
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::list_details::{self, Columns, DetailsInput};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
-/// 행 높이 — 16px 시스템 아이콘이 들어갈 여유를 둔다
-const ROW_HEIGHT: f32 = 20.0;
-/// 헤더 높이
-const HEADER_HEIGHT: f32 = 22.0;
-/// 열 폭 (헤더와 행이 같은 x를 쓰도록 공유). 마지막 열은 남는 폭 전부
-const COL_NAME_W: f32 = 320.0;
-const COL_SIZE_W: f32 = 90.0;
-const COL_TYPE_W: f32 = 150.0;
-/// 아이콘 크기·좌측 여백
-const ICON_SIZE: f32 = 16.0;
-const ICON_X: f32 = 4.0;
-/// 이름 텍스트 시작 x (아이콘 뒤)
-const NAME_X: f32 = 24.0;
-/// 셀 사이 여백
-const CELL_PAD: f32 = 6.0;
-
 /// 목록이 상위(패널)에 돌려주는 사용자 조작.
 /// 즉시 모드라 콜백을 등록하지 않고 이번 프레임의 조작을 값으로 반환한다
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Default)]
 pub enum FileListAction {
+    #[default]
     None,
     /// 항목 실행 — 폴더면 진입, 파일이면 연결 프로그램 (호출부가 판정)
     Open(usize),
@@ -55,6 +42,8 @@ pub struct FileListView {
     selection: BTreeSet<usize>,
     /// Shift 범위 선택의 기준점
     anchor: Option<usize>,
+    /// 자세히 보기 열 폭 — 패널마다 독립이며 세션에 저장된다 (plan D3)
+    columns: Columns,
 }
 
 impl Default for FileListView {
@@ -74,7 +63,18 @@ impl FileListView {
             ascending: true,
             selection: BTreeSet::new(),
             anchor: None,
+            columns: Columns::new(),
         }
+    }
+
+    /// 저장된 열 폭을 되살린다 (FR-11)
+    pub fn set_columns(&mut self, saved: &[f32]) {
+        self.columns = Columns::from_saved(saved);
+    }
+
+    /// 세션에 저장할 열 폭
+    pub fn columns(&self) -> Vec<f32> {
+        self.columns.to_saved()
     }
 
     /// 새 폴더의 항목으로 교체한다. 정렬은 현재 정렬 기준을 유지한다.
@@ -194,59 +194,7 @@ impl FileListView {
         self.anchor = Some(index);
     }
 
-    /// 열 머리글 — 클릭으로 정렬, 현재 정렬 열에 방향 표시
-    fn header(&mut self, ui: &mut egui::Ui) {
-        let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width(), HEADER_HEIGHT));
-        ui.painter().rect_filled(rect, 0.0, theme::HEADER_BG);
-        let columns = [
-            (SortKey::Name, "이름", rect.left(), COL_NAME_W),
-            (SortKey::Size, "크기", rect.left() + COL_NAME_W, COL_SIZE_W),
-            (
-                SortKey::Type,
-                "종류",
-                rect.left() + COL_NAME_W + COL_SIZE_W,
-                COL_TYPE_W,
-            ),
-            (
-                SortKey::Modified,
-                "수정한 날짜",
-                rect.left() + COL_NAME_W + COL_SIZE_W + COL_TYPE_W,
-                rect.right() - (rect.left() + COL_NAME_W + COL_SIZE_W + COL_TYPE_W),
-            ),
-        ];
-        let font = egui::TextStyle::Body.resolve(ui.style());
-        let mut clicked = None;
-        for (key, label, x, width) in columns {
-            if width <= 0.0 {
-                continue;
-            }
-            let cell = egui::Rect::from_min_size(
-                egui::pos2(x, rect.top()),
-                egui::vec2(width, HEADER_HEIGHT),
-            );
-            let id = ui.id().with(("head", label));
-            if ui.interact(cell, id, egui::Sense::click()).clicked() {
-                clicked = Some(key);
-            }
-            let arrow = if self.sort_key == key {
-                if self.ascending { " ▲" } else { " ▼" }
-            } else {
-                ""
-            };
-            ui.painter().text(
-                egui::pos2(x + CELL_PAD, cell.center().y),
-                egui::Align2::LEFT_CENTER,
-                format!("{label}{arrow}"),
-                font.clone(),
-                theme::HEADER_TEXT,
-            );
-        }
-        if let Some(key) = clicked {
-            self.apply_sort(key);
-        }
-    }
-
-    /// 목록 본문 — 보이는 행만 그린다(가상 스크롤).
+    /// 목록을 그리고 이번 프레임의 조작을 반영한다.
     /// `icons`·`textures`는 앱 전역에서 공유하므로 인자로 받는다(패널마다 캐시를 두면 낭비)
     pub fn show(
         &mut self,
@@ -254,154 +202,33 @@ impl FileListView {
         icons: &mut IconCache,
         textures: &mut IconTextures,
     ) -> FileListAction {
-        self.header(ui);
-        let mut action = FileListAction::None;
-        // 선택 변경은 그리기 루프가 self를 빌린 뒤에 적용한다
-        let mut select_request: Option<(usize, egui::Modifiers)> = None;
-        let himl = icons.himl();
-        let ctx = ui.ctx().clone();
-
-        let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
-        let output = scroll.show_rows(ui, ROW_HEIGHT, self.entries.len(), |ui, range| {
-            let font = egui::TextStyle::Body.resolve(ui.style());
-            let stripe = ui.visuals().faint_bg_color;
-            let hover_bg = ui.visuals().widgets.hovered.bg_fill;
-            let sel_bg = ui.visuals().selection.bg_fill;
-            for index in range {
-                let entry = &self.entries[index];
-                // 행 전체를 하나의 클릭 대상으로 잡는다 — 어느 열을 눌러도 같은 행이 된다
-                let (id, rect) = ui.allocate_space(egui::vec2(ui.available_width(), ROW_HEIGHT));
-                let resp = ui.interact(rect, id, egui::Sense::click());
-                if resp.clicked() {
-                    select_request = Some((index, ui.input(|i| i.modifiers)));
-                }
-                if resp.double_clicked() {
-                    action = FileListAction::Open(index);
-                }
-                if resp.secondary_clicked()
-                    && let Some(pos) = resp.interact_pointer_pos()
-                {
-                    // 선택되지 않은 행을 우클릭하면 그 행을 단독 선택한 뒤 메뉴를 연다
-                    if !self.selection.contains(&index) {
-                        select_request = Some((index, egui::Modifiers::NONE));
-                    }
-                    action = FileListAction::Context {
-                        index: Some(index),
-                        pos,
-                    };
-                }
-                if !ui.is_rect_visible(rect) {
-                    continue;
-                }
-
-                let painter = ui.painter();
-                if index % 2 == 1 {
-                    painter.rect_filled(rect, 0.0, stripe);
-                }
-                if self.selection.contains(&index) {
-                    painter.rect_filled(rect, 0.0, sel_bg);
-                } else if resp.hovered() {
-                    painter.rect_filled(rect, 0.0, hover_bg);
-                }
-
-                let y = rect.center().y;
-                // 보이는 행에 한해 아이콘 인덱스를 조회한다 — 로드 시 전체를 미리 계산하면
-                // exe가 많은 폴더에서 로드가 길어진다(PoC 실측 585ms → 84ms)
-                let icon_index = match self.icon_indices[index] {
-                    Some(cached) => cached,
-                    None => {
-                        let full = self.dir.join(entry.name_string());
-                        let looked_up = icons.icon_index(
-                            &entry.extension(),
-                            entry.is_dir,
-                            Some(&full.to_string_lossy()),
-                        );
-                        self.icon_indices[index] = Some(looked_up);
-                        looked_up
-                    }
-                };
-                if let Some(tex) = textures.get(&ctx, himl, icon_index) {
-                    let icon_rect = egui::Rect::from_min_size(
-                        egui::pos2(rect.left() + ICON_X, y - ICON_SIZE / 2.0),
-                        egui::vec2(ICON_SIZE, ICON_SIZE),
-                    );
-                    // painter를 다시 얻는다 — textures가 ui를 빌리는 사이 앞의 painter가 무효화된다
-                    ui.painter().image(
-                        tex.id(),
-                        icon_rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-                }
-
-                let size_text = if entry.is_dir {
-                    String::new()
-                } else {
-                    format_size_kb(entry.size)
-                };
-                let cells = [
-                    (
-                        entry.name_string(),
-                        rect.left() + NAME_X,
-                        COL_NAME_W - NAME_X - CELL_PAD,
-                    ),
-                    (
-                        size_text,
-                        rect.left() + COL_NAME_W + CELL_PAD,
-                        COL_SIZE_W - CELL_PAD * 2.0,
-                    ),
-                    (
-                        self.type_names[index].clone(),
-                        rect.left() + COL_NAME_W + COL_SIZE_W + CELL_PAD,
-                        COL_TYPE_W - CELL_PAD * 2.0,
-                    ),
-                    (
-                        format_filetime(entry.modified),
-                        rect.left() + COL_NAME_W + COL_SIZE_W + COL_TYPE_W + CELL_PAD,
-                        rect.right() - (rect.left() + COL_NAME_W + COL_SIZE_W + COL_TYPE_W),
-                    ),
-                ];
-                let painter = ui.painter();
-                for (text, x, width) in cells {
-                    if text.is_empty() || width <= 0.0 {
-                        continue;
-                    }
-                    let galley = elided_galley(painter, text, font.clone(), width);
-                    painter.galley(
-                        egui::pos2(x, y - galley.size().y / 2.0),
-                        galley,
-                        theme::TEXT,
-                    );
-                }
-            }
-        });
-
-        // 목록 아래 빈 공간 우클릭 → 폴더 배경 메뉴.
-        // 대상은 **콘텐츠가 끝난 지점부터** 뷰포트 바닥까지다 — 뷰포트 전체를 잡으면 이 위젯이
-        // 행보다 나중에 등록돼 행 클릭을 통째로 가로챈다(egui 히트 테스트는 겹칠 때 나중에
-        // 등록된 위젯을 위로 본다). 항목이 화면을 채우면 빈 공간이 없어 배경 메뉴도 열리지
-        // 않는데, 이는 Windows 탐색기와 같은 동작이다
-        let content_bottom = output.inner_rect.top() + output.content_size.y;
-        if content_bottom < output.inner_rect.bottom() {
-            let empty = egui::Rect::from_min_max(
-                egui::pos2(output.inner_rect.left(), content_bottom),
-                output.inner_rect.max,
-            );
-            let resp = ui.interact(empty, ui.id().with("list_bg"), egui::Sense::click());
-            if resp.secondary_clicked()
-                && let Some(pos) = resp.interact_pointer_pos()
-            {
-                action = FileListAction::Context { index: None, pos };
-            }
-            if resp.clicked() {
-                self.selection.clear();
-                self.anchor = None;
-            }
-        }
-        if let Some((index, modifiers)) = select_request {
+        let outcome = list_details::show(
+            ui,
+            DetailsInput {
+                dir: &self.dir,
+                entries: &self.entries,
+                type_names: &self.type_names,
+                icon_indices: &mut self.icon_indices,
+                selection: &self.selection,
+                sort_key: self.sort_key,
+                ascending: self.ascending,
+                columns: &mut self.columns,
+            },
+            icons,
+            textures,
+        );
+        // 상태 변경은 그리기가 끝난 뒤에 한다 — 그리는 동안에는 목록이 빌려진 상태다
+        if let Some(key) = outcome.sort_click {
+            self.apply_sort(key);
+        } else if let Some((index, modifiers)) = outcome.select_request {
+            // 정렬이 일어나면 인덱스가 통째로 바뀌므로 같은 프레임의 선택은 버린다
             self.select(index, modifiers);
         }
-        action
+        if outcome.clear_selection {
+            self.selection.clear();
+            self.anchor = None;
+        }
+        outcome.action
     }
 }
 
@@ -410,7 +237,7 @@ impl FileListView {
 /// `Painter::layout`을 쓰면 안 된다 — 그 함수의 폭 인자는 자르는 폭이 아니라 **줄바꿈 폭**이라
 /// 긴 이름이 여러 줄이 된다. 행 높이는 `ROW_HEIGHT` 고정이므로 2줄이 되는 순간 아래 행과 겹쳐
 /// 글자가 포개져 보인다(사용자 보고 4번). `max_rows: 1`이 그 겹침과 말줄임을 함께 해결한다
-fn elided_galley(
+pub(crate) fn elided_galley(
     painter: &egui::Painter,
     text: String,
     font: egui::FontId,

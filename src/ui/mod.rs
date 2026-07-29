@@ -6,6 +6,7 @@ pub mod address_bar;
 pub mod app;
 pub mod file_list;
 pub mod icon_tex;
+pub mod list_details;
 pub mod menu;
 pub mod panel;
 pub mod session;
