@@ -108,7 +108,11 @@
 | 주소창 버튼 크기·프레임 | 24×24px·hover 시에만 배경 | `ui/address_bar.rs` `NAV_BUTTON_SIZE = 24.0` + `widgets.rs`의 hover 시에만 `rect_filled` | ✅ 소스 |
 | 주소창 버튼 아이콘 글꼴 | 16px·활성/비활성 동일 | `NAV_ICON_PX = 16.0`을 `nav_button`의 두 경로에 동일 전달 | ✅ 소스 |
 | 주소창 버튼 비활성 표현 | `TEXT_DIM`·hover 배경 없음·클릭 무반응·툴팁 없음 | `nav_button`의 `!enabled` 분기 — `TEXT_DIM` + `Color32::TRANSPARENT` + `on_hover_text` 미부착 + 무조건 `return false` | ✅ 소스 |
+| 분할 패널 경계 | 패널마다 1px `#333333` | `ui/splitter.rs` 테두리 패스 + `theme.rs` `PANE_BORDER = from_rgb(0x33,0x33,0x33)` | ✅ 소스 |
+| 분할 패널 활성 강조 | 활성만 1px `#5A5A5A` | `if id == active { PANE_BORDER_ACTIVE } else { PANE_BORDER }` + `theme.rs` 상수 | ✅ 소스 |
+| 분할 없을 때 | 테두리 없음 | `if computed.panes.len() > 1` 조건 유지 | ✅ 소스 |
 | **탭 줄 전체의 실제 화면 결과** | 1번 이미지와 동일한 인상 | — | ⏳ 미확인 (F-8 인계) |
+| **분할 패널 경계의 실제 화면 결과** | 3번 이미지처럼 패널 구분이 보임 | — | ⏳ 미확인 (F-8 인계) |
 | **주소창 버튼의 실제 화면 결과** | 프레임 없이 아이콘만·비활성 흐림 | — | ⏳ 미확인 (F-8 인계) |
 | **닫기 우선 규칙의 실제 조작 결과** | 비활성 탭 × 클릭 시 닫힘·전환 없음 | 배선은 `show_tab`의 `!clicked_on_close`로 확인 | ⏳ 미확인 (F-8 인계) |
 
@@ -217,7 +221,7 @@
   - `nav_button`이 `enabled == false`이면 클릭 여부와 무관하게 `false`를 반환한다(코드상 조기 반환 확인 — `Ui`가 필요해 단위 테스트 비대상)
   - 화면 확인(HUMAN-VERIFY): ⓐ 세 버튼에 사각 배경이 없고 hover 시에만 배경이 뜬다 ⓑ 갈 수 없는 방향이 흐리게 보이며 hover해도 배경·툴팁이 뜨지 않는다 ⓒ 탐색 동작(뒤로·앞으로·상위)이 그대로다
 
-### T4. 분할 패널 경계 테두리 (Type C)
+### [x] T4. 분할 패널 경계 테두리 (Type C)
 
 **Design**:
 - 배치: `src/ui/splitter.rs`의 `show_layout` 안, 현행 활성 테두리 코드(`splitter.rs:106~116`) 자리를 확장. `src/ui/theme.rs`에 색 상수 2개 추가
