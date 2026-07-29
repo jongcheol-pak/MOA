@@ -310,9 +310,32 @@
   - 결정(T4): 테두리를 패널 그리기 루프에 합치지 않고 **별도 패스**로 뒀다. 그 루프는 `panels`에 실체가 없으면 `continue`하는데, 빈 자리도 레이아웃상 한 칸이라 경계는 보여야 하기 때문이다. 대신 그 루프의 0크기 가드가 이어지지 않아 새 패스에서 다시 검사한다.
   - F-7 지적 반영: README 모듈 목록에 `widgets.rs` 누락(MAJOR), V-9 표에 "닫기 × 프레임" 행 누락, Progress Log T3·T4 미기록 — 전부 문서 수정으로 해소. 더불어 `tabs.rs`에 이전 plan 결정 번호를 가리키던 `(plan D3/D6/D8)` 주석을 `(split-4way plan …)`으로 출처를 명시해 현행 plan 번호와의 혼동을 없앴다.
 
+## Phase G 결과 (G-1 충족표 — F-7 대조 재사용)
+
+| PRD ID | 우선순위 | 충족 | 근거 |
+|---|---|---|---|
+| FR-1 (자유 분할, 진입점=탭 스트립 분할 버튼·메뉴바) | Must | ✅ | T4 — `show_split_button` → `Popup::menu` → `split_items` 4방향 경로 불변, `layout_flow` 통합 2건 통과 |
+| FR-2 (스플리터 드래그·패널 닫기) | Must | ✅ | T4 — 변경은 테두리 패스 한정, `compute_rects`·드래그 무변경 |
+| FR-3 (패널별 독립 탭) | Must | ✅ | T2 — `TabAction` 3종·`ui/panel.rs` 무변경, 표시 방식만 변경 |
+| FR-6 (주소창 입력·뒤로/앞으로/상위) | Must | ✅ | T3 — `NavAction` 4종 유지, 활성 조건(`can_back`·`can_forward`·`parent()`) 동일 |
+| FR-21 (탐색기 고정 다크) | Should | ✅ | T1~T4 — 기존 팔레트 값 무변경, 신규 3색은 대역 안 추가 |
+| FR-4·5·7~20·22 | Must/Should | 대조 제외 | `## PRD Coverage`가 "이번 범위 외 (기구현)"로 선언 |
+| NFR-1~8 | — | 영향 없음 | 의존성 추가 0, 신규 스레드·I/O 0, 스트립 높이 +6px만 |
+
+- **Must 충족률 100%** (미충족 active FR 0건), 재루프 0회
+- 시각 항목은 이 표가 아니라 F-8 관문이 다룬다 (`### V-9 대조 결과`의 `⏳ 미확인` 4행)
+
+## Next Steps
+
+- 권장 다음 액션: 앱을 실행해 F-8 확인 목록 4가지를 눈으로 확인 (`cargo run`). 어긋난 곳을 알려주시면 그 항목만 수정 후 F-8 재진입
+- Suggested skills: 확인 후 이상 없으면 종결, 수정이 필요하면 `pjc:implement-task` 재개
+
 ## Phase Ledger
 
-- (미시작)
+- T1~T4 완료
+- Phase F 통과 (HEAD d4a761a — F-7 1회차 MAJOR 1·MINOR 2 반영 후 재검토, 2회차 BLOCKER·MAJOR·MINOR 0)
+- Phase G 통과 (Must 100% — F-7의 PRD 전수 대조 재사용, 재루프 0회. 커버 대상 FR-1·2·3·6·21 전부 유지, 나머지 active Must FR은 `## PRD Coverage`에서 이번 범위 외로 선언)
+- F-8 보류 — 시각 `⏳ 미확인` 4행에 대해 사용자 화면 확인 대기
 
 ## Retry Ledger
 
