@@ -375,6 +375,14 @@ mod tests {
     }
 
     #[test]
+    fn 최대화_중에는_크기_조절을_받지_않는다() {
+        // 최대화된 창은 크기를 바꿀 수 없다 — 가드가 빠지면 가장자리에서 커서만 바뀌고 동작하지 않는
+        // 어정쩡한 상태가 된다. 이 분기는 `resize_direction`이 아니라 여기 있어 Context가 필요하다
+        let ctx = egui::Context::default();
+        assert_eq!(show_resize_handles(&ctx, true), None);
+    }
+
+    #[test]
     fn 위쪽_변은_버튼_구간을_비켜준다() {
         // 버튼 위쪽 4px가 크기 조절에 먹히면 그 버튼을 누를 수 없다.
         // 창 폭 100px에서 좌측 38px·우측 174px 구간이 버튼 자리이므로 여기서는 폭을 넉넉히 잡는다

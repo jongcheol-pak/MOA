@@ -183,7 +183,7 @@
 - **Source**: `eframe-0.35.0/src/epi.rs:42`, `winit/src/platform/windows.rs:509`
 
 ### D11. `app::theme::apply_dark_titlebar` 처리
-- **Chosen**: **건드리지 않는다**(호출 0곳이므로 동작 영향 없음)
+- **Chosen**: **건드리지 않는다**(진입점이 쓰지 않는 코드라 동작 영향 없음 — 호출 수는 4-A 행의 F-3 정정 참조)
 - **Rationale**: Win32 이식 잔재 정리는 Deferred 대장의 "구 Win32 UI 코드 제거"가 통째로 다루기로 보류된 항목이다. 여기서 일부만 지우면 그 판단이 쪼개진다
 - **Source**: `src/app/window.rs:183`(호출 1건 — 단 진입점이 쓰지 않는 Win32 이식 이전 코드), `docs/plans/deferred.md:7`
 
@@ -269,7 +269,7 @@
   - **Acceptance**: Given 앱 실행, When 창이 뜸, Then OS 기본 제목 표시줄이 없고 다크 타이틀바에 활성 워크스페이스 이름이 중앙에 보인다 / Given 타이틀바 빈 영역, When 드래그, Then 창이 따라 움직이고 화면 가장자리로 끌면 Windows 스냅이 동작한다 / Given 타이틀바 빈 영역, When 더블클릭, Then 최대화·복원이 토글되고 **드래그로 오인되지 않는다** / Given 최대화 상태, When 최대화 버튼 확인, Then 아이콘이 `CORNERS_IN`으로 바뀐다 / Given 최소화·닫기 버튼, When 클릭, Then 각각 창이 최소화되고 종료되며 **종료 시 세션이 저장된다**(`on_exit` 경로 유지) / Given 최대화 후 복원, When 재시작, Then 이전 크기·위치로 복원된다(FR-11 회귀 없음) / Given 파일 목록, When 우클릭, Then Win32 셸 컨텍스트 메뉴가 **여전히 다크로** 뜬다(D13 — `enable_dark_mode` 존치 확인) / `cargo test` 통과(기존 테스트 회귀 없음)
   - **Files**:
     - 주: `src/ui/titlebar.rs`(신규), `src/main.rs`, `src/ui/app.rs`
-    - 동반: `src/ui/mod.rs`, `src/ui/theme.rs`
+    - 동반: `src/ui/mod.rs`, `src/ui/theme.rs`(상수 1개 추가 — `CLOSE_HOT`. 계획 단계에는 `TITLEBAR_BG`도 적었으나 만들지 않았다, 4-A·4-D 정정 참조)
     - 테스트: 없음 — 이 task에는 순수 함수가 없다(제목 말줄임은 egui가 처리, D14). 단위테스트는 T4의 `resize_direction`이 담당
   - **Edge Cases**:
     - 워크스페이스 이름이 매우 길다 → `Label::truncate()`가 가용 폭에서 자른다(좌우 버튼 영역 침범 금지)
@@ -286,8 +286,8 @@
 
 - [x] T4. 가장자리·모서리 리사이즈 핸들
   - **Type**: C
-  - **Design**: ① 배치 — `src/ui/titlebar.rs`(창 프레임 제어라는 같은 책임) ② 신규 심볼 — `show_resize_handles(&egui::Context, bool)`(창 최외곽에 8방향 히트 영역을 두고 눌리면 `BeginResize` 전송) / `resize_direction(pointer: Pos2, window: Rect, margin: f32) -> Option<ResizeDirection>`(좌표 → 방향 판정, 순수 함수) ③ 의존 방향 — `ui::titlebar` → `egui`만. `ui::app`이 매 프레임 호출한다 ④ 비추상화 — 커서 모양·히트 영역을 위한 별도 위젯 타입을 만들지 않고 `Area` + `Sense::drag`로 직접 처리한다
-  - **Acceptance**: Given 일반(비최대화) 창, When 창 4변·4모서리 가장자리(4px)에 마우스를 올림, Then 방향에 맞는 리사이즈 커서가 뜨고 드래그하면 그 방향으로 크기가 바뀐다 / Given 최대화 상태, When 가장자리에 마우스를 올림, Then 리사이즈가 동작하지 않는다 / Given 파일 목록·사이드바 가장자리 안쪽, When 드래그, Then 리사이즈로 가로채지 않고 기존 동작(스크롤·스플리터)이 그대로 된다 / `cargo test` 통과(`resize_direction` 단위테스트: 8방향 + 중앙 None + 최대화 시 None)
+  - **Design**: ① 배치 — `src/ui/titlebar.rs`(창 프레임 제어라는 같은 책임) ② 신규 심볼 — `show_resize_handles(&egui::Context, bool)`(창 최외곽에서 방향을 판정해 크기 조절을 요청) / `resize_direction(pointer: Pos2, window: Rect, margin: f32) -> Option<ResizeDirection>`(좌표 → 방향 판정, 순수 함수) ③ 의존 방향 — `ui::titlebar` → `egui`만. `ui::app`이 매 프레임 호출한다 ④ 비추상화 — 커서 모양·히트 영역을 위한 별도 위젯 타입을 만들지 않는다. **T4 구현에서 정정**: `Area` + `Sense::drag` 대신 **포인터 좌표를 직접 보는 방식**을 썼다 — `Area`는 8방향마다 하나씩 만들어야 하는데, 판정은 좌표 하나로 끝나므로 그편이 더 짧고 순수 함수로 테스트도 된다. 창 명령 전송은 이 모듈이 하지 않고 `WindowRequest`로 돌려준다(T3에서 세운 규약)
+  - **Acceptance**: Given 일반(비최대화) 창, When 창 4변·4모서리 가장자리(4px)에 마우스를 올림, Then 방향에 맞는 리사이즈 커서가 뜨고 드래그하면 그 방향으로 크기가 바뀐다 / Given 최대화 상태, When 가장자리에 마우스를 올림, Then 리사이즈가 동작하지 않는다 / Given 파일 목록·사이드바 가장자리 안쪽, When 드래그, Then 리사이즈로 가로채지 않고 기존 동작(스크롤·스플리터)이 그대로 된다 / `cargo test` 통과(`resize_direction` 단위테스트: 8방향 + 중앙 None, **최대화 시 None은 `show_resize_handles` 테스트로** — 그 가드는 `Context`가 필요해 순수 함수 쪽에 둘 수 없다)
   - **Files**:
     - 주: `src/ui/titlebar.rs`
     - 동반: `src/ui/app.rs`
@@ -345,10 +345,20 @@
   8. 종료 후 재실행 시 창 위치·크기·워크스페이스 복원(FR-11·FR-20 회귀)
   9. 파일 목록에서 우클릭했을 때 Windows 셸 컨텍스트 메뉴가 여전히 다크로 뜨는지 (D13 — `enable_dark_mode` 존치 회귀)
   10. 창을 아주 좁게 줄였을 때 제목이 좌우 버튼을 침범하지 않고 말줄임되는지 (D14)
+  11. 설정 팝업이 **바깥 클릭·Esc로 닫히는지** (T5 acceptance — `egui::Popup::menu` 기본 동작에 의존하므로 화면으로만 확인 가능)
+  12. **파일 목록·사이드바 스플리터를 창 가장자리 근처에서 드래그**했을 때 크기 조절이 가로채지 않고 기존 동작(스크롤·폭 조절)이 되는지 (T4 acceptance)
+  13. 한글 글꼴(`C:\Windows\Fonts\malgun.ttf`)을 읽지 못하는 환경에서도 **타이틀바 아이콘이 두부(□) 없이 보이는지** (T2 acceptance — 코드 경로상 `set_fonts`가 항상 아이콘 글꼴을 포함하지만, 재현에는 글꼴 경로 변조가 필요해 실행 확인은 하지 않았다)
 
 ## Phase Ledger
 
+- T1~T5 완료
+- Phase F 통과 (F-7 1회차 MAJOR 2·MINOR 4 반영 후 재검토)
+
 ## Retry Ledger
+
+- T3: 리뷰 지적(BLOCKER) 수정 사이클 1/5 — 배경 끌기와 버튼 클릭 경합
+- T4: 리뷰 지적(MAJOR) 수정 사이클 1/5 — 상단 크기 조절 띠가 버튼을 가로챔
+- Phase F: F-7 재진입 1/3 — MAJOR 2건(최대화 가드 테스트 부재·수동 확인 목록 누락)
 
 ## Progress Log
 
