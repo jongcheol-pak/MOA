@@ -27,6 +27,10 @@ const LEFT_GROUP_WIDTH: f32 = LEFT_MARGIN + BUTTON_SIZE;
 const ICON_FONT_PX: f32 = 16.0;
 const TITLE_FONT_PX: f32 = 14.0;
 
+/// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
+/// 넓히면 목록 스크롤바·스플리터처럼 창 끝에 닿는 위젯을 자주 가로챈다
+const RESIZE_MARGIN: f32 = 4.0;
+
 /// 창 자체에 대한 요청 — 실행(`ViewportCommand` 전송)은 `ui::app`이 한다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowRequest {
@@ -35,6 +39,8 @@ pub enum WindowRequest {
     Close,
     /// 이 프레임부터 OS에 창 끌기를 맡긴다
     Drag,
+    /// 이 프레임부터 OS에 창 크기 조절을 맡긴다
+    Resize(egui::ResizeDirection),
 }
 
 /// 타이틀바를 그리는 데 필요한 현재 상태
@@ -154,6 +160,68 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> Option<WindowRequest> 
     request
 }
 
+/// 창 가장자리 크기 조절 (FR-22) — 매 프레임 포인터 위치를 보고 커서를 바꾸며,
+/// 가장자리에서 왼쪽 버튼이 눌리면 OS에 크기 조절을 넘긴다.
+///
+/// 최대화 상태에서는 아무것도 하지 않는다 — 그 상태의 창은 크기를 바꿀 수 없다.
+/// 가장자리 4px는 그 아래 위젯보다 크기 조절이 우선한다(그러지 않으면 창 끝에 닿는
+/// 목록·스플리터 때문에 크기를 잡을 자리가 사라진다)
+pub fn show_resize_handles(ctx: &egui::Context, maximized: bool) -> Option<WindowRequest> {
+    if maximized {
+        return None;
+    }
+    let pointer = ctx.pointer_latest_pos()?;
+    let direction = resize_direction(pointer, ctx.viewport_rect(), RESIZE_MARGIN)?;
+    ctx.set_cursor_icon(resize_cursor(direction));
+    // 누른 **직후**에 넘겨야 OS 크기 조절 루프가 열린다 (`BeginResize` 계약)
+    let pressed = ctx.input(|input| input.pointer.primary_pressed());
+    pressed.then_some(WindowRequest::Resize(direction))
+}
+
+/// 포인터가 창 가장자리 어느 쪽에 있는지 판정한다. 없으면 `None`(창 안쪽).
+///
+/// **모서리를 변보다 먼저 본다** — 두 변이 겹치는 자리에서 변으로 판정하면
+/// 대각선 크기 조절을 할 수 없다
+fn resize_direction(
+    pointer: egui::Pos2,
+    window: egui::Rect,
+    margin: f32,
+) -> Option<egui::ResizeDirection> {
+    if !window.contains(pointer) {
+        return None;
+    }
+    let left = pointer.x - window.min.x <= margin;
+    let right = window.max.x - pointer.x <= margin;
+    let top = pointer.y - window.min.y <= margin;
+    let bottom = window.max.y - pointer.y <= margin;
+    let direction = match (left, right, top, bottom) {
+        (true, _, true, _) => egui::ResizeDirection::NorthWest,
+        (_, true, true, _) => egui::ResizeDirection::NorthEast,
+        (true, _, _, true) => egui::ResizeDirection::SouthWest,
+        (_, true, _, true) => egui::ResizeDirection::SouthEast,
+        (true, ..) => egui::ResizeDirection::West,
+        (_, true, ..) => egui::ResizeDirection::East,
+        (_, _, true, _) => egui::ResizeDirection::North,
+        (.., true) => egui::ResizeDirection::South,
+        _ => return None,
+    };
+    Some(direction)
+}
+
+/// 방향에 맞는 마우스 커서
+fn resize_cursor(direction: egui::ResizeDirection) -> egui::CursorIcon {
+    match direction {
+        egui::ResizeDirection::North => egui::CursorIcon::ResizeNorth,
+        egui::ResizeDirection::South => egui::CursorIcon::ResizeSouth,
+        egui::ResizeDirection::East => egui::CursorIcon::ResizeEast,
+        egui::ResizeDirection::West => egui::CursorIcon::ResizeWest,
+        egui::ResizeDirection::NorthEast => egui::CursorIcon::ResizeNorthEast,
+        egui::ResizeDirection::NorthWest => egui::CursorIcon::ResizeNorthWest,
+        egui::ResizeDirection::SouthEast => egui::CursorIcon::ResizeSouthEast,
+        egui::ResizeDirection::SouthWest => egui::CursorIcon::ResizeSouthWest,
+    }
+}
+
 /// 캡션 버튼 하나 — 최소화·최대화·닫기가 같은 폭·같은 그리기 규칙을 쓴다
 fn caption_button(ui: &mut egui::Ui, icon: &str, hover_fill: egui::Color32) -> egui::Response {
     icon_button(ui, icon, CAPTION_WIDTH, hover_fill)
@@ -179,4 +247,85 @@ fn icon_button(
         theme::TEXT,
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 100×100 창 — 가장자리 판정만 보므로 위치는 원점으로 둔다
+    fn window() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0))
+    }
+
+    #[test]
+    fn 창_안쪽에서는_크기_조절이_아니다() {
+        assert_eq!(
+            resize_direction(egui::pos2(50.0, 50.0), window(), 4.0),
+            None
+        );
+    }
+
+    #[test]
+    fn 창_밖은_판정하지_않는다() {
+        // 다른 창 위에 있는 포인터까지 잡으면 엉뚱한 곳에서 커서가 바뀐다
+        assert_eq!(
+            resize_direction(egui::pos2(-5.0, 50.0), window(), 4.0),
+            None
+        );
+    }
+
+    #[test]
+    fn 네_변을_각각_판정한다() {
+        let (w, m) = (window(), 4.0);
+        assert_eq!(
+            resize_direction(egui::pos2(1.0, 50.0), w, m),
+            Some(egui::ResizeDirection::West)
+        );
+        assert_eq!(
+            resize_direction(egui::pos2(99.0, 50.0), w, m),
+            Some(egui::ResizeDirection::East)
+        );
+        assert_eq!(
+            resize_direction(egui::pos2(50.0, 1.0), w, m),
+            Some(egui::ResizeDirection::North)
+        );
+        assert_eq!(
+            resize_direction(egui::pos2(50.0, 99.0), w, m),
+            Some(egui::ResizeDirection::South)
+        );
+    }
+
+    #[test]
+    fn 모서리는_변보다_먼저_판정된다() {
+        // 두 변이 겹치는 자리를 변으로 판정하면 대각선 크기 조절을 할 수 없다
+        let (w, m) = (window(), 4.0);
+        assert_eq!(
+            resize_direction(egui::pos2(1.0, 1.0), w, m),
+            Some(egui::ResizeDirection::NorthWest)
+        );
+        assert_eq!(
+            resize_direction(egui::pos2(99.0, 1.0), w, m),
+            Some(egui::ResizeDirection::NorthEast)
+        );
+        assert_eq!(
+            resize_direction(egui::pos2(1.0, 99.0), w, m),
+            Some(egui::ResizeDirection::SouthWest)
+        );
+        assert_eq!(
+            resize_direction(egui::pos2(99.0, 99.0), w, m),
+            Some(egui::ResizeDirection::SouthEast)
+        );
+    }
+
+    #[test]
+    fn 경계_바로_안쪽까지_잡는다() {
+        // margin과 정확히 같은 거리도 가장자리로 본다 — 4px 띠가 3px로 좁아지면 잡기 어려워진다
+        let (w, m) = (window(), 4.0);
+        assert_eq!(
+            resize_direction(egui::pos2(4.0, 50.0), w, m),
+            Some(egui::ResizeDirection::West)
+        );
+        assert_eq!(resize_direction(egui::pos2(4.1, 50.0), w, m), None);
+    }
 }

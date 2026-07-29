@@ -486,7 +486,7 @@ impl ExplorerApp {
     }
 
     /// 타이틀바를 그리고 앱 명령을 돌려준다 (FR-22).
-    /// 창 조작(최소화·최대화·닫기·끌기)은 여기서 바로 창에 전달하고,
+    /// 창 조작(최소화·최대화·닫기·끌기·가장자리 크기 조절)은 여기서 바로 창에 전달하고,
     /// 앱 명령(사이드바 토글)만 호출부로 넘긴다 — 분할 영역이 확정된 뒤에 실행해야 하기 때문이다
     fn show_titlebar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> Option<Command> {
         let state = titlebar::TitlebarState {
@@ -502,7 +502,10 @@ impl ExplorerApp {
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| titlebar::show_titlebar(ui, &title, state))
             .inner;
-        if let Some(request) = outcome.window {
+        // 창 가장자리 크기 조절 — 타이틀바 버튼과 겹치는 최외곽 4px에서는 **크기 조절이 우선**이다.
+        // 버튼은 남은 자리로도 누를 수 있지만, 모서리를 버튼이 가져가면 창 크기를 잡을 곳이 사라진다
+        let resize = titlebar::show_resize_handles(ctx, self.window.maximized);
+        if let Some(request) = resize.or(outcome.window) {
             let command = match request {
                 WindowRequest::Minimize => egui::ViewportCommand::Minimized(true),
                 WindowRequest::ToggleMaximize => {
@@ -512,6 +515,7 @@ impl ExplorerApp {
                 // 부르므로 세션이 저장된다(프로세스를 직접 끝내면 그 경로가 사라진다)
                 WindowRequest::Close => egui::ViewportCommand::Close,
                 WindowRequest::Drag => egui::ViewportCommand::StartDrag,
+                WindowRequest::Resize(direction) => egui::ViewportCommand::BeginResize(direction),
             };
             ctx.send_viewport_cmd(command);
         }
