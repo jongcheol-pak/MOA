@@ -37,9 +37,9 @@ pub struct ThumbnailImage {
     pub rgba: Vec<u8>,
 }
 
-/// 워커에게 보내는 요청
+/// 워커에게 보내는 요청. 세대 번호를 실어 보내 **늦게 도착한 이전 폴더의 결과**를 가려낸다
 enum Request {
-    Make(PathBuf),
+    Make { generation: u64, path: PathBuf },
     Stop,
 }
 
@@ -48,7 +48,7 @@ enum Request {
 /// 패널마다 하나씩 둔다(NFR-9의 상한이 패널당이다). 폴더를 떠나면 `clear`로 비운다
 pub struct ThumbnailCache {
     tx: Sender<Request>,
-    rx: Receiver<(PathBuf, Option<ThumbnailImage>)>,
+    rx: Receiver<(u64, PathBuf, Option<ThumbnailImage>)>,
     /// 완성된 썸네일. `None`은 **만들 수 없는 파일**(썸네일 없는 형식)이며,
     /// 다시 요청하지 않기 위해 실패도 기억한다
     ready: HashMap<PathBuf, Option<ThumbnailImage>>,
@@ -56,6 +56,10 @@ pub struct ThumbnailCache {
     order: Vec<PathBuf>,
     /// 요청을 보냈고 아직 결과가 안 온 것 — 같은 파일을 거듭 요청하지 않는다
     pending: Vec<PathBuf>,
+    /// 폴더를 떠날 때마다 오르는 번호. 결과에 실려 돌아오며, 지금 세대와 다르면 버린다 —
+    /// 폴더를 빠르게 오가면 이전 폴더의 요청이 나중에 도착해 캐시 자리를 차지한다
+    /// (`ui::panel`의 `DirLoad`가 쓰는 것과 같은 방식)
+    generation: u64,
 }
 
 impl ThumbnailCache {
@@ -69,6 +73,7 @@ impl ThumbnailCache {
             ready: HashMap::new(),
             order: Vec::new(),
             pending: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -79,7 +84,10 @@ impl ThumbnailCache {
         }
         self.pending.push(path.to_path_buf());
         // 워커가 죽었으면(앱 종료 중) 전송 실패는 무해하다
-        let _ = self.tx.send(Request::Make(path.to_path_buf()));
+        let _ = self.tx.send(Request::Make {
+            generation: self.generation,
+            path: path.to_path_buf(),
+        });
     }
 
     /// 도착한 결과를 받아들인다. **새로 준비된 경로들**을 돌려준다 —
@@ -88,12 +96,11 @@ impl ThumbnailCache {
         let mut arrived = Vec::new();
         loop {
             match self.rx.try_recv() {
-                Ok((path, image)) => {
-                    self.pending.retain(|p| p != &path);
-                    if image.is_some() {
-                        arrived.push(path.clone());
+                Ok((generation, path, image)) => {
+                    // 폴더를 떠난 뒤 도착한 결과는 `accept`가 걸러낸다
+                    if self.accept(generation, path.clone(), image) {
+                        arrived.push(path);
                     }
-                    self.insert(path, image);
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,
@@ -112,12 +119,14 @@ impl ThumbnailCache {
     }
 
     /// 폴더를 떠날 때 호출 — 그 폴더의 썸네일을 즉시 놓는다 (NFR-9).
-    /// 진행 중이던 요청의 결과는 나중에 도착해도 `insert`에서 다시 담기지만,
-    /// 다음 `clear`나 축출이 곧 정리한다
+    ///
+    /// **세대를 올려** 진행 중이던 요청의 결과가 나중에 도착해도 버려지게 한다.
+    /// 워커는 이미 만들던 것을 끝까지 만들지만 그 결과는 `poll`이 걸러낸다
     pub fn clear(&mut self) {
         self.ready.clear();
         self.order.clear();
         self.pending.clear();
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// 캐시에 든 항목 수 (실패로 기억한 것 포함) — 상한 검증용
@@ -127,6 +136,18 @@ impl ThumbnailCache {
 
     pub fn is_empty(&self) -> bool {
         self.ready.is_empty()
+    }
+
+    /// 도착한 결과 하나를 세대 검사 후 받아들인다. 담았으면 `true`.
+    /// `poll`과 테스트가 같은 판정을 쓰도록 한 곳에 둔다
+    fn accept(&mut self, generation: u64, path: PathBuf, image: Option<ThumbnailImage>) -> bool {
+        if generation != self.generation {
+            return false;
+        }
+        self.pending.retain(|p| p != &path);
+        let is_image = image.is_some();
+        self.insert(path, image);
+        is_image
     }
 
     fn insert(&mut self, path: PathBuf, image: Option<ThumbnailImage>) {
@@ -170,26 +191,27 @@ impl Drop for ThumbnailCache {
 ///
 /// **스레드마다 COM을 따로 초기화한다** — 셸 인터페이스는 아파트 단위라
 /// 메인 스레드의 초기화가 여기까지 미치지 않는다
-fn worker(rx: Receiver<Request>, tx: Sender<(PathBuf, Option<ThumbnailImage>)>) {
-    // 안전성: 이 스레드에서 초기화하고 끝날 때 같은 스레드에서 해제한다.
-    // 실패해도(이미 초기화됨 등) 셸 호출은 대개 동작하므로 결과를 무시하고 진행한다
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
+fn worker(rx: Receiver<Request>, tx: Sender<(u64, PathBuf, Option<ThumbnailImage>)>) {
+    // 안전성: 이 스레드에서 초기화하고, **성공했을 때만** 같은 스레드에서 해제한다 —
+    // 실패한 초기화를 짝지어 해제하면 COM 참조 수가 어긋난다.
+    // 실패해도 셸 호출이 동작하는 경우가 있어 작업 자체는 계속 시도한다
+    let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
     while let Ok(request) = rx.recv() {
         match request {
-            Request::Make(path) => {
+            Request::Make { generation, path } => {
                 let image = make_thumbnail(&path);
-                if tx.send((path, image)).is_err() {
+                if tx.send((generation, path, image)).is_err() {
                     break; // 수신부가 사라졌다 — 패널이 닫혔거나 앱이 끝났다
                 }
             }
             Request::Stop => break,
         }
     }
-    // 안전성: 위 초기화와 같은 스레드에서 1회 호출
-    unsafe {
-        CoUninitialize();
+    if initialized {
+        // 안전성: 위에서 성공한 초기화와 같은 스레드에서 1회 호출
+        unsafe {
+            CoUninitialize();
+        }
     }
 }
 
@@ -262,15 +284,23 @@ unsafe fn bitmap_to_rgba(bitmap: HBITMAP) -> Option<ThumbnailImage> {
             return None;
         }
 
-        // GDI는 BGRA로 주고 알파는 프리멀티플라이일 수 있다 — 스트레이트 알파로 되돌린다
+        // 알파 채널을 **쓰지 않는** 비트맵인지 먼저 판정한다 — 전부 0이면 그렇다.
+        // 픽셀마다 판정하면 진짜 투명한 부분(로고 주변 등)까지 불투명으로 메워
+        // 검은 테두리가 생긴다. `ui::icon_tex`의 아이콘 변환과 같은 규칙이다
+        let opaque_bitmap = pixels.chunks_exact(4).all(|px| px[3] == 0);
         for px in pixels.chunks_exact_mut(4) {
             let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
-            if a == 0 {
-                // 썸네일은 대개 불투명하다 — 알파 0은 "알파 채널을 안 쓰는 비트맵"이라는 뜻이라
-                // 색을 그대로 두고 불투명으로 만든다(투명으로 두면 그림이 통째로 사라진다)
+            if opaque_bitmap {
+                // 알파를 안 쓰는 비트맵 — 색만 옮기고 불투명으로 둔다
                 px.copy_from_slice(&[r, g, b, 255]);
                 continue;
             }
+            if a == 0 {
+                // 실제로 투명한 픽셀이다 — 색까지 지워야 가장자리에 잔상이 남지 않는다
+                px.copy_from_slice(&[0, 0, 0, 0]);
+                continue;
+            }
+            // GDI는 프리멀티플라이 알파를 줄 수 있다 — 스트레이트 알파로 되돌린다
             let unmul = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
             px[0] = unmul(r);
             px[1] = unmul(g);
@@ -360,6 +390,28 @@ mod tests {
         cache.request(&path);
         cache.request(&path);
         assert_eq!(cache.pending.len(), 1, "같은 요청이 쌓였다");
+    }
+
+    #[test]
+    fn 폴더를_떠난_뒤_도착한_결과는_버린다() {
+        // 폴더를 빠르게 오가면 이전 폴더의 요청이 나중에 도착한다 — 담아 두면
+        // 지금 폴더의 캐시 자리를 뺏는다 (`DirLoad`와 같은 세대 방식)
+        let mut cache = cache();
+        let old = PathBuf::from("이전폴더/사진.jpg");
+        cache.request(&old);
+        let stale_generation = cache.generation;
+        cache.clear(); // 폴더 이동 — 세대가 오른다
+        assert_ne!(cache.generation, stale_generation, "세대가 오르지 않았다");
+
+        // 워커가 이전 세대로 보낸 결과가 뒤늦게 도착한 상황을 그대로 재현한다
+        cache.accept(stale_generation, old.clone(), Some(image(1)));
+        assert!(cache.is_empty(), "떠난 폴더의 결과가 담겼다");
+
+        // 지금 세대의 결과는 정상으로 담긴다
+        let now = PathBuf::from("현재폴더/사진.jpg");
+        let generation = cache.generation;
+        cache.accept(generation, now.clone(), Some(image(1)));
+        assert!(cache.get(&now).is_some());
     }
 
     #[test]
