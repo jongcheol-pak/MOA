@@ -136,6 +136,14 @@ impl ThumbnailCache {
         arrived
     }
 
+    /// 보냈지만 아직 결과가 안 온 요청이 있는가.
+    ///
+    /// 워커 결과는 채널로만 오고 이 모듈은 egui를 모르므로(계층 단방향), 화면 쪽이
+    /// **기다리는 동안 스스로 깨어나야** 도착을 알아챈다 — 그 판단에 쓰인다
+    pub fn is_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     /// 준비된 썸네일. 없으면 `None`(아직이거나 만들 수 없는 파일).
     /// 꺼내 쓰면 **최근 사용으로 올린다** — 화면에 보이는 것이 먼저 버려지지 않게 한다
     pub fn get(&mut self, path: &Path) -> Option<&ThumbnailImage> {

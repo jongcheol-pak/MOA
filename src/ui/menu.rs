@@ -84,9 +84,13 @@ impl PanelMenuState {
 /// 항목 순서·구분선 위치는 plan `## 시각 요소 분해`의 인벤토리 표 13행 그대로다.
 /// 진입점이 이 메뉴 하나뿐이므로, 여기서 빠진 기능은 마우스로 닿을 수 없게 된다
 pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Option<Command>) {
-    // 마우스를 올리기만 해도 펼쳐진다 — 메뉴 안에서 부른 `menu_button`은 egui가
-    // `SubMenuButton`으로 바꾸고, 그것이 hover로 열린다 (사용자 요청 8번)
-    ui.menu_button("보기", |ui| view_items(ui, state.view_mode, out));
+    // 마우스를 올리기만 해도 펼쳐진다 — `SubMenuButton`이 hover로 여는 팝업이다 (사용자 요청 8번).
+    // 화살표를 egui 기본값(`⏵` U+23F5) 대신 아이콘 글꼴에서 가져오는 이유: 이 앱은 egui 내장
+    // 글꼴을 끄고 맑은 고딕만 쓰는데 맑은 고딕에 U+23F5가 없어 두부(`?`)로 보였다
+    egui::containers::menu::SubMenuButton::from_button(
+        egui::Button::new("보기").right_text(egui_phosphor::regular::CARET_RIGHT),
+    )
+    .ui(ui, |ui| view_items(ui, state.view_mode, out));
     ui.separator();
     split_items(ui, out);
     ui.separator();

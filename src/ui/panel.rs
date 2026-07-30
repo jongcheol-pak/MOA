@@ -23,12 +23,19 @@ use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::time::Duration;
 
 /// 트리와 목록을 가르는 세로 선 두께 — 현행 판 트리의 테두리(`WS_EX_CLIENTEDGE`)를 대신한다
 const TREE_BORDER: f32 = 1.0;
 
 /// 트리 영역 안쪽 여백 — 항목이 패널 가장자리에 붙지 않게 한다
 const TREE_PAD: f32 = 4.0;
+
+/// 썸네일 도착을 확인하러 스스로 깨어나는 간격 (FR-24).
+///
+/// 매 프레임 깨우면 만드는 동안 앱이 쉬지 않고 그려 배터리를 먹고, 너무 길면 사진이
+/// 뒤늦게 뜬다. 20장 남짓이 수백 ms 안에 만들어지므로 그 사이 몇 번 확인하는 값으로 잡았다
+const THUMB_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// 백그라운드 폴더 열거 상태.
 ///
@@ -279,7 +286,9 @@ impl PanelState {
         self.poll_load(icons);
         self.poll_watch(ctx);
         self.poll_create(ctx);
-        self.poll_thumbnails(ctx);
+        if let Some(delay) = self.poll_thumbnails(ctx) {
+            ctx.request_repaint_after(delay);
+        }
         if self.load.is_loading() {
             ctx.request_repaint();
         }
@@ -394,9 +403,26 @@ impl PanelState {
     ///
     /// 채널을 비운 뒤 **픽셀 캐시 전체와 동기화**한다 — 방금 도착한 것만 올리면
     /// 프레임 상한에 걸린 경로가 영영 올라가지 못하고, 축출된 픽셀의 텍스처도 남는다
-    fn poll_thumbnails(&mut self, ctx: &egui::Context) {
-        self.thumbs.poll();
+    /// 다시 그려야 하면 그 지연을 돌려준다. `None`이면 그릴 이유가 없다.
+    ///
+    /// `Duration::ZERO`는 **이번 프레임에 올린 것이 있다**는 뜻이고, 짧은 지연은
+    /// **워커 결과를 기다린다**는 뜻이다. 열거(`DirLoad`)는 워커가 `ctx`를 들고 있어
+    /// 직접 깨우지만, 썸네일 워커는 `fs` 계층이라 egui를 모른다(AGENTS: 의존 단방향) —
+    /// 그래서 화면 쪽이 스스로 깨어나 채널을 확인한다.
+    ///
+    /// **판정을 값으로 돌려주는 이유**: 여기서 `ctx`에 직접 요청하면 `load_texture`가
+    /// 스스로 일으키는 repaint와 섞여 테스트가 둘을 구분할 수 없다. 이 신호가 빠지면
+    /// 워커가 늦게 준 썸네일이 사용자가 마우스를 움직일 때까지 형식 아이콘에 머문다
+    /// (F-8 화면 확인에서 실제로 그랬다)
+    fn poll_thumbnails(&mut self, ctx: &egui::Context) -> Option<Duration> {
+        let arrived = self.thumbs.poll();
+        let before = self.thumb_textures.len();
         self.thumb_textures.sync(ctx, &self.thumbs);
+        // 프레임 상한(`MAX_NEW_THUMBS_PER_FRAME`)에 걸려 남은 것도 이 신호로 이어 올라간다
+        if !arrived.is_empty() || self.thumb_textures.len() != before {
+            return Some(Duration::ZERO);
+        }
+        self.thumbs.is_pending().then_some(THUMB_POLL_INTERVAL)
     }
 
     /// 실패 문구에 쓸 대상 폴더 이름 — 전체 경로는 길어 끝 이름만 보여준다
@@ -835,6 +861,48 @@ mod tests {
             height: 2,
             rgba: vec![255; 16],
         }
+    }
+
+    #[test]
+    fn 썸네일을_올린_프레임은_곧바로_다시_그리라고_알린다() {
+        // egui는 입력이 없으면 프레임을 돌리지 않는다 — 이 신호가 빠지면 워커가 늦게 준
+        // 썸네일이 사용자가 마우스를 움직일 때까지 형식 아이콘에 머문다 (F-8에서 실제로 그랬다)
+        let ctx = egui::Context::default();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        panel.thumbs.accept_for_test(
+            std::path::PathBuf::from(r"C:\Users\사진.jpg"),
+            Some(sample_thumb()),
+        );
+
+        assert_eq!(
+            panel.poll_thumbnails(&ctx),
+            Some(Duration::ZERO),
+            "썸네일을 올린 프레임인데 곧바로 다시 그리라고 알리지 않았다"
+        );
+        assert_eq!(panel.thumb_textures.len(), 1, "텍스처가 올라가지 않았다");
+        // 올릴 것도 기다릴 것도 없으면 알리지 않는다 — 늘 알리면 앱이 쉬지 않고 그린다
+        assert_eq!(
+            panel.poll_thumbnails(&ctx),
+            None,
+            "할 일이 없는데도 다시 그리라고 알렸다"
+        );
+    }
+
+    #[test]
+    fn 썸네일을_기다리는_동안은_스스로_깨어난다() {
+        // 썸네일 워커는 `fs` 계층이라 egui를 모른다 — 결과가 채널에 들어와도 앱은 알 수 없다.
+        // 이 신호가 없으면 사진이 사용자가 마우스를 움직일 때까지 안 나타난다(F-8 실측)
+        let ctx = egui::Context::default();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        panel
+            .thumbs
+            .request(std::path::Path::new(r"C:\Users\아직없음.jpg"));
+
+        assert_eq!(
+            panel.poll_thumbnails(&ctx),
+            Some(THUMB_POLL_INTERVAL),
+            "결과를 기다리는데 다시 깨어날 시점을 알리지 않았다"
+        );
     }
 
     #[test]
