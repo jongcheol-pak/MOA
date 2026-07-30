@@ -27,6 +27,8 @@
 - [2026-07-29] 빈 영역 클릭 처리가 두 렌더 모듈에서 다른 기법 — 자세히는 콘텐츠 아래 사각형, 격자는 플래그 사후 억제. `list_common`에 헬퍼로 뽑을지 검토 (출처: 같은 plan T10 quality S1)
 - [2026-07-29] `file_list::show`의 4-튜플 분해 — `DetailsOutcome`·`GridOutcome`이 `sort_click` 하나만 달라 공통 타입으로 묶을 여지 (출처: 같은 plan T10 quality S2)
 - [2026-07-29] `ui/address_bar.rs`의 rustfmt 드리프트 — 이번 작업 전부터 있던 것으로 `cargo fmt --check`가 원래 실패한다. 별도 정리 필요 (출처: 같은 plan)
+- [2026-07-30] **NFR-1 위반: 콜드 스타트 7.7~9.6초 (기준 1초 미만)** — 임시 계측으로 구간을 특정했다: `main` 진입~`run_native` 호출 직전이 **14ms**, `run_native` 진입~`ExplorerApp::new` 진입이 **7.7~9.6초**다. 즉 우리 코드(COM 12ms·세션 0.7ms·맑은 고딕 12.84MB 파싱 20ms·`ShellHost` 0.5ms·`IconCache` 16ms)가 아니라 **eframe의 창 생성 + glutin/glow GL 컨텍스트 초기화** 구간이다. 연속 실행 3회에도 개선이 없어(7.9→8.5→9.6초) 캐시로 가려지는 성질이 아니다. 이 PC의 GPU는 Intel Arc 140T(드라이버 32.0.101.8243). PRD에 기록된 PoC 실측 47ms와 크게 어긋나므로 **PoC 이후 무엇이 달라졌는지**(드라이버·eframe 버전·창 무장식 설정)부터 좁혀야 한다. 후보: ① 다른 GPU·PC에서 재측정해 환경 요인 판별 ② eframe wgpu 백엔드와 비교(의존성 변경이라 승인 필요) ③ `with_decorations(false)`·`with_position` 등 창 옵션을 하나씩 빼고 측정. 계측 패치는 커밋하지 않았다 — 재현에 같은 패치가 필요하다(`ui::app`에 `probe(label)`를 두고 `main`·`ExplorerApp::new`·`logic`에 호출을 심는 방식) (출처: 2026-07-29-view-modes-and-panel-menu F-8 남은 이슈 조사)
+- [2026-07-30] NFR-3의 프레임 시간 미측정 — 10만 파일 폴더에서 "응답 유지·모드 전환 2.5~2.8초"까지는 외부 스크립트로 확인했으나, 프레임당 소요 시간은 앱 내부 계측(`ctx.input(|i| i.stable_dt)`) 없이는 잴 수 없다. 상시 표시할 성질이 아니므로 디버그 오버레이나 임시 계측으로 다룰지 결정 필요 (출처: 같은 조사)
 
 ## 종결
 - [2026-07-23 → 2026-07-26] shell_menu items_menu의 pidls[0] "items 비지 않음" 암묵 계약 — 반영 (doc 주석 + debug_assert, egui 이식 part1 T3)
