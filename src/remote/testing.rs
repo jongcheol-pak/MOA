@@ -1,0 +1,425 @@
+//! 인메모리 가짜 서버 — **외부 FTP/SFTP 서버 없이** 워커·연결 관리자·전송을 실측한다 (D25).
+//!
+//! NFR-10(워커 격리)·NFR-11(다중 연결 무간섭)·NFR-12(스트리밍)가 사는 곳은 서버가 아니라
+//! **우리 쪽 워커·버퍼 코드**다. 그래서 자격증명도 네트워크도 없이 이 가짜 세션만으로
+//! 그 셋을 전부 재현할 수 있다.
+//!
+//! **전송 바이트를 보관하지 않는다 (D25-a).** 업로드는 길이만 세는 싱크로 받고, 다운로드는
+//! 요청한 크기만큼 패턴을 만들어 내주는 생성기로 준다 — 가짜 세션이 바이트를 쌓으면
+//! 1GB×4건 측정에서 4GB가 잡혀, 재려던 것(우리 스트리밍)이 아니라 측정 장치를 재게 된다.
+//!
+//! 이 모듈은 `#[cfg(test)]`가 아니다 — `tests/`의 통합 테스트가 라이브러리를 일반 빌드로
+//! 링크하기 때문이다(T26의 동시성 회귀 테스트가 이것을 쓴다).
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use crate::remote::pump;
+use crate::remote::types::{
+    Progress, RemoteEntry, RemoteError, RemotePath, RemoteResult, RemoteSession, SiteRecord,
+};
+
+/// 가짜 서버 한 대. 여러 `FakeSession`이 이것을 함께 본다 —
+/// 테스트가 바깥에서 지연·실패·응답 없음을 켜고 끌 수 있다.
+#[derive(Default)]
+pub struct FakeServer {
+    /// 경로 → 그 폴더의 항목들
+    entries: Mutex<HashMap<String, Vec<RemoteEntry>>>,
+    /// 명령마다 재우는 시간 — 느린 서버를 흉내 낸다
+    delay_ms: AtomicU64,
+    /// 켜져 있는 동안 명령이 **돌아오지 않는다** — "응답 없는 서버"(NFR-11 실측용)
+    hang: AtomicBool,
+    /// 남은 연결 실패 횟수 — 이 수만큼 `connect`가 실패한 뒤 성공한다(재시도 확인용)
+    connect_failures: AtomicU32,
+    /// `download`가 내줄 바이트 수
+    download_bytes: AtomicU64,
+    /// 지금까지 받은 업로드 바이트 — **내용은 버리고 길이만 센다**
+    uploaded_bytes: AtomicU64,
+    /// 살아 있는 세션 수 — 워커가 회수됐는지 보는 데 쓴다
+    live_sessions: AtomicUsize,
+    /// 처리한 명령 이름을 순서대로 — 직렬 처리 확인용
+    calls: Mutex<Vec<String>>,
+}
+
+impl FakeServer {
+    pub fn new() -> Arc<FakeServer> {
+        Arc::new(FakeServer::default())
+    }
+
+    /// 폴더 하나의 목록을 심는다
+    pub fn set_entries(&self, path: &str, entries: Vec<RemoteEntry>) {
+        if let Ok(mut map) = self.entries.lock() {
+            map.insert(path.to_owned(), entries);
+        }
+    }
+
+    /// 모든 명령을 이만큼 지연시킨다
+    pub fn set_delay(&self, delay: Duration) {
+        self.delay_ms
+            .store(delay.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// 응답 없는 서버로 만들거나 되돌린다
+    pub fn set_hang(&self, hang: bool) {
+        self.hang.store(hang, Ordering::SeqCst);
+    }
+
+    /// 다음 `count`번의 연결을 실패시킨다
+    pub fn fail_connects(&self, count: u32) {
+        self.connect_failures.store(count, Ordering::SeqCst);
+    }
+
+    /// `download`가 내줄 크기를 정한다
+    pub fn set_download_size(&self, bytes: u64) {
+        self.download_bytes.store(bytes, Ordering::SeqCst);
+    }
+
+    pub fn uploaded_bytes(&self) -> u64 {
+        self.uploaded_bytes.load(Ordering::SeqCst)
+    }
+
+    pub fn live_sessions(&self) -> usize {
+        self.live_sessions.load(Ordering::SeqCst)
+    }
+
+    /// 처리한 명령 이름들 (순서 보존)
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    fn record(&self, name: &str) {
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push(name.to_owned());
+        }
+    }
+
+    /// 지연·응답 없음을 흉내 낸다. 응답 없음이 풀릴 때까지 여기서 머문다
+    fn tick(&self) {
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            std::thread::sleep(Duration::from_millis(delay));
+        }
+        while self.hang.load(Ordering::SeqCst) {
+            // 완전히 멈춰 세우면 테스트가 끝나지 못한다 — 짧게 자며 풀리기를 기다린다
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// 가짜 서버에 붙은 세션 하나 — `RemoteSession`을 그대로 구현한다
+pub struct FakeSession {
+    server: Arc<FakeServer>,
+    connected: bool,
+}
+
+impl FakeSession {
+    pub fn new(server: Arc<FakeServer>) -> FakeSession {
+        server.live_sessions.fetch_add(1, Ordering::SeqCst);
+        FakeSession {
+            server,
+            connected: false,
+        }
+    }
+
+    fn ensure_connected(&self) -> RemoteResult<()> {
+        if self.connected {
+            Ok(())
+        } else {
+            Err(RemoteError::Protocol {
+                detail: "연결되어 있지 않습니다".to_owned(),
+            })
+        }
+    }
+}
+
+impl Drop for FakeSession {
+    fn drop(&mut self) {
+        self.server.live_sessions.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl RemoteSession for FakeSession {
+    fn connect(&mut self, _site: &SiteRecord) -> RemoteResult<()> {
+        self.server.record("connect");
+        self.server.tick();
+        // 남은 실패 횟수가 있으면 그만큼 거절한다 — 재시도 경로를 태우기 위함
+        if self
+            .server
+            .connect_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(RemoteError::Connect {
+                detail: "421 Too many connections".to_owned(),
+            });
+        }
+        self.connected = true;
+        Ok(())
+    }
+
+    fn login(&mut self, _site: &SiteRecord, _password: &str) -> RemoteResult<()> {
+        self.server.record("login");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn pwd(&mut self) -> RemoteResult<RemotePath> {
+        self.server.record("pwd");
+        self.server.tick();
+        self.ensure_connected()?;
+        Ok(RemotePath::root())
+    }
+
+    fn list(&mut self, path: &RemotePath) -> RemoteResult<Vec<RemoteEntry>> {
+        self.server.record("list");
+        self.server.tick();
+        self.ensure_connected()?;
+        let map = self
+            .server
+            .entries
+            .lock()
+            .map_err(|_| RemoteError::Protocol {
+                detail: "가짜 서버 상태가 오염됐습니다".to_owned(),
+            })?;
+        map.get(path.as_str())
+            .cloned()
+            .ok_or_else(|| RemoteError::NotFound {
+                path: path.as_str().to_owned(),
+                detail: "없는 폴더".to_owned(),
+            })
+    }
+
+    fn cwd(&mut self, _path: &RemotePath) -> RemoteResult<()> {
+        self.server.record("cwd");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn mkdir(&mut self, _path: &RemotePath) -> RemoteResult<()> {
+        self.server.record("mkdir");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn remove(&mut self, _path: &RemotePath) -> RemoteResult<()> {
+        self.server.record("remove");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn rmdir(&mut self, _path: &RemotePath) -> RemoteResult<()> {
+        self.server.record("rmdir");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn rename(&mut self, _from: &RemotePath, _to: &RemotePath) -> RemoteResult<()> {
+        self.server.record("rename");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn chmod(&mut self, _path: &RemotePath, _mode: u32) -> RemoteResult<()> {
+        self.server.record("chmod");
+        self.server.tick();
+        self.ensure_connected()
+    }
+
+    fn download(
+        &mut self,
+        _path: &RemotePath,
+        dest: &mut dyn Write,
+        offset: u64,
+        progress: &mut dyn Progress,
+    ) -> RemoteResult<u64> {
+        self.server.record("download");
+        self.server.tick();
+        self.ensure_connected()?;
+        let total = self.server.download_bytes.load(Ordering::SeqCst);
+        let remaining = total.saturating_sub(offset);
+        // 바이트를 쌓아 두지 않고 그 자리에서 만들어 낸다 (D25-a)
+        let mut source = PatternReader { remaining };
+        finish(pump(&mut source, dest, progress))
+    }
+
+    fn upload(
+        &mut self,
+        _path: &RemotePath,
+        src: &mut dyn Read,
+        _offset: u64,
+        progress: &mut dyn Progress,
+    ) -> RemoteResult<u64> {
+        self.server.record("upload");
+        self.server.tick();
+        self.ensure_connected()?;
+        // 받은 바이트는 버리고 길이만 센다 (D25-a)
+        let mut sink = CountingSink {
+            server: Arc::clone(&self.server),
+        };
+        finish(pump(src, &mut sink, progress))
+    }
+
+    fn noop(&mut self) -> RemoteResult<()> {
+        self.server.record("noop");
+        self.ensure_connected()
+    }
+
+    fn quit(&mut self) -> RemoteResult<()> {
+        self.server.record("quit");
+        self.connected = false;
+        Ok(())
+    }
+}
+
+/// `pump` 결과를 전송 메서드의 반환값으로 옮긴다 — 실제 구현(`ftp`·`sftp`)과 같은 규칙이다
+fn finish(outcome: crate::remote::Pumped) -> RemoteResult<u64> {
+    match outcome {
+        crate::remote::Pumped::Done(total) => Ok(total),
+        crate::remote::Pumped::Cancelled => Err(RemoteError::Cancelled),
+        crate::remote::Pumped::Failed {
+            transferred,
+            detail,
+        } => Err(RemoteError::Transfer {
+            detail,
+            transferred,
+        }),
+    }
+}
+
+/// 요청한 크기만큼 같은 바이트를 만들어 내주는 읽기 원본 — 메모리에 미리 쌓지 않는다
+struct PatternReader {
+    remaining: u64,
+}
+
+impl Read for PatternReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Ok(0);
+        }
+        let take = buf.len().min(self.remaining as usize);
+        buf[..take].fill(0xAB);
+        self.remaining -= take as u64;
+        Ok(take)
+    }
+}
+
+/// 받은 바이트를 세기만 하는 쓰기 대상
+struct CountingSink {
+    server: Arc<FakeServer>,
+}
+
+impl Write for CountingSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.server
+            .uploaded_bytes
+            .fetch_add(buf.len() as u64, Ordering::SeqCst);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 테스트에서 쓰는 항목 하나 — 이름과 폴더 여부만 정한다
+pub fn fake_entry(name: &str, is_dir: bool) -> RemoteEntry {
+    RemoteEntry {
+        name: name.to_owned(),
+        is_dir,
+        is_symlink: false,
+        link_target: None,
+        size: 0,
+        modified: None,
+        mode: None,
+        owner: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote::types::{SiteId, SiteRecord};
+
+    struct Silent;
+    impl Progress for Silent {
+        fn report(&mut self, _transferred: u64) -> bool {
+            true
+        }
+    }
+
+    fn site() -> SiteRecord {
+        SiteRecord::new(SiteId(1), "가짜".to_owned())
+    }
+
+    #[test]
+    fn 세션은_연결_전에는_명령을_받지_않는다() {
+        let server = FakeServer::new();
+        let mut session = FakeSession::new(Arc::clone(&server));
+        assert!(session.list(&RemotePath::root()).is_err());
+        session.connect(&site()).expect("연결");
+        server.set_entries("/", vec![fake_entry("a.txt", false)]);
+        assert_eq!(session.list(&RemotePath::root()).expect("목록").len(), 1);
+    }
+
+    #[test]
+    fn 정한_횟수만큼_연결이_실패한_뒤_성공한다() {
+        let server = FakeServer::new();
+        server.fail_connects(2);
+        let mut session = FakeSession::new(Arc::clone(&server));
+        assert!(session.connect(&site()).is_err());
+        assert!(session.connect(&site()).is_err());
+        session.connect(&site()).expect("세 번째는 성공해야 한다");
+    }
+
+    #[test]
+    fn 전송은_바이트를_쌓지_않고_길이만_센다() {
+        // D25-a — 가짜 세션이 바이트를 보관하면 NFR-12 측정이 측정 장치를 재게 된다
+        let server = FakeServer::new();
+        server.set_download_size(300 * 1024);
+        let mut session = FakeSession::new(Arc::clone(&server));
+        session.connect(&site()).expect("연결");
+
+        let mut sink = std::io::sink();
+        let moved = session
+            .download(&RemotePath::root(), &mut sink, 0, &mut Silent)
+            .expect("받기");
+        assert_eq!(moved, 300 * 1024);
+
+        let mut source = PatternReader {
+            remaining: 128 * 1024,
+        };
+        let sent = session
+            .upload(&RemotePath::root(), &mut source, 0, &mut Silent)
+            .expect("보내기");
+        assert_eq!(sent, 128 * 1024);
+        assert_eq!(server.uploaded_bytes(), 128 * 1024);
+    }
+
+    #[test]
+    fn 이어받기_지점만큼_남은_바이트가_준다() {
+        let server = FakeServer::new();
+        server.set_download_size(100);
+        let mut session = FakeSession::new(Arc::clone(&server));
+        session.connect(&site()).expect("연결");
+        let mut sink = std::io::sink();
+        let moved = session
+            .download(&RemotePath::root(), &mut sink, 40, &mut Silent)
+            .expect("이어받기");
+        assert_eq!(moved, 60);
+    }
+
+    #[test]
+    fn 세션이_사라지면_살아있는_수가_준다() {
+        let server = FakeServer::new();
+        assert_eq!(server.live_sessions(), 0);
+        {
+            let _session = FakeSession::new(Arc::clone(&server));
+            assert_eq!(server.live_sessions(), 1);
+        }
+        assert_eq!(server.live_sessions(), 0);
+    }
+}
