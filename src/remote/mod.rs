@@ -15,7 +15,9 @@ pub mod ftp;
 pub mod hostkey;
 pub mod log;
 pub mod manager;
+pub mod secret;
 pub mod sftp;
+pub mod sites;
 pub mod testing;
 pub mod types;
 
