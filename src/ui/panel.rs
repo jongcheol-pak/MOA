@@ -1239,4 +1239,40 @@ mod tests {
             "감시 통지로 로컬 열거가 시작됐다"
         );
     }
+
+    #[test]
+    fn 만드는_중_원격_탭으로_옮겨_가면_로컬_열거를_걸지_않는다() {
+        // 새 폴더를 만드는 워커가 도는 사이 원격 탭으로 옮겨 가면, 완료 시점의 활성 탭은
+        // 원격이다 — 그때 활성 탭 기준으로 다시 읽으면 빈 경로를 열거하게 된다
+        use std::time::{Duration, Instant};
+
+        let ctx = egui::Context::default();
+        let dir = std::env::temp_dir().join(format!("fe_t9_생성_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let mut panel = PanelState::new(dir.clone());
+        panel.new_folder(&ctx);
+        assert!(panel.create.pending.is_some(), "생성이 시작되지 않았다");
+
+        // 만드는 사이 원격 탭으로 옮겨 간다
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new("/var/www"),
+        ));
+        assert!(panel.is_remote());
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while panel.create.pending.is_some() && Instant::now() < deadline {
+            panel.poll_create(&ctx);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(panel.create.pending.is_none(), "생성이 끝나지 않았다");
+        assert!(
+            panel.pending_dir.as_os_str().is_empty(),
+            "원격 탭인데 로컬 열거가 시작됐다: {:?}",
+            panel.pending_dir
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
