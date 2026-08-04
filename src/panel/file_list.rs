@@ -792,7 +792,7 @@ mod tests {
     #[test]
     fn 원격_항목도_같은_규칙으로_정렬된다() {
         // 화면이 프로토콜마다 다르게 줄 세우면 안 된다 (plan T7)
-        let mut rows = vec![
+        let mut rows = [
             remote("파일10.txt", false, 10, Some(100)),
             remote("파일2.txt", false, 20, Some(200)),
             remote("zzz", true, 0, Some(0)),
@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn 시각을_주지_않은_원격_항목이_가장_앞선다() {
-        let mut rows = vec![
+        let mut rows = [
             remote("시각있음", false, 0, Some(1_700_000_000)),
             remote("시각없음", false, 0, None),
         ];
