@@ -649,7 +649,8 @@ pub fn compare_rows<R: ListRow + ?Sized>(
 
 /// StrCmpLogicalW 래퍼 — 널 종단 UTF-16 이름 비교 ("파일2" < "파일10")
 fn logical_name_cmp(a: &[u16], b: &[u16]) -> std::cmp::Ordering {
-    // 안전성: 두 버퍼 모두 널 종단 보장(FileEntry 불변식)
+    // 안전성: 두 버퍼 모두 널 종단이 보장된다 — 로컬은 `FileEntry.name` 불변식이,
+    // 원격은 `ListRow::name_sort_key` 구현이 끝에 0을 붙여 만든다
     let r = unsafe { StrCmpLogicalW(PCWSTR(a.as_ptr()), PCWSTR(b.as_ptr())) };
     r.cmp(&0)
 }
