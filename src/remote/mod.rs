@@ -13,6 +13,7 @@
 pub mod connection;
 pub mod ftp;
 pub mod hostkey;
+pub mod log;
 pub mod manager;
 pub mod sftp;
 pub mod testing;

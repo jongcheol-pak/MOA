@@ -16,6 +16,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::remote::log::{LogBuffer, LogKind};
 use crate::remote::types::{
     Progress, RemoteEntry, RemoteError, RemotePath, RemoteResult, RemoteSession, SiteId, SiteRecord,
 };
@@ -155,8 +156,11 @@ pub enum ConnEvent {
         path: RemotePath,
         entries: Vec<RemoteEntry>,
     },
-    /// 서버와 주고받은 줄 — 서버 로그 패널이 쌓는다 (버퍼는 T5가 만든다)
-    Log(String),
+    /// 서버와 주고받은 줄 — `Connection`이 자기 로그 버퍼에 쌓고 화면(T20)이 읽는다
+    Log {
+        kind: LogKind,
+        text: String,
+    },
     OpDone {
         op: OpKind,
         result: Result<(), RemoteError>,
@@ -188,6 +192,8 @@ pub struct Connection {
     /// 워커가 끝나면 켜진다 — `Drop`이 이것으로 회수를 확인한다
     finished: Arc<AtomicBool>,
     phase: ConnPhase,
+    /// 이 연결의 서버 로그 (FR-40). 워커가 올린 줄을 `poll`이 여기 쌓고 화면은 읽기만 한다
+    log: LogBuffer,
 }
 
 impl Connection {
@@ -236,6 +242,7 @@ impl Connection {
             shutdown,
             finished,
             phase: ConnPhase::Idle,
+            log: LogBuffer::new(),
         }
     }
 
@@ -260,8 +267,10 @@ impl Connection {
         let mut events = Vec::new();
         // 비었거나 워커가 사라지면 `try_recv`가 실패하고 그 자리에서 끝난다
         while let Ok(event) = self.rx.try_recv() {
-            if let ConnEvent::Phase(phase) = &event {
-                self.phase = phase.clone();
+            match &event {
+                ConnEvent::Phase(phase) => self.phase = phase.clone(),
+                ConnEvent::Log { kind, text } => self.log.push(*kind, text.clone()),
+                _ => {}
             }
             events.push(event);
         }
@@ -270,6 +279,11 @@ impl Connection {
 
     pub fn phase(&self) -> &ConnPhase {
         &self.phase
+    }
+
+    /// 이 연결의 서버 로그 — 화면은 읽기만 한다 (FR-40)
+    pub fn log(&self) -> &LogBuffer {
+        &self.log
     }
 
     /// 워커가 끝났는가 — 회수 확인용
@@ -322,8 +336,8 @@ impl Worker {
         true
     }
 
-    fn log(&self, text: String) -> bool {
-        self.emit(ConnEvent::Log(text))
+    fn log(&self, kind: LogKind, text: String) -> bool {
+        self.emit(ConnEvent::Log { kind, text })
     }
 }
 
@@ -349,7 +363,7 @@ fn worker(mut worker: Worker) {
                         path,
                         entries,
                     }),
-                    Err(err) => worker.log(format!("오류: {err}")),
+                    Err(err) => worker.log(LogKind::Error, err.to_string()),
                 };
                 if !alive {
                     break;
@@ -440,10 +454,13 @@ fn connect_with_retry(worker: &mut Worker) -> bool {
             }));
         };
 
-        if !worker.log(format!(
-            "상태: 연결에 실패해 {}초 뒤 다시 시도합니다 — {err}",
-            delay.as_secs_f32()
-        )) {
+        if !worker.log(
+            LogKind::Status,
+            format!(
+                "연결에 실패해 {}초 뒤 다시 시도합니다 — {err}",
+                delay.as_secs_f32()
+            ),
+        ) {
             return false;
         }
         // 기다리는 동안은 명령 채널을 보지 않는다 — 그 사이 연결이 닫히면 곧바로 접는다
