@@ -49,6 +49,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [ ] 전송 큐 항목 재정렬·우선순위 (Out of Scope 사유와 같음 — 디자인에 진입점이 생기면 검토)
 - [ ] **SFTP 로그인 실패 문구의 인증 방식 목록** (T3 quality 리뷰 m1) — `auth_error`가 `받는 방식: publickey,keyboard-interactive`처럼 SSH 프로토콜 식별자를 그대로 보인다. 주 문장("이 서버는 비밀번호 인증을 받지 않습니다")은 사용자 언어이고 그 목록은 사용자가 서버 관리자에게 전할 정보라 이번엔 그대로 뒀다 — 사용자 문구 다듬기를 검토한다
 - [ ] **SFTP 목록의 비UTF-8 파일명** (T3 관측) — `ssh2`가 Windows에서 경로 바이트를 `from_utf8().unwrap()`으로 옮겨 **패닉**한다. 지금은 `guard_path_panic`이 오류로 바꿔 연결을 지키지만, CP949 서버의 파일명을 **읽어 보이는 것**은 못 한다(라이브러리 안에서 이름이 버려진다). 문자셋 지원(T16·D23)에서 이 경로를 어떻게 다룰지 정해야 한다
+- [ ] **[SUGGEST] 로컬→원격 탭 전환 시 옛 `DirWatcher`가 살아 있다** (T9 quality 리뷰 m1) — 원격 탭을 보는 동안 통지는 무시되므로(가드) 화면은 정확하지만, 이전 로컬 폴더의 감시 스레드·핸들이 그대로 유지된다. 자원 유휴 보유 수준이라 이번엔 두고, 원격 탭 배선(T10) 뒤에 정리 지점을 정한다
 - [ ] **[SUGGEST] 원격 목록 정렬의 이름 키 할당** (T7 quality 리뷰 m2) — `ListRow::name_sort_key`가 원격 항목마다 널 종단 UTF-16을 새로 만든다(비교마다 최대 2회). 로컬·원격이 **같은 정렬 규칙**(`StrCmpLogicalW`)을 쓰기 위한 대가다. T9/T10에서 배선할 때 **정렬이 UI 스레드에서 돌지 않게** 하고(NFR-13: 파싱·정렬은 워커), 1만 항목에서 T26이 실측해 필요하면 키를 미리 만들어 두는 쪽으로 바꾼다
 - [ ] **[SUGGEST] `remote::testing`이 릴리스 빌드에 포함된다** (T4 quality 리뷰 m2) — 가짜 서버·세션 400여 줄이 배포 exe에 그대로 들어간다. `tests/`가 라이브러리를 일반 빌드로 링크해서 `#[cfg(test)]`를 쓸 수 없기 때문이다. Cargo feature(`test-util`)로 가르는 것이 깔끔하지만 이 프로젝트에 feature 관례가 전혀 없어 이번엔 두었다 — T26에서 exe 크기를 잴 때 함께 판단한다
 - [ ] 원격 목록 가상 스크롤의 원격 전용 튜닝 — 로컬과 같은 렌더 경로를 쓰므로 기본 성능은 따라오지만, 1만 항목 이상에서 재측정 후 필요하면
@@ -376,7 +377,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [x] T6 자격증명 DPAPI 보관 + 사이트 저장소 [D]
 - [x] T7 목록·탭 모델 일반화 (새 타입 가산) [D]
 - [x] T8 목록 렌더 일반화 [D]
-- [ ] T9 탭 소스 전환 + 레거시 어댑트 [D]
+- [x] T9 탭 소스 전환 + 레거시 어댑트 [D]
 - [ ] T10 원격 탭 배지 · 연결 단계 화면 · 호스트 키 대화 [C]
 - [ ] T11 원격 목록 열 확장 + 열 메뉴 [C]
 - [ ] T12 사이드바 연결 섹션 + 팔레트 통합 [C]
@@ -819,17 +820,23 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ## Next Steps
 
-- 권장 다음 액션: `T10부터 계속`으로 implement-task 재개
+- 권장 다음 액션: `T10부터 계속`으로 implement-task 재개 (T9까지 완료)
 - Suggested skills: pjc:implement-task
 - T10 착수 메모: `PanelState`는 `request_remote_list(&ConnectionManager)`·`apply_remote_listed(generation, entries, icons)` 두 진입점을 이미 갖고 있다. **`ui/app.rs`가 연결 이벤트를 패널로 라우팅하는 배선이 T10 몫**이다(아래 T9 Design 갱신 참조).
 
+- T9 완료: `TabState`가 `committed: PathBuf` 대신 `source: TabSource`를 든다. 레거시 `panel/panel.rs`는 `committed()`/`set_committed()` 접근자로 기계 어댑트(D26). splitter가 패널 결과를 **통째로** 올리고 필드별 first-wins로 병합한다. 신규 단위 테스트 10개(377→387).
+  - **결정(계획 문구 정정)**: `PanelState`가 `Option<&ConnectionManager>`를 인자로 받지 않고 `request_remote_list`/`apply_remote_listed` **두 진입점**을 연다 — 이벤트 폴링은 가변 참조가 필요하고 연결→패널 라우팅은 앱이 쥐어야 해서, 인자로 받으면 `show()` 시그니처가 그 결정에 묶인다. **`ui/app.rs` 배선은 T10 몫**(T9 Design에 기록).
+  - **관측**: `src/app/window.rs`는 `TabState`를 참조하지 않아 손댈 것이 없었다 — 전제 17이 센 15곳은 `Session` 구조체 리터럴이고 그것은 T25가 다룬다(전제 17의 파일 귀속 일부 정정).
+  - **리뷰 지적 — quality MAJOR 3라운드**: ① 원격 탭에서 **가드가 빠진 경로 5곳**(`refresh`·`Up`·`Open`·`Context`·`poll_watch`) — 빈 경로로 로컬 열거·셸 경로 조합이 일어난다 → 전부 소스 분기로 고쳤고 원격 `Up`은 루트에서 멈춘다. ② 같은 부류가 `poll_create`에 하나 더(생성 중 원격 탭으로 옮겨 가면 완료 시 빈 경로 열거) → 고쳤다. ③ **회귀 테스트가 `pending_dir`만 봐서 가드 유무를 가리지 못했다** — 원격 탭에서는 그 값이 어차피 비어 있다 → `load.pending`(열거 워커 기동 여부)으로 바꾸고, 가드를 임시로 뺐을 때 실제로 FAILED가 나는 것을 실측했다.
+
 ## Phase Ledger
 
-- T0~T8 완료. 남은 것: T4~T26 + Phase F + Phase G(PRD 연결 plan).
+- T0~T9 완료. 남은 것: T4~T26 + Phase F + Phase G(PRD 연결 plan).
 
 ## Retry Ledger
 
 - T2: 리뷰 지적 수정 사이클 1회(M1 — PASV 사설 IP). 빌드 실패 0회, 복구 0회.
+- T9: 리뷰 지적 수정 사이클 4회(가드 5곳 → poll_create → 회귀 테스트 → 단언 교체). 같은 지적이 3회 연속은 아니었고(매 라운드 지적 대상이 좁혀졌다) 마지막에 변이 검증으로 닫았다. 빌드 실패 다수(타입 전환에 따른 호출부 연쇄 — 전부 같은 성격).
 - T8: 리뷰 지적 수정 사이클 0회(둘 다 첫 판에 통과). 빌드 실패 3회(제네릭 확산에 따른 호출부 연쇄 — 전부 같은 성격).
 - T7: 리뷰 지적 수정 사이클 0회(둘 다 첫 판에 통과, MINOR 1건만 반영). clippy 실패 1회(`vec!` → 배열).
 - T6: 리뷰 지적 수정 사이클 1회(quality MAJOR 2 + MINOR 2 동시 수정). 빌드 실패 0회, 테스트 실패 0회.
