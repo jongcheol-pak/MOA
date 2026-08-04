@@ -49,7 +49,11 @@ raw-window-handle = "0.6"
 #
 # FTP/FTPS. native-tls는 Windows에서 schannel 백엔드를 써 OpenSSL·perl이 필요 없다.
 # LIST 파서(`suppaftp::list::File`)가 권한·소유자까지 줘서 원격 열의 원천이 된다.
-suppaftp = { version = "10.0.1", features = ["native-tls"] }
+#
+# `deprecated`는 묵시적 TLS 연결(`connect_secure_implicit`)을 여는 기능 플래그다.
+# 크레이트가 "명시적 TLS를 권한다"는 뜻으로 붙여 둔 이름이며, 사이트 관리자의 암호화 항목이
+# 묵시적 TLS를 선택지로 두는 이상(FR-27) 그 경로가 없으면 고를 수 없는 값이 된다.
+suppaftp = { version = "10.0.1", features = ["native-tls", "deprecated"] }
 # SFTP. libssh2가 Windows에서 WinCNG 백엔드로 빌드돼 역시 OpenSSL이 필요 없다.
 # 전송이 std::io::Read/Write 스트림이라 진행률·버퍼 크기·취소를 우리가 직접 통제한다.
 ssh2 = "0.9.6"
