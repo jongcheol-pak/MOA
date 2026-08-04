@@ -77,7 +77,13 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 **위키 참조**: vault 실재 확인(`D:\Personal Project\Obsidian Vault\LLM WIKI` — 20_projects·30_knowledge·40_guides 존재). **FileExplorer는 위키에 미등록**이고 vault 전체 grep에서 FTP/SFTP 관련 자료 0건 — 관련 위키 자료 없음, 코드 1차 출처로 진행. 대상 프로젝트 `decisions.md`도 없다(미등록이므로).
 
-**Deferred 대장 확인**: `docs/plans/deferred.md` `## 대기` 20건을 훑었다. 이번 작업과 닿는 항목 없음 — 구 Win32 UI 제거·한글 폰트 서브셋·탭 폭 고정 등은 원격 기능과 독립이라 그대로 대기에 둔다. 이전 plan(`2026-07-29-view-modes-and-panel-menu`)은 `## Phase Ledger`에 `Phase G 통과 (Must 100%)`가 있어 완료로 판정했고, 그 `## Deferred / Follow-up` 7건은 이미 대장에 이관돼 있다.
+**Deferred 대장 확인**: `docs/plans/deferred.md` `## 대기` 20건을 훑었다. 이번 작업과 닿는 항목 없음 — 구 Win32 UI 제거·한글 폰트 서브셋·탭 폭 고정 등은 원격 기능과 독립이라 그대로 대기에 둔다. 이전 plan(`2026-07-29-view-modes-and-panel-menu`)은 `## Next Steps
+
+- 권장 다음 액션: `T9부터 계속`으로 implement-task 재개 (T9 = 탭 소스 전환, 6파일 원자적 변경)
+- Suggested skills: pjc:implement-task
+- T9 착수 메모: `TabState.committed: PathBuf` → `TabSource`. 레거시 두 파일(`src/panel/panel.rs` 31곳·`src/app/window.rs` 15곳)은 **읽기 접근자 `committed()` + 쓰기 `set_committed()`**로 기계적으로 어댑트한다(D26 — 기능을 되살리지 않는다). 실행 경로는 `src/ui/panel.rs`다.
+
+## Phase Ledger`에 `Phase G 통과 (Must 100%)`가 있어 완료로 판정했고, 그 `## Deferred / Follow-up` 7건은 이미 대장에 이관돼 있다.
 
 **AGENTS.md 신선도**: `src/{ui,app,panel,fs}`·`docs/prd.md`·`docs/plans/` 실재 확인. 빌드·테스트 명령(`cargo build`/`test`/`clippy`/`fmt`)은 표준 cargo라 별도 스크립트 없음. 어긋남 0건.
 

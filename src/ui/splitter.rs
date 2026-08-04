@@ -7,7 +7,7 @@ use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{Command, PanelMenuState};
-use crate::ui::panel::{MenuRequest, PanelState};
+use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::HashMap;
@@ -45,6 +45,25 @@ pub struct LayoutOutcome {
     /// 있어 그 위에서 고르면 아래 깔린 패널이 활성이 된다 — 그대로 활성 패널에 적용하면
     /// 닫기·새 파일이 엉뚱한 패널에 간다 (plan D16)
     pub command: Option<(PanelId, Command)>,
+}
+
+/// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
+///
+/// 골라 담으면 `PanelOutcome`에 필드가 늘 때마다 이 파일을 함께 고쳐야 한다(T22의 드래그 전송·
+/// T23의 원격 메뉴가 그렇다). 대신 **필드별 first-wins**로 병합한다 — 한 프레임에 A패널이
+/// 메뉴를 내고 B패널이 명령을 내면 둘 다 살아남아야 하므로, 비어 있는 필드만 채운다
+fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOutcome) {
+    let PanelOutcome { menu, command } = panel;
+    // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
+    if outcome.menu.is_none() {
+        outcome.menu = menu;
+    }
+    // 명령도 한 프레임에 하나만 — 어느 패널이 요청했는지 함께 담는다
+    if outcome.command.is_none()
+        && let Some(command) = command
+    {
+        outcome.command = Some((id, command));
+    }
 }
 
 /// 분할된 패널들을 그리고 스플리터 드래그·활성 패널 전환을 처리한다.
@@ -99,16 +118,7 @@ pub fn show_layout(
                 panel.show(ui, ctx, icons, textures, menu_state)
             })
             .inner;
-        // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
-        if outcome.menu.is_none() {
-            outcome.menu = requested.menu;
-        }
-        // 명령도 한 프레임에 하나만 — 어느 패널이 요청했는지 함께 담는다
-        if outcome.command.is_none()
-            && let Some(command) = requested.command
-        {
-            outcome.command = Some((*id, command));
-        }
+        merge_panel_outcome(&mut outcome, *id, requested);
     }
 
     // 패널 경계 — 여러 패널이 있을 때만 의미가 있다(하나뿐이면 창 가장자리와 겹친다).

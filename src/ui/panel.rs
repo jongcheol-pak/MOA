@@ -10,7 +10,10 @@ use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
-use crate::panel::tabs::{CloseOutcome, TabState, TabsModel};
+use crate::panel::tabs::{CloseOutcome, TabSource, TabState, TabsModel};
+use crate::remote::connection::ConnCommand;
+use crate::remote::manager::ConnectionManager;
+use crate::remote::types::RemoteEntry;
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
@@ -201,6 +204,9 @@ pub struct PanelState {
     watch: Option<DirWatch>,
     /// 진행 중인 새 폴더·새 파일 생성 (FR-25)
     create: CreateOp,
+    /// 원격 목록 요청의 세대 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
+    /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다
+    remote_generation: u64,
     /// 썸네일 픽셀 캐시 (FR-24) — 상한이 패널당이라 패널이 소유한다 (NFR-9)
     thumbs: ThumbnailCache,
     /// 올라간 썸네일 텍스처 — 픽셀 캐시와 함께 비워진다
@@ -229,6 +235,7 @@ impl PanelState {
             tree_visible: false,
             watch: None,
             create: CreateOp::new(),
+            remote_generation: 0,
             thumbs: ThumbnailCache::new(),
             thumb_textures: ThumbnailTextures::new(),
         }
@@ -246,7 +253,7 @@ impl PanelState {
     ) -> Option<PanelState> {
         let states: Vec<TabState> = tabs.into_iter().map(TabState::new).collect();
         let model = TabsModel::from_tabs(states, active_tab)?;
-        let start = model.active().committed.clone();
+        let start = model.active().committed().to_path_buf();
         let mut panel = PanelState::new(start);
         panel.tabs = model;
         if !columns.is_empty() {
@@ -260,7 +267,7 @@ impl PanelState {
 
     /// 현재 표시 중인 폴더 — 활성 탭이 커밋한 경로가 정본이다
     pub fn dir(&self) -> &Path {
-        &self.tabs.active().committed
+        self.tabs.active().committed()
     }
 
     /// 세션 저장용 — 탭들의 폴더 경로(탭 순서)와 활성 탭
@@ -360,7 +367,7 @@ impl PanelState {
                 // "폴더가 바뀌었다"가 영영 성립하지 않는다
                 let dir = std::mem::take(&mut self.pending_dir);
                 let tab = self.tabs.active_mut();
-                tab.committed = dir.clone();
+                tab.set_committed(dir.clone());
                 match self.pending_nav {
                     PendingNav::None => {}
                     PendingNav::Push => tab.history.push(dir.clone()),
@@ -471,16 +478,68 @@ impl PanelState {
         self.list.set_view_mode(mode);
     }
 
-    /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25)
+    /// 활성 탭이 원격을 가리키는가 — 로컬에만 있는 일(열거·감시·썸네일·새 파일)이 이것으로 갈린다
+    pub fn is_remote(&self) -> bool {
+        self.tabs.active().source.is_remote()
+    }
+
+    /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25).
+    /// **원격 탭에서는 아무것도 하지 않는다** — 원격 폴더 만들기는 원격 파일 작업(T23)이 맡는다
     pub fn new_folder(&mut self, ctx: &egui::Context) {
+        if self.is_remote() {
+            return;
+        }
         let dir = self.dir().to_path_buf();
         self.create.start(dir, "폴더", create::new_folder, ctx);
     }
 
-    /// 표시 중인 폴더에 빈 텍스트 문서를 만든다 (FR-25)
+    /// 표시 중인 폴더에 빈 텍스트 문서를 만든다 (FR-25). 원격 탭에서는 하지 않는다
     pub fn new_file(&mut self, ctx: &egui::Context) {
+        if self.is_remote() {
+            return;
+        }
         let dir = self.dir().to_path_buf();
         self.create.start(dir, "파일", create::new_text_file, ctx);
+    }
+
+    /// 활성 원격 탭의 목록을 요청한다. 돌려주는 값은 이번 요청의 세대다.
+    ///
+    /// **연결이 없으면 아무것도 보내지 않는다**(plan Edge Case) — 아직 연결하지 않은 탭에서
+    /// 새로 고침을 눌러도 서버로 나가는 것이 없어야 한다
+    pub fn request_remote_list(&mut self, manager: &ConnectionManager) -> Option<u64> {
+        let TabSource::Remote {
+            conn: Some(conn),
+            path,
+            ..
+        } = &self.tabs.active().source
+        else {
+            return None;
+        };
+        let (conn, path) = (*conn, path.clone());
+        self.remote_generation += 1;
+        let generation = self.remote_generation;
+        manager
+            .send(conn, ConnCommand::List { generation, path })
+            .then_some(generation)
+    }
+
+    /// 워커가 돌려준 원격 목록을 반영한다.
+    ///
+    /// 세대가 지금 것과 다르면 버린다(늦게 도착한 이전 폴더의 결과 — D7).
+    /// **`..`는 언제나 첫 줄에 하나만 둔다** — 서버가 주기도 하고 안 주기도 해서 목록이
+    /// 서버마다 달라 보이면 안 된다
+    pub fn apply_remote_listed(
+        &mut self,
+        generation: u64,
+        entries: Vec<RemoteEntry>,
+        icons: &mut IconCache,
+    ) -> bool {
+        if generation != self.remote_generation {
+            return false;
+        }
+        self.list
+            .set_remote_entries(with_parent_first(entries), icons);
+        true
     }
 
     /// 생성 결과를 반영한다 — 실패하면 사유만 상태 줄에 보인다 (plan D12).
@@ -509,10 +568,13 @@ impl PanelState {
         match action {
             TabAction::Switch(index) => {
                 if self.tabs.switch(index) {
-                    // 탭마다 폴더가 다르므로 전환하면 그 탭의 폴더를 다시 읽는다.
-                    // 히스토리는 이미 그 탭의 것이라 손대지 않는다
-                    let path = self.tabs.active().committed.clone();
-                    self.start_load(path, PendingNav::None, ctx);
+                    // 탭마다 소스가 다르므로 전환하면 그 탭의 것을 다시 읽는다.
+                    // 히스토리는 이미 그 탭의 것이라 손대지 않는다.
+                    // **원격 탭이면 로컬 열거를 걸지 않는다** — 목록은 연결 워커가 돌려준다
+                    if let Some(path) = self.tabs.active().source.local_path() {
+                        let path = path.to_path_buf();
+                        self.start_load(path, PendingNav::None, ctx);
+                    }
                 }
             }
             TabAction::Close(index) => {
@@ -520,17 +582,25 @@ impl PanelState {
                 let was_active = index == self.tabs.active_index();
                 if let CloseOutcome::Removed(_) = self.tabs.close(index)
                     && was_active
+                    && let Some(path) = self.tabs.active().source.local_path()
                 {
-                    let path = self.tabs.active().committed.clone();
+                    let path = path.to_path_buf();
                     self.start_load(path, PendingNav::None, ctx);
                 }
                 // LastTab이면 아무것도 하지 않는다 — 패널의 마지막 탭은 남는다
             }
             TabAction::New => {
-                // 새 탭은 현재 폴더를 복제해 연다 (탐색기 관례)
-                let path = self.dir().to_path_buf();
-                self.tabs.add(TabState::new(path.clone()));
-                self.start_load(path, PendingNav::None, ctx);
+                // 새 탭은 지금 보고 있는 곳을 복제해 연다 (탐색기 관례).
+                // 원격 탭이면 **같은 원격 위치**를 복제한다 — 로컬 폴더로 떨어지면 맥락이 끊긴다
+                match self.tabs.active().source.clone() {
+                    TabSource::Local(path) => {
+                        self.tabs.add(TabState::new(path.clone()));
+                        self.start_load(path, PendingNav::None, ctx);
+                    }
+                    TabSource::Remote { site, path, .. } => {
+                        self.tabs.add(TabState::remote(site, path));
+                    }
+                }
             }
         }
     }
@@ -612,7 +682,7 @@ impl PanelState {
     ) -> PanelOutcome {
         let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, menu_state);
         let tab = self.tabs.active();
-        let nav = self.address.show(ui, &tab.committed, &tab.history);
+        let nav = self.address.show(ui, tab.committed(), &tab.history);
 
         // 트리는 주소창 아래 좌측 고정폭을 차지한다 — 현행 Win32 판의 배치와 같다
         let area = ui.available_rect_before_wrap();
@@ -718,6 +788,26 @@ impl PanelState {
         }
         action
     }
+}
+
+/// 원격 목록의 첫 줄을 언제나 상위 이동(`..`)으로 맞춘다.
+///
+/// 서버·프로토콜에 따라 `..`를 주기도 하고 안 주기도 한다 — 그대로 두면 같은 조작이
+/// 서버마다 다르게 보인다. 여기서 **한 번만, 맨 앞에** 오도록 정리한다
+fn with_parent_first(entries: Vec<RemoteEntry>) -> Vec<RemoteEntry> {
+    let mut out = Vec::with_capacity(entries.len() + 1);
+    out.push(RemoteEntry {
+        name: "..".to_owned(),
+        is_dir: true,
+        is_symlink: false,
+        link_target: None,
+        size: 0,
+        modified: None,
+        mode: None,
+        owner: None,
+    });
+    out.extend(entries.into_iter().filter(|entry| entry.name != ".."));
+    out
 }
 
 #[cfg(test)]

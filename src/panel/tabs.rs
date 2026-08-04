@@ -24,9 +24,12 @@ use windows::core::{HSTRING, PWSTR, Result};
 /// 탭 스트립 높이
 pub const TAB_HEIGHT: i32 = 26;
 
-/// 탭 하나의 탐색 상태 — 탭별 독립 경로·히스토리 (FR-3)
+/// 탭 하나의 탐색 상태 — 탭별 독립 소스·히스토리 (FR-3).
+///
+/// 커밋된 위치를 `PathBuf`가 아니라 `TabSource`로 드는 이유는 아래 `TabSource` 설명 참조.
+/// 히스토리는 **로컬 탐색 전용**이다 — 원격 탭의 뒤로/앞으로는 이번 범위 밖이라 비워 둔다
 pub struct TabState {
-    pub committed: PathBuf,
+    pub source: TabSource,
     pub history: History,
 }
 
@@ -34,8 +37,33 @@ impl TabState {
     pub fn new(path: PathBuf) -> TabState {
         TabState {
             history: History::new(path.clone()),
-            committed: path,
+            source: TabSource::Local(path),
         }
+    }
+
+    /// 원격 위치를 가리키는 탭 — 아직 연결하지 않은 상태로 만든다
+    pub fn remote(site: SiteId, path: RemotePath) -> TabState {
+        TabState {
+            // 히스토리는 로컬 경로만 담는다 — 원격 탭에서는 쓰이지 않는다
+            history: History::new(PathBuf::new()),
+            source: TabSource::Remote {
+                site,
+                conn: None,
+                path,
+                phase: TabPhase::New,
+            },
+        }
+    }
+
+    /// 로컬 탭의 커밋 경로. **원격 탭이면 빈 경로**다 —
+    /// 로컬 전용 일(열거·감시·썸네일)은 `TabSource::local_path()`로 갈라야 한다
+    pub fn committed(&self) -> &Path {
+        self.source.local_path().unwrap_or(Path::new(""))
+    }
+
+    /// 로컬 위치를 옮긴다. 원격 탭이었으면 로컬 탭이 된다
+    pub fn set_committed(&mut self, path: PathBuf) {
+        self.source = TabSource::Local(path);
     }
 }
 
@@ -149,9 +177,18 @@ impl TabsModel {
         Some(TabsModel { tabs, active })
     }
 
-    /// 탭별 커밋 경로 (탭 순서 유지) — 세션 저장용
+    /// 탭별 소스 (탭 순서 유지) — 세션 저장·탭 라벨이 쓴다
+    pub fn sources(&self) -> Vec<TabSource> {
+        self.tabs.iter().map(|t| t.source.clone()).collect()
+    }
+
+    /// 탭별 로컬 경로 (탭 순서 유지). **원격 탭은 빈 경로**로 나온다 —
+    /// 원격까지 담는 세션 저장은 T25가 `sources()`로 바꾼다
     pub fn paths(&self) -> Vec<PathBuf> {
-        self.tabs.iter().map(|t| t.committed.clone()).collect()
+        self.tabs
+            .iter()
+            .map(|t| t.committed().to_path_buf())
+            .collect()
     }
 
     /// 탭 수 — 세션 저장(part2 T4)·테스트가 소비.
@@ -446,13 +483,13 @@ mod tests {
         m.add(tab("C:\\b"));
         assert_eq!(m.len(), 2);
         assert_eq!(m.active_index(), 1);
-        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\b"));
 
         // 첫 탭으로 돌아가 중간 삽입 확인
         m.switch(0);
         m.add(tab("C:\\c"));
         assert_eq!(m.active_index(), 1);
-        assert_eq!(m.active().committed, PathBuf::from("C:\\c"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\c"));
         assert_eq!(m.len(), 3);
     }
 
@@ -462,7 +499,7 @@ mod tests {
         m.add(tab("C:\\b"));
         m.add(tab("C:\\c")); // 활성 = 2 (c)
         assert_eq!(m.close_active(), CloseOutcome::Removed(1)); // c 제거 → b 활성
-        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\b"));
         assert_eq!(m.close_active(), CloseOutcome::Removed(0)); // b 제거 → a 활성
         assert_eq!(m.close_active(), CloseOutcome::LastTab); // 마지막 — 제거 안 됨
         assert_eq!(m.len(), 1);
@@ -477,11 +514,11 @@ mod tests {
 
         // 활성보다 앞의 배경 탭(b)을 닫아도 계속 d를 보고 있어야 한다
         assert_eq!(m.close(1), CloseOutcome::Removed(2));
-        assert_eq!(m.active().committed, PathBuf::from("C:\\d"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\d"));
 
         // 활성보다 뒤는 없지만, 앞쪽(a)을 하나 더 닫아도 마찬가지
         assert_eq!(m.close(0), CloseOutcome::Removed(1));
-        assert_eq!(m.active().committed, PathBuf::from("C:\\d"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\d"));
     }
 
     #[test]
@@ -491,11 +528,11 @@ mod tests {
         m.add(tab("C:\\c")); // 활성 = 2 (c)
 
         assert_eq!(m.close(2), CloseOutcome::Removed(1));
-        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\b"));
 
         // 활성(1=b)보다 뒤가 없으니 앞의 a를 닫으면 b가 0번으로 당겨진다
         assert_eq!(m.close(0), CloseOutcome::Removed(0));
-        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\b"));
     }
 
     #[test]
@@ -511,7 +548,7 @@ mod tests {
         m.add(tab("C:\\b")); // 활성 = 1
         assert_eq!(m.close(9), CloseOutcome::Removed(1));
         assert_eq!(m.len(), 2);
-        assert_eq!(m.active().committed, PathBuf::from("C:\\b"));
+        assert_eq!(m.active().committed(), PathBuf::from("C:\\b"));
     }
 
     #[test]

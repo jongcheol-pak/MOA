@@ -138,6 +138,22 @@ impl FileListView {
         }
     }
 
+    /// 원격 폴더의 항목으로 교체한다 (FR-31).
+    ///
+    /// 로컬과 달리 **선택을 되살리지 않는다** — 원격 목록은 사용자가 새로 고침을 눌렀을 때만
+    /// 바뀌고(변경 감시가 없다 — Deferred), 그때는 선택이 풀리는 것이 자연스럽다
+    pub fn set_remote_entries(&mut self, entries: Vec<RemoteEntry>, icons: &mut IconCache) {
+        self.type_names = entries
+            .iter()
+            .map(|e| icons.type_name(&e.extension(), e.is_dir))
+            .collect();
+        self.icon_indices = vec![None; entries.len()];
+        self.model = ListModel::Remote(entries);
+        self.selection.clear();
+        self.anchor = None;
+        self.resort();
+    }
+
     /// 지금 담긴 항목들 — 종류별 분기가 필요한 호출부가 쓴다
     pub fn model(&self) -> &ListModel {
         &self.model

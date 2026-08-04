@@ -154,7 +154,13 @@ impl PanelState {
     }
 
     fn nav_up(&mut self, hwnd: HWND) {
-        if let Some(parent) = self.tabs.active().committed.parent().map(Path::to_path_buf) {
+        if let Some(parent) = self
+            .tabs
+            .active()
+            .committed()
+            .parent()
+            .map(Path::to_path_buf)
+        {
             self.navigate(hwnd, parent, PendingKind::Push);
         }
         // 드라이브 루트(상위 없음)는 무시 — 버튼도 비활성 (D11)
@@ -163,14 +169,14 @@ impl PanelState {
     /// 주소창 Enter — 입력 정규화 후 이동
     fn nav_enter(&mut self, hwnd: HWND) {
         let input = self.address_bar.text();
-        if let Some(path) = normalize_input(&self.tabs.active().committed, &input) {
+        if let Some(path) = normalize_input(self.tabs.active().committed(), &input) {
             self.navigate(hwnd, path, PendingKind::Push);
         }
     }
 
     /// 새 탭 — 현재 활성 탭의 경로 복제 (plan D4)
     fn tab_new(&mut self, hwnd: HWND) {
-        let path = self.tabs.active().committed.clone();
+        let path = self.tabs.active().committed().to_path_buf();
         let index = self.tabs.add(TabState::new(path.clone()));
         self.tab_strip.insert(index, &tab_title(&path));
         self.tab_strip.set_selection(index);
@@ -186,7 +192,7 @@ impl PanelState {
             CloseOutcome::Removed(new_active) => {
                 self.tab_strip.remove(old);
                 self.tab_strip.set_selection(new_active);
-                let path = self.tabs.active().committed.clone();
+                let path = self.tabs.active().committed().to_path_buf();
                 self.address_bar.set_path(&path);
                 self.navigate(hwnd, path, PendingKind::Keep);
                 self.update_nav_state();
@@ -199,7 +205,7 @@ impl PanelState {
     /// 탭 전환 — 해당 탭의 커밋 경로를 다시 열거해 표시 (탭별 히스토리 유지)
     fn tab_switch(&mut self, hwnd: HWND, index: usize) {
         if self.tabs.switch(index) {
-            let path = self.tabs.active().committed.clone();
+            let path = self.tabs.active().committed().to_path_buf();
             self.address_bar.set_path(&path);
             self.navigate(hwnd, path, PendingKind::Keep);
             self.update_nav_state();
@@ -216,7 +222,7 @@ impl PanelState {
         };
         let name = entry.name_string();
         let is_dir = entry.is_dir;
-        let full = self.tabs.active().committed.join(&name);
+        let full = self.tabs.active().committed().join(&name);
         if is_dir {
             self.navigate(hwnd, full, PendingKind::Push);
         } else {
@@ -253,8 +259,8 @@ impl PanelState {
                     }
                     PendingKind::Keep => {}
                 }
-                tab.committed = target;
-                let committed = tab.committed.clone();
+                tab.set_committed(target);
+                let committed = tab.committed().to_path_buf();
                 self.address_bar.set_path(&committed);
                 self.tab_strip
                     .set_title(self.tabs.active_index(), &tab_title(&committed));
@@ -286,7 +292,7 @@ impl PanelState {
     /// 감시 대상을 활성 탭 커밋 경로에 맞춘다 — 다르면 이전 감시 정지 후 재시작.
     /// 이전 워커는 Drop이 정지 신호·join으로 회수한다 (탭 고속 전환 누수 금지 — T3 Edge)
     fn sync_watcher(&mut self, hwnd: HWND) {
-        let target = self.tabs.active().committed.clone();
+        let target = self.tabs.active().committed().to_path_buf();
         if self
             .watcher
             .as_ref()
@@ -303,7 +309,7 @@ impl PanelState {
         if self.pending.is_some() {
             return;
         }
-        let path = self.tabs.active().committed.clone();
+        let path = self.tabs.active().committed().to_path_buf();
         self.navigate(hwnd, path, PendingKind::Keep);
     }
 
@@ -326,7 +332,7 @@ impl PanelState {
         }
         let active = self.tabs.active_index();
         self.tab_strip.set_selection(active);
-        let path = self.tabs.active().committed.clone();
+        let path = self.tabs.active().committed().to_path_buf();
         self.address_bar.set_path(&path);
         self.navigate(hwnd, path, PendingKind::Keep);
         self.update_nav_state();
@@ -336,7 +342,7 @@ impl PanelState {
     fn fail_pending(&mut self, message: &str) {
         self.file_list.clear();
         show_status(self.status_label, message);
-        self.address_bar.set_path(&self.tabs.active().committed);
+        self.address_bar.set_path(self.tabs.active().committed());
     }
 
     fn update_nav_state(&self) {
@@ -344,7 +350,7 @@ impl PanelState {
         self.address_bar.set_nav_state(
             tab.history.can_back(),
             tab.history.can_forward(),
-            tab.committed.parent().is_some(),
+            tab.committed().parent().is_some(),
         );
     }
 
@@ -534,7 +540,7 @@ fn collect_context_menu_request(
     if wparam.0 as isize != state.file_list.hwnd().0 as isize {
         return None;
     }
-    let folder = state.tabs.active().committed.clone();
+    let folder = state.tabs.active().committed().to_path_buf();
     let items: Vec<PathBuf> = state
         .file_list
         .selected_indices()
