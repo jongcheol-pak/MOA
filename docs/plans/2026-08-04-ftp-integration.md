@@ -365,7 +365,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 - [x] T0 rustfmt 드리프트 선행 정리 [B]
 - [x] T1 원격 도메인 타입 + 세션 트레이트 [D]
-- [ ] T2 FTP/FTPS 세션 구현 [D]
+- [x] T2 FTP/FTPS 세션 구현 [D]
 - [ ] T3 SFTP 세션 구현 + 호스트 키 저장소 [D]
 - [ ] T4 연결 워커 · 연결 관리자 [D]
 - [ ] T5 서버 로그 버퍼 [C]
@@ -419,6 +419,8 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Design**:
   - **배치**: `remote::ftp` — `RemoteSession`의 FTP·FTPS 구현
   - **신규 심볼**: `FtpSession` — 평문/TLS 두 스트림을 **열거형 한 겹**으로 감싸 같은 메서드를 노출 / `parse_list_line(&str) -> Option<RemoteEntry>` — `suppaftp::list::File` → `RemoteEntry`(권한 문자열·소유자 조립 포함) / 전송 모드(기본/능동/수동) 적용
+    - **구현 중 확정 (원안 대비 3건 — 리뷰가 각각 "기술적으로 타당·수용 가능"으로 판정)**: ① **열거형을 두지 않았다** — `suppaftp`에서 TLS 가능한 스트림 타입(`NativeTlsFtpStream`)은 연결 직후엔 평문이고 `AUTH TLS` 승격에 성공해야 암호화로 바뀐다. 즉 **한 타입이 두 상태를 이미 담아** 열거형을 덧대면 19개 남짓한 메서드마다 같은 갈래를 다시 적을 뿐 동작이 달라지지 않는다(라이브러리 소스로 확인). ② **`parse_list_line`(LIST 전용)과 `parse_mlsd_line`(MLSD 전용)으로 나눴다** — `suppaftp`의 MLSX 파서가 `=` 없는 토큰을 조용히 건너뛰어 **아무 문자열이나 받아들이므로**, LIST 경로를 그쪽에 태우면 깨진 줄이 이름만 있는 가짜 항목으로 살아남아 Acceptance ②가 성립하지 않는다. ③ **PASV 사설 IP 대응을 조건부로 구현** — 라이브러리의 `set_passive_nat_workaround`는 무조건 치환이라 사내망 서버(제어 연결도 사설)까지 깨뜨린다. `passive_stream_builder`를 갈아끼워 **광고 주소가 사설이고 제어 연결이 공인일 때만** 호스트를 바꾼다(포트 유지).
+    - **`src/remote/types.rs`는 손대지 않았다** — Files에 있었으나 T1이 이미 필요한 타입을 모두 확정해 변경할 것이 없었다.
   - **의존 방향**: `suppaftp` → `remote::ftp` → `remote::types`
   - **비추상화 선언**: TLS/평문을 `Box<dyn>`으로 나누지 않는다 — 우리 쪽 메서드 표면이 같아 트레이트 객체를 도입할 이유가 없다
 - **Acceptance**: ① `parse_list_line`이 Unix 형식·심볼릭 링크(`→ 대상` 원천)·폴더·큰 파일·한글 이름을 옳게 옮긴다(단위 테스트). ② 파싱 실패한 줄은 **그 줄만 건너뛰고 나머지 목록이 유지된다**. ③ `download`/`upload`가 **64KB 버퍼 단위로 진행률 콜백을 부른다** — 200KB 입력에서 콜백 4회 이상(인메모리 스트림으로 검증, 서버 불필요). ④ `FE_TEST_FTP_URL`이 설정된 환경에서만 도는 실서버 왕복 테스트가 있고, 미설정이면 건너뛴 사유를 출력한다(이 테스트에 acceptance를 걸지 않는다 — D25).
@@ -766,10 +768,18 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
   - **quality 리뷰 지적(m1) 반영**: `Encryption::Implicit` 독스트링이 "전용 포트를 쓴다"고 약속했는데 `default_port`는 프로토콜만 보고 21을 준다 — **주석이 동작보다 넓었다.** 포트를 암호화 항목이 몰래 덮어쓰면 사용자가 적어 둔 값이 사라지므로, 동작을 그대로 두고 주석을 사실에 맞췄다(FR-27·T15③과도 정합).
   - **커밋 hook 오탐 확인**: `check-secrets`가 "password 값"을 경고했으나 `password_sealed` 필드명·`login(.., password: &str)` 파라미터명일 뿐 평문 값은 없다(quality 리뷰가 독립 확인).
 
+- T2 완료: `remote::ftp` 신설 — `FtpSession`(연결·인증·목록·전송·파일 작업) + LIST/MLSD 파서 + 오류 분류. 신규 단위 테스트 20개(266→286).
+  - **결정**: 전송 복사 루프를 순수 함수 `pump`으로 떼어 냈다 — 서버 없이 64KB 보고·취소·부분 전송 실패를 실측하려면 세션 밖에 있어야 한다(D25). `download`/`upload` 두 곳이 같은 것을 쓴다.
+  - **결정**: MLSD는 서버가 **그 사실(fact)을 실제로 준 경우에만** 권한·소유자·시각을 채운다. 라이브러리 파서는 없으면 `0o777`·1970년을 기본값으로 넣는데, 그대로 믿으면 화면이 서버가 하지 않은 말을 한다.
+  - **결정**: 이어 올리기는 REST+STOR이 아니라 APPE로 한다 — 업로드에 REST를 받아 주는 서버가 들쭉날쭉하고, 이어받기 지점은 호출부가 원격 파일 크기로 이미 정한다.
+  - **의존성**: `suppaftp`에 `deprecated` 기능 플래그 추가(사전 승인 1). 묵시적 TLS 경로(`connect_secure_implicit`)가 그 플래그 뒤에 있어, 없으면 `Encryption::Implicit`이 고를 수 없는 값이 된다.
+  - **리뷰 지적(M1) 반영**: plan Edge Case "PASV 응답이 사설 IP → 제어 연결 호스트를 쓴다"가 구현에 없었다. `passive_stream_builder` + 순수 함수 `passive_target`으로 조건부 치환을 넣고 IPv4·IPv6 경계를 테스트로 고정했다(재리뷰 OK).
+  - **커밋 hook 오탐 확인**: `check-secrets`가 "password 값"·"IP 주소"를 경고했으나, 앞은 `password: &str` 파라미터명·환경변수에서 읽는 테스트 URL 파서이고 뒤는 RFC 5737 문서용(203.0.113.x·198.51.100.x)·RFC 1918 사설 대역 상수다. 실제 자격증명·인프라 주소는 없다(두 리뷰어가 독립 확인).
+
 ## Phase Ledger
 
-(implement-task가 채운다)
+- T0~T2 완료. 남은 것: T3~T26 + Phase F + Phase G(PRD 연결 plan).
 
 ## Retry Ledger
 
-(implement-task가 채운다)
+- T2: 리뷰 지적 수정 사이클 1회(M1 — PASV 사설 IP). 빌드 실패 0회, 복구 0회.

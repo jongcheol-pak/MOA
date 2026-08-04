@@ -911,6 +911,21 @@ mod tests {
         assert_eq!(passive_target(local, loopback), local);
     }
 
+    #[test]
+    fn ipv6의_고유_로컬과_링크_로컬도_사설로_본다() {
+        // 비트 마스크를 한 칸만 잘못 잡아도 공인 주소를 사설로 오판한다 — 경계를 고정해 둔다
+        let site_local = ["fc00::1", "fdff::1", "fe80::1", "febf::1", "::1"];
+        for raw in site_local {
+            let ip: IpAddr = raw.parse().expect("주소");
+            assert!(is_site_local(ip), "{raw}은(는) 사설이어야 한다");
+        }
+        let public = ["2001:db8::1", "fec0::1", "fb00::1", "2400::1"];
+        for raw in public {
+            let ip: IpAddr = raw.parse().expect("주소");
+            assert!(!is_site_local(ip), "{raw}은(는) 사설이 아니어야 한다");
+        }
+    }
+
     fn response_error(code: u32, body: &str) -> FtpError {
         FtpError::UnexpectedResponse(Response::new(Status::from(code), body.as_bytes().to_vec()))
     }
