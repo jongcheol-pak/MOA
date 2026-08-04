@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin: 0; background: #0F0F0F; }
+  a { color: #4A9EFF; text-decoration: none; }
+  a:hover { color: #7FBBFF; }
+</style>
+</helmet>
+
+<div data-root="1" style="position:relative;width:1660px;height:990px;display:flex;flex-direction:column;background:#1B1B1B;color:#E8E8E8;font-family:'Malgun Gothic','Segoe UI',system-ui,sans-serif;font-size:13px;overflow:hidden">
+
+  <div style="display:flex;align-items:stretch;height:36px;flex:0 0 36px;position:relative">
+    <div style="width:2px;flex:0 0 2px"></div>
+    <div style="display:flex;align-items:center;justify-content:center;width:36px;flex:0 0 36px" style-hover="background:#383838">
+      <div style="position:relative;width:16px;height:14px;border:1px solid #E8E8E8;border-radius:1px"><div style="position:absolute;left:4px;top:0;bottom:0;width:1px;background:#E8E8E8"></div></div>
+    </div>
+    <div style="flex:1 1 auto"></div>
+    <div style="position:absolute;left:0;right:0;top:0;height:36px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#E8E8E8;pointer-events:none">{{ title }}</div>
+    <div style="display:flex;align-items:center;justify-content:center;width:36px;flex:0 0 36px;font-size:16px" style-hover="background:#383838">⚙</div>
+    <div style="display:flex;align-items:center;justify-content:center;width:46px;flex:0 0 46px;font-size:15px" style-hover="background:#383838">－</div>
+    <div style="display:flex;align-items:center;justify-content:center;width:46px;flex:0 0 46px" style-hover="background:#383838"><div style="width:11px;height:11px;border:1px solid #E8E8E8"></div></div>
+    <div style="display:flex;align-items:center;justify-content:center;width:46px;flex:0 0 46px;font-size:15px" style-hover="background:#C42B1C">✕</div>
+  </div>
+
+  <div style="flex:1 1 0;min-height:0;display:flex;align-items:stretch">
+
+    <div style="width:300px;flex:0 0 300px;display:flex;flex-direction:column;background:#1B1B1B">
+      <div style="display:flex;align-items:center;justify-content:space-between;height:36px;flex:0 0 36px;padding:0 8px">
+        <span style="font-size:14px;color:#9A9A9A">워크스페이스</span>
+        <span style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#9A9A9A" style-hover="color:#E8E8E8">+</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;padding:0 8px">
+        <sc-for list="{{ workspaces }}" as="w" hint-placeholder-count="2">
+          <div onClick="{{ w.select }}" title="클릭하여 이 워크스페이스의 패널로 전환" style="position:relative;height:60px;flex:0 0 60px;background:{{ w.bg }};border:1px solid #2C2C2C;display:flex;flex-direction:column;justify-content:center;padding-left:38px;overflow:hidden;cursor:pointer" style-hover="background:{{ w.hoverBg }}">
+            <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:{{ w.edge }}"></div>
+            <div style="position:absolute;left:12px;top:22px;width:16px;height:16px">
+              <div style="position:absolute;left:1px;top:3px;width:5px;height:3px;background:#E8B34D;border-radius:1px 1px 0 0"></div>
+              <div style="position:absolute;left:1px;top:5px;width:14px;height:8px;background:#E8B34D;border-radius:1px"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;padding-right:8px;min-width:0">
+              <span style="font-size:15px;color:#E8E8E8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ w.name }}</span>
+              <span style="flex:0 0 auto;height:16px;padding:0 6px;display:flex;align-items:center;background:#242424;border:1px solid #333333;color:#8A8A8A;font-size:11px">패널 {{ w.paneCount }}</span>
+            </div>
+            <div style="margin-top:6px;font-size:13px;color:#8A8A8A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px">{{ w.path }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;height:36px;flex:0 0 36px;padding:0 8px;margin-top:14px">
+        <span style="font-size:14px;color:#9A9A9A">연결</span>
+        <div style="display:flex;align-items:center;gap:2px">
+          <span style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#9A9A9A;cursor:pointer" style-hover="color:#E8E8E8">⟳</span>
+          <span onClick="{{ toggleMenu }}" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:15px;color:{{ plusColor }};background:{{ plusBg }};cursor:pointer" style-hover="color:#E8E8E8">+</span>
+        </div>
+      </div>
+      <div style="position:relative;z-index:15;display:flex;flex-direction:column;gap:2px;padding:0 8px">
+        <sc-for list="{{ sites }}" as="s" hint-placeholder-count="4">
+          <div onClick="{{ s.select }}" onDoubleClick="{{ s.connect }}" onContextMenu="{{ s.ctx }}" title="더블클릭하여 연결" style="display:flex;align-items:center;gap:8px;height:36px;flex:0 0 36px;padding:0 8px;background:{{ s.bg }};border-left:2px solid {{ s.edge }};font-size:13px;white-space:nowrap;overflow:hidden;cursor:pointer" style-hover="background:#282828">
+            <span style="width:7px;height:7px;border-radius:4px;background:{{ s.dot }};flex:0 0 7px"></span>
+            <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;color:{{ s.fg }}">{{ s.name }}</span>
+            <span style="color:#6A6A6A;font-size:12px">{{ s.proto }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="flex:1 1 auto"></div>
+      
+    </div>
+
+    <div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;padding:4px 4px 0 0;gap:4px">
+      <sc-for list="{{ wsPairs }}" as="p" hint-placeholder-count="2">
+        <div style="flex:1 1 0;min-height:0;display:flex;gap:4px">
+          <div style="position:relative;flex:1 1 0;min-width:0"><dc-import name="ExplorerPane" tabs="{{ p.localTabs }}" rows="{{ p.localRows }}" path="{{ p.localPath }}" status="{{ p.localStatus }}" sites="{{ siteMenuList }}" on-open-site="{{ openSiteTab }}" hint-size="100%,100%"></dc-import></div>
+          <div style="position:relative;flex:1 1 0;min-width:0"><dc-import name="ExplorerPane" tabs="{{ p.remoteTabs }}" rows="{{ p.remoteRows }}" path="{{ p.remotePath }}" status="{{ p.remoteStatus }}" label="원격 트리" badge="{{ p.badge }}" sites="{{ siteMenuList }}" on-open-site="{{ openSiteTab }}" hint-size="100%,100%"></dc-import></div>
+        </div>
+      </sc-for>
+
+      <sc-for list="{{ connPanes }}" as="c" hint-placeholder-count="1">
+      <div style="flex:1 1 0;min-height:0;display:flex;gap:4px">
+        <div style="position:relative;flex:1 1 0;min-width:0"><dc-import name="ExplorerPane" tabs="{{ c.localTabs }}" rows="{{ c.localRows }}" path="{{ c.localPath }}" status="{{ c.localStatus }}" sites="{{ siteMenuList }}" on-open-site="{{ openSiteTab }}" hint-size="100%,100%"></dc-import></div>
+
+        <sc-if value="{{ c.ok }}" hint-placeholder-val="{{ false }}">
+          <div style="position:relative;flex:{{ paneFlex }} 1 0;min-width:0;display:flex;flex-direction:column;background:#1B1B1B;border:1px solid #333333;overflow:hidden">
+            <div style="display:flex;flex:0 0 28px;height:28px;align-items:stretch;position:relative;z-index:12">
+              <sc-for list="{{ c.tabs }}" as="t" hint-placeholder-count="1">
+                <div onClick="{{ t.pick }}" style="display:flex;align-items:center;padding:0 4px 0 6px;background:{{ t.bg }};color:{{ t.fg }};font-size:13px;white-space:nowrap;cursor:pointer;max-width:230px" style-hover="background:{{ t.hoverBg }}">
+                  <div style="position:relative;width:16px;height:16px;flex:0 0 16px;opacity:{{ t.iconOpacity }}">
+                    <div style="position:absolute;left:1px;top:3px;width:5px;height:3px;background:#E8B34D;border-radius:1px 1px 0 0"></div>
+                    <div style="position:absolute;left:1px;top:5px;width:14px;height:8px;background:#E8B34D;border-radius:1px"></div>
+                  </div>
+                  <span style="margin-left:6px;height:15px;padding:0 5px;display:flex;align-items:center;background:{{ t.badgeBg }};border:1px solid {{ t.badgeEdge }};color:{{ t.badgeFg }};font-size:11px;flex:0 0 auto;gap:4px">
+                    <span style="width:5px;height:5px;border-radius:3px;background:{{ t.dot }}"></span>{{ t.badge }}
+                  </span>
+                  <span style="margin-left:6px;overflow:hidden;text-overflow:ellipsis">{{ t.title }}</span>
+                  <span onClick="{{ t.close }}" style="width:20px;text-align:center;font-size:12px;cursor:pointer">✕</span>
+                </div>
+              </sc-for>
+              <div onClick="{{ c.addTab }}" title="같은 연결의 새 탭" style="display:flex;align-items:center;justify-content:center;width:24px;flex:0 0 24px;color:#E8E8E8;font-size:15px;cursor:pointer" style-hover="background:#383838">+</div>
+              <div onClick="{{ c.openTabMenu }}" title="다른 사이트로 새 탭 열기" style="display:flex;align-items:center;justify-content:center;width:18px;flex:0 0 18px;background:{{ c.menuBg }};color:#9A9A9A;font-size:11px;cursor:pointer" style-hover="color:#E8E8E8;background:#383838">▾</div>
+              <div style="flex:1 1 auto"></div>
+            </div>
+
+            <sc-if value="{{ c.menuOpen }}" hint-placeholder-val="{{ false }}">
+              <div onClick="{{ c.closeTabMenu }}" style="position:absolute;left:0;right:0;top:0;bottom:0;z-index:20"></div>
+              <div style="position:absolute;left:{{ c.menuX }};top:28px;width:250px;z-index:21;background:#252525;border:1px solid #3A3A3A;box-shadow:0 8px 24px rgba(0,0,0,0.5);padding:4px 0;display:flex;flex-direction:column">
+                <div style="padding:4px 10px 6px;color:#6A6A6A;font-size:11px">새 탭으로 열 사이트</div>
+                <sc-for list="{{ c.menuSites }}" as="m" hint-placeholder-count="4">
+                  <div onClick="{{ m.open }}" style="display:flex;align-items:center;gap:8px;height:28px;flex:0 0 28px;padding:0 10px;color:#E8E8E8;font-size:13px;white-space:nowrap;cursor:pointer" style-hover="background:#333333">
+                    <span style="width:6px;height:6px;border-radius:3px;background:{{ m.dot }};flex:0 0 6px"></span>
+                    <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis">{{ m.name }}</span>
+                    <span style="color:#6A6A6A;font-size:12px">{{ m.proto }}</span>
+                  </div>
+                </sc-for>
+                <div style="height:1px;flex:0 0 1px;margin:4px 0;background:#3A3A3A"></div>
+                <div onClick="{{ c.addBlankTab }}" style="display:flex;align-items:center;gap:8px;height:28px;flex:0 0 28px;padding:0 10px;color:#C8C8C8;font-size:13px;white-space:nowrap;cursor:pointer" style-hover="background:#333333">
+                  <span style="color:#7FD6A2">sftp://</span>새 연결…
+                </div>
+              </div>
+            </sc-if>
+
+            <div style="display:flex;align-items:center;height:26px;flex:0 0 26px;padding:0 2px">
+              <div style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex:0 0 24px;color:#6A6A6A;font-size:15px">←</div>
+              <div style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex:0 0 24px;color:#6A6A6A;font-size:15px">→</div>
+              <div style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;flex:0 0 24px;color:#E8E8E8;font-size:15px;cursor:pointer" style-hover="background:#383838">↑</div>
+              <div style="flex:1 1 auto;min-width:0;height:22px;display:flex;align-items:center;padding:0 6px;margin-left:4px;background:#1E1E1E;color:{{ c.pathColor }};font-size:13px;white-space:nowrap;overflow:hidden">{{ c.path }}</div>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;height:24px;flex:0 0 24px;padding:0 8px;white-space:nowrap;gap:8px">
+              <span style="display:flex;align-items:center;gap:8px;min-width:0">
+                <span style="color:#E8E8E8;font-size:13px">원격 트리</span>
+                <span style="display:flex;align-items:center;gap:5px;height:18px;padding:0 7px;background:#16241C;border:1px solid #2F6B4F;color:#7FD6A2;font-size:12px;flex:0 0 auto">
+                  <span style="width:6px;height:6px;border-radius:3px;background:#4ADE80"></span>{{ c.badge }}
+                </span>
+              </span>
+              <span style="display:flex;align-items:center;gap:8px;color:#8A8A8A;font-size:12px">
+                <span>2분 전 기준</span>
+                <span style="color:#6A6A6A">·</span>
+                <span style="color:#9A9A9A;cursor:pointer" style-hover="color:#E8E8E8">⟳ 새로 고침 F5</span>
+                <span style="color:#6A6A6A">·</span>
+                <span style="color:#6A6A6A">{{ c.count }}</span>
+              </span>
+            </div>
+
+            <div style="flex:1 1 0;min-height:0;background:#1E1E1E;overflow:hidden;display:flex;flex-direction:column">
+              <div onContextMenu="{{ openColMenu }}" title="우클릭하여 컬럼 선택" style="display:grid;grid-template-columns:{{ gridCols }};height:22px;flex:0 0 22px;align-items:center;background:#252525;color:#C8C8C8;font-size:13px;white-space:nowrap;cursor:context-menu">
+                <div style="padding:0 6px;overflow:hidden">이름 ▲</div>
+                <div style="padding:0 6px;overflow:hidden">크기</div>
+                <div style="padding:0 6px;overflow:hidden">종류</div>
+                <div style="padding:0 6px;overflow:hidden">수정한 날짜</div>
+                <sc-if value="{{ showPerm }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:0 6px;overflow:hidden">권한</div>
+                </sc-if>
+                <sc-if value="{{ showOwner }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:0 6px;overflow:hidden">소유자</div>
+                </sc-if>
+              </div>
+              <div style="flex:1 1 0;min-height:0;overflow:hidden">
+                <sc-if value="{{ c.tabConnecting }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:6px;padding-top:14px">
+                    <sc-for list="{{ skeleton }}" as="sk" hint-placeholder-count="8">
+                      <div style="height:12px;flex:0 0 12px;margin:0 10px;width:{{ sk }};background:#262626"></div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ c.tabNew }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:#6A6A6A;font-size:13px;text-align:center;padding:0 20px">
+                    <div style="color:#9A9A9A">주소창에 <span style="color:#7FD6A2">sftp://호스트</span> 를 입력해 연결하세요</div>
+                    <div>사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ c.tabOk }}" hint-placeholder-val="{{ true }}">
+                <sc-for list="{{ c.rows }}" as="r" hint-placeholder-count="9">
+                  <div style="display:grid;grid-template-columns:{{ gridCols }};height:20px;align-items:center;background:{{ r.bg }};color:{{ r.fg }};font-size:13px;white-space:nowrap">
+                    <div style="display:flex;align-items:center;padding-left:4px;min-width:0;overflow:hidden">
+                      <sc-if value="{{ r.isDir }}" hint-placeholder-val="{{ true }}">
+                        <div style="position:relative;width:16px;height:16px;flex:0 0 16px;opacity:{{ r.iconOpacity }}">
+                          <div style="position:absolute;left:1px;top:3px;width:5px;height:3px;background:#E8B34D;border-radius:1px 1px 0 0"></div>
+                          <div style="position:absolute;left:1px;top:5px;width:14px;height:8px;background:#E8B34D;border-radius:1px"></div>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ r.isFile }}" hint-placeholder-val="{{ false }}">
+                        <div style="position:relative;width:16px;height:16px;flex:0 0 16px;opacity:{{ r.iconOpacity }}">
+                          <div style="position:absolute;left:3px;top:2px;width:10px;height:12px;background:#D6D6D6;border-radius:1px"></div>
+                          <div style="position:absolute;left:8px;top:2px;width:5px;height:5px;background:#8A8A8A"></div>
+                        </div>
+                      </sc-if>
+                      <span style="margin-left:4px;overflow:hidden;text-overflow:ellipsis">{{ r.name }}</span>
+                      <sc-if value="{{ r.isLink }}" hint-placeholder-val="{{ false }}">
+                        <span style="margin-left:6px;color:#6A6A6A;overflow:hidden;text-overflow:ellipsis">→ {{ r.target }}</span>
+                      </sc-if>
+                      <sc-if value="{{ r.locked }}" hint-placeholder-val="{{ false }}">
+                        <span style="margin-left:6px;padding:0 5px;height:15px;display:flex;align-items:center;background:#2A2320;border:1px solid #4A3A2A;color:#C79A5A;font-size:11px;flex:0 0 auto">🔒 접근 불가</span>
+                      </sc-if>
+                    </div>
+                    <div style="padding:0 6px;overflow:hidden">{{ r.size }}</div>
+                    <div style="padding:0 6px;overflow:hidden">{{ r.type }}</div>
+                    <div title="{{ r.utc }}" style="padding:0 6px;overflow:hidden">{{ r.date }}</div>
+                    <sc-if value="{{ showPerm }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding:0 6px;overflow:hidden;font-family:Consolas,'D2Coding',monospace;color:#9A9A9A">{{ r.perm }}</div>
+                    </sc-if>
+                    <sc-if value="{{ showOwner }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding:0 6px;overflow:hidden;color:#9A9A9A">{{ r.owner }}</div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ c.connecting }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1 1 0;min-width:0;background:#1B1B1B;border:1px solid #333333;display:flex;flex-direction:column;overflow:hidden">
+            <div style="display:flex;align-items:center;height:28px;flex:0 0 28px;padding:0 8px;background:#2A2A2A;font-size:13px;color:#E8E8E8;white-space:nowrap">{{ c.name }}</div>
+            <div style="display:flex;align-items:center;gap:8px;height:26px;flex:0 0 26px;padding:0 6px">
+              <div style="display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;background:#241F14;border:1px solid #6B562F;color:#E8B34D;font-size:12px;white-space:nowrap">
+                <span style="width:6px;height:6px;border-radius:3px;background:#E8B34D"></span>연결 중…
+              </div>
+              <div style="flex:1 1 auto;min-width:0;height:22px;display:flex;align-items:center;padding:0 6px;background:#1E1E1E;color:#9A9A9A;font-size:13px;white-space:nowrap;overflow:hidden">인증 · 디렉터리 목록 요청 중</div>
+              <div onClick="{{ c.cancel }}" style="height:22px;padding:0 10px;display:flex;align-items:center;background:#252525;border:1px solid #3A3A3A;color:#C8C8C8;font-size:12px;cursor:pointer;flex:0 0 auto" style-hover="background:#2E2E2E">취소</div>
+            </div>
+            <div style="flex:1 1 0;min-height:0;background:#1E1E1E;display:flex;flex-direction:column;padding-top:22px;gap:6px">
+              <sc-for list="{{ skeleton }}" as="sk" hint-placeholder-count="8">
+                <div style="height:12px;flex:0 0 12px;margin:0 10px;width:{{ sk }};background:#262626"></div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ c.error }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1 1 0;min-width:0;background:#1B1B1B;border:1px solid #4A2626;display:flex;flex-direction:column;overflow:hidden">
+            <div style="display:flex;align-items:center;height:28px;flex:0 0 28px;padding:0 8px;background:#2A2A2A;font-size:13px;color:#E8E8E8;white-space:nowrap">
+              <span style="flex:1 1 auto">{{ c.name }}</span>
+              <span onClick="{{ c.close }}" style="width:20px;text-align:center;font-size:12px;cursor:pointer">✕</span>
+            </div>
+            <div style="flex:1 1 0;min-height:0;background:#1E1E1E;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 28px;text-align:center">
+              <div style="width:34px;height:34px;border:2px solid #FF6B6B;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#FF6B6B;font-size:19px">!</div>
+              <div style="font-size:14px;color:#E8E8E8">연결하지 못했습니다</div>
+              <div style="font-size:13px;line-height:1.6;color:#9A9A9A;text-wrap:pretty">530 Login incorrect — 사용자 또는 비밀번호가 올바르지 않습니다.<br>암호화 설정이 서버와 다를 수도 있습니다.</div>
+              <div style="display:flex;gap:8px;flex:0 0 auto">
+                <div onClick="{{ c.retry }}" style="height:28px;padding:0 16px;display:flex;align-items:center;background:#252525;border:1px solid #3A3A3A;color:#D8D8D8;font-size:13px;cursor:pointer;white-space:nowrap;flex:0 0 auto" style-hover="background:#2E2E2E">재시도</div>
+                <div onClick="{{ openManager }}" style="height:28px;padding:0 16px;display:flex;align-items:center;background:#252525;border:1px solid #3A3A3A;color:#D8D8D8;font-size:13px;cursor:pointer;white-space:nowrap;flex:0 0 auto" style-hover="background:#2E2E2E">설정 열기</div>
+              </div>
+              <div onClick="{{ toggleLog }}" style="font-size:12px;color:#6A6A6A;cursor:pointer" style-hover="color:#C8C8C8">서버 로그 보기</div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ showQueuePanel }}" hint-placeholder-val="{{ false }}">
+    <div style="height:268px;flex:0 0 268px;background:#1E1E1E;border-top:1px solid #333333;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;height:28px;flex:0 0 28px;background:#1B1B1B;padding-right:6px">
+        <sc-for list="{{ panelTabs }}" as="t" hint-placeholder-count="3">
+          <div onClick="{{ t.pick }}" style="display:flex;align-items:center;height:28px;padding:0 14px;font-size:13px;color:{{ t.fg }};background:{{ t.bg }};white-space:nowrap;cursor:pointer" style-hover="color:#E8E8E8">{{ t.title }}</div>
+        </sc-for>
+        <span style="flex:1 1 auto"></span>
+        <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:#9A9A9A;font-size:13px" style-hover="background:#383838">⏸</span>
+        <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:#9A9A9A;font-size:13px" style-hover="background:#383838">✕</span>
+        <span onClick="{{ closePanel }}" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:#9A9A9A;font-size:14px;cursor:pointer" style-hover="background:#383838">▼</span>
+      </div>
+      <div style="display:flex;align-items:stretch;height:28px;flex:0 0 28px;background:#1E1E1E;border-bottom:1px solid #2C2C2C;padding:0 4px;gap:2px">
+        <sc-for list="{{ queueSiteTabs }}" as="qs" hint-placeholder-count="3">
+          <div onClick="{{ qs.pick }}" style="display:flex;align-items:center;gap:7px;padding:0 12px;font-size:13px;color:{{ qs.fg }};background:{{ qs.bg }};border-bottom:2px solid {{ qs.edge }};white-space:nowrap;cursor:pointer" style-hover="color:#E8E8E8">
+            <span style="width:6px;height:6px;border-radius:3px;background:{{ qs.dot }}"></span>{{ qs.title }}
+          </div>
+        </sc-for>
+      </div>
+      <div style="display:grid;grid-template-columns:34px 1fr 300px 120px 84px 118px 150px;height:22px;flex:0 0 22px;align-items:center;background:#252525;color:#C8C8C8;font-size:13px;white-space:nowrap">
+        <div style="padding:0 6px">방향</div><div style="padding:0 6px">로컬 파일</div><div style="padding:0 6px">원격 파일</div><div style="padding:0 6px">서버</div><div style="padding:0 6px">크기</div><div style="padding:0 6px">진행률</div><div style="padding:0 6px">상태</div>
+      </div>
+      <sc-for list="{{ queue }}" as="q" hint-placeholder-count="6">
+        <div style="display:grid;grid-template-columns:34px 1fr 300px 120px 84px 118px 150px;height:24px;flex:0 0 24px;align-items:center;background:{{ q.bg }};font-size:13px;white-space:nowrap;color:#E8E8E8" style-hover="background:#2E2E2E">
+          <div style="padding:0 6px;color:{{ q.arrowColor }}">{{ q.arrow }}</div>
+          <div style="padding:0 6px;overflow:hidden;text-overflow:ellipsis;color:#C8C8C8">{{ q.local }}</div>
+          <div style="padding:0 6px;overflow:hidden;text-overflow:ellipsis;color:#C8C8C8">{{ q.remote }}</div>
+          <div style="padding:0 6px;overflow:hidden;text-overflow:ellipsis;color:#9A9A9A">{{ q.server }}</div>
+          <div style="padding:0 6px">{{ q.size }}</div>
+          <div style="padding:0 6px;display:flex;align-items:center">
+            <div style="width:110px;height:6px;background:#2A2A2A;overflow:hidden"><div style="width:{{ q.pct }};height:6px;background:{{ q.barColor }}"></div></div>
+          </div>
+          <div style="padding:0 6px;color:{{ q.stateColor }}">{{ q.state }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showLogPanel }}" hint-placeholder-val="{{ false }}">
+    <div style="height:268px;flex:0 0 268px;background:#1E1E1E;border-top:1px solid #333333;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;height:28px;flex:0 0 28px;background:#1B1B1B;padding-right:6px">
+        <sc-for list="{{ panelTabs }}" as="t" hint-placeholder-count="3">
+          <div onClick="{{ t.pick }}" style="display:flex;align-items:center;height:28px;padding:0 14px;font-size:13px;color:{{ t.fg }};background:{{ t.bg }};white-space:nowrap;cursor:pointer" style-hover="color:#E8E8E8">{{ t.title }}</div>
+        </sc-for>
+        <span style="flex:1 1 auto"></span>
+        <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:#9A9A9A;font-size:13px" style-hover="background:#383838">⧉</span>
+        <span onClick="{{ closePanel }}" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;color:#9A9A9A;font-size:14px;cursor:pointer" style-hover="background:#383838">▼</span>
+      </div>
+      <div style="flex:1 1 0;min-height:0;padding:6px 10px;display:flex;flex-direction:column;gap:2px;overflow:hidden">
+        <sc-for list="{{ logLines }}" as="ln" hint-placeholder-count="9">
+          <div style="display:flex;gap:10px;font-family:Consolas,'D2Coding',monospace;font-size:12px;line-height:17px;white-space:nowrap;background:{{ ln.bg }}">
+            <span style="color:#6A6A6A;flex:0 0 62px">{{ ln.time }}</span>
+            <span style="color:{{ ln.color }};flex:0 0 44px">{{ ln.kind }}</span>
+            <span style="color:#B4B4B4;overflow:hidden;text-overflow:ellipsis">{{ ln.text }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <div style="display:flex;align-items:center;gap:14px;height:30px;flex:0 0 30px;padding:0 10px;background:#1E1E1E;border-top:1px solid #2C2C2C;font-size:13px;white-space:nowrap">
+    <span onClick="{{ toggleQueue }}" style="display:flex;align-items:center;gap:6px;color:#C8C8C8;cursor:pointer" style-hover="color:#FFFFFF">{{ queueCaret }} 전송 큐</span>
+    <span style="color:#9A9A9A">{{ queueSummary }}</span>
+    <div style="width:240px;height:6px;background:#2A2A2A;overflow:hidden;flex:0 0 240px">
+      <div style="width:{{ overallPct }};height:6px;background:{{ overallColor }}"></div>
+    </div>
+    <span style="color:#C8C8C8;overflow:hidden;text-overflow:ellipsis;min-width:0">{{ currentTransfer }}</span>
+    <span style="flex:1 1 auto"></span>
+    <sc-if value="{{ hasFailures }}" hint-placeholder-val="{{ false }}">
+      <span style="display:flex;align-items:center;gap:6px;color:#FF6B6B;padding:0 8px;height:20px;background:#2A1A1A;border:1px solid #4A2626">● 실패 {{ failCount }}</span>
+    </sc-if>
+    <span style="color:{{ connColor }}">● {{ connLabel }}</span>
+    <span onClick="{{ toggleLog }}" style="color:#6A6A6A;cursor:pointer" style-hover="color:#C8C8C8">{{ logCaret }} 로그</span>
+  </div>
+
+  <sc-if value="{{ showColMenu }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeColMenu }}" onContextMenu="{{ closeColMenu }}" style="position:absolute;inset:0;z-index:17"></div>
+    <div style="position:absolute;left:{{ colX }};top:{{ colY }};width:186px;background:#1E1E1E;border:1px solid #333333;box-shadow:0 10px 28px rgba(0,0,0,0.6);padding:4px 0;display:flex;flex-direction:column;font-size:13px;color:#E8E8E8;z-index:18">
+      <div style="padding:4px 12px 6px;color:#6A6A6A;font-size:12px">표시할 컬럼</div>
+      <sc-for list="{{ colOptions }}" as="c" hint-placeholder-count="6">
+        <div onClick="{{ c.toggle }}" style="display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;cursor:{{ c.cursor }};color:{{ c.fg }}" style-hover="background:#383838">
+          <span style="width:12px;text-align:center;color:#7FD6A2">{{ c.check }}</span><span>{{ c.label }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;right:16px;bottom:44px;display:flex;align-items:center;gap:10px;height:34px;padding:0 14px;background:#252525;border:1px solid #3A3A3A;box-shadow:0 8px 24px rgba(0,0,0,0.5);color:#E8E8E8;font-size:13px;white-space:nowrap;z-index:19">
+      <span style="width:7px;height:7px;border-radius:4px;background:#6A6A6A"></span>{{ toastText }}
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showCtxMenu }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeCtx }}" onContextMenu="{{ closeCtx }}" style="position:absolute;inset:0;z-index:17"></div>
+    <div style="position:absolute;left:{{ ctxX }};top:{{ ctxY }};width:180px;background:#1E1E1E;border:1px solid #333333;box-shadow:0 10px 28px rgba(0,0,0,0.6);padding:4px 0;display:flex;flex-direction:column;font-size:13px;color:#E8E8E8;z-index:18">
+      <div style="padding:4px 12px 6px;color:#6A6A6A;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ ctxName }}</div>
+      <div style="height:1px;background:#333333;margin:2px 0"></div>
+      <div onClick="{{ deleteSite }}" style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;cursor:pointer" style-hover="background:#C42B1C">
+        <span style="width:16px;text-align:center;color:#C8C8C8">🗑</span><span>삭제</span>
+        <span style="flex:1 1 auto"></span><span style="color:#6A6A6A;font-size:12px">Del</span>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showConnectMenu }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeMenu }}" style="position:absolute;inset:0;z-index:14"></div>
+    <div style="position:absolute;left:150px;top:246px;width:246px;background:#1E1E1E;border:1px solid #333333;box-shadow:0 10px 28px rgba(0,0,0,0.6);padding:4px 0;display:flex;flex-direction:column;font-size:13px;color:#E8E8E8;z-index:16">
+      <div style="padding:4px 12px 6px;color:#6A6A6A;font-size:12px">등록된 사이트</div>
+      <sc-for list="{{ allSites }}" as="s" hint-placeholder-count="4">
+        <div onClick="{{ s.open }}" style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;white-space:nowrap;overflow:hidden;cursor:pointer" style-hover="background:#383838">
+          <span style="width:7px;height:7px;border-radius:4px;background:{{ s.dot }};flex:0 0 7px;margin-left:5px"></span>
+          <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;color:{{ s.fg }}">{{ s.name }}</span>
+          <span style="color:#6A6A6A;font-size:12px">{{ s.proto }}</span>
+        </div>
+      </sc-for>
+      <div style="height:1px;background:#333333;margin:4px 0"></div>
+      <div onClick="{{ openManager }}" style="display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;cursor:pointer" style-hover="background:#383838">
+        <span style="width:16px;text-align:center;color:#C8C8C8">+</span><span>새 사이트 추가…</span>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showSiteManager }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeManager }}" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:20">
+      <div onClick="{{ stop }}" style="width:1080px;height:680px;background:#1E1E1E;border:1px solid #3A3A3A;box-shadow:0 18px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;height:40px;flex:0 0 40px;padding:0 8px 0 16px">
+          <span style="font-size:16px">사이트 관리자</span><span style="flex:1 1 auto"></span>
+          <span onClick="{{ closeManager }}" style="display:flex;align-items:center;justify-content:center;width:40px;height:32px;color:#C8C8C8;font-size:15px;cursor:pointer" style-hover="background:#C42B1C">✕</span>
+        </div>
+
+        <div style="flex:1 1 0;min-height:0;display:flex;gap:22px;padding:6px 18px 0">
+          <div style="width:400px;flex:0 0 400px;display:flex;flex-direction:column;gap:8px">
+            <div style="color:#C8C8C8;font-size:13px">항목 선택(S):</div>
+            <div style="flex:1 1 0;min-height:0;background:#151515;border:1px solid #333333;padding:8px 6px;display:flex;flex-direction:column;gap:1px;overflow:hidden">
+              <sc-for list="{{ allSites }}" as="s" hint-placeholder-count="4">
+                <div onClick="{{ s.select }}" style="display:flex;align-items:center;gap:6px;height:24px;font-size:13px;white-space:nowrap;overflow:hidden;padding-left:8px;cursor:pointer">
+                  <div style="position:relative;width:16px;height:16px;flex:0 0 16px">
+                    <div style="position:absolute;left:3px;top:2px;width:10px;height:12px;background:#9AA3AA;border-radius:1px"></div>
+                    <div style="position:absolute;left:5px;top:4px;width:6px;height:2px;background:#2A2A2A"></div>
+                    <div style="position:absolute;left:5px;top:8px;width:6px;height:2px;background:#2A2A2A"></div>
+                    <div style="position:absolute;left:5px;top:11px;width:2px;height:2px;background:{{ s.dot }}"></div>
+                  </div>
+                  <span style="padding:0 5px;background:{{ s.selBg }};color:{{ s.selFg }};overflow:hidden;text-overflow:ellipsis">{{ s.name }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:2px 30px 6px">
+              <sc-for list="{{ treeButtons }}" as="b" hint-placeholder-count="3">
+                <div style="height:28px;display:flex;align-items:center;justify-content:center;background:#252525;border:1px solid #3A3A3A;color:#D8D8D8;font-size:13px;white-space:nowrap" style-hover="background:#2E2E2E">{{ b }}</div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:stretch;height:28px;flex:0 0 28px;border-bottom:1px solid #333333">
+              <sc-for list="{{ dialogTabs }}" as="t" hint-placeholder-count="4">
+                <div onClick="{{ t.pick }}" style="display:flex;align-items:center;padding:0 14px;font-size:13px;color:{{ t.fg }};background:{{ t.bg }};border:1px solid {{ t.border }};border-bottom:none;white-space:nowrap;cursor:pointer" style-hover="color:#E8E8E8">{{ t.title }}</div>
+              </sc-for>
+            </div>
+
+            <div style="flex:1 1 0;min-height:0;display:flex;flex-direction:column;gap:11px;padding:16px 2px 0">
+              <sc-if value="{{ tabGeneral }}" hint-placeholder-val="{{ true }}">
+              <sc-for list="{{ dialogFields }}" as="fld" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="width:96px;flex:0 0 96px;color:#C8C8C8;font-size:13px">{{ fld.label }}</span>
+                  <div style="flex:1 1 auto;min-width:0;height:28px;display:flex;align-items:center;padding:0 8px;background:#151515;border:1px solid #3A3A3A;color:#E8E8E8;font-size:13px;white-space:nowrap;overflow:hidden">
+                    <span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis">{{ fld.value }}</span>
+                    <span style="color:#9A9A9A;font-size:11px;margin-left:8px">{{ fld.caret }}</span>
+                  </div>
+                  <sc-if value="{{ fld.hasPort }}" hint-placeholder-val="{{ false }}">
+                    <span style="color:#C8C8C8;font-size:13px;white-space:nowrap;margin-left:6px">포트(P):</span>
+                  </sc-if>
+                  <sc-if value="{{ fld.hasPort }}" hint-placeholder-val="{{ false }}">
+                    <div style="width:96px;flex:0 0 96px;height:28px;display:flex;align-items:center;padding:0 8px;background:#151515;border:1px solid #3A3A3A;color:#E8E8E8;font-size:13px">{{ fld.port }}</div>
+                  </sc-if>
+                </div>
+              </sc-for>
+              </sc-if>
+
+              <sc-if value="{{ tabTransfer }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:14px;padding:2px 2px 0">
+                  <div style="color:#C8C8C8;font-size:13px">전송 모드(T):</div>
+                  <div style="display:flex;align-items:center;gap:28px;padding-left:4px">
+                    <sc-for list="{{ transferModes }}" as="m" hint-placeholder-count="3">
+                      <div onClick="{{ m.pick }}" style="display:flex;align-items:center;gap:8px;color:#E8E8E8;font-size:13px;white-space:nowrap;cursor:pointer">
+                        <span style="width:14px;height:14px;border-radius:8px;border:1px solid {{ m.edge }};background:#151515;display:flex;align-items:center;justify-content:center;flex:0 0 14px">
+                          <span style="width:6px;height:6px;border-radius:4px;background:{{ m.dot }}"></span>
+                        </span>{{ m.label }}
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div onClick="{{ toggleLimit }}" style="display:flex;align-items:center;gap:8px;color:#E8E8E8;font-size:13px;white-space:nowrap;cursor:pointer;padding-left:4px;margin-top:6px">
+                    <span style="width:14px;height:14px;border:1px solid {{ limitEdge }};background:{{ limitBg }};color:#FFFFFF;font-size:10px;line-height:12px;text-align:center;flex:0 0 14px">{{ limitCheck }}</span>
+                    동시 연결 수 제한(L)
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;padding-left:34px">
+                    <span style="color:{{ limitFg }};font-size:13px;white-space:nowrap">최대 동시 연결 수(M):</span>
+                    <div style="width:92px;flex:0 0 92px;height:26px;display:flex;align-items:center;background:{{ limitFieldBg }};border:1px solid #3A3A3A">
+                      <span style="flex:1 1 auto;text-align:right;padding-right:8px;color:{{ limitFg }};font-size:13px">{{ limitValue }}</span>
+                      <div style="width:16px;flex:0 0 16px;height:24px;display:flex;flex-direction:column;border-left:1px solid #3A3A3A">
+                        <div onClick="{{ limitUp }}" style="flex:1 1 0;display:flex;align-items:center;justify-content:center;color:#9A9A9A;font-size:8px;cursor:pointer" style-hover="background:#2E2E2E">▲</div>
+                        <div onClick="{{ limitDown }}" style="flex:1 1 0;display:flex;align-items:center;justify-content:center;color:#9A9A9A;font-size:8px;cursor:pointer;border-top:1px solid #3A3A3A" style-hover="background:#2E2E2E">▼</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ tabCharset }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:12px;padding:2px 2px 0">
+                  <div style="color:#C8C8C8;font-size:13px">서버에서 파일명에 사용하는 문자셋</div>
+                  <div style="color:#C8C8C8;font-size:13px">인코딩:</div>
+                  <sc-for list="{{ charsetModes }}" as="m" hint-placeholder-count="2">
+                    <div onClick="{{ m.pick }}" style="display:flex;align-items:center;gap:8px;color:#E8E8E8;font-size:13px;white-space:nowrap;cursor:pointer;padding-left:4px">
+                      <span style="width:14px;height:14px;border-radius:8px;border:1px solid {{ m.edge }};background:#151515;display:flex;align-items:center;justify-content:center;flex:0 0 14px">
+                        <span style="width:6px;height:6px;border-radius:4px;background:{{ m.dot }}"></span>
+                      </span>{{ m.label }}
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;align-items:center;gap:10px;padding-left:26px">
+                    <span style="color:{{ encFg }};font-size:13px;white-space:nowrap">인코딩(E):</span>
+                    <div style="width:210px;flex:0 0 210px;height:26px;display:flex;align-items:center;padding:0 8px;background:{{ encBg }};border:1px solid #3A3A3A;color:{{ encFg }};font-size:13px">{{ encValue }}</div>
+                  </div>
+                  <div style="margin-top:14px;color:#9A9A9A;font-size:13px;line-height:1.7">문자셋을 잘못 지정하면 파일명이 올바르게<br>보여지지 않을 수 있습니다.</div>
+                </div>
+              </sc-if>
+
+              <div style="height:22px;flex:0 0 22px"></div>
+
+              <div style="flex:1 1 0;min-height:0"></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;height:58px;flex:0 0 58px;padding:0 18px;border-top:1px solid #2C2C2C">
+          <div onClick="{{ addAndConnect }}" style="height:30px;padding:0 24px;display:flex;align-items:center;background:#2F6B4F;border:1px solid #3E8A66;color:#E8FFF2;font-size:13px;cursor:pointer" style-hover="background:#387E5D">연결(C)</div>
+          <div onClick="{{ addAndRegister }}" style="height:30px;padding:0 24px;display:flex;align-items:center;background:#252525;border:1px solid #3A3A3A;color:#D8D8D8;font-size:13px;cursor:pointer" style-hover="background:#2E2E2E">확인(O)</div>
+          <div onClick="{{ closeManager }}" style="height:30px;padding:0 24px;display:flex;align-items:center;background:#252525;border:1px solid #3A3A3A;color:#D8D8D8;font-size:13px;cursor:pointer" style-hover="background:#2E2E2E">취소</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1660,&quot;height&quot;:990}}">
+class Component extends DCLogic {
+  state = { menuOpen: false, managerOpen: false, panel: "", dialogTab: 0, selectedSite: 0, removed: [], ctx: null, added: [], conns: [{ name: "cdn-assets", phase: "ok", ws: 0 }], ws: 0, paneTabs: {}, tabMenu: "", toast: "", showPerm: false, showOwner: false, colMenu: null };
+
+  componentWillUnmount() { clearTimeout(this._t); clearTimeout(this._tt); }
+
+  setPhase(name, phase) {
+    this.setState((s) => ({
+      conns: s.conns.some((c) => c.name === name)
+        ? s.conns.map((c) => (c.name === name ? { ...c, phase } : c))
+        : s.conns.concat({ name, phase, ws: s.ws || 0 }),
+    }));
+  }
+
+  connect(name) {
+    this.setPhase(name, "connecting");
+    this.set({ menuOpen: false, ctx: null });
+    this._timers = this._timers || {};
+    clearTimeout(this._timers[name]);
+    this._timers[name] = setTimeout(() => {
+      this.setPhase(name, name === "legacy-backup" ? "error" : "ok");
+    }, 1600);
+  }
+
+  paneOf(conn) {
+    return this.state.paneTabs[conn] || { list: [{ id: conn + "-0", site: conn, phase: "ok" }], at: 0 };
+  }
+
+  setPane(conn, p) {
+    this.setState((s) => ({ paneTabs: { ...s.paneTabs, [conn]: p } }));
+  }
+
+  addPaneTab(conn, site, phase) {
+    const p = this.paneOf(conn);
+    const id = conn + "-" + (this._tid = (this._tid || 0) + 1);
+    const list = p.list.concat({ id, site, phase });
+    this.setPane(conn, { list, at: list.length - 1 });
+    this.set({ tabMenu: "" });
+    if (phase === "connecting") {
+      setTimeout(() => {
+        const q = this.paneOf(conn);
+        this.setPane(conn, { list: q.list.map((t) => (t.id === id ? { ...t, phase: "ok" } : t)), at: q.at });
+      }, 1200);
+    }
+  }
+
+  pickPaneTab(conn, i) {
+    const p = this.paneOf(conn);
+    this.setPane(conn, { list: p.list, at: i });
+  }
+
+  closePaneTab(conn, i) {
+    const p = this.paneOf(conn);
+    if (p.list.length <= 1) return this.disconnect(conn);
+    const list = p.list.filter((_, k) => k !== i);
+    this.setPane(conn, { list, at: Math.min(p.at, list.length - 1) });
+  }
+
+  disconnect(name) {
+    if (this._timers) clearTimeout(this._timers[name]);
+    this.setState((s) => ({ conns: s.conns.filter((c) => c.name !== name) }));
+  }
+
+  toast(text) {
+    clearTimeout(this._tt);
+    this.set({ toast: text });
+    this._tt = setTimeout(() => this.set({ toast: "" }), 3200);
+  }
+
+  addSite(connectNow) {
+    const name = "211.60.125.26";
+    this.setState((s) => ({
+      added: s.added.some((a) => a.name === name) ? s.added : s.added.concat({ name, proto: "ftp" }),
+      managerOpen: false,
+    }));
+    if (connectNow) this.connect(name);
+    else this.toast(name + " 등록됨 · 더블클릭하여 연결");
+  }
+
+  pickFromMenu(name, allNames) {
+    const st = this.state;
+    const wasHidden = st.removed.includes(name);
+    const removed = st.removed.filter((n) => n !== name);
+    const visible = allNames.filter((n) => !removed.includes(n));
+    this.set({ removed, selectedSite: Math.max(0, visible.indexOf(name)), menuOpen: false });
+    if (wasHidden) this.toast(name + " 을(를) 연결 목록에 추가했습니다");
+  }
+
+  pos(e) {
+    const root = e.currentTarget.closest("[data-root]");
+    const r = root.getBoundingClientRect();
+    const k = r.width ? 1660 / r.width : 1;
+    return { x: Math.round((e.clientX - r.left) * k), y: Math.round((e.clientY - r.top) * k) };
+  }
+
+  openCtx(e, name) {
+    e.preventDefault();
+    const p = this.pos(e);
+    this.set({ ctx: { name, x: p.x, y: p.y } });
+  }
+
+  openMenuAt(e, key) {
+    e.preventDefault();
+    this.set({ [key]: this.pos(e) });
+  }
+
+  set(patch) { this.setState(patch); }
+
+  renderVals() {
+    return this.build();
+  }
+
+  build() {
+    const st = this.state;
+    const isQueue = st.panel === "queue";
+    const isLog = st.panel === "log";
+    const isManager = st.managerOpen;
+    const isMenu = st.menuOpen && !st.managerOpen;
+
+    const d = (name, date) => ({ name, size: "", type: "파일 폴더", date });
+    const f = (name, size, type, date) => ({ name, size, type, date, isDir: false });
+    const tabs = (...t) => t.map((title, i) => ({ title, active: i === 0 }));
+
+    const localRows = [
+      d("assets", "2026-07-31 14:02"), d("fonts", "2026-07-28 09:11"), d("img", "2026-07-30 17:45"),
+      f("index.html", "12 KB", "HTML 문서", "2026-07-31 16:20"),
+      f("app.bundle.js", "1,840 KB", "JavaScript 파일", "2026-07-31 16:20"),
+      f("app.bundle.js.map", "3,204 KB", "MAP 파일", "2026-07-31 16:20"),
+      f("styles.css", "88 KB", "CSS 문서", "2026-07-31 16:19"),
+      f("favicon.ico", "15 KB", "아이콘", "2026-05-16 12:57"),
+      f("robots.txt", "1 KB", "텍스트 문서", "2026-05-16 12:57"),
+      f("sitemap.xml", "24 KB", "XML 문서", "2026-07-31 16:20"),
+      f("manifest.webmanifest", "1 KB", "WEBMANIFEST 파일", "2026-07-20 16:04"),
+      f("sw.js", "9 KB", "JavaScript 파일", "2026-07-31 16:20"),
+    ];
+    const remoteRows = [
+      d("..", "2026-07-30 03:12"), d("assets", "2026-07-30 03:12"), d("img", "2026-07-29 22:40"), d("uploads", "2026-07-31 07:55"),
+      f("index.html", "12 KB", "HTML 문서", "2026-07-30 03:12"),
+      f("app.bundle.js", "1,120 KB", "JavaScript 파일", "2026-07-30 03:12"),
+      f("styles.css", "84 KB", "CSS 문서", "2026-07-30 03:12"),
+      f("favicon.ico", "15 KB", "아이콘", "2026-04-02 11:08"),
+      f("robots.txt", "1 KB", "텍스트 문서", "2026-04-02 11:08"),
+      f(".htaccess", "2 KB", "HTACCESS 파일", "2026-06-13 14:32"),
+      f("health.php", "1 KB", "PHP 파일", "2026-06-13 14:32"),
+    ];
+    const localRows2 = [
+      d("components", "2026-07-31 15:02"), d("hooks", "2026-07-24 17:54"), d("lib", "2026-07-15 07:58"),
+      d("pages", "2026-07-31 15:40"), d("styles", "2026-07-14 07:54"), d("types", "2026-06-26 15:30"),
+      f("main.tsx", "4 KB", "TSX 파일", "2026-07-31 15:41"),
+      f("router.tsx", "7 KB", "TSX 파일", "2026-07-30 11:12"),
+      f("config.ts", "2 KB", "TS 파일", "2026-07-18 14:52"),
+      f("vite.config.ts", "3 KB", "TS 파일", "2026-07-14 07:56"),
+    ];
+    const remoteRows2 = [
+      f("access.log", "48,210 KB", "로그 파일", "2026-08-01 09:14"),
+      f("access.log.1", "10,240 KB", "로그 파일", "2026-07-31 00:00"),
+      f("access.log.2.gz", "1,204 KB", "GZ 파일", "2026-07-30 00:00"),
+      f("error.log", "612 KB", "로그 파일", "2026-08-01 08:57"),
+      f("error.log.1", "1,024 KB", "로그 파일", "2026-07-31 00:00"),
+      f("error.log.2.gz", "96 KB", "GZ 파일", "2026-07-30 00:00"),
+    ];
+
+    const sitesBase = [
+      { name: "web-prod", proto: "sftp", dot: "#4ADE80", bg: "#2E2E2E", fg: "#E8E8E8", edge: "#4A9EFF" },
+      { name: "web-staging", proto: "sftp", dot: "#6A6A6A", bg: "transparent", fg: "#C8C8C8", edge: "transparent" },
+      { name: "cdn-assets", proto: "ftps", dot: "#6A6A6A", bg: "transparent", fg: "#C8C8C8", edge: "transparent" },
+      { name: "legacy-backup", proto: "ftp", dot: "#E8B34D", bg: "transparent", fg: "#C8C8C8", edge: "transparent" },
+    ].concat(st.added.map((a) => ({
+      name: a.name, proto: a.proto, dot: "#6A6A6A", bg: "transparent", fg: "#C8C8C8", edge: "transparent",
+    })));
+    const allNames = sitesBase.map((x) => x.name);
+    const sites = sitesBase.map((x, i) => {
+      const live = st.conns.find((c) => c.name === x.name);
+      const dot = !live ? x.dot
+        : live.phase === "connecting" ? "#E8B34D"
+        : live.phase === "ok" ? "#4ADE80"
+        : live.phase === "error" ? "#FF6B6B" : x.dot;
+      return {
+        ...x, dot,
+        ctx: (e) => this.openCtx(e, x.name),
+        bg: "transparent",
+        edge: "transparent",
+        fg: "#C8C8C8",
+        selBg: i === st.selectedSite ? "#2A5FA8" : "transparent",
+        selFg: i === st.selectedSite ? "#FFFFFF" : "#E8E8E8",
+        select: () => this.set({ selectedSite: i }),
+        connect: () => this.connect(x.name),
+        open: () => this.pickFromMenu(x.name, allNames),
+      };
+    });
+
+    const mk = (arrow, local, remote, size, state, pct, kind) => ({
+      arrow, local, remote, size, state, pct, kind: kind || "wait",
+      arrowColor: arrow === "↑" ? "#4A9EFF" : "#7FD6A2",
+      stateColor: kind === "err" ? "#FF6B6B" : kind === "run" ? "#4A9EFF" : kind === "done" ? "#7FD6A2" : "#9A9A9A",
+      barColor: kind === "err" ? "#FF6B6B" : kind === "done" ? "#2F6B4F" : "#4A9EFF",
+    });
+    const servers = ["web-prod", "web-prod", "web-prod", "web-prod", "web-prod", "web-prod", "cdn-assets", "cdn-assets"];
+    const queueAll = [
+      mk("↑", "D:\\work\\web-prod\\dist\\app.bundle.js", "/var/www/html/app.bundle.js", "1,840 KB", "전송 중 · 12.4 MB/s", "62%", "run"),
+      mk("↑", "D:\\work\\web-prod\\dist\\styles.css", "/var/www/html/styles.css", "88 KB", "대기 중", "0%", ""),
+      mk("↑", "D:\\work\\web-prod\\dist\\index.html", "/var/www/html/index.html", "12 KB", "대기 중", "0%", ""),
+      mk("↓", "D:\\work\\web-prod\\logs\\error.log", "/var/log/nginx/error.log", "612 KB", "대기 중", "0%", ""),
+      mk("↑", "D:\\work\\web-prod\\dist\\sw.js", "/var/www/html/sw.js", "9 KB", "550 권한 거부", "0%", "err"),
+      mk("↑", "D:\\work\\web-prod\\dist\\sitemap.xml", "/var/www/html/sitemap.xml", "24 KB", "완료", "100%", "done"),
+      mk("↑", "D:\\work\\web-prod\\dist\\favicon.ico", "/var/www/html/favicon.ico", "15 KB", "완료", "100%", "done"),
+      mk("↑", "D:\\work\\web-prod\\dist\\robots.txt", "/var/www/html/robots.txt", "1 KB", "완료", "100%", "done"),
+    ].map((r, i) => ({ ...r, server: servers[i] || "web-prod" }));
+    const queueSite = st.queueSite || "전체";
+    const qf = st.queueFilter || "all";
+    const doneCount = queueAll.filter((r) => r.kind === "done").length;
+    const errCount = queueAll.filter((r) => r.kind === "err").length;
+    const queue = queueAll
+      .filter((r) => qf === "all" || r.kind === qf)
+      .filter((r) => queueSite === "전체" || r.server === queueSite)
+      .map((r, i) => ({ ...r, bg: i % 2 === 1 ? "#252525" : "transparent" }));
+    const queueSiteNames = ["전체"].concat(queueAll.reduce((a, r) => (a.includes(r.server) ? a : a.concat(r.server)), []));
+    const queueSiteTabs = queueSiteNames.map((n) => ({
+      title: n === "전체" ? "전체 (" + queueAll.length + ")" : n + " (" + queueAll.filter((r) => r.server === n).length + ")",
+      fg: n === queueSite ? "#E8E8E8" : "#9A9A9A",
+      bg: n === queueSite ? "#252525" : "transparent",
+      edge: n === queueSite ? "#4A9EFF" : "transparent",
+      dot: n === "전체" ? "transparent" : (st.conns.find((c) => c.name === n) || {}).phase === "error" ? "#FF6B6B" : "#4ADE80",
+      pick: () => this.set({ queueSite: n }),
+    }));
+
+    const L = (time, kind, text, color, bg) => ({ time, kind, text, color, bg: bg || "transparent" });
+    const logLines = [
+      L("15:02:11", "상태:", "sftp://deploy@web-prod.example.com:22 에 연결 중...", "#C8C8C8"),
+      L("15:02:11", "상태:", "호스트 키를 확인했습니다 (SHA256:8Fq…c2W)", "#C8C8C8"),
+      L("15:02:12", "명령:", "USER deploy", "#6FA8FF"),
+      L("15:02:13", "응답:", "230 User deploy logged in", "#9A9A9A"),
+      L("15:02:13", "명령:", "CWD /var/www/html", "#6FA8FF"),
+      L("15:02:13", "응답:", "250 Directory successfully changed", "#9A9A9A"),
+      L("15:02:14", "상태:", "디렉터리 목록 조회 성공 (11개 항목)", "#C8C8C8"),
+      L("15:04:02", "명령:", "PUT sw.js → /var/www/html/sw.js", "#6FA8FF"),
+      L("15:04:02", "오류:", "550 /var/www/html/sw.js: 권한이 거부되었습니다", "#FF6B6B", "#2A1A1A"),
+      L("15:04:02", "상태:", "전송 1건 실패 · 재시도 대기 중", "#FF6B6B", "#2A1A1A"),
+    ];
+
+    const remoteRaw = [
+      { name: "..", isDir: true, date: "2026-07-30 12:12", utc: "UTC 2026-07-30 03:12", perm: "drwxr-xr-x", owner: "root" },
+      { name: "public_html", isDir: true, date: "2026-07-31 20:02", utc: "UTC 2026-07-31 11:02", perm: "drwxr-xr-x", owner: "deploy" },
+      { name: "backup", isDir: true, date: "2026-07-28 13:00", utc: "UTC 2026-07-28 04:00", perm: "drwx------", owner: "root", locked: true },
+      { name: "logs", isDir: true, date: "2026-08-01 09:14", utc: "UTC 2026-08-01 00:14", perm: "lrwxrwxrwx", owner: "deploy", link: "/var/log/nginx" },
+      { name: "deploy.sh", size: "3 KB", type: "SH 파일", date: "2026-07-30 18:41", utc: "UTC 2026-07-30 09:41", perm: "-rwxr-xr-x", owner: "deploy" },
+      { name: "release.tar.gz", size: "24,880 KB", type: "GZ 파일", date: "2026-07-31 20:02", utc: "UTC 2026-07-31 11:02", perm: "-rw-r--r--", owner: "deploy" },
+      { name: "VERSION", size: "1 KB", type: "파일", date: "2026-07-31 20:02", utc: "UTC 2026-07-31 11:02", perm: "-rw-r--r--", owner: "deploy" },
+      { name: ".env", size: "2 KB", type: "ENV 파일", date: "2026-06-13 23:32", utc: "UTC 2026-06-13 14:32", perm: "-rw-------", owner: "root", locked: true },
+      { name: "current", size: "", type: "심볼릭 링크", date: "2026-07-31 20:02", utc: "UTC 2026-07-31 11:02", perm: "lrwxrwxrwx", owner: "deploy", link: "releases/2026-07-31", isFileLink: true },
+    ];
+    const cdnRaw = [
+      { name: "..", isDir: true, date: "2026-07-20 10:00", utc: "UTC 2026-07-20 01:00", perm: "drwxr-xr-x", owner: "root" },
+      { name: "img", isDir: true, date: "2026-07-31 11:20", utc: "UTC 2026-07-31 02:20", perm: "drwxr-xr-x", owner: "cdn" },
+      { name: "fonts", isDir: true, date: "2026-07-12 08:40", utc: "UTC 2026-07-11 23:40", perm: "drwxr-xr-x", owner: "cdn" },
+      { name: "video", isDir: true, date: "2026-06-30 19:05", utc: "UTC 2026-06-30 10:05", perm: "drwx------", owner: "root", locked: true },
+      { name: "sprite.svg", size: "142 KB", type: "SVG 문서", date: "2026-07-29 16:11", utc: "UTC 2026-07-29 07:11", perm: "-rw-r--r--", owner: "cdn" },
+      { name: "hero@2x.webp", size: "860 KB", type: "WEBP 파일", date: "2026-07-31 11:20", utc: "UTC 2026-07-31 02:20", perm: "-rw-r--r--", owner: "cdn" },
+      { name: "manifest.json", size: "4 KB", type: "JSON 파일", date: "2026-07-31 11:20", utc: "UTC 2026-07-31 02:20", perm: "-rw-r--r--", owner: "cdn" },
+    ];
+    const legacyRaw = [
+      { name: "..", isDir: true, date: "2025-11-02 04:30", utc: "UTC 2025-11-01 19:30", perm: "drwxr-xr-x", owner: "root" },
+      { name: "2025", isDir: true, date: "2026-01-01 03:00", utc: "UTC 2025-12-31 18:00", perm: "drwxr-xr-x", owner: "backup" },
+      { name: "2026", isDir: true, date: "2026-07-01 03:00", utc: "UTC 2026-06-30 18:00", perm: "drwxr-xr-x", owner: "backup" },
+      { name: "vault", isDir: true, date: "2026-05-04 03:00", utc: "UTC 2026-05-03 18:00", perm: "drwx------", owner: "root", locked: true },
+      { name: "full-2026-07.tar", size: "1,204,880 KB", type: "TAR 파일", date: "2026-07-01 03:44", utc: "UTC 2026-06-30 18:44", perm: "-rw-r--r--", owner: "backup" },
+      { name: "checksums.txt", size: "6 KB", type: "텍스트 문서", date: "2026-07-01 03:52", utc: "UTC 2026-06-30 18:52", perm: "-rw-r--r--", owner: "backup" },
+    ];
+    const mkRows = (list) => list.map((r, i) => ({
+      name: r.name,
+      size: r.size ?? "",
+      type: r.type ?? "파일 폴더",
+      date: r.date,
+      utc: r.utc + " (서버 시각)",
+      perm: r.perm,
+      owner: r.owner,
+      isDir: !!r.isDir,
+      isFile: !r.isDir,
+      isLink: !!r.link,
+      target: r.link || "",
+      locked: !!r.locked,
+      iconOpacity: r.locked ? "0.4" : "1",
+      fg: r.locked ? "#6A6A6A" : "#E8E8E8",
+      bg: i % 2 === 1 ? "#252525" : "transparent",
+    }));
+    const countOf = (list) => {
+      const dirs = list.filter((r) => r.isDir && r.name !== "..").length;
+      return "폴더 " + dirs + " 파일 " + (list.length - dirs - 1);
+    };
+    const siteData = {
+      "web-prod": { raw: remoteRaw, path: "/home/deploy", proto: "sftp", localPath: "D:\\work\\web-prod\\src", localTab: "src", localRows: localRows2, localStatus: "폴더 6 파일 4" },
+      "cdn-assets": { raw: cdnRaw, path: "/srv/cdn", proto: "ftps", localPath: "D:\\work\\web-prod\\dist\\assets", localTab: "assets", localRows: localRows, localStatus: "폴더 3 파일 9" },
+      "legacy-backup": { raw: legacyRaw, path: "/backup", proto: "ftp", localPath: "E:\\archive\\backup", localTab: "backup", localRows: remoteRows2, localStatus: "파일 6" },
+    };
+    const siteOf = (name) => siteData[name] || { raw: remoteRaw, path: "/home/" + name, proto: "sftp", localPath: "D:\\work\\" + name, localTab: name, localRows: localRows2, localStatus: "폴더 6 파일 4" };
+
+    const wsList = [
+      {
+        name: "web-prod 배포", path: "D:\\work\\web-prod",
+        pairs: [
+          { localPath: "D:\\work\\web-prod\\dist", localTab: "dist", localRows, localStatus: "폴더 3 파일 9", remotePath: "/var/www/html", remoteTab: "html", remoteRows, remoteStatus: "폴더 4 파일 7", badge: "sftp · web-prod" },
+          { localPath: "D:\\work\\web-prod\\src", localTab: "src", localRows: localRows2, localStatus: "폴더 6 파일 4", remotePath: "/var/log/nginx", remoteTab: "nginx", remoteRows: remoteRows2, remoteStatus: "파일 6", badge: "sftp · web-prod" },
+        ],
+      },
+      {
+        name: "워크스페이스 2", path: "C:\\Users\\jongc",
+        pairs: [
+          { localPath: "C:\\Users\\jongc\\Documents", localTab: "Documents", localRows: localRows2, localStatus: "폴더 6 파일 4", remotePath: "/srv/cdn/assets", remoteTab: "assets", remoteRows, remoteStatus: "폴더 4 파일 7", badge: "ftps · cdn-assets" },
+        ],
+      },
+    ];
+    const wsIdx = Math.min(st.ws || 0, wsList.length - 1);
+    const wsConns = st.conns.filter((c) => (c.ws || 0) === wsIdx);
+    const activePairs = wsConns.length ? wsList[wsIdx].pairs.slice(0, 1) : wsList[wsIdx].pairs;
+
+    const tabSet = (titles, at) => titles.map((t, i) => ({
+      title: t, fg: i === at ? "#E8E8E8" : "#9A9A9A", bg: i === at ? "#1E1E1E" : "transparent",
+    }));
+
+    return {
+      title: isManager ? "web-prod 배포 — 사이트 관리자" : "web-prod 배포",
+      queueSiteTabs,
+      sites: sites.filter((x) => !st.removed.includes(x.name)).map((x, i) => ({
+        ...x,
+        bg: i === st.selectedSite ? "#2E2E2E" : "transparent",
+        edge: i === st.selectedSite ? "#4A9EFF" : "transparent",
+        fg: i === st.selectedSite ? "#E8E8E8" : "#C8C8C8",
+        select: () => this.set({ selectedSite: i }),
+      })),
+      allSites: sites,
+      queue, logLines,
+      showQueuePanel: isQueue,
+      showLogPanel: isLog,
+      showSiteManager: isManager,
+      showConnectMenu: isMenu,
+      treeButtons: ["이름 바꾸기(R)", "삭제(D)", "복제(I)"],
+      dialogTabs: ["일반", "전송 설정", "문자셋"].map((t, i) => ({
+        title: t,
+        fg: i === st.dialogTab ? "#E8E8E8" : "#9A9A9A",
+        bg: i === st.dialogTab ? "#1E1E1E" : "#191919",
+        border: i === st.dialogTab ? "#333333" : "transparent",
+        pick: () => this.set({ dialogTab: i }),
+      })),
+      tabGeneral: st.dialogTab === 0,
+      tabTransfer: st.dialogTab === 1,
+      tabCharset: st.dialogTab === 2,
+      transferModes: [["기본(E)", "default"], ["능동형(A)", "active"], ["수동형(P)", "passive"]].map(([label, key]) => ({
+        label,
+        edge: (st.xferMode || "default") === key ? "#4A9EFF" : "#5A5A5A",
+        dot: (st.xferMode || "default") === key ? "#4A9EFF" : "transparent",
+        pick: () => this.set({ xferMode: key }),
+      })),
+      toggleLimit: () => this.set({ limitOn: !st.limitOn }),
+      limitCheck: st.limitOn ? "✓" : "",
+      limitBg: st.limitOn ? "#4A9EFF" : "#151515",
+      limitEdge: st.limitOn ? "#4A9EFF" : "#5A5A5A",
+      limitFg: st.limitOn ? "#E8E8E8" : "#6A6A6A",
+      limitFieldBg: st.limitOn ? "#151515" : "#1A1A1A",
+      limitValue: String(st.limitN || 1),
+      limitUp: () => this.set({ limitN: Math.min(10, (st.limitN || 1) + 1) }),
+      limitDown: () => this.set({ limitN: Math.max(1, (st.limitN || 1) - 1) }),
+      charsetModes: [["UTF-8(U)", "utf8"], ["문자셋 직접 설정(C)", "custom"]].map(([label, key]) => ({
+        label,
+        edge: (st.charset || "utf8") === key ? "#4A9EFF" : "#5A5A5A",
+        dot: (st.charset || "utf8") === key ? "#4A9EFF" : "transparent",
+        pick: () => this.set({ charset: key }),
+      })),
+      encFg: st.charset === "custom" ? "#E8E8E8" : "#6A6A6A",
+      encBg: st.charset === "custom" ? "#151515" : "#1A1A1A",
+      encValue: st.charset === "custom" ? "EUC-KR" : "",
+      plusColor: st.menuOpen ? "#E8E8E8" : "#9A9A9A",
+      plusBg: st.menuOpen ? "#383838" : "transparent",
+      stop: (e) => e.stopPropagation(),
+      skeleton: ["46%", "62%", "38%", "70%", "52%", "44%", "66%", "34%"],
+      gridCols: (st.showPerm || st.showOwner)
+        ? "minmax(110px,1fr) 74px 92px 118px" + (st.showPerm ? " 92px" : "") + (st.showOwner ? " 80px" : "")
+        : "minmax(180px,1fr) 84px 116px 140px",
+      paneFlex: (st.showPerm && st.showOwner) ? "2.4" : (st.showPerm || st.showOwner) ? "2" : "1.35",
+      showPerm: st.showPerm,
+      showOwner: st.showOwner,
+      showColMenu: !!st.colMenu,
+      colX: st.colMenu ? st.colMenu.x + "px" : "0px",
+      colY: st.colMenu ? st.colMenu.y + "px" : "0px",
+      closeColMenu: (e) => { if (e && e.preventDefault) e.preventDefault(); this.set({ colMenu: null }); },
+      openColMenu: (e) => this.openMenuAt(e, "colMenu"),
+      colOptions: [
+        { label: "이름", on: true, fixed: true },
+        { label: "크기", on: true, fixed: true },
+        { label: "종류", on: true, fixed: true },
+        { label: "수정한 날짜", on: true, fixed: true },
+        { label: "권한", on: st.showPerm, key: "showPerm" },
+        { label: "소유자", on: st.showOwner, key: "showOwner" },
+      ].map((c) => ({
+        label: c.label,
+        check: c.on ? "✓" : "",
+        fg: c.fixed ? "#6A6A6A" : "#E8E8E8",
+        cursor: c.fixed ? "default" : "pointer",
+        toggle: c.fixed ? () => {} : () => this.set({ [c.key]: !this.state[c.key] }),
+      })),
+      siteMenuList: sites.filter((x) => !st.removed.includes(x.name)).map((x) => ({
+        name: x.name,
+        proto: x.proto,
+        dot: st.conns.some((c) => c.name === x.name && c.phase === "ok") ? "#4ADE80" : "#6A6A6A",
+      })),
+      openSiteTab: (name) => this.connect(name),
+      workspaces: wsList.map((w, i) => ({
+        name: w.name,
+        path: w.path,
+        paneCount: i === wsIdx ? activePairs.length + wsConns.length : w.pairs.length + st.conns.filter((c) => (c.ws || 0) === i).length,
+        bg: i === wsIdx ? "#2E2E2E" : "#232323",
+        hoverBg: i === wsIdx ? "#2E2E2E" : "#282828",
+        edge: i === wsIdx ? "#4A9EFF" : "transparent",
+        select: () => this.set({ ws: i }),
+      })),
+      wsPairs: activePairs.map((p) => ({
+        ...p,
+        localTabs: tabs(p.localTab),
+        remoteTabs: tabs(p.remoteTab),
+      })),
+      connIdle: wsConns.length === 0,
+      connPanes: wsConns.map((c) => {
+        const pane = this.paneOf(c.name);
+        const at = Math.min(pane.at, pane.list.length - 1);
+        const act = pane.list[at] || { site: c.name, phase: "ok" };
+        const sd = siteOf(act.site || c.name);
+        const home = siteOf(c.name);
+        const tone = (ph) => ph === "connecting"
+          ? { dot: "#E8B34D", bg: "#241F14", edge: "#6B562F", fg: "#E8B34D" }
+          : ph === "new"
+            ? { dot: "#6A6A6A", bg: "#242424", edge: "#3A3A3A", fg: "#8A8A8A" }
+            : { dot: "#4ADE80", bg: "#16241C", edge: "#2F6B4F", fg: "#7FD6A2" };
+        return {
+        name: c.name,
+        ok: c.phase === "ok",
+        connecting: c.phase === "connecting",
+        error: c.phase === "error",
+        tabs: pane.list.map((t, i) => {
+          const s = t.site ? siteOf(t.site) : null;
+          const tn = tone(t.phase);
+          return {
+            title: t.site || "\uc0c8 \uc5f0\uacb0",
+            badge: t.phase === "new" ? "\uc5f0\uacb0 \uc5c6\uc74c" : t.phase === "connecting" ? "\uc5f0\uacb0 \uc911\u2026" : s.proto,
+            badgeBg: tn.bg, badgeEdge: tn.edge, badgeFg: tn.fg, dot: tn.dot,
+            bg: i === at ? "#2A2A2A" : "transparent",
+            hoverBg: i === at ? "#2A2A2A" : "#252525",
+            fg: i === at ? "#E8E8E8" : "#9A9A9A",
+            iconOpacity: t.phase === "ok" ? "1" : "0.45",
+            pick: () => this.pickPaneTab(c.name, i),
+            close: (e) => { e.stopPropagation(); this.closePaneTab(c.name, i); },
+          };
+        }),
+        addTab: () => this.addPaneTab(c.name, act.site || c.name, "ok"),
+        addBlankTab: () => this.addPaneTab(c.name, null, "new"),
+        openTabMenu: () => this.set({ tabMenu: st.tabMenu === c.name ? "" : c.name }),
+        closeTabMenu: () => this.set({ tabMenu: "" }),
+        menuOpen: st.tabMenu === c.name,
+        menuBg: st.tabMenu === c.name ? "#383838" : "transparent",
+        menuX: "8px",
+        menuSites: sites.filter((x) => !st.removed.includes(x.name)).map((x) => ({
+          name: x.name,
+          proto: x.proto,
+          dot: x.name === act.site ? "#4ADE80" : "#6A6A6A",
+          open: () => this.addPaneTab(c.name, x.name, "connecting"),
+        })),
+        tabOk: act.phase === "ok",
+        tabConnecting: act.phase === "connecting",
+        tabNew: act.phase === "new",
+        badge: act.phase === "new" ? "\uc5f0\uacb0 \uc5c6\uc74c" : sd.proto + " \u00b7 " + (act.site || c.name),
+        path: act.phase === "new" ? "sftp://" : sd.path,
+        pathColor: act.phase === "new" ? "#6A6A6A" : "#E8E8E8",
+        rows: mkRows(sd.raw),
+        count: act.phase === "ok" ? countOf(sd.raw) : "\u2014",
+        localPath: home.localPath,
+        localRows: home.localRows,
+        localStatus: home.localStatus,
+        localTabs: tabs(home.localTab),
+        close: () => this.disconnect(c.name),
+        cancel: () => this.disconnect(c.name),
+        retry: () => this.connect(c.name),
+        };
+      }),
+      addAndRegister: () => this.addSite(false),
+      addAndConnect: () => this.addSite(true),
+      showToast: !!st.toast,
+      toastText: st.toast,
+      showCtxMenu: !!st.ctx,
+      ctxName: st.ctx ? st.ctx.name : "",
+      ctxX: st.ctx ? st.ctx.x + "px" : "0px",
+      ctxY: st.ctx ? st.ctx.y + "px" : "0px",
+      closeCtx: (e) => { if (e && e.preventDefault) e.preventDefault(); this.set({ ctx: null }); },
+      deleteSite: () => this.setState((s) => ({
+        removed: s.ctx ? s.removed.concat(s.ctx.name) : s.removed,
+        ctx: null,
+        selectedSite: 0,
+      })),
+      toggleMenu: () => this.set({ menuOpen: !st.menuOpen }),
+      closeMenu: () => this.set({ menuOpen: false }),
+      openManager: () => this.set({ menuOpen: false, managerOpen: true }),
+      closeManager: () => this.set({ managerOpen: false }),
+      toggleQueue: () => this.set({ panel: st.panel === "queue" ? "" : "queue" }),
+      toggleLog: () => this.set({ panel: st.panel === "log" ? "" : "log" }),
+      showQueueTab: () => this.set({ panel: "queue" }),
+      showLogTab: () => this.set({ panel: "log" }),
+      closePanel: () => this.set({ panel: "" }),
+      dialogFields: [
+        { label: "프로토콜(T):", value: "FTP - 파일 전송 프로토콜", caret: "▾" },
+        { label: "호스트(H):", value: "211.60.125.26", caret: "", hasPort: true, port: "21" },
+        { label: "암호화(E):", value: "TLS를 통한 명시적 FTP가 가능한 경우 사용", caret: "▾" },
+        { label: "로그온 유형(L):", value: "일반", caret: "▾" },
+        { label: "사용자(U):", value: "lg", caret: "" },
+        { label: "비밀번호(W):", value: "●●●●●●●●●●", caret: "" },
+      ],
+      panelTabs: [
+        { title: "전송 큐 (" + queueAll.length + ")", key: "all" },
+        { title: "서버 로그", key: "log" },
+        { title: "성공 (" + doneCount + ")", key: "done" },
+        { title: "실패 (" + errCount + ")", key: "err" },
+      ].map((t) => {
+        const on = t.key === "log" ? isLog : !isLog && qf === t.key;
+        return {
+        title: t.title,
+        fg: on ? (t.key === "err" ? "#FF8A8A" : t.key === "done" ? "#7FD6A2" : "#E8E8E8") : "#9A9A9A",
+        bg: on ? "#1E1E1E" : "transparent",
+        pick: () => this.set(t.key === "log" ? { panel: "log" } : { panel: "queue", queueFilter: t.key }),
+        };
+      }).map((t) => ({
+        ...t,
+      })),
+      queueCaret: isQueue || isLog ? "▼" : "▲",
+      logCaret: isLog ? "▼" : "▲",
+      queueSummary: "5건 대기 · 12.4 MB/s · 00:41 남음",
+      overallPct: "62%",
+      overallColor: "#4A9EFF",
+      currentTransfer: "↑ app.bundle.js — 62%",
+      hasFailures: true,
+      failCount: 1,
+      connColor: "#7FD6A2",
+      connLabel: "sftp web-prod 연결됨 · TLS",
+      remoteBadge: "sftp · web-prod",
+      localRows, remoteRows, localRows2, remoteRows2,
+      localTabs: tabs("dist"),
+      remoteTabs: tabs("html"),
+      localTabs2: tabs("src"),
+      remoteTabs2: tabs("nginx"),
+      formFields: [
+        { label: "프로토콜", value: "SFTP — SSH File Transfer Protocol" },
+        { label: "호스트", value: "web-prod.example.com" },
+        { label: "포트", value: "22" },
+        { label: "로그온 유형", value: "키 파일" },
+        { label: "사용자", value: "deploy" },
+        { label: "키 파일", value: "C:\\Users\\jongc\\.ssh\\id_ed25519" },
+        { label: "기본 원격 경로", value: "/var/www/html" },
+        { label: "기본 로컬 경로", value: "D:\\work\\web-prod\\dist" },
+      ],
+    };
+  }
+}
+
+</script>
+</body>
+</html>
