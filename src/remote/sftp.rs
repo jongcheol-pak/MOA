@@ -131,26 +131,20 @@ impl RemoteSession for SftpSession {
     }
 
     fn pwd(&mut self) -> RemoteResult<RemotePath> {
-        // SFTP에는 작업 디렉터리가 없다 — `.`의 실제 경로가 서버가 정한 홈이다
-        let home = self
-            .sftp()?
-            .realpath(Path::new("."))
-            .map_err(|e| classify(e, "홈 확인", None))?;
-        Ok(RemotePath::new(&home.to_string_lossy()))
+        let sftp = self.sftp()?;
+        // SFTP에는 작업 디렉터리가 없다 — `.`의 실제 경로가 서버가 정한 홈이다.
+        // `realpath`도 아래 `list`와 같은 경로 변환을 거치므로 같은 방어막이 필요하다
+        guard_path_panic("서버의 시작 폴더 이름", || {
+            let home = sftp
+                .realpath(Path::new("."))
+                .map_err(|e| classify(e, "홈 확인", None))?;
+            Ok(RemotePath::new(&home.to_string_lossy()))
+        })
     }
 
     fn list(&mut self, path: &RemotePath) -> RemoteResult<Vec<RemoteEntry>> {
         let sftp = self.sftp()?;
-        // 라이브러리가 **UTF-8이 아닌 파일명에서 패닉한다**(`ssh2`의 내부 경로 변환). 워커 스레드가
-        // 통째로 죽으면 그 연결이 사라지므로 여기서 막아 오류로 돌린다. 서버 문자셋 지원은 T16(D23)
-        std::panic::catch_unwind(AssertUnwindSafe(|| read_directory(sftp, path))).unwrap_or_else(
-            |_| {
-                Err(RemoteError::Protocol {
-                    detail: "이 폴더의 파일 이름을 읽지 못했습니다 (서버가 UTF-8이 아닌 이름을 쓰는 것 같습니다)"
-                        .to_owned(),
-                })
-            },
-        )
+        guard_path_panic("이 폴더의 파일 이름", || read_directory(sftp, path))
     }
 
     fn cwd(&mut self, path: &RemotePath) -> RemoteResult<()> {
@@ -350,6 +344,22 @@ fn resolve_host_key<'prompt>(
             detail: rejected_detail,
         }),
     }
+}
+
+/// 서버가 준 이름을 경로로 옮기는 라이브러리 호출을 감싼다.
+///
+/// `ssh2`는 Windows에서 경로 바이트를 `str::from_utf8(..).unwrap()`으로 옮기므로 **UTF-8이 아닌
+/// 이름을 만나면 패닉한다** — 목록(`readdir`)·링크 대상(`readlink`)·홈 경로(`realpath`)가 모두
+/// 그 변환을 지난다. 워커 스레드가 통째로 죽으면 그 연결이 사라지므로 오류로 바꿔 돌린다.
+/// 서버 문자셋 지원 자체는 T16(D23) 몫이다.
+fn guard_path_panic<T>(subject: &str, call: impl FnOnce() -> RemoteResult<T>) -> RemoteResult<T> {
+    std::panic::catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
+        Err(RemoteError::Protocol {
+            detail: format!(
+                "{subject}을(를) 읽지 못했습니다 (서버가 UTF-8이 아닌 이름을 쓰는 것 같습니다)"
+            ),
+        })
+    })
 }
 
 /// 목록 조회 본체 — `list`가 패닉 방어막을 두르고 부른다

@@ -366,7 +366,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [x] T0 rustfmt 드리프트 선행 정리 [B]
 - [x] T1 원격 도메인 타입 + 세션 트레이트 [D]
 - [x] T2 FTP/FTPS 세션 구현 [D]
-- [ ] T3 SFTP 세션 구현 + 호스트 키 저장소 [D]
+- [x] T3 SFTP 세션 구현 + 호스트 키 저장소 [D]
 - [ ] T4 연결 워커 · 연결 관리자 [D]
 - [ ] T5 서버 로그 버퍼 [C]
 - [ ] T6 자격증명 DPAPI 보관 + 사이트 저장소 [D]
@@ -429,9 +429,11 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T3. SFTP 세션 구현 + 호스트 키 저장소 [Type D]
 
-- **Files**: `src/remote/sftp.rs`(신규), `src/remote/hostkey.rs`(신규), `src/remote/mod.rs`
+- **Files**: `src/remote/sftp.rs`(신규), `src/remote/hostkey.rs`(신규), `src/remote/mod.rs`, `src/remote/ftp.rs`(구현 중 편입 — 아래 ①)
 - **Design**:
   - **배치**: `remote::sftp`(세션) + `remote::hostkey`(알려진 호스트 저장소). **확인 대화 UI는 T10**이 만든다 — 여기서는 판정 결과와 결정 채널만 정의한다
+  - **구현 중 확정 (원안 대비 4건 — 리뷰가 전부 "허용·정확"으로 판정)**: ① **전송 복사 루프를 `remote::mod.rs`로 올렸다** — T2가 `ftp.rs`에 둔 `pump`/`Pumped`/`TRANSFER_BUFFER`를 SFTP도 그대로 쓰는데, 사본이 둘이면 한쪽만 고쳐졌을 때 NFR-12가 조용히 깨진다. 순수 이동(단위 테스트 3건 포함)이라 `ftp.rs`가 Files에 편입됐다. ② **`..`를 우리가 되돌려 놓는다** — `ssh2::Sftp::readdir`는 `.`과 `..`를 **둘 다** 걸러 내므로(크레이트 소스 확인), 루트가 아닐 때 상위 항목을 다시 넣는다. 관측 결과는 plan대로 "`.` 없음 + `..` 하나"이고 FTP(T2)와도 같다. ③ **라이브러리가 이어 붙인 경로를 쓰지 않는다** — `readdir`가 `PathBuf::join`으로 잇는데 Windows에서 이음매가 `\`가 되어 원격 경로가 손상된다(D9의 함정). 마지막 이름만 떼어 쓰고 경로는 `RemotePath`로 조립한다. ④ **`list()`에 패닉 방어막(`catch_unwind`)** — `ssh2`의 Windows 경로 변환이 `str::from_utf8(..).unwrap()`이라 **UTF-8이 아닌 파일명에서 패닉한다**. 워커 스레드가 죽으면 그 연결이 통째로 사라지므로 오류로 바꿔 돌린다(서버 문자셋 지원 자체는 T16·D23).
+  - **`cwd`의 의미**: SFTP에는 작업 디렉터리를 옮기는 명령이 없다 — 갈 수 있는 폴더인지 `stat`으로 확인만 한다.
   - **신규 심볼**: `SftpSession` — `ssh2::Session` + `ssh2::Sftp` 보유 / `KnownHosts` — 호스트·포트 → SHA256 지문 표(`%APPDATA%\FileExplorer\known_hosts.json`), `check()` → `Match`/`Unknown{fingerprint}`/`Changed{old,new}` / `HostKeyDecision{Accept,Reject}` — T10의 대화가 돌려주는 값
   - **의존 방향**: `ssh2` → `remote::sftp` → `remote::{types,hostkey}`
   - **비추상화 선언**: 인증 방식을 트레이트로 열지 않는다 — v1은 비밀번호뿐(Out of Scope)
@@ -776,9 +778,15 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
   - **리뷰 지적(M1) 반영**: plan Edge Case "PASV 응답이 사설 IP → 제어 연결 호스트를 쓴다"가 구현에 없었다. `passive_stream_builder` + 순수 함수 `passive_target`으로 조건부 치환을 넣고 IPv4·IPv6 경계를 테스트로 고정했다(재리뷰 OK).
   - **커밋 hook 오탐 확인**: `check-secrets`가 "password 값"·"IP 주소"를 경고했으나, 앞은 `password: &str` 파라미터명·환경변수에서 읽는 테스트 URL 파서이고 뒤는 RFC 5737 문서용(203.0.113.x·198.51.100.x)·RFC 1918 사설 대역 상수다. 실제 자격증명·인프라 주소는 없다(두 리뷰어가 독립 확인).
 
+- T3 완료: `remote::sftp`(SFTP 세션) + `remote::hostkey`(TOFU 지문 저장소) 신설. 신규 단위 테스트 21개(286→307).
+  - **결정**: 지문 확인을 **주입받은 통로**(`HostKeyPrompt`)로 처리한다 — `remote`가 `ui`를 모르는 채로 사용자에게 물으려면 이 방향뿐이고(D6과 같은 기법), **통로가 없으면 거절**이라 자동 수락 경로가 코드에 존재하지 않는다(D15). 판정(`resolve_host_key`)과 파일 저장을 나눠 판정만 단위 테스트로 고정했다 — 저장까지 묶으면 테스트가 사용자 폴더를 건드린다.
+  - **결정**: 지문 표기는 `SHA256:` + 패딩 없는 base64(`ssh-keygen -lf`와 같은 표기). 사용자가 서버에서 뽑은 값과 눈으로 대조해야 하므로 표기가 다르면 대조 자체가 안 된다. 이것 하나 때문에 base64 패키지를 들이지 않고 15줄로 직접 넣었다(RFC 4648 시험값으로 고정).
+  - **관측(라이브러리 함정 3건, 크레이트 소스로 확인)**: `Sftp::readdir`가 `.`·`..`를 둘 다 걸러 냄 / 항목 경로를 `PathBuf::join`으로 이어 Windows에서 `\`가 섞임(D9 함정) / Windows 경로 변환이 `from_utf8().unwrap()`이라 **비UTF-8 파일명에서 패닉**. 앞의 둘은 우리가 이름만 떼어 쓰고 경로를 직접 조립해 피했고, 셋째는 `catch_unwind`로 막아 연결이 죽지 않게 했다.
+  - **커밋 hook 오탐 확인**: `check-secrets`의 "password 값" 경고는 `password: &str` 파라미터명과 환경변수에서 읽는 테스트 URL 파서다.
+
 ## Phase Ledger
 
-- T0~T2 완료. 남은 것: T3~T26 + Phase F + Phase G(PRD 연결 plan).
+- T0~T3 완료. 남은 것: T4~T26 + Phase F + Phase G(PRD 연결 plan).
 
 ## Retry Ledger
 
