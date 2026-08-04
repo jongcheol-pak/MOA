@@ -156,7 +156,10 @@ pub enum ConnEvent {
         path: RemotePath,
         entries: Vec<RemoteEntry>,
     },
-    /// 서버와 주고받은 줄 — `Connection`이 자기 로그 버퍼에 쌓고 화면(T20)이 읽는다
+    /// 서버와 주고받은 줄 — `Connection`이 자기 로그 버퍼에 쌓고 화면(T20)이 읽는다.
+    ///
+    /// **이 변형은 `log_event`로만 만든다** — 거기서 비밀번호를 가리기 때문이다(D14).
+    /// 직접 만들면 평문이 채널을 타고 나간다(열거형 필드에는 가시성을 걸 수 없어 규약으로 지킨다)
     Log {
         kind: LogKind,
         text: String,

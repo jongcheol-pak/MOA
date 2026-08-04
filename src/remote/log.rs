@@ -118,7 +118,7 @@ impl LogBuffer {
 /// (`sftp://사용자:비밀번호@호스트`). 둘 다 그대로 남으면 로그를 내보내는 순간 새어 나간다.
 ///
 /// **여러 번 걸어도 결과가 같다** — 이벤트를 만들 때와 버퍼에 쌓을 때 두 번 지나기 때문이다.
-pub fn mask_secrets(text: &str) -> String {
+pub(crate) fn mask_secrets(text: &str) -> String {
     const MASK: &str = "******";
     let trimmed = text.trim_start();
     // 바이트로 견준다 — 한글이 섞인 줄에서 4바이트 자리가 글자 경계가 아닐 수 있다
@@ -141,31 +141,35 @@ pub fn mask_secrets(text: &str) -> String {
 /// **`@`는 뒤에서부터 찾는다.** 비밀번호에 `@`가 들어 있는 일이 흔한데(`p@ss`), 앞에서부터
 /// 찾으면 그 `@`를 호스트 구분자로 오인해 비밀번호 뒷부분이 평문으로 남는다.
 /// 찾는 범위는 호스트 부분(첫 `/` 또는 공백 앞)까지다 — 뒤쪽 경로의 `@`에 끌려가지 않는다.
+///
+/// 한 줄에 주소가 여럿이면 **전부** 가린다 — 하나만 가리고 나머지를 흘려보내면 그것으로 샌다.
 fn mask_url_credentials(text: &str, mask: &str) -> String {
-    let Some(scheme_end) = text.find("://") else {
-        return text.to_owned();
-    };
-    let after_scheme = scheme_end + 3;
-    let rest = &text[after_scheme..];
-    let authority_end = rest
-        .find(|c: char| c == '/' || c.is_whitespace())
-        .unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(scheme_end) = rest.find("://") {
+        let after_scheme = scheme_end + 3;
+        out.push_str(&rest[..after_scheme]);
+        rest = &rest[after_scheme..];
 
-    let Some(at) = authority.rfind('@') else {
-        return text.to_owned();
-    };
-    let credentials = &authority[..at];
-    let Some(colon) = credentials.find(':') else {
-        return text.to_owned();
-    };
-    format!(
-        "{}{}:{}{}",
-        &text[..after_scheme],
-        &credentials[..colon],
-        mask,
-        &text[after_scheme + at..]
-    )
+        let authority_end = rest
+            .find(|c: char| c == '/' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        let authority = &rest[..authority_end];
+        let Some(at) = authority.rfind('@') else {
+            continue;
+        };
+        let credentials = &authority[..at];
+        let Some(colon) = credentials.find(':') else {
+            continue;
+        };
+        out.push_str(&credentials[..colon]);
+        out.push(':');
+        out.push_str(mask);
+        // 가린 자리 다음(`@`)부터 이어 본다
+        rest = &rest[at..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 지금 시각을 로컬 `HH:MM:SS`로. 변환에 실패하면 빈 문자열이다
@@ -287,6 +291,18 @@ mod tests {
         assert!(
             text.contains("ftp://user:******@host/경로/파일@이름.txt"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn 한_줄에_주소가_여럿이면_전부_가린다() {
+        // 하나만 가리고 나머지를 흘려보내면 그것으로 샌다
+        let masked = mask_secrets("sftp://a:비밀1@host1 에서 sftp://b:비밀2@host2 로 옮깁니다");
+        assert!(!masked.contains("비밀1"), "{masked}");
+        assert!(!masked.contains("비밀2"), "{masked}");
+        assert_eq!(
+            masked,
+            "sftp://a:******@host1 에서 sftp://b:******@host2 로 옮깁니다"
         );
     }
 
