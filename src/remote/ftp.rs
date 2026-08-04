@@ -8,6 +8,7 @@
 //! `AUTH TLS` 승격에 성공해야 암호화로 바뀐다 — 즉 한 타입이 두 상태를 이미 담는다. 열거형을 덧대면
 //! 15개 남짓한 메서드마다 같은 갈래를 다시 적을 뿐 동작이 달라지지 않아 두지 않았다.
 use std::io::{Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::time::UNIX_EPOCH;
 
 use suppaftp::list::{File as ListFile, ListParser, PosixPexQuery};
@@ -128,6 +129,17 @@ impl RemoteSession for FtpSession {
                     Err(err) => return Err(classify(err, "TLS 승격", None)),
                 }
             }
+        };
+
+        // 제어 연결의 상대 주소를 알아 두면 수동형 데이터 주소가 사설로 왔을 때 갈아끼울 수 있다.
+        // 주소를 얻지 못하면 서버가 알려 준 주소를 그대로 쓴다(라이브러리 기본 동작)
+        let control_ip = stream.get_ref().peer_addr().ok().map(|addr| addr.ip());
+        let stream = match control_ip {
+            Some(control) => stream.passive_stream_builder(move |advertised| {
+                TcpStream::connect(passive_target(advertised, control))
+                    .map_err(FtpError::ConnectionError)
+            }),
+            None => stream,
         };
 
         self.stream = Some(stream);
@@ -322,6 +334,33 @@ fn effective_encryption(site: &SiteRecord) -> Encryption {
     match (site.protocol, site.encryption) {
         (Protocol::Ftps, Encryption::Plain) => Encryption::ExplicitRequired,
         (_, encryption) => encryption,
+    }
+}
+
+/// 수동형 데이터 연결을 실제로 걸 주소.
+///
+/// NAT 뒤의 서버는 PASV 응답에 자기 **사설** 주소를 적어 보내는 일이 흔하다 — 그대로 접속하면
+/// 우리 쪽 사설망의 엉뚱한 기계로 가거나 아무 데도 닿지 못한다. 제어 연결이 공인 주소로 서
+/// 있는데 데이터 주소만 사설이면, **포트만 살리고 호스트는 제어 연결 쪽을 쓴다.**
+///
+/// 반대로 제어 연결 자체가 사설(사내망 서버)이면 사설 데이터 주소가 정상이므로 손대지 않는다.
+fn passive_target(advertised: SocketAddr, control: IpAddr) -> SocketAddr {
+    if is_site_local(advertised.ip()) && !is_site_local(control) {
+        SocketAddr::new(control, advertised.port())
+    } else {
+        advertised
+    }
+}
+
+/// 인터넷 밖으로 나갈 수 없는 주소인가
+fn is_site_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+        // 고유 로컬(fc00::/7)과 링크 로컬(fe80::/10)이 IPv4의 사설 대역에 해당한다
+        IpAddr::V6(v6) => {
+            let head = v6.segments()[0];
+            v6.is_loopback() || (head & 0xfe00) == 0xfc00 || (head & 0xffc0) == 0xfe80
+        }
     }
 }
 
@@ -843,6 +882,33 @@ mod tests {
             effective_encryption(&site(Protocol::Ftp, Encryption::ExplicitIfAvailable)),
             Encryption::ExplicitIfAvailable
         );
+    }
+
+    #[test]
+    fn 사설_주소로_온_수동형_응답은_제어_연결_호스트로_바뀐다() {
+        let control: IpAddr = "203.0.113.7".parse().expect("공인 주소");
+        // NAT 뒤 서버가 자기 사설 주소를 적어 보냈다 — 포트만 살리고 호스트를 갈아끼운다
+        let advertised: SocketAddr = "192.168.0.5:50123".parse().expect("사설 주소");
+        assert_eq!(
+            passive_target(advertised, control),
+            "203.0.113.7:50123".parse::<SocketAddr>().expect("결과")
+        );
+
+        // 서버가 제대로 공인 주소를 줬으면 손대지 않는다
+        let public: SocketAddr = "198.51.100.9:50124".parse().expect("공인 주소");
+        assert_eq!(passive_target(public, control), public);
+    }
+
+    #[test]
+    fn 사내망_서버의_사설_응답은_그대로_쓴다() {
+        // 제어 연결부터 사설이면 사설 데이터 주소가 정상이다
+        let control: IpAddr = "10.0.0.2".parse().expect("사설 주소");
+        let advertised: SocketAddr = "10.0.0.2:50125".parse().expect("사설 주소");
+        assert_eq!(passive_target(advertised, control), advertised);
+
+        let loopback: IpAddr = "127.0.0.1".parse().expect("루프백");
+        let local: SocketAddr = "127.0.0.1:50126".parse().expect("루프백");
+        assert_eq!(passive_target(local, loopback), local);
     }
 
     fn response_error(code: u32, body: &str) -> FtpError {
