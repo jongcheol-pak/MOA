@@ -16,7 +16,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crate::remote::log::{LogBuffer, LogKind};
+use crate::remote::log::{LogBuffer, LogKind, mask_secrets};
 use crate::remote::types::{
     Progress, RemoteEntry, RemoteError, RemotePath, RemoteResult, RemoteSession, SiteId, SiteRecord,
 };
@@ -337,7 +337,7 @@ impl Worker {
     }
 
     fn log(&self, kind: LogKind, text: String) -> bool {
-        self.emit(ConnEvent::Log { kind, text })
+        self.emit(log_event(kind, text))
     }
 }
 
@@ -468,6 +468,17 @@ fn connect_with_retry(worker: &mut Worker) -> bool {
             return false;
         }
         attempt += 1;
+    }
+}
+
+/// 로그 이벤트를 만든다 — **비밀번호는 여기서 가려진다** (D14).
+///
+/// 버퍼에 쌓을 때만 가리면, 이벤트를 버퍼 대신 직접 소비하는 쪽(화면·상위 계층)에는
+/// 평문이 그대로 흘러간다. 채널에 실리기 전에 한 번 가려 그 경로를 막는다.
+fn log_event(kind: LogKind, text: String) -> ConnEvent {
+    ConnEvent::Log {
+        kind,
+        text: mask_secrets(&text),
     }
 }
 
@@ -655,6 +666,25 @@ mod tests {
             }
         }
         events
+    }
+
+    #[test]
+    fn 로그_이벤트는_채널에_실리기_전에_가려진다() {
+        // 버퍼에 쌓을 때만 가리면, 이벤트를 직접 소비하는 쪽에 평문이 흘러간다 (D14)
+        let ConnEvent::Log { text, .. } =
+            log_event(LogKind::Command, "PASS 진짜비밀번호".to_owned())
+        else {
+            panic!("로그 이벤트가 아니다");
+        };
+        assert_eq!(text, "PASS ******");
+
+        let ConnEvent::Log { text, .. } = log_event(
+            LogKind::Status,
+            "sftp://deploy:p@ss@example.test:22 에 연결".to_owned(),
+        ) else {
+            panic!("로그 이벤트가 아니다");
+        };
+        assert!(!text.contains("p@ss"), "비밀번호가 남았다: {text}");
     }
 
     #[test]

@@ -6,7 +6,11 @@
 //! 는다. 2000줄이면 평균 100바이트로 잡아 연결당 약 200KB다.
 //!
 //! **비밀번호는 어느 줄에도 남지 않는다**(D14): 로그는 `⧉` 버튼으로 파일·클립보드에 그대로
-//! 나갈 수 있어, 한 번 들어가면 회수할 방법이 없다.
+//! 나갈 수 있어, 한 번 들어가면 회수할 방법이 없다. 그래서 가리기(`mask_secrets`)는
+//! **버퍼에 쌓을 때와 이벤트를 만들 때 양쪽**에서 한다 — 버퍼만 지키면 이벤트를 직접 쓰는 쪽
+//! (연결 이벤트를 그대로 소비하는 화면)에 평문이 새어 나간다.
+//!
+//! 레벨 필터·검색은 두지 않는다 — 디자인에 그 진입점이 없다(plan T5 비추상화 선언).
 use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,7 +62,8 @@ impl LogBuffer {
 
     /// 한 줄 쌓는다. 상한을 넘으면 **가장 오래된 것부터** 밀린다.
     ///
-    /// 비밀번호가 섞인 줄은 여기서 가려진다 — 쌓는 길목이 하나뿐이라 이 한 곳만 지키면 된다
+    /// 비밀번호가 섞인 줄은 여기서도 가려진다 — 이벤트를 만들 때 이미 한 번 가리지만,
+    /// 버퍼에 직접 쌓는 다른 길이 생겨도 새지 않도록 이 문턱을 함께 둔다
     pub fn push(&mut self, kind: LogKind, text: impl Into<String>) {
         self.push_line(LogLine {
             time: local_hms(SystemTime::now()),
@@ -111,7 +116,9 @@ impl LogBuffer {
 ///
 /// 두 가지를 본다 — FTP의 `PASS <비밀번호>` 명령과, 주소에 자격증명이 붙은 형태
 /// (`sftp://사용자:비밀번호@호스트`). 둘 다 그대로 남으면 로그를 내보내는 순간 새어 나간다.
-fn mask_secrets(text: &str) -> String {
+///
+/// **여러 번 걸어도 결과가 같다** — 이벤트를 만들 때와 버퍼에 쌓을 때 두 번 지나기 때문이다.
+pub fn mask_secrets(text: &str) -> String {
     const MASK: &str = "******";
     let trimmed = text.trim_start();
     // 바이트로 견준다 — 한글이 섞인 줄에서 4바이트 자리가 글자 경계가 아닐 수 있다
@@ -129,17 +136,26 @@ fn mask_secrets(text: &str) -> String {
     mask_url_credentials(text, MASK)
 }
 
-/// `스킴://사용자:비밀번호@호스트`에서 비밀번호 자리만 가린다
+/// `스킴://사용자:비밀번호@호스트`에서 비밀번호 자리만 가린다.
+///
+/// **`@`는 뒤에서부터 찾는다.** 비밀번호에 `@`가 들어 있는 일이 흔한데(`p@ss`), 앞에서부터
+/// 찾으면 그 `@`를 호스트 구분자로 오인해 비밀번호 뒷부분이 평문으로 남는다.
+/// 찾는 범위는 호스트 부분(첫 `/` 또는 공백 앞)까지다 — 뒤쪽 경로의 `@`에 끌려가지 않는다.
 fn mask_url_credentials(text: &str, mask: &str) -> String {
     let Some(scheme_end) = text.find("://") else {
         return text.to_owned();
     };
     let after_scheme = scheme_end + 3;
-    // 자격증명은 `@` 앞까지다. 뒤쪽 경로에 `@`가 있어도 앞의 것이 먼저 잡힌다
-    let Some(at) = text[after_scheme..].find('@') else {
+    let rest = &text[after_scheme..];
+    let authority_end = rest
+        .find(|c: char| c == '/' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+
+    let Some(at) = authority.rfind('@') else {
         return text.to_owned();
     };
-    let credentials = &text[after_scheme..after_scheme + at];
+    let credentials = &authority[..at];
     let Some(colon) = credentials.find(':') else {
         return text.to_owned();
     };
@@ -252,6 +268,35 @@ mod tests {
         // 비밀번호 자리가 없는 주소는 그대로다
         assert!(text.contains("sftp://deploy@example.test:22"));
         assert!(!text.contains("******"));
+    }
+
+    #[test]
+    fn 비밀번호에_골뱅이가_들어_있어도_전부_가려진다() {
+        // `@`를 앞에서부터 찾으면 `p@ss`의 뒷부분이 평문으로 남는다
+        let mut buffer = LogBuffer::new();
+        buffer.push(
+            LogKind::Status,
+            "sftp://deploy:p@ss@example.test:22 에 연결",
+        );
+        buffer.push(LogKind::Status, "ftp://user:a@b@c@host/경로/파일@이름.txt");
+
+        let text = buffer.to_text();
+        assert!(!text.contains("p@ss"), "비밀번호가 남았다: {text}");
+        assert!(text.contains("sftp://deploy:******@example.test:22"));
+        // 경로에 있는 `@`는 자격증명이 아니다 — 호스트 부분에서만 찾는다
+        assert!(
+            text.contains("ftp://user:******@host/경로/파일@이름.txt"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn 가리기는_여러_번_걸어도_결과가_같다() {
+        // 이벤트를 만들 때와 버퍼에 쌓을 때 두 번 지난다
+        let once = mask_secrets("PASS 비밀");
+        assert_eq!(mask_secrets(&once), once);
+        let url = mask_secrets("sftp://deploy:p@ss@example.test:22");
+        assert_eq!(mask_secrets(&url), url);
     }
 
     #[test]
