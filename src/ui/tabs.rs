@@ -5,12 +5,11 @@
 //! 탭 하나는 **한 덩어리 위젯**이다 — 제목과 닫기 버튼을 각각 `Button`으로 두면
 //! 저마다 프레임·여백을 그려 두 개의 사각형으로 보인다(Windows 11 탐색기는 한 탭 안에
 //! 아이콘·제목·닫기가 들어 있다). 그래서 영역만 잡고 내용은 직접 그린다.
-use crate::panel::tabs::{TabsModel, tab_title};
+use crate::panel::tabs::{TabSource, TabsModel};
 use crate::ui::menu::{self, Command, PanelMenuState};
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
-use std::path::Path;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
 /// 탭·버튼의 높이 — 스트립 한 줄의 기준
@@ -103,11 +102,13 @@ fn show_tabs(ui: &mut egui::Ui, model: &TabsModel, action: &mut Option<TabAction
             // 탭끼리 붙어야 한 줄로 이어져 보인다 — 사이를 벌리면 다시 낱개 버튼처럼 보인다
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.horizontal(|ui| {
-                let paths = model.paths();
+                let sources = model.sources();
                 let active_index = model.active_index();
-                for (index, path) in paths.iter().enumerate() {
+                for (index, source) in sources.iter().enumerate() {
                     let active = index == active_index;
-                    let hit = show_tab(ui, index, &tab_title(path), path, active);
+                    // 사이트 이름은 아직 여기까지 오지 않는다 — 원격 탭의 이름·배지는 T10이 붙인다
+                    let title = source.title(None);
+                    let hit = show_tab(ui, index, &title, source, active);
                     if hit.close {
                         *action = Some(TabAction::Close(index));
                     } else if hit.switch {
@@ -116,7 +117,7 @@ fn show_tabs(ui: &mut egui::Ui, model: &TabsModel, action: &mut Option<TabAction
                     // 구분선은 **양옆이 모두 비활성일 때만** 그린다 —
                     // 활성 탭은 배경 자체가 경계 역할을 해서 선까지 그으면 지저분해진다
                     let next = index + 1;
-                    if next < paths.len() && !active && next != active_index {
+                    if next < sources.len() && !active && next != active_index {
                         draw_separator(ui.painter(), hit.rect);
                     }
                 }
@@ -139,7 +140,13 @@ fn show_tabs(ui: &mut egui::Ui, model: &TabsModel, action: &mut Option<TabAction
 ///
 /// 내부 요소는 위젯이 아니라 painter로 그린다. `icon_button` 같은 위젯을 쓰면
 /// 자기 자리를 새로 잡아 탭 밖에 배치되고, 그 자리에서 탭 클릭도 삼켜진다
-fn show_tab(ui: &mut egui::Ui, index: usize, title: &str, path: &Path, active: bool) -> TabHit {
+fn show_tab(
+    ui: &mut egui::Ui,
+    index: usize,
+    title: &str,
+    source: &TabSource,
+    active: bool,
+) -> TabHit {
     let text = elide(title);
     let font = egui::TextStyle::Button.resolve(ui.style());
     let text_width = ui
@@ -208,7 +215,12 @@ fn show_tab(ui: &mut egui::Ui, index: usize, title: &str, path: &Path, active: b
     let switch = response.clicked() && !clicked_on_close;
     // 가운데 버튼 클릭으로도 닫는다 (브라우저 관례)
     let middle_close = response.middle_clicked();
-    response.on_hover_text(path.to_string_lossy());
+    // 마우스를 올리면 어디를 가리키는지 보인다 — 로컬은 전체 경로, 원격은 원격 경로다
+    let hover = match source {
+        TabSource::Local(path) => path.to_string_lossy().into_owned(),
+        TabSource::Remote { path, .. } => path.as_str().to_owned(),
+    };
+    response.on_hover_text(hover);
 
     TabHit {
         switch,

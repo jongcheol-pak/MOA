@@ -813,6 +813,7 @@ fn with_parent_first(entries: Vec<RemoteEntry>) -> Vec<RemoteEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::types::{RemotePath, SiteId};
 
     /// egui는 같은 ID가 한 프레임에 두 번 쓰이면 화면에 경고 텍스트를 그린다.
     /// 그 텍스트를 그려진 도형에서 찾아 ID 충돌 여부를 판정한다
@@ -1033,5 +1034,85 @@ mod tests {
             "위젯 ID 충돌(트리 표시): {:?}",
             draw_panel(true)
         );
+    }
+
+    #[test]
+    fn 원격_목록의_첫_줄은_언제나_상위_이동이다() {
+        // 서버가 `..`를 주기도 하고 안 주기도 한다 — 화면은 어느 쪽이든 같아야 한다 (plan T9 ③)
+        fn entry(name: &str, is_dir: bool) -> RemoteEntry {
+            RemoteEntry {
+                name: name.to_owned(),
+                is_dir,
+                is_symlink: false,
+                link_target: None,
+                size: 0,
+                modified: None,
+                mode: None,
+                owner: None,
+            }
+        }
+
+        let 없는_경우 = with_parent_first(vec![entry("public_html", true), entry("a.txt", false)]);
+        let names: Vec<&str> = 없는_경우.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["..", "public_html", "a.txt"]);
+
+        let 있는_경우 = with_parent_first(vec![
+            entry("..", true),
+            entry("public_html", true),
+            entry("..", true),
+        ]);
+        let names: Vec<&str> = 있는_경우.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["..", "public_html"], "`..`가 둘이 되면 안 된다");
+
+        // 빈 폴더에도 상위 이동은 남는다
+        assert_eq!(with_parent_first(Vec::new()).len(), 1);
+    }
+
+    #[test]
+    fn 원격_탭에서는_로컬_전용_작업이_일어나지_않는다() {
+        // 열거·감시·썸네일·새 파일은 로컬에만 있는 일이다 (plan T9 ②)
+        let ctx = egui::Context::default();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new("/pub"),
+        ));
+        assert!(panel.is_remote(), "원격 탭이 활성이어야 한다");
+
+        // 새 폴더·새 파일은 아무 일도 하지 않는다
+        panel.new_folder(&ctx);
+        panel.new_file(&ctx);
+        assert!(
+            panel.create.pending.is_none(),
+            "원격 탭에서 로컬 생성이 시작됐다"
+        );
+        // 연결이 없는 원격 탭에서는 목록 요청도 나가지 않는다
+        let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
+        assert_eq!(panel.request_remote_list(&manager), None);
+    }
+
+    #[test]
+    fn 한_패널에_로컬_탭과_원격_탭을_섞을_수_있다() {
+        // 탭마다 자기 소스로 그려져야 한다 (plan T9 ⑤)
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(3),
+            RemotePath::new("/var/www"),
+        ));
+
+        let sources = panel.tabs.sources();
+        assert_eq!(sources.len(), 2);
+        assert!(!sources[0].is_remote(), "첫 탭은 로컬이어야 한다");
+        assert!(sources[1].is_remote(), "둘째 탭은 원격이어야 한다");
+        assert_eq!(sources[1].site(), Some(SiteId(3)));
+        assert_eq!(
+            sources[1].remote_path().map(|p| p.as_str()),
+            Some("/var/www")
+        );
+
+        // 로컬 탭으로 돌아오면 다시 로컬 전용 일이 열린다
+        assert!(panel.tabs.switch(0));
+        assert!(!panel.is_remote());
+        assert_eq!(panel.dir(), std::path::Path::new(r"C:\테스트"));
     }
 }

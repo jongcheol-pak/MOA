@@ -213,4 +213,67 @@ mod tests {
         assert_eq!(e.width(), 0.0);
         assert_eq!(e.height(), 0.0);
     }
+
+    #[test]
+    fn 여러_패널의_서로_다른_결과가_함께_살아남는다() {
+        // A패널이 메뉴를, B패널이 명령을 낸 프레임에서 한쪽이 통째로 버려지면 안 된다.
+        // relay를 통째로 올리도록 바꾸면서 필드별 first-wins를 유지하는지 고정한다 (plan T9 ⑦)
+        let mut outcome = LayoutOutcome::default();
+        merge_panel_outcome(
+            &mut outcome,
+            PanelId(1),
+            PanelOutcome {
+                menu: Some(MenuRequest {
+                    folder: std::path::PathBuf::from(r"C:\A"),
+                    items: Vec::new(),
+                    pos: egui::pos2(0.0, 0.0),
+                }),
+                command: None,
+            },
+        );
+        merge_panel_outcome(
+            &mut outcome,
+            PanelId(2),
+            PanelOutcome {
+                menu: None,
+                command: Some(Command::NewFolder),
+            },
+        );
+
+        assert!(outcome.menu.is_some(), "A패널의 메뉴가 버려졌다");
+        assert_eq!(
+            outcome.command,
+            Some((PanelId(2), Command::NewFolder)),
+            "B패널의 명령이 버려졌다"
+        );
+        assert_eq!(
+            outcome.menu.as_ref().map(|m| m.folder.clone()),
+            Some(std::path::PathBuf::from(r"C:\A"))
+        );
+    }
+
+    #[test]
+    fn 같은_종류의_결과는_먼저_낸_패널_것을_쓴다() {
+        // 한 프레임에 메뉴는 하나만 뜬다
+        let mut outcome = LayoutOutcome::default();
+        for (id, folder) in [(PanelId(1), r"C:\먼저"), (PanelId(2), r"C:\나중")] {
+            merge_panel_outcome(
+                &mut outcome,
+                id,
+                PanelOutcome {
+                    menu: Some(MenuRequest {
+                        folder: std::path::PathBuf::from(folder),
+                        items: Vec::new(),
+                        pos: egui::pos2(0.0, 0.0),
+                    }),
+                    command: Some(Command::NewFolder),
+                },
+            );
+        }
+        assert_eq!(
+            outcome.menu.as_ref().map(|m| m.folder.clone()),
+            Some(std::path::PathBuf::from(r"C:\먼저"))
+        );
+        assert_eq!(outcome.command.map(|(id, _)| id), Some(PanelId(1)));
+    }
 }
