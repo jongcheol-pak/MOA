@@ -26,6 +26,8 @@ const LEFT_MARGIN: f32 = 2.0;
 /// 좌측 버튼군 전체 폭 — 여백 + 사이드바 토글 1개
 const LEFT_GROUP_WIDTH: f32 = LEFT_MARGIN + BUTTON_SIZE;
 const TITLE_FONT_PX: f32 = 14.0;
+/// 타이틀바 아래 구분선 두께
+const SEPARATOR_THICKNESS: f32 = 1.0;
 
 /// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
 /// 넓히면 목록 스크롤바·스플리터처럼 창 끝에 닿는 위젯을 자주 가로챈다
@@ -119,6 +121,15 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
         )
         .truncate()
         .selectable(false),
+    );
+
+    // 타이틀바와 그 아래 본문을 가르는 구분선. egui Panel의 기본 구분선(전역 visuals 색)이 아니라
+    // 여기서 직접 그린다 — 그 색은 다른 패널 구분선과 공유돼, 이 선만 조정할 수 없기 때문이다.
+    // 바 **안쪽 끝**에 그린다(중심을 반 두께만큼 올린다) — 경계 밖은 패널 클립에 잘린다
+    ui.painter().hline(
+        bar.x_range(),
+        bar.max.y - SEPARATOR_THICKNESS / 2.0,
+        egui::Stroke::new(SEPARATOR_THICKNESS, theme::PANE_BORDER),
     );
 
     outcome

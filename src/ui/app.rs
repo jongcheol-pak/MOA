@@ -504,7 +504,7 @@ impl ExplorerApp {
         let outcome = egui::Panel::top(egui::Id::new("titlebar"))
             .resizable(false)
             .exact_size(titlebar::TITLEBAR_HEIGHT)
-            // 참조 화면에는 타이틀바 아래 구분선이 없다 — egui 기본값(그림)을 끈다
+            // 구분선은 `titlebar`가 앱 팔레트 색으로 직접 그린다 — egui 기본 구분선은 끈다
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| titlebar::show_titlebar(ui, &title, state))
