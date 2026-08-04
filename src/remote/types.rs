@@ -1,0 +1,735 @@
+//! 원격 연결의 도메인 타입 — 프로토콜·사이트 설정·경로·항목·오류 (FR-27~FR-31).
+//!
+//! 이 모듈은 `serde` 외에 아무것도 참조하지 않는다. 프로토콜 구현(`remote::ftp`·`remote::sftp`)과
+//! 화면(`ui`)이 이쪽을 참조하며 역방향은 없다 (AGENTS: 의존 단방향).
+use serde::{Deserialize, Serialize};
+
+/// 원격 프로토콜 (FR-30).
+///
+/// `Ftps`를 `Ftp`와 별개 항목으로 두는 이유: 디자인의 사이드바 배지·사이트 관리자 프로토콜
+/// 드롭다운이 셋을 나란히 보이므로(README §1·§9) 화면이 곧 이 열거형이다. `Encryption`은
+/// 그중 FTP 계열의 TLS 협상 방식을 더 좁히는 값이라 역할이 겹치지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Protocol {
+    Ftp,
+    Ftps,
+    Sftp,
+}
+
+impl Protocol {
+    /// 탭 배지·사이드바에 그대로 쓰이는 표기 (README §4 배지 라벨)
+    pub fn label(self) -> &'static str {
+        match self {
+            Protocol::Ftp => "ftp",
+            Protocol::Ftps => "ftps",
+            Protocol::Sftp => "sftp",
+        }
+    }
+
+    /// 주소창 URL 스킴 (FR-34)
+    pub fn scheme(self) -> &'static str {
+        self.label()
+    }
+
+    /// 사용자가 포트를 지정하지 않았을 때의 기본값
+    pub fn default_port(self) -> u16 {
+        match self {
+            // FTPS(명시적 TLS)는 평문 FTP와 같은 21번에서 AUTH TLS로 승격한다
+            Protocol::Ftp | Protocol::Ftps => 21,
+            Protocol::Sftp => 22,
+        }
+    }
+
+    /// SSH 계열인가 — 암호화 설정·호스트 키 확인이 이 값으로 갈린다
+    pub fn is_ssh(self) -> bool {
+        matches!(self, Protocol::Sftp)
+    }
+}
+
+/// FTP 계열의 TLS 협상 방식 (사이트 관리자 `암호화(E):` — README §9).
+/// `Protocol::Sftp`에는 적용되지 않는다 (SSH가 전송 계층을 이미 암호화한다).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Encryption {
+    /// 평문 — 서버가 TLS를 지원해도 쓰지 않는다
+    Plain,
+    /// 가능하면 명시적 TLS로 승격하고, 서버가 거부하면 평문으로 진행 (디자인 기본값)
+    #[default]
+    ExplicitIfAvailable,
+    /// 명시적 TLS 필수 — 승격에 실패하면 연결을 포기한다
+    ExplicitRequired,
+    /// 묵시적 TLS — 연결 직후부터 TLS.
+    ///
+    /// 관례상 990번을 쓰지만 **기본 포트를 여기서 바꾸지 않는다** — `default_port`는
+    /// 프로토콜만 보고 정하며(FR-27: FTP/FTPS 21, SFTP 22), 묵시적 TLS를 고른 사용자가
+    /// 사이트 관리자의 `포트(P):`에 직접 적는다. 암호화 항목이 포트를 몰래 덮어쓰면
+    /// 사용자가 적어 둔 값이 사라진다
+    Implicit,
+}
+
+/// 로그온 유형 (사이트 관리자 `로그온 유형(L):`).
+/// 키 파일·에이전트 인증은 v1 범위 밖이라 두 가지뿐이다 (PRD Out of Scope).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LogonType {
+    /// 익명 — 사용자 `anonymous`, 비밀번호는 비운다
+    Anonymous,
+    /// 일반 — 사용자·비밀번호를 직접 준다
+    #[default]
+    Normal,
+}
+
+/// FTP 데이터 연결 방식 (사이트 관리자 `전송 모드(T):` — FR-45)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TransferMode {
+    /// 기본 — 수동형으로 시도하고 실패하면 능동형 (FileZilla의 `기본(E)`)
+    #[default]
+    Default,
+    /// 능동형 — 서버가 클라이언트로 데이터 연결을 건다 (PORT)
+    Active,
+    /// 수동형 — 클라이언트가 서버로 데이터 연결을 건다 (PASV)
+    Passive,
+}
+
+/// 원격 파일명 인코딩 (사이트 관리자 `문자셋` 탭 — FR-46).
+///
+/// 실제 인코딩·디코딩 함수는 `remote::charset`이 갖는다 — 이 타입은 `SiteRecord`가
+/// 담아야 해서 도메인 타입 쪽에 둔다.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Charset {
+    /// `UTF-8(U)` — 기본값
+    #[default]
+    Utf8,
+    /// `문자셋 직접 설정(C)` + `인코딩(E):`에 적은 이름
+    Named(String),
+}
+
+/// 사이트 식별자.
+///
+/// **이름으로 잡지 않는 이유**: 사이트 이름은 `이름 바꾸기(R)`로 바뀌는데, 그때 연결·전송 큐·
+/// 원격 탭이 들고 있던 참조가 통째로 끊긴다 (워크스페이스가 `WorkspaceId`를 쓰는 것과 같은 이유).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SiteId(pub u32);
+
+/// 사이트 관리자에 등록된 사이트 한 벌 (FR-27).
+///
+/// **비밀번호는 평문으로 담지 않는다** — `password_sealed`는 DPAPI로 봉인된 바이트이며
+/// 연결 직전에만 `remote::secret::unseal`로 풀어 쓴다 (FR-28).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SiteRecord {
+    pub id: SiteId,
+    pub name: String,
+    pub protocol: Protocol,
+    pub host: String,
+    pub port: u16,
+    /// FTP 계열에만 뜻이 있다 (`Protocol::Sftp`면 무시된다)
+    pub encryption: Encryption,
+    pub logon: LogonType,
+    pub user: String,
+    /// DPAPI로 봉인된 비밀번호. 비어 있으면 "저장된 비밀번호 없음"이다 (FR-28).
+    /// **평문이 들어오면 안 된다** — 채우는 곳은 `remote::secret::seal`뿐이다
+    #[serde(default)]
+    pub password_sealed: Vec<u8>,
+    pub transfer_mode: TransferMode,
+    /// `동시 연결 수 제한(L)`이 켜졌을 때의 상한 `M` (1~10). `None`이면 제한 없음이며
+    /// 기본 정책(탐색 1 + 전송 2)을 쓴다 (FR-45·D4)
+    pub connection_limit: Option<u8>,
+    pub charset: Charset,
+}
+
+/// `최대 동시 연결 수(M)`가 가질 수 있는 범위 (사이트 관리자 스피너 — FR-45)
+pub const CONNECTION_LIMIT_RANGE: std::ops::RangeInclusive<u8> = 1..=10;
+
+impl SiteRecord {
+    /// 새 사이트의 기본값 — 사이트 관리자가 `새 사이트 추가…`에서 쓰는 초안
+    pub fn new(id: SiteId, name: String) -> SiteRecord {
+        let protocol = Protocol::Ftp;
+        SiteRecord {
+            id,
+            name,
+            protocol,
+            host: String::new(),
+            port: protocol.default_port(),
+            encryption: Encryption::default(),
+            logon: LogonType::default(),
+            user: String::new(),
+            password_sealed: Vec::new(),
+            transfer_mode: TransferMode::default(),
+            connection_limit: None,
+            charset: Charset::default(),
+        }
+    }
+
+    /// 로그인에 쓸 사용자 이름 — 익명이면 관례상 `anonymous`다
+    pub fn effective_user(&self) -> &str {
+        match self.logon {
+            LogonType::Anonymous => "anonymous",
+            LogonType::Normal => &self.user,
+        }
+    }
+
+    /// 연결 대상 `호스트:포트` — 프로토콜 구현이 그대로 쓴다
+    pub fn address(&self) -> String {
+        // IPv6 리터럴은 대괄호로 감싸야 포트와 구분된다
+        if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+/// 원격 경로 — **POSIX `/` 구분자 전용** (D9).
+///
+/// `PathBuf`를 쓰지 않는 이유: Windows의 `PathBuf`는 `/`를 `\`로 정규화하고 `\`를 구분자로
+/// 해석하는데, 원격 파일명에는 `\`가 그대로 들어갈 수 있어 경로가 손상된다.
+/// 로컬 쪽의 `\\?\` 접두 함정(`fs::enumerate::to_extended_pattern`)과 같은 계열의 문제다.
+///
+/// 생성 시 **중복 슬래시를 접고 후행 슬래시를 떼되**, 백슬래시는 건드리지 않는다.
+/// 앞의 `/` 유무(절대/상대)는 보존한다.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RemotePath(String);
+
+impl RemotePath {
+    /// 정규화해 만든다. 빈 문자열은 루트(`/`)로 본다
+    pub fn new(raw: &str) -> RemotePath {
+        let absolute = raw.starts_with('/');
+        let mut out = String::with_capacity(raw.len() + 1);
+        if absolute {
+            out.push('/');
+        }
+        let mut first = true;
+        for segment in raw.split('/').filter(|s| !s.is_empty()) {
+            if !first {
+                out.push('/');
+            }
+            out.push_str(segment);
+            first = false;
+        }
+        // 세그먼트가 하나도 없으면(빈 문자열·`/`·`///`) 루트다
+        if first && !absolute {
+            out.push('/');
+        }
+        RemotePath(out)
+    }
+
+    /// 루트 경로 `/`
+    pub fn root() -> RemotePath {
+        RemotePath("/".to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0 == "/"
+    }
+
+    /// 마지막 세그먼트 — 루트면 `None`
+    pub fn file_name(&self) -> Option<&str> {
+        if self.is_root() {
+            return None;
+        }
+        self.0.rsplit('/').next().filter(|s| !s.is_empty())
+    }
+
+    /// 한 단계 위 경로.
+    ///
+    /// 루트는 `None`이고, **상대 경로의 단일 세그먼트도 `None`**이다 — 그 위가 무엇인지
+    /// 서버의 현재 위치를 알아야 정해지므로 여기서 추측하지 않는다
+    pub fn parent(&self) -> Option<RemotePath> {
+        if self.is_root() {
+            return None;
+        }
+        match self.0.rfind('/') {
+            // `/a` → 루트
+            Some(0) => Some(RemotePath::root()),
+            Some(cut) => Some(RemotePath(self.0[..cut].to_owned())),
+            // 상대 경로의 단일 세그먼트 (`pub`)
+            None => None,
+        }
+    }
+
+    /// 하위 경로를 잇는다. `name`에 `/`가 섞여 있어도 정규화된다
+    pub fn join(&self, name: &str) -> RemotePath {
+        if self.is_root() {
+            RemotePath::new(&format!("/{name}"))
+        } else {
+            RemotePath::new(&format!("{}/{}", self.0, name))
+        }
+    }
+
+    /// 세그먼트 목록 — 주소창 표시·트리 확장에 쓴다
+    pub fn segments(&self) -> impl Iterator<Item = &str> {
+        self.0.split('/').filter(|s| !s.is_empty())
+    }
+}
+
+impl std::fmt::Display for RemotePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Default for RemotePath {
+    fn default() -> RemotePath {
+        RemotePath::root()
+    }
+}
+
+/// 원격 디렉터리의 항목 하나 (FR-31).
+///
+/// 로컬의 `fs::enumerate::FileEntry`를 재사용하지 않는 이유(D10): 그쪽 `name`은 Win32 정렬
+/// API와 공용하려고 널 종단 UTF-16을 담고 `modified`는 FILETIME 원시값이다 — 원격에는 둘 다
+/// 맞지 않는다. 대신 **정렬 규칙은 T7의 `ListRow` 트레이트로 공유**해 화면 동작이 갈리지 않게 한다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    /// 심볼릭 링크가 가리키는 대상 — 이름 뒤에 `→ 대상`으로 붙는다 (README §3)
+    pub link_target: Option<String>,
+    pub size: u64,
+    /// Unix epoch 초(UTC). 서버가 시각을 주지 않으면 `None`
+    pub modified: Option<i64>,
+    /// POSIX 권한 비트(`0o755` 등). 서버가 주지 않으면 `None` — 권한 열이 빈칸이 된다
+    pub mode: Option<u32>,
+    /// 소유자 표시값. 이름을 못 얻는 서버에서는 uid를 문자열로 담는다
+    pub owner: Option<String>,
+}
+
+impl RemoteEntry {
+    /// 소문자 확장자 (`""` = 없음/폴더) — 형식 아이콘·종류 열 조회에 쓴다 (D11).
+    /// 로컬 `FileEntry::extension`과 같은 규칙이다(앞이 빈 `.gitignore`는 확장자 없음)
+    pub fn extension(&self) -> String {
+        if self.is_dir {
+            return String::new();
+        }
+        match self.name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => ext.to_ascii_lowercase(),
+            _ => String::new(),
+        }
+    }
+
+    /// `rwxr-xr-x` 형태의 권한 열 표시값 — 비트가 없으면 `None`
+    pub fn permissions_string(&self) -> Option<String> {
+        let mode = self.mode?;
+        let mut out = String::with_capacity(9);
+        // 소유자·그룹·기타 순으로 세 묶음, 각 묶음이 rwx
+        for shift in [6, 3, 0] {
+            let bits = (mode >> shift) & 0b111;
+            out.push(if bits & 0b100 != 0 { 'r' } else { '-' });
+            out.push(if bits & 0b010 != 0 { 'w' } else { '-' });
+            out.push(if bits & 0b001 != 0 { 'x' } else { '-' });
+        }
+        Some(out)
+    }
+}
+
+/// 원격 작업 실패 사유 (FR-30).
+///
+/// **어느 갈래든 서버가 준 원문을 잃지 않는다** — 실패 화면이 그 문구를 그대로 보이고
+/// (README §5), 서버마다 다른 사유를 우리가 임의로 요약하면 사용자가 원인을 짚을 수 없다.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemoteError {
+    /// 연결 자체가 안 됨 (DNS·거부·타임아웃·TLS 협상 실패)
+    Connect { detail: String },
+    /// 인증 실패 (FTP 530 등)
+    Auth { detail: String },
+    /// 호스트 키 문제 — 미등록이거나 지문이 바뀌었다 (D15, T3에서 채운다)
+    HostKey { detail: String },
+    /// 경로 없음
+    NotFound { path: String, detail: String },
+    /// 권한 거부 (FTP 550 등)
+    PermissionDenied { path: String, detail: String },
+    /// 전송 중 실패. `transferred`는 그때까지 옮긴 바이트로, **이어받기의 시작점**이 된다
+    Transfer { detail: String, transferred: u64 },
+    /// 서버가 그 기능을 지원하지 않음 (SITE CHMOD 미지원 등 — D22)
+    Unsupported { operation: String, detail: String },
+    /// 그 밖의 프로토콜 오류
+    Protocol { detail: String },
+    /// 사용자가 취소함 — 실패로 세지 않는다
+    Cancelled,
+}
+
+impl RemoteError {
+    /// 실패 화면·상태 줄에 그대로 보일 서버 원문. 취소는 원문이 없다
+    pub fn detail(&self) -> &str {
+        match self {
+            RemoteError::Connect { detail }
+            | RemoteError::Auth { detail }
+            | RemoteError::HostKey { detail }
+            | RemoteError::NotFound { detail, .. }
+            | RemoteError::PermissionDenied { detail, .. }
+            | RemoteError::Transfer { detail, .. }
+            | RemoteError::Unsupported { detail, .. }
+            | RemoteError::Protocol { detail } => detail,
+            RemoteError::Cancelled => "",
+        }
+    }
+
+    /// 이어받기 시작점 — 전송 실패가 아니면 0
+    pub fn transferred(&self) -> u64 {
+        match self {
+            RemoteError::Transfer { transferred, .. } => *transferred,
+            _ => 0,
+        }
+    }
+}
+
+impl std::fmt::Display for RemoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RemoteError::Connect { detail } => write!(f, "연결하지 못했습니다 — {detail}"),
+            RemoteError::Auth { detail } => write!(f, "로그인하지 못했습니다 — {detail}"),
+            RemoteError::HostKey { detail } => {
+                write!(f, "호스트 키를 확인하지 못했습니다 — {detail}")
+            }
+            RemoteError::NotFound { path, detail } => {
+                write!(f, "'{path}'을(를) 찾을 수 없습니다 — {detail}")
+            }
+            RemoteError::PermissionDenied { path, detail } => {
+                write!(f, "'{path}'에 접근할 권한이 없습니다 — {detail}")
+            }
+            RemoteError::Transfer {
+                detail,
+                transferred,
+            } => write!(
+                f,
+                "전송이 중단됐습니다 ({transferred}바이트 진행) — {detail}"
+            ),
+            RemoteError::Unsupported { operation, detail } => {
+                write!(f, "서버가 '{operation}'을(를) 지원하지 않습니다 — {detail}")
+            }
+            RemoteError::Protocol { detail } => write!(f, "서버와 통신하지 못했습니다 — {detail}"),
+            RemoteError::Cancelled => f.write_str("취소했습니다"),
+        }
+    }
+}
+
+/// 원격 작업 결과
+pub type RemoteResult<T> = Result<T, RemoteError>;
+
+/// 전송 진행 통지 — 워커가 64KB마다 부른다 (D12·NFR-12).
+///
+/// **`false`를 돌려주면 전송을 그 자리에서 멈춘다** — 취소를 별도 채널로 폴링하지 않고
+/// 이 반환값 하나로 처리해, 프로토콜 구현이 취소 방식을 몰라도 되게 한다
+pub trait Progress {
+    /// `transferred`는 이번 전송에서 옮긴 누적 바이트다
+    fn report(&mut self, transferred: u64) -> bool;
+}
+
+/// 진행을 보고받지 않고 취소도 하지 않는 통지 — 목록 조회처럼 진행률이 없는 곳에서 쓴다
+pub struct NoProgress;
+
+impl Progress for NoProgress {
+    fn report(&mut self, _transferred: u64) -> bool {
+        true
+    }
+}
+
+/// 프로토콜 한 벌이 제공해야 하는 동작 (FR-30·FR-31·FR-37·FR-39).
+///
+/// 구현은 `remote::ftp::FtpSession`(FTP·FTPS)과 `remote::sftp::SftpSession`(SFTP) 둘뿐이며,
+/// **연결 워커 스레드 안에서만** 쓰인다 — 그래서 `Send`만 요구하고 `Sync`는 요구하지 않는다.
+///
+/// 프로토콜별 설정 차이(FTP의 능동/수동, SFTP의 호스트 키)는 이 트레이트에 올리지 않는다 —
+/// 각 구현이 `SiteRecord`에서 필요한 것만 읽는다 (T1 Design 비추상화 선언).
+pub trait RemoteSession: Send {
+    /// 소켓을 열고 프로토콜 협상까지 한다 (TLS 승격·SSH 핸드셰이크 포함)
+    fn connect(&mut self, site: &SiteRecord) -> RemoteResult<()>;
+
+    /// 인증한다. `password`는 **연결 직전에 봉인을 푼 평문**이며 어디에도 보관하지 않는다
+    fn login(&mut self, site: &SiteRecord, password: &str) -> RemoteResult<()>;
+
+    /// 로그인 직후의 현재 위치 — 서버가 정하는 홈 디렉터리다
+    fn pwd(&mut self) -> RemoteResult<RemotePath>;
+
+    fn list(&mut self, path: &RemotePath) -> RemoteResult<Vec<RemoteEntry>>;
+
+    fn cwd(&mut self, path: &RemotePath) -> RemoteResult<()>;
+
+    fn mkdir(&mut self, path: &RemotePath) -> RemoteResult<()>;
+
+    /// 파일 삭제
+    fn remove(&mut self, path: &RemotePath) -> RemoteResult<()>;
+
+    /// 빈 디렉터리 삭제 (재귀 삭제는 호출부가 항목을 훑어 조립한다 — T23)
+    fn rmdir(&mut self, path: &RemotePath) -> RemoteResult<()>;
+
+    fn rename(&mut self, from: &RemotePath, to: &RemotePath) -> RemoteResult<()>;
+
+    /// POSIX 권한 변경. 지원하지 않는 서버는 `RemoteError::Unsupported`를 돌려준다 (D22)
+    fn chmod(&mut self, path: &RemotePath, mode: u32) -> RemoteResult<()>;
+
+    /// 원격 → 로컬. `offset`이 0보다 크면 그 지점부터 이어받는다.
+    /// 반환값은 **이번 호출에서 옮긴 바이트**다 (이어받기 시작점은 포함하지 않는다)
+    fn download(
+        &mut self,
+        path: &RemotePath,
+        dest: &mut dyn std::io::Write,
+        offset: u64,
+        progress: &mut dyn Progress,
+    ) -> RemoteResult<u64>;
+
+    /// 로컬 → 원격. `offset`이 0보다 크면 그 지점에 이어 붙인다
+    fn upload(
+        &mut self,
+        path: &RemotePath,
+        src: &mut dyn std::io::Read,
+        offset: u64,
+        progress: &mut dyn Progress,
+    ) -> RemoteResult<u64>;
+
+    /// 연결 유지 확인 (유휴 타임아웃 방지)
+    fn noop(&mut self) -> RemoteResult<()>;
+
+    /// 정상 종료 인사. 실패해도 소켓은 어차피 닫히므로 호출부가 무시해도 된다
+    fn quit(&mut self) -> RemoteResult<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 경로는_중복_슬래시와_후행_슬래시를_정리한다() {
+        assert_eq!(RemotePath::new("/a//b/").as_str(), "/a/b");
+        assert_eq!(
+            RemotePath::new("//var///www//html").as_str(),
+            "/var/www/html"
+        );
+        assert_eq!(RemotePath::new("/pub/").as_str(), "/pub");
+    }
+
+    #[test]
+    fn 빈_경로와_슬래시만_있는_경로는_루트다() {
+        assert!(RemotePath::new("").is_root());
+        assert!(RemotePath::new("/").is_root());
+        assert!(RemotePath::new("///").is_root());
+        assert_eq!(RemotePath::new("").as_str(), "/");
+    }
+
+    #[test]
+    fn 상대_경로의_앞_슬래시_유무는_보존된다() {
+        // 서버가 상대 경로를 돌려줄 수 있어 절대로 승격하지 않는다
+        assert_eq!(RemotePath::new("pub/data").as_str(), "pub/data");
+        assert_eq!(RemotePath::new("/pub/data").as_str(), "/pub/data");
+    }
+
+    #[test]
+    fn 백슬래시는_구분자가_아니라_파일명_문자다() {
+        // POSIX 서버의 파일명에는 `\`가 들어갈 수 있다 — 로컬 경로처럼 정규화하면 손상된다 (D9)
+        let path = RemotePath::new(r"/data/a\b.txt");
+        assert_eq!(path.as_str(), r"/data/a\b.txt");
+        assert_eq!(path.file_name(), Some(r"a\b.txt"));
+        assert_eq!(
+            path.parent().map(|p| p.as_str().to_owned()),
+            Some("/data".to_owned())
+        );
+    }
+
+    #[test]
+    fn 상위_경로는_한_단계씩_올라가고_루트에서_멈춘다() {
+        let deep = RemotePath::new("/var/www/html");
+        let up1 = deep.parent().expect("한 단계 위가 있어야 한다");
+        assert_eq!(up1.as_str(), "/var/www");
+        let up2 = up1.parent().expect("두 단계 위가 있어야 한다");
+        assert_eq!(up2.as_str(), "/var");
+        let up3 = up2.parent().expect("루트가 나와야 한다");
+        assert!(up3.is_root());
+        assert_eq!(up3.parent(), None, "루트 위로는 올라가지 않는다");
+    }
+
+    #[test]
+    fn 상대_경로의_단일_세그먼트는_상위를_추측하지_않는다() {
+        assert_eq!(RemotePath::new("pub").parent(), None);
+    }
+
+    #[test]
+    fn 파일명은_마지막_세그먼트고_루트는_없다() {
+        assert_eq!(
+            RemotePath::new("/var/www/index.html").file_name(),
+            Some("index.html")
+        );
+        assert_eq!(RemotePath::new("pub").file_name(), Some("pub"));
+        assert_eq!(RemotePath::root().file_name(), None);
+    }
+
+    #[test]
+    fn 잇기는_루트에서도_슬래시를_겹치지_않는다() {
+        assert_eq!(RemotePath::root().join("var").as_str(), "/var");
+        assert_eq!(RemotePath::new("/var").join("www").as_str(), "/var/www");
+        // 이름에 구분자가 섞여도 정규화된다
+        assert_eq!(
+            RemotePath::new("/var").join("/www/html").as_str(),
+            "/var/www/html"
+        );
+    }
+
+    #[test]
+    fn 이름에_개행이나_제어문자가_있어도_경로는_유지된다() {
+        // 서버가 이상한 이름을 줘도 우리가 잘라내지 않는다 — 조작은 되어야 한다
+        let path = RemotePath::root().join("이상한\t이름\u{7f}.txt");
+        assert_eq!(path.file_name(), Some("이상한\t이름\u{7f}.txt"));
+    }
+
+    #[test]
+    fn 세그먼트는_빈_칸을_건너뛴다() {
+        let path = RemotePath::new("//var//www/");
+        let parts: Vec<&str> = path.segments().collect();
+        assert_eq!(parts, vec!["var", "www"]);
+        assert_eq!(RemotePath::root().segments().count(), 0);
+    }
+
+    fn sample_site() -> SiteRecord {
+        SiteRecord {
+            id: SiteId(7),
+            name: "배포 서버".into(),
+            protocol: Protocol::Sftp,
+            host: "example.test".into(),
+            port: 2222,
+            encryption: Encryption::ExplicitRequired,
+            logon: LogonType::Normal,
+            user: "deploy".into(),
+            password_sealed: vec![1, 2, 3, 250],
+            transfer_mode: TransferMode::Passive,
+            connection_limit: Some(3),
+            charset: Charset::Named("CP949".into()),
+        }
+    }
+
+    #[test]
+    fn 사이트_설정은_왕복해도_같다() {
+        let site = sample_site();
+        let json = serde_json::to_string(&site).expect("직렬화");
+        let back: SiteRecord = serde_json::from_str(&json).expect("역직렬화");
+        assert_eq!(back, site);
+    }
+
+    #[test]
+    fn 봉인_비밀번호_필드가_없는_옛_기록도_읽힌다() {
+        // 세션 스키마가 늘 때 필드 하나 때문에 통째로 폴백되면 안 된다 (T25와 같은 규칙)
+        let site = sample_site();
+        let json = serde_json::to_string(&site).expect("직렬화");
+        let without = json.replace(",\"password_sealed\":[1,2,3,250]", "");
+        assert!(
+            !without.contains("password_sealed"),
+            "테스트가 필드를 못 걷어냈다"
+        );
+        let back: SiteRecord = serde_json::from_str(&without).expect("옛 기록이 거부됐다");
+        assert!(back.password_sealed.is_empty());
+        assert_eq!(back.user, site.user);
+    }
+
+    #[test]
+    fn 새_사이트는_프로토콜_기본_포트로_시작한다() {
+        let site = SiteRecord::new(SiteId(1), "새 사이트".into());
+        assert_eq!(site.protocol, Protocol::Ftp);
+        assert_eq!(site.port, 21);
+        assert_eq!(Protocol::Sftp.default_port(), 22);
+        assert_eq!(Protocol::Ftps.default_port(), 21);
+    }
+
+    #[test]
+    fn 익명_로그온은_사용자를_anonymous로_본다() {
+        let mut site = SiteRecord::new(SiteId(1), "공개".into());
+        site.user = "무시됨".into();
+        site.logon = LogonType::Anonymous;
+        assert_eq!(site.effective_user(), "anonymous");
+        site.logon = LogonType::Normal;
+        assert_eq!(site.effective_user(), "무시됨");
+    }
+
+    #[test]
+    fn ipv6_호스트는_대괄호로_감싼다() {
+        let mut site = SiteRecord::new(SiteId(1), "v6".into());
+        site.host = "2001:db8::1".into();
+        site.port = 21;
+        assert_eq!(site.address(), "[2001:db8::1]:21");
+        // 이미 감싼 값은 다시 감싸지 않는다
+        site.host = "[2001:db8::1]".into();
+        assert_eq!(site.address(), "[2001:db8::1]:21");
+        site.host = "example.test".into();
+        assert_eq!(site.address(), "example.test:21");
+    }
+
+    fn entry(name: &str, is_dir: bool) -> RemoteEntry {
+        RemoteEntry {
+            name: name.to_owned(),
+            is_dir,
+            is_symlink: false,
+            link_target: None,
+            size: 0,
+            modified: None,
+            mode: None,
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn 확장자_추출은_로컬과_같은_규칙이다() {
+        assert_eq!(entry("A.TXT", false).extension(), "txt");
+        assert_eq!(entry("no_ext", false).extension(), "");
+        assert_eq!(entry(".gitignore", false).extension(), "");
+        assert_eq!(entry("dir.name", true).extension(), "");
+    }
+
+    #[test]
+    fn 권한_문자열은_비트를_rwx로_옮긴다() {
+        let mut e = entry("a", false);
+        e.mode = Some(0o755);
+        assert_eq!(e.permissions_string().as_deref(), Some("rwxr-xr-x"));
+        e.mode = Some(0o640);
+        assert_eq!(e.permissions_string().as_deref(), Some("rw-r-----"));
+        e.mode = Some(0);
+        assert_eq!(e.permissions_string().as_deref(), Some("---------"));
+        // 서버가 권한을 안 주면 열이 빈칸이 된다
+        e.mode = None;
+        assert_eq!(e.permissions_string(), None);
+    }
+
+    #[test]
+    fn 항목은_4gb를_넘는_크기도_담는다() {
+        let mut e = entry("big.bin", false);
+        e.size = 8 * 1024 * 1024 * 1024;
+        assert_eq!(e.size, 8_589_934_592);
+    }
+
+    #[test]
+    fn 오류는_서버_원문을_잃지_않는다() {
+        // 실패 화면이 이 문구를 그대로 보인다 (README §5) — 요약하면 원인을 짚을 수 없다
+        let raw = "530 Login incorrect";
+        let err = RemoteError::Auth {
+            detail: raw.to_owned(),
+        };
+        assert_eq!(err.detail(), raw);
+        assert!(err.to_string().contains(raw), "Display가 원문을 잃었다");
+
+        let err = RemoteError::PermissionDenied {
+            path: "/var/www/sw.js".to_owned(),
+            detail: "550 Permission denied".to_owned(),
+        };
+        assert!(err.to_string().contains("550 Permission denied"));
+        assert!(err.to_string().contains("/var/www/sw.js"));
+    }
+
+    #[test]
+    fn 전송_오류는_이어받기_시작점을_담는다() {
+        let err = RemoteError::Transfer {
+            detail: "connection reset".to_owned(),
+            transferred: 1_048_576,
+        };
+        assert_eq!(err.transferred(), 1_048_576);
+        assert!(err.to_string().contains("1048576"));
+        // 다른 갈래는 0이다
+        assert_eq!(RemoteError::Cancelled.transferred(), 0);
+        assert_eq!(RemoteError::Cancelled.detail(), "");
+    }
+
+    #[test]
+    fn 진행_통지의_기본_구현은_취소하지_않는다() {
+        let mut sink = NoProgress;
+        assert!(sink.report(0));
+        assert!(sink.report(u64::MAX));
+    }
+}

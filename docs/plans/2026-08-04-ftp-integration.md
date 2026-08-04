@@ -364,7 +364,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 ### 진행 상태
 
 - [x] T0 rustfmt 드리프트 선행 정리 [B]
-- [ ] T1 원격 도메인 타입 + 세션 트레이트 [D]
+- [x] T1 원격 도메인 타입 + 세션 트레이트 [D]
 - [ ] T2 FTP/FTPS 세션 구현 [D]
 - [ ] T3 SFTP 세션 구현 + 호스트 키 저장소 [D]
 - [ ] T4 연결 워커 · 연결 관리자 [D]
@@ -404,7 +404,9 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Files**: `src/remote/mod.rs`(신규), `src/remote/types.rs`(신규), `src/lib.rs`, `Cargo.toml`
 - **Design**:
   - **배치**: `src/remote/` — `fs`(로컬 Win32 전담)와 나란한 새 최상위 모듈. `ui`만 상위이므로 `remote`는 `ui`를 모른다 (D5)
-  - **신규 심볼**: `Protocol{Ftp,Ftps,Sftp}` / `SiteId(u32)` — 이름은 바뀌므로 이름으로 잡지 않는다 / `SiteRecord` — 사이트 설정 한 벌(이름·프로토콜·호스트·포트·암호화·로그온 유형·사용자·전송 모드·동시 연결 상한·문자셋) / `RemotePath(String)` — POSIX 경로(D9), `parent()`·`join()`·`file_name()` / `RemoteEntry` — 이름·is_dir·is_symlink·link_target·size·modified·permissions·owner / `RemoteError` — 연결·인증·경로·권한·전송·프로토콜 분류 + 서버 원문 보존 / `RemoteSession` 트레이트 — `connect`·`login`·`list`·`cwd`·`mkdir`·`remove`·`rmdir`·`rename`·`chmod`·`download`·`upload`·`noop`·`quit`
+  - **신규 심볼**: `Protocol{Ftp,Ftps,Sftp}` / `Encryption`·`LogonType`·`TransferMode`·`Charset` — 사이트 설정의 선택값 / `SiteId(u32)` — 이름은 바뀌므로 이름으로 잡지 않는다 / `SiteRecord` — 사이트 설정 한 벌(이름·프로토콜·호스트·포트·암호화·로그온 유형·사용자·**봉인된 비밀번호**·전송 모드·동시 연결 상한·문자셋) / `RemotePath(String)` — POSIX 경로(D9), `parent()`·`join()`·`file_name()`·`segments()` / `RemoteEntry` — 이름·is_dir·is_symlink·link_target·size·modified·**mode**(POSIX 권한 비트)·owner / `RemoteError` — 연결·인증·호스트키·경로·권한·전송·미지원·프로토콜·취소 분류 + 서버 원문 보존 / `Progress` 트레이트 + `NoProgress` / `RemoteSession` 트레이트 — `connect`·`login`·**`pwd`**·`list`·`cwd`·`mkdir`·`remove`·`rmdir`·`rename`·`chmod`·`download`·`upload`·`noop`·`quit`
+    - **구현 중 확정 (원안 대비 3건 — 리뷰가 "기술적 필연, 계획 문구 정정 권장"으로 판정)**: ① **`pwd` 추가** — 로그인 직후 원격 탭이 보일 경로는 서버가 정하는 홈 디렉터리라, 이것 없이는 초기 경로를 정할 수 없다. ② **`Charset` 타입을 `types.rs`에 배치** — `SiteRecord`가 그 값을 담아야 T1이 컴파일된다. **T16은 `remote/charset.rs`에 `encode_name`/`decode_name` 함수만 더한다**(타입 재정의 없음). ③ **`Progress` 추가** — `download`/`upload`가 이미 계획된 메서드인데 진행률·취소 수단이 없으면 시그니처가 성립하지 않는다. 취소를 별도 채널이 아니라 `report`의 반환값으로 처리해 프로토콜 구현이 취소 방식을 모르게 했다.
+    - **`permissions` → `mode`로 바꾼 이유**: 표시용 문자열 하나만 들면 chmod(FR-39)가 쓸 숫자가 없어 두 벌이 된다. 비트를 정본으로 두고 `permissions_string()`이 `rwxr-xr-x`를 만든다.
   - **의존 방향**: `remote::types`는 `serde`만 참조. 구현체(T2·T3)와 `ui`가 이쪽을 참조하며 역방향 없음
   - **비추상화 선언**: 프로토콜별 설정 차이(FTP 능동/수동, SFTP 호스트 키)를 트레이트에 올리지 않는다 — 각 구현체가 `SiteRecord`에서 필요한 것만 읽는다. 연결 관리자·전송 큐용 별도 트레이트도 만들지 않는다
 - **Acceptance**: ① `RemotePath`의 `parent`/`join`/`file_name`이 루트(`/`)·중첩·후행 슬래시·빈 세그먼트에서 기대대로 동작한다. ② `SiteRecord`가 serde 왕복해도 같다. ③ `RemoteError`가 서버 원문을 잃지 않는다(`Display`에 원문 포함).
@@ -589,7 +591,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Files**: `src/ui/site_manager.rs`, `src/ui/toast.rs`(신규), `src/ui/widgets.rs`, `src/remote/charset.rs`(신규), `src/ui/app.rs`
 - **Design**:
   - **배치**: 두 탭은 `site_manager` 안에, 토스트는 창 전역이라 `ui::toast`
-  - **신규 심볼**: `widgets::radio_row`(14px 원·6px 점)·`check_row`(14px 사각)·`spinner_field`(92px·▲▼) / `Toast{text,until}` + `show_toast`(3200ms) / `remote::charset::Charset{Utf8,Named(String)}` + `encode_name`/`decode_name`(UTF-8·CP949·Latin-1 3종 + 폴백, D23)
+  - **신규 심볼**: `widgets::radio_row`(14px 원·6px 점)·`check_row`(14px 사각)·`spinner_field`(92px·▲▼) / `Toast{text,until}` + `show_toast`(3200ms) / `remote::charset`의 **`encode_name`/`decode_name`**(UTF-8·CP949·Latin-1 3종 + 폴백, D23) — **`Charset` 타입 자체는 T1이 이미 `remote::types`에 도입했다**(`SiteRecord`가 담아야 해서). 이 task는 함수만 더하고 타입을 재정의하지 않는다
   - **의존 방향**: `remote::charset`은 `remote::{ftp,sftp}`가 파일명 인·디코딩에 쓴다
   - **비추상화 선언**: 인코딩을 플러그인화하지 않는다 — 3종 표로 충분하고, 늘어나면 그때 외부 크레이트를 검토한다
 - **Acceptance**: ① 인벤토리 #76~87의 문구가 원문 그대로다. ② `동시 연결 수 제한(L)`이 꺼져 있으면 `최대 동시 연결 수(M)` 필드·라벨이 **흐림 + 조작 불가**, 켜면 활성(#81). ③ `문자셋 직접 설정(C)`이 아닐 때 `인코딩(E):`가 흐림(#86). ④ 스피너가 1~10으로 클램프된다. ⑤ **설정한 M이 `SiteRecord`에 저장되어 T4의 채널 배정에 그대로 전달된다**(FR-45 — UI 값이 연결 동작에 닿는 경로를 단위 테스트로 고정). ⑥ 토스트가 3200ms 후 사라지고 문구가 `<host> 등록됨 · 더블클릭하여 연결`이다(#91). ⑦ CP949로 인코딩된 한글 파일명이 옳게 디코딩되고 왕복한다.
@@ -757,7 +759,12 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - 선행 커밋 `b5bedf3` (문서): PRD 갱신(FR-27~46·NFR-10~13) + plan 파일 + 사용자 제공 기준 문서 `docs/design/`를 트리에 올림. task 루프 밖의 별도 커밋이다.
   - **관측**: `docs/design/design-files/FileExplorer-FTP.dc.html`의 샘플 호스트가 실제 IP 형태라 `check-secrets` hook이 경고했다. 사용자 제공 기준 문서라 수정하지 않고 Deferred에 기록(push 전 사용자 판단).
 - T0 완료: `cargo fmt` 1회로 `ui/address_bar.rs` 드리프트 해소. 이후 26개 task의 검증 기준선이 깨끗해졌다.
-  - **절차 기록**: V-5 prefilter 1회차를 BASE_SHA `576b64b`(T0 start)로 호출했는데 그 구간에 위 문서 커밋이 끼어 있어 "Task Files에 없는 신규 파일 14개"로 ESCALATE가 났다. **리뷰어 판정은 정확했고 입력이 틀린 것**이라, BASE를 `b5bedf3`으로 정정해 재호출했다. 이후 task는 **직전 task 완료 커밋을 BASE로** 잡는다(중간에 루프 밖 커밋을 끼우지 않는다).
+  - **절차 기록**: V-5 prefilter 1회차를 BASE_SHA `576b64b`(T0 start)로 호출했는데 그 구간에 위 문서 커밋이 끼어 있어 "Task Files에 없는 신규 파일 14개"로 ESCALATE가 났다. **리뷰어 판정은 정확했고 입력이 틀린 것**이라, BASE를 `b5bedf3`으로 정정해 재호출했다. 이후 task는 **직전 task 완료 커밋(또는 그 task의 `checkpoint: T<N> start`)을 BASE로** 잡는다(중간에 루프 밖 커밋을 끼우지 않는다).
+- T1 완료: `src/remote/` 신설 + 도메인 타입·`RemoteSession` 트레이트. 의존성 3건(`suppaftp`·`ssh2`·`windows`의 `Win32_Security_Cryptography`) 추가 후 빌드 확인. 신규 단위 테스트 21개(249→266).
+  - **결정(원안 대비 3건, 리뷰가 "기술적 필연"으로 판정)**: `pwd` 추가(초기 원격 경로가 서버 홈이라 없으면 정할 수 없다) / `Charset` 타입을 T16이 아니라 `types.rs`에 배치(`SiteRecord`가 담아야 컴파일된다 — T16은 함수만 추가) / `Progress` 트레이트 추가(계획된 `download`/`upload` 시그니처가 진행률·취소 수단 없이는 성립하지 않는다. 취소를 `report`의 반환값으로 처리해 프로토콜 구현이 취소 방식을 모르게 했다).
+  - **결정**: `RemoteEntry`의 권한을 표시 문자열이 아니라 **POSIX 비트(`mode: Option<u32>`)**로 든다 — 문자열만 들면 chmod(FR-39)가 쓸 숫자가 없어 정본이 두 벌이 된다. `permissions_string()`이 `rwxr-xr-x`를 만든다.
+  - **quality 리뷰 지적(m1) 반영**: `Encryption::Implicit` 독스트링이 "전용 포트를 쓴다"고 약속했는데 `default_port`는 프로토콜만 보고 21을 준다 — **주석이 동작보다 넓었다.** 포트를 암호화 항목이 몰래 덮어쓰면 사용자가 적어 둔 값이 사라지므로, 동작을 그대로 두고 주석을 사실에 맞췄다(FR-27·T15③과도 정합).
+  - **커밋 hook 오탐 확인**: `check-secrets`가 "password 값"을 경고했으나 `password_sealed` 필드명·`login(.., password: &str)` 파라미터명일 뿐 평문 값은 없다(quality 리뷰가 독립 확인).
 
 ## Phase Ledger
 

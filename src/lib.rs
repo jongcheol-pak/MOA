@@ -5,4 +5,5 @@
 pub mod app;
 pub mod fs;
 pub mod panel;
+pub mod remote;
 pub mod ui;

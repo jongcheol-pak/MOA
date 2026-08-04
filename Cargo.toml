@@ -8,6 +8,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    # CryptProtectData/CryptUnprotectData — 사이트 비밀번호 DPAPI 봉인 (FR-28)
+    "Win32_Security_Cryptography",
     # DwmSetWindowAttribute — 다크 타이틀바(DWMWA_USE_IMMERSIVE_DARK_MODE)
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
@@ -40,6 +42,17 @@ eframe = { version = "0.35", default-features = false, features = ["glow"] }
 egui-phosphor = "0.13"
 # eframe이 재수출하지 않아 직접 의존 — 창 HWND 추출(셸 컨텍스트 메뉴)에 필요
 raw-window-handle = "0.6"
+
+# 원격 연결 (FR-27~FR-46). 둘 다 **동기(blocking) API**라 이 앱의 std::thread + 채널 구조에
+# 그대로 맞는다 — async 런타임(tokio)을 들이지 않는다(AGENTS 동시성 규약).
+# 대안 `russh-sftp`는 tokio를 강제해 기각했다.
+#
+# FTP/FTPS. native-tls는 Windows에서 schannel 백엔드를 써 OpenSSL·perl이 필요 없다.
+# LIST 파서(`suppaftp::list::File`)가 권한·소유자까지 줘서 원격 열의 원천이 된다.
+suppaftp = { version = "10.0.1", features = ["native-tls"] }
+# SFTP. libssh2가 Windows에서 WinCNG 백엔드로 빌드돼 역시 OpenSSL이 필요 없다.
+# 전송이 std::io::Read/Write 스트림이라 진행률·버퍼 크기·취소를 우리가 직접 통제한다.
+ssh2 = "0.9.6"
 
 [profile.release]
 # 경량 배포 목표(NFR-2) — 크기 최적화·심볼 제거
