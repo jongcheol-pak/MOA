@@ -129,14 +129,7 @@ fn nav_button(ui: &mut egui::Ui, icon: &str, enabled: bool, hint: &str) -> bool 
         );
         return false;
     }
-    widgets::icon_button_styled(
-        ui,
-        icon,
-        size,
-        theme::CONTROL_HOT,
-        theme::TEXT,
-        NAV_ICON_PX,
-    )
-    .on_hover_text(hint)
-    .clicked()
+    widgets::icon_button_styled(ui, icon, size, theme::CONTROL_HOT, theme::TEXT, NAV_ICON_PX)
+        .on_hover_text(hint)
+        .clicked()
 }
