@@ -207,7 +207,7 @@ impl FileListView {
     /// 현재 정렬 기준으로 항목을 다시 배열한다.
     ///
     /// 폴더/파일 판정을 먼저 하고 **같은 종류끼리만** 방향을 뒤집는다 —
-    /// `compare_entries` 반환값 전체를 뒤집으면 폴더 우선까지 뒤집힌다 (part1 D13)
+    /// `compare_rows` 반환값 전체를 뒤집으면 폴더 우선까지 뒤집힌다 (part1 D13)
     fn resort(&mut self) {
         let (key, asc) = (self.sort_key, self.ascending);
         let (type_names, icon_indices) = (&mut self.type_names, &mut self.icon_indices);
