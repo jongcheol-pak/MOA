@@ -1166,9 +1166,8 @@ mod tests {
         let mut panel = panel_with_remote_tab("/var/www");
         panel.refresh(&ctx);
         assert!(
-            panel.pending_dir.as_os_str().is_empty(),
-            "원격 탭에서 로컬 열거가 시작됐다: {:?}",
-            panel.pending_dir
+            panel.load.pending.is_none(),
+            "원격 탭에서 로컬 열거 워커가 떴다"
         );
     }
 
@@ -1194,8 +1193,8 @@ mod tests {
             panel.tabs.active().source.remote_path().map(|p| p.as_str()),
             Some("/")
         );
-        // 로컬 열거도 걸리지 않았다
-        assert!(panel.pending_dir.as_os_str().is_empty());
+        // 로컬 열거 워커도 뜨지 않았다
+        assert!(panel.load.pending.is_none());
     }
 
     #[test]
@@ -1215,7 +1214,7 @@ mod tests {
         // 항목 열기도 로컬 경로를 만들지 않는다
         let opened = panel.handle_list_action(FileListAction::Open(0), &ctx);
         assert!(opened.is_none());
-        assert!(panel.pending_dir.as_os_str().is_empty());
+        assert!(panel.load.pending.is_none());
     }
 
     #[test]
@@ -1235,8 +1234,8 @@ mod tests {
 
         panel.poll_watch(&ctx);
         assert!(
-            panel.pending_dir.as_os_str().is_empty(),
-            "감시 통지로 로컬 열거가 시작됐다"
+            panel.load.pending.is_none(),
+            "감시 통지로 로컬 열거 워커가 떴다"
         );
     }
 
@@ -1267,10 +1266,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(panel.create.pending.is_none(), "생성이 끝나지 않았다");
+        // **`load.pending`으로 본다** — `pending_dir`은 원격 탭에서 어차피 빈 경로라
+        // 가드 유무를 가리지 못한다. 열거 워커가 떴는지가 유일하게 둘을 가르는 신호다
         assert!(
-            panel.pending_dir.as_os_str().is_empty(),
-            "원격 탭인데 로컬 열거가 시작됐다: {:?}",
-            panel.pending_dir
+            panel.load.pending.is_none(),
+            "원격 탭인데 로컬 열거 워커가 떴다"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
