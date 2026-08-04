@@ -182,6 +182,9 @@ pub struct Connection {
     handle: Option<JoinHandle<()>>,
     /// 진행 중인 전송을 멈추라는 신호 — 워커의 진행 통지가 매 64KB마다 본다
     cancel: Arc<AtomicBool>,
+    /// 이 연결을 접는다는 신호. **명령 채널을 보지 않는 구간**(재시도 백오프 대기)에서도
+    /// 워커가 이것을 살펴 곧바로 빠져나온다
+    shutdown: Arc<AtomicBool>,
     /// 워커가 끝나면 켜진다 — `Drop`이 이것으로 회수를 확인한다
     finished: Arc<AtomicBool>,
     phase: ConnPhase,
@@ -203,8 +206,10 @@ impl Connection {
         let (event_tx, event_rx) = channel::<ConnEvent>();
         let cancel = Arc::new(AtomicBool::new(false));
         let finished = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new(AtomicBool::new(false));
 
         let worker_cancel = Arc::clone(&cancel);
+        let worker_shutdown = Arc::clone(&shutdown);
         let worker_finished = Arc::clone(&finished);
         let handle = std::thread::spawn(move || {
             worker(Worker {
@@ -215,6 +220,7 @@ impl Connection {
                 tx: event_tx,
                 wake,
                 cancel: worker_cancel,
+                shutdown: worker_shutdown,
                 retry,
             });
             worker_finished.store(true, Ordering::SeqCst);
@@ -227,6 +233,7 @@ impl Connection {
             rx: event_rx,
             handle: Some(handle),
             cancel,
+            shutdown,
             finished,
             phase: ConnPhase::Idle,
         }
@@ -273,8 +280,9 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        // 전송 중이라면 먼저 깨워 놓아야 `Stop`을 볼 수 있다
+        // 전송 중이거나 재시도를 기다리는 중이라면 먼저 깨워 놓아야 `Stop`을 볼 수 있다
         self.cancel.store(true, Ordering::SeqCst);
+        self.shutdown.store(true, Ordering::SeqCst);
         let _ = self.tx.send(ConnCommand::Stop);
 
         let deadline = Instant::now() + STOP_GRACE;
@@ -300,6 +308,7 @@ struct Worker {
     tx: Sender<ConnEvent>,
     wake: Wake,
     cancel: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
     retry: RetryPolicy,
 }
 
@@ -437,8 +446,31 @@ fn connect_with_retry(worker: &mut Worker) -> bool {
         )) {
             return false;
         }
-        std::thread::sleep(delay);
+        // 기다리는 동안은 명령 채널을 보지 않는다 — 그 사이 연결이 닫히면 곧바로 접는다
+        if !sleep_until_shutdown(&worker.shutdown, delay) {
+            return false;
+        }
         attempt += 1;
+    }
+}
+
+/// 종료 신호를 살피며 잔다. 신호가 오면 그 자리에서 `false`를 돌려준다.
+///
+/// 재시도 대기는 최대 30초라 한 번에 자 버리면, 그동안 앱을 닫아도 워커가 소켓을 쥔 채
+/// 그만큼 남는다. 잘게 나눠 자며 살펴 종료가 `STOP_GRACE` 안에 끝나게 한다.
+fn sleep_until_shutdown(shutdown: &AtomicBool, total: Duration) -> bool {
+    /// 살피는 간격 — `Drop`의 대기(200ms)보다 짧아야 그 안에 빠져나온다
+    const SLICE: Duration = Duration::from_millis(20);
+    let deadline = Instant::now() + total;
+    loop {
+        if shutdown.load(Ordering::SeqCst) {
+            return false;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return true;
+        }
+        std::thread::sleep(left.min(SLICE));
     }
 }
 
@@ -576,6 +608,23 @@ mod tests {
             silent_wake(),
             retry,
         )
+    }
+
+    /// 테스트가 쓰는 임시 파일 — 프로세스 번호를 넣어 동시에 도는 다른 실행과 겹치지 않게 한다
+    fn temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("fe_t4_{label}_{}.bin", std::process::id()))
+    }
+
+    /// 조건이 참이 될 때까지 짧게 기다린다. 시간이 아니라 **관측된 상태**로 판정하기 위한 것이다
+    fn wait_until(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        done()
     }
 
     /// 이벤트가 올 때까지 짧게 기다린다 — 워커가 다른 스레드라 즉시 오지 않는다
@@ -816,7 +865,7 @@ mod tests {
         server.set_entries("/", vec![fake_entry("a.txt", false)]);
         server.set_download_size(4 * 1024);
         let mut connection = spawn(&server, fast_retry());
-        let local = std::env::temp_dir().join("fe_t4_직렬_확인.bin");
+        let local = temp_path("직렬_확인");
 
         connection.send(ConnCommand::Connect);
         connection.send(ConnCommand::List {
@@ -860,13 +909,17 @@ mod tests {
     #[test]
     fn 취소하면_전송이_그_자리에서_멈춘다() {
         let server = FakeServer::new();
-        // 취소 신호를 볼 틈이 생기도록 충분히 크게 잡는다
-        server.set_download_size(64 * 1024 * 1024);
+        server.set_download_size(8 * 1024 * 1024);
         let mut connection = spawn(&server, fast_retry());
-        let local = std::env::temp_dir().join("fe_t4_취소_확인.bin");
+        let local = temp_path("취소_확인");
 
         connection.send(ConnCommand::Connect);
         wait_events(&mut connection, 2, Duration::from_secs(2));
+
+        // **기계 속도에 기대지 않는다** — 서버를 응답 없는 상태로 두어 전송을 들어간 자리에
+        // 세워 놓고, 취소 신호를 준 뒤에 풀어 준다. 그래야 "얼마나 빨리 옮기느냐"와 무관하게
+        // 취소가 반드시 전송 도중에 도착한다
+        server.set_hang(true);
         connection.send(ConnCommand::Transfer(TransferRequest {
             id: TransferId(1),
             direction: TransferDirection::Download,
@@ -874,8 +927,11 @@ mod tests {
             local: local.clone(),
             offset: 0,
         }));
-        std::thread::sleep(Duration::from_millis(10));
+        wait_until(Duration::from_secs(2), || {
+            server.calls().iter().any(|name| name == "download")
+        });
         connection.cancel_transfer();
+        server.set_hang(false);
 
         let events = wait_events(&mut connection, 1, Duration::from_secs(3));
         let cancelled = events.iter().any(|event| {
@@ -891,6 +947,35 @@ mod tests {
 
         drop(connection);
         let _ = std::fs::remove_file(local);
+    }
+
+    #[test]
+    fn 재시도를_기다리는_중에_닫아도_곧바로_회수된다() {
+        // 백오프 대기는 기본값이 최대 30초다 — 그 사이 앱을 닫았는데 워커가 소켓을 쥔 채
+        // 그만큼 남으면, 사용자에게는 종료가 걸린 것으로 보인다
+        let server = FakeServer::new();
+        server.fail_connects(99);
+        let slow_retry = RetryPolicy {
+            base: Duration::from_secs(5),
+            max: Duration::from_secs(5),
+            attempts: 5,
+        };
+        let started = Instant::now();
+        {
+            let connection = spawn(&server, slow_retry);
+            connection.send(ConnCommand::Connect);
+            // 첫 시도가 실패해 대기에 들어갈 때까지 기다린다
+            wait_until(Duration::from_secs(2), || {
+                server.calls().iter().any(|name| name == "connect")
+            });
+        }
+        wait_until(Duration::from_secs(3), || server.live_sessions() == 0);
+        assert_eq!(server.live_sessions(), 0, "워커가 회수되지 않았다");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "백오프 대기(5초)를 다 기다린 뒤에야 끝났다: {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
