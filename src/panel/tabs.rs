@@ -1,6 +1,8 @@
 //! 패널별 탭 — 순수 모델(TabsModel, 단위테스트 대상) + WC_TABCONTROL 래퍼 (FR-3)
 use crate::app::theme;
 use crate::panel::history::History;
+use crate::remote::connection::ConnectionId;
+use crate::remote::types::{RemotePath, SiteId};
 use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -33,6 +35,84 @@ impl TabState {
         TabState {
             history: History::new(path.clone()),
             committed: path,
+        }
+    }
+}
+
+/// 원격 탭의 연결 단계 — 화면(T10)이 배지·본문으로 투영한다.
+///
+/// 연결 자체의 단계(`remote::connection::ConnPhase`)와 따로 두는 이유: 탭은 **연결이 없어도**
+/// 존재한다(주소만 적힌 빈 탭·세션 복원 직후). 연결 쪽 단계를 그대로 쓰면 그 상태를 표현할 수 없다.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TabPhase {
+    /// 아직 어디에도 연결하지 않았다 (배지 `연결 없음`)
+    #[default]
+    New,
+    Connecting,
+    Ok,
+    Error {
+        message: String,
+    },
+}
+
+/// 탭이 가리키는 곳 — 로컬 폴더이거나 원격 위치다 (plan D8).
+///
+/// 소스를 패널이 아니라 **탭**에 두는 이유: 연결의 단위가 탭이라(README §4), 패널 단위로 두면
+/// 한 패널에 로컬 탭과 원격 탭을 섞을 수 없어 FR-33(모든 패널에서 사이트를 새 탭으로)이 성립하지 않는다.
+///
+/// 트레이트 객체로 만들지 않는다 — 종류가 둘뿐이고 열거형이 분기를 한눈에 보이게 한다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabSource {
+    Local(PathBuf),
+    Remote {
+        site: SiteId,
+        /// 이 탭이 쓰는 연결. 아직 연결하지 않았으면 `None`이다
+        conn: Option<ConnectionId>,
+        path: RemotePath,
+        phase: TabPhase,
+    },
+}
+
+/// 사이트를 찾을 수 없을 때 탭에 보일 이름 (사이트가 지워진 뒤 남은 탭)
+const MISSING_SITE: &str = "알 수 없는 사이트";
+
+impl TabSource {
+    /// 탭에 보일 이름.
+    ///
+    /// 원격 이름을 여기 사본으로 들지 않고 **호출부가 넘겨준다** — 사이트 이름은 `이름 바꾸기(R)`로
+    /// 바뀌는데, 사본을 들면 탭만 옛 이름으로 남는다
+    pub fn title(&self, site_name: Option<&str>) -> String {
+        match self {
+            TabSource::Local(path) => tab_title(path),
+            TabSource::Remote { .. } => site_name.unwrap_or(MISSING_SITE).to_owned(),
+        }
+    }
+
+    pub fn is_remote(&self) -> bool {
+        matches!(self, TabSource::Remote { .. })
+    }
+
+    /// 로컬 탭의 경로 — 원격 탭이면 `None`.
+    /// 열거·감시·썸네일처럼 **로컬에만 있는 일**이 이것으로 갈린다
+    pub fn local_path(&self) -> Option<&Path> {
+        match self {
+            TabSource::Local(path) => Some(path),
+            TabSource::Remote { .. } => None,
+        }
+    }
+
+    /// 원격 탭의 위치 — 로컬 탭이면 `None`
+    pub fn remote_path(&self) -> Option<&RemotePath> {
+        match self {
+            TabSource::Local(_) => None,
+            TabSource::Remote { path, .. } => Some(path),
+        }
+    }
+
+    pub fn site(&self) -> Option<SiteId> {
+        match self {
+            TabSource::Local(_) => None,
+            TabSource::Remote { site, .. } => Some(*site),
         }
     }
 }
@@ -458,5 +538,49 @@ mod tests {
     fn 탭_제목은_폴더_이름이다() {
         assert_eq!(tab_title(Path::new(r"C:\Users\me\문서")), "문서");
         assert_eq!(tab_title(Path::new(r"C:\")), r"C:\");
+    }
+
+    #[test]
+    fn 탭_소스의_이름은_로컬은_폴더_원격은_사이트다() {
+        let local = TabSource::Local(PathBuf::from(r"C:\Users\me\문서"));
+        assert_eq!(local.title(None), "문서");
+        // 로컬 탭은 넘겨준 사이트 이름을 쓰지 않는다
+        assert_eq!(local.title(Some("배포 서버")), "문서");
+
+        let remote = TabSource::Remote {
+            site: SiteId(3),
+            conn: None,
+            path: RemotePath::new("/var/www"),
+            phase: TabPhase::New,
+        };
+        assert_eq!(remote.title(Some("배포 서버")), "배포 서버");
+        // 사이트가 지워진 뒤 남은 탭
+        assert_eq!(remote.title(None), MISSING_SITE);
+    }
+
+    #[test]
+    fn 탭_소스는_로컬과_원격을_가른다() {
+        let local = TabSource::Local(PathBuf::from(r"C:\"));
+        assert!(!local.is_remote());
+        assert_eq!(local.local_path(), Some(Path::new(r"C:\")));
+        assert_eq!(local.remote_path(), None);
+        assert_eq!(local.site(), None);
+
+        let remote = TabSource::Remote {
+            site: SiteId(7),
+            conn: None,
+            path: RemotePath::new("/pub"),
+            phase: TabPhase::Connecting,
+        };
+        assert!(remote.is_remote());
+        // 열거·감시·썸네일은 이 `None`으로 갈린다
+        assert_eq!(remote.local_path(), None);
+        assert_eq!(remote.remote_path().map(|p| p.as_str()), Some("/pub"));
+        assert_eq!(remote.site(), Some(SiteId(7)));
+    }
+
+    #[test]
+    fn 새_원격_탭의_기본_단계는_연결_없음이다() {
+        assert_eq!(TabPhase::default(), TabPhase::New);
     }
 }

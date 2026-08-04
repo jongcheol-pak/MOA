@@ -501,19 +501,149 @@ pub fn compare_entries(
     type_b: &str,
     key: SortKey,
 ) -> std::cmp::Ordering {
+    compare_rows(a, type_a, b, type_b, key)
+}
+
+/// 목록 한 줄이 정렬·표시에 내주어야 하는 것 (plan T7).
+///
+/// 로컬(`fs::enumerate::FileEntry`)과 원격(`remote::types::RemoteEntry`)은 이름·시각을 담는
+/// 방식이 서로 다르지만(널 종단 UTF-16 + FILETIME ↔ `String` + 유닉스 초), **정렬 규칙은
+/// 한 벌이어야** 화면이 프로토콜마다 달라지지 않는다. 그 한 벌을 이 트레이트가 잇는다.
+///
+/// 렌더·선택·아이콘은 여기 두지 않는다 — 정렬과 표시 문자열에 필요한 것만이다.
+/// 트레이트 객체가 아니라 **제네릭**으로 쓴다(10만 항목 정렬에 가상 호출을 넣지 않는다).
+pub trait ListRow {
+    /// 표시용 이름
+    fn name(&self) -> String;
+
+    /// **정렬용 널 종단 UTF-16 이름.**
+    ///
+    /// 이름 비교는 탐색기와 같은 `StrCmpLogicalW`로 한다("파일2" < "파일10") — 그 API가
+    /// 널 종단 UTF-16을 받으므로 여기서 그 형태로 내준다. 로컬 항목은 이미 그 모양이라
+    /// 빌려주고, 원격 항목만 그때 만든다
+    fn name_sort_key(&self) -> std::borrow::Cow<'_, [u16]>;
+
+    fn is_dir(&self) -> bool;
+
+    fn is_symlink(&self) -> bool;
+
+    /// 심볼릭 링크가 가리키는 곳 — 이름 뒤에 `→ 대상`으로 붙는다 (FR-31)
+    fn link_target(&self) -> Option<&str>;
+
+    fn size(&self) -> u64;
+
+    /// **정렬 전용 시각 키** — 1601-01-01부터의 100나노초 단위(FILETIME 눈금)다.
+    ///
+    /// 유닉스 초로 맞추지 않는 이유: 로컬 항목의 시각은 100나노초 정밀도라, 초 단위로 깎으면
+    /// **같은 초에 만들어진 파일들의 차례가 바뀐다**(지금 동작이 달라진다). 표시용 변환은
+    /// 각 목록이 자기 원본 값으로 한다
+    fn modified_key(&self) -> u64;
+
+    /// 소문자 확장자 (`""` = 없음/폴더)
+    fn extension(&self) -> String;
+}
+
+/// 유닉스 초(UTC) → FILETIME 눈금. 두 목록이 같은 자로 정렬되게 맞춘다
+pub fn unix_seconds_to_filetime(seconds: i64) -> u64 {
+    const EPOCH_DIFFERENCE_SECONDS: i64 = 11_644_473_600;
+    let since_1601 = seconds.saturating_add(EPOCH_DIFFERENCE_SECONDS).max(0);
+    (since_1601 as u64).saturating_mul(10_000_000)
+}
+
+impl ListRow for FileEntry {
+    fn name(&self) -> String {
+        self.name_string()
+    }
+
+    fn name_sort_key(&self) -> std::borrow::Cow<'_, [u16]> {
+        // 이미 널 종단 UTF-16이라 그대로 빌려준다
+        std::borrow::Cow::Borrowed(&self.name)
+    }
+
+    fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+
+    fn is_symlink(&self) -> bool {
+        // 로컬 목록은 링크를 따로 표시하지 않는다 (원격 전용 표시다 — FR-31)
+        false
+    }
+
+    fn link_target(&self) -> Option<&str> {
+        None
+    }
+
+    fn size(&self) -> u64 {
+        self.size
+    }
+
+    fn modified_key(&self) -> u64 {
+        self.modified
+    }
+
+    fn extension(&self) -> String {
+        self.extension()
+    }
+}
+
+impl ListRow for crate::remote::types::RemoteEntry {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn name_sort_key(&self) -> std::borrow::Cow<'_, [u16]> {
+        let mut wide: Vec<u16> = self.name.encode_utf16().collect();
+        wide.push(0);
+        std::borrow::Cow::Owned(wide)
+    }
+
+    fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+
+    fn is_symlink(&self) -> bool {
+        self.is_symlink
+    }
+
+    fn link_target(&self) -> Option<&str> {
+        self.link_target.as_deref()
+    }
+
+    fn size(&self) -> u64 {
+        self.size
+    }
+
+    fn modified_key(&self) -> u64 {
+        self.modified.map_or(0, unix_seconds_to_filetime)
+    }
+
+    fn extension(&self) -> String {
+        self.extension()
+    }
+}
+
+/// 정렬 비교 — 로컬·원격이 함께 쓰는 한 벌의 규칙. `compare_entries`가 이것에 위임한다.
+///
+/// 폴더 우선은 정렬 방향과 무관하게 결정된다 — 위 `compare_entries` 주석과 같은 주의다
+pub fn compare_rows<R: ListRow + ?Sized>(
+    a: &R,
+    type_a: &str,
+    b: &R,
+    type_b: &str,
+    key: SortKey,
+) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    // 폴더는 정렬 방향과 무관하게 항상 우선
-    match (a.is_dir, b.is_dir) {
+    match (a.is_dir(), b.is_dir()) {
         (true, false) => return Ordering::Less,
         (false, true) => return Ordering::Greater,
         _ => {}
     }
-    let by_name = |x: &FileEntry, y: &FileEntry| logical_name_cmp(&x.name, &y.name);
+    let by_name = || logical_name_cmp(&a.name_sort_key(), &b.name_sort_key());
     match key {
-        SortKey::Name => by_name(a, b),
-        SortKey::Size => a.size.cmp(&b.size).then_with(|| by_name(a, b)),
-        SortKey::Type => type_a.cmp(type_b).then_with(|| by_name(a, b)),
-        SortKey::Modified => a.modified.cmp(&b.modified).then_with(|| by_name(a, b)),
+        SortKey::Name => by_name(),
+        SortKey::Size => a.size().cmp(&b.size()).then_with(by_name),
+        SortKey::Type => type_a.cmp(type_b).then_with(by_name),
+        SortKey::Modified => a.modified_key().cmp(&b.modified_key()).then_with(by_name),
     }
 }
 
@@ -584,6 +714,7 @@ fn write_to_buffer(text: &str, buf: windows::core::PWSTR, cap: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::types::RemoteEntry;
 
     fn entry(name: &str, is_dir: bool, size: u64, modified: u64) -> FileEntry {
         let mut v: Vec<u16> = name.encode_utf16().collect();
@@ -641,6 +772,111 @@ mod tests {
         let new = entry("new", false, 0, 200);
         assert_eq!(
             compare_entries(&old, "", &new, "", SortKey::Modified),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    fn remote(name: &str, is_dir: bool, size: u64, modified: Option<i64>) -> RemoteEntry {
+        RemoteEntry {
+            name: name.to_owned(),
+            is_dir,
+            is_symlink: false,
+            link_target: None,
+            size,
+            modified,
+            mode: None,
+            owner: None,
+        }
+    }
+
+    #[test]
+    fn 원격_항목도_같은_규칙으로_정렬된다() {
+        // 화면이 프로토콜마다 다르게 줄 세우면 안 된다 (plan T7)
+        let mut rows = vec![
+            remote("파일10.txt", false, 10, Some(100)),
+            remote("파일2.txt", false, 20, Some(200)),
+            remote("zzz", true, 0, Some(0)),
+        ];
+        rows.sort_by(|a, b| compare_rows(a, "", b, "", SortKey::Name));
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        // 폴더 우선 + 숫자 인지 정렬("파일2" < "파일10")
+        assert_eq!(names, vec!["zzz", "파일2.txt", "파일10.txt"]);
+
+        rows.sort_by(|a, b| compare_rows(a, "", b, "", SortKey::Size));
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["zzz", "파일10.txt", "파일2.txt"]);
+    }
+
+    #[test]
+    fn 시각을_주지_않은_원격_항목이_가장_앞선다() {
+        let mut rows = vec![
+            remote("시각있음", false, 0, Some(1_700_000_000)),
+            remote("시각없음", false, 0, None),
+        ];
+        rows.sort_by(|a, b| compare_rows(a, "", b, "", SortKey::Modified));
+        assert_eq!(rows[0].name, "시각없음");
+    }
+
+    #[test]
+    fn 정렬용_시각은_초로_깎이지_않는다() {
+        // 유닉스 초로 맞추면 같은 초에 만들어진 로컬 파일들의 차례가 바뀐다
+        let earlier = entry("a.txt", false, 0, 132_000_000_000_000_000);
+        let later = entry("b.txt", false, 0, 132_000_000_005_000_000);
+        assert_eq!(
+            compare_entries(&earlier, "", &later, "", SortKey::Modified),
+            std::cmp::Ordering::Less,
+            "0.5초 차이가 같은 것으로 뭉개졌다"
+        );
+    }
+
+    #[test]
+    fn 유닉스_시각_변환은_기준점을_맞춘다() {
+        // 1970-01-01 → FILETIME의 1601 기준 100나노초 단위
+        assert_eq!(unix_seconds_to_filetime(0), 11_644_473_600 * 10_000_000);
+        assert_eq!(
+            unix_seconds_to_filetime(1),
+            11_644_473_600 * 10_000_000 + 10_000_000
+        );
+        // 1970년 이전(음수)도 0 아래로 내려가지 않는다
+        assert_eq!(unix_seconds_to_filetime(-11_644_473_600), 0);
+        assert_eq!(unix_seconds_to_filetime(i64::MIN), 0);
+    }
+
+    #[test]
+    fn 목록_한_줄의_표시값을_트레이트로_읽는다() {
+        let local = entry("보고서.hwp", false, 1024, 7);
+        assert_eq!(ListRow::name(&local), "보고서.hwp");
+        assert_eq!(ListRow::extension(&local), "hwp");
+        assert!(
+            !local.is_symlink(),
+            "로컬 목록은 링크를 따로 표시하지 않는다"
+        );
+        assert_eq!(ListRow::link_target(&local), None);
+        assert_eq!(local.modified_key(), 7);
+
+        let mut link = remote("current", false, 0, None);
+        link.is_symlink = true;
+        link.link_target = Some("releases/42".to_owned());
+        assert!(link.is_symlink());
+        assert_eq!(ListRow::link_target(&link), Some("releases/42"));
+        // 폴더와 앞이 빈 이름은 확장자가 없다
+        assert_eq!(ListRow::extension(&remote("폴더", true, 0, None)), "");
+        assert_eq!(
+            ListRow::extension(&remote(".gitignore", false, 0, None)),
+            ""
+        );
+    }
+
+    #[test]
+    fn 이름이_같고_종류가_다르면_폴더가_앞선다() {
+        let dir = remote("같은이름", true, 0, Some(1));
+        let file = remote("같은이름", false, 0, Some(1));
+        assert_eq!(
+            compare_rows(&dir, "", &file, "", SortKey::Name),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_rows(&dir, "", &file, "", SortKey::Modified),
             std::cmp::Ordering::Less
         );
     }
