@@ -61,8 +61,16 @@ impl TabState {
         self.source.local_path().unwrap_or(Path::new(""))
     }
 
-    /// 로컬 위치를 옮긴다. 원격 탭이었으면 로컬 탭이 된다
+    /// 로컬 위치를 옮긴다.
+    ///
+    /// **로컬 탭에만 쓴다** — 원격 탭에 부르면 연결·원격 경로가 조용히 사라지고 로컬 탭으로
+    /// 둔갑한다. 부르는 곳은 로컬 열거가 성공한 자리뿐이며, 오용을 개발 중에 드러내려고
+    /// 단언을 둔다(배포 빌드에서는 사라진다)
     pub fn set_committed(&mut self, path: PathBuf) {
+        debug_assert!(
+            !self.source.is_remote(),
+            "원격 탭에 로컬 경로를 커밋하려 했다"
+        );
         self.source = TabSource::Local(path);
     }
 }

@@ -13,7 +13,7 @@ use crate::fs::watcher::DirWatcher;
 use crate::panel::tabs::{CloseOutcome, TabSource, TabState, TabsModel};
 use crate::remote::connection::ConnCommand;
 use crate::remote::manager::ConnectionManager;
-use crate::remote::types::RemoteEntry;
+use crate::remote::types::{RemoteEntry, RemotePath};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
@@ -320,6 +320,11 @@ impl PanelState {
     /// 감시 통지를 확인해 변경이 있으면 폴더를 다시 읽는다.
     /// 폴더가 열리지 않아 감시가 즉시 끝난 경우에도 통지 1회가 오며, 재열거가 사유를 표시한다
     fn poll_watch(&mut self, ctx: &egui::Context) {
+        // 원격 탭을 보는 동안에는 로컬 감시 통지를 처리하지 않는다 — 이전 폴더의 감시가
+        // 아직 살아 있을 수 있는데, 그 통지로 로컬 열거를 걸면 원격 화면이 로컬 목록으로 덮인다
+        if self.is_remote() {
+            return;
+        }
         let Some(watch) = self.watch.as_ref() else {
             return;
         };
@@ -462,9 +467,15 @@ impl PanelState {
         self.handle_nav(NavAction::Up, ctx);
     }
 
-    /// 보고 있는 폴더를 다시 읽는다 — 경로도 히스토리도 그대로다
+    /// 보고 있는 폴더를 다시 읽는다 — 경로도 히스토리도 그대로다.
+    ///
+    /// **원격 탭에서는 로컬 열거를 걸지 않는다** — 원격 목록은 연결 워커에게 다시 물어야 하고
+    /// (`request_remote_list`), 그 배선은 연결 화면과 함께 들어온다(T10)
     pub fn refresh(&mut self, ctx: &egui::Context) {
-        let dir = self.dir().to_path_buf();
+        let Some(dir) = self.tabs.active().source.local_path() else {
+            return;
+        };
+        let dir = dir.to_path_buf();
         self.start_load(dir, PendingNav::None, ctx);
     }
 
@@ -500,6 +511,14 @@ impl PanelState {
         }
         let dir = self.dir().to_path_buf();
         self.create.start(dir, "파일", create::new_text_file, ctx);
+    }
+
+    /// 활성 원격 탭이 가리키는 위치를 옮긴다. 연결·단계는 그대로 둔다 —
+    /// 목록 다시 읽기는 호출부가 `request_remote_list`로 잇는다(T10 배선)
+    pub fn set_remote_path(&mut self, target: RemotePath) {
+        if let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source {
+            *path = target;
+        }
     }
 
     /// 활성 원격 탭의 목록을 요청한다. 돌려주는 값은 이번 요청의 세대다.
@@ -618,11 +637,20 @@ impl PanelState {
                     self.start_load(path, PendingNav::Forward, ctx);
                 }
             }
-            NavAction::Up => {
-                if let Some(parent) = self.dir().parent().map(PathBuf::from) {
-                    self.navigate(parent, ctx);
+            NavAction::Up => match &self.tabs.active().source {
+                TabSource::Local(path) => {
+                    if let Some(parent) = path.parent().map(PathBuf::from) {
+                        self.navigate(parent, ctx);
+                    }
                 }
-            }
+                // 원격은 원격 경로로 올라간다. **루트에서는 그대로 머문다** — `parent()`가
+                // `None`을 주므로 아무것도 하지 않는 것이 곧 "루트에 머문다"이다
+                TabSource::Remote { path, .. } => {
+                    if let Some(parent) = path.parent() {
+                        self.set_remote_path(parent);
+                    }
+                }
+            },
             NavAction::Goto(path) => self.navigate(path, ctx),
         }
     }
@@ -640,8 +668,11 @@ impl PanelState {
         match action {
             FileListAction::None => None,
             FileListAction::Open(index) => {
+                // 원격 항목은 로컬 경로가 없다 — 여는 일은 원격 탐색·전송(T13·T22)이 맡는다.
+                // 여기서 빈 경로에 이름을 이어 붙이면 있지도 않은 로컬 파일을 셸에 넘기게 된다
                 let entry = self.list.entry_at(index)?;
-                let target = self.dir().join(entry.name_string());
+                let dir = self.tabs.active().source.local_path()?;
+                let target = dir.join(entry.name_string());
                 if entry.is_dir {
                     self.navigate(target, ctx);
                 } else {
@@ -657,11 +688,9 @@ impl PanelState {
                 } else {
                     Vec::new()
                 };
-                Some(MenuRequest {
-                    folder: self.dir().to_path_buf(),
-                    items,
-                    pos,
-                })
+                // 셸 메뉴는 로컬 전용이다 (D21) — 원격 목록의 우클릭은 자체 메뉴(T23)가 받는다
+                let folder = self.tabs.active().source.local_path()?.to_path_buf();
+                Some(MenuRequest { folder, items, pos })
             }
         }
     }

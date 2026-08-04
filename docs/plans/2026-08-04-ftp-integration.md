@@ -77,13 +77,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 **위키 참조**: vault 실재 확인(`D:\Personal Project\Obsidian Vault\LLM WIKI` — 20_projects·30_knowledge·40_guides 존재). **FileExplorer는 위키에 미등록**이고 vault 전체 grep에서 FTP/SFTP 관련 자료 0건 — 관련 위키 자료 없음, 코드 1차 출처로 진행. 대상 프로젝트 `decisions.md`도 없다(미등록이므로).
 
-**Deferred 대장 확인**: `docs/plans/deferred.md` `## 대기` 20건을 훑었다. 이번 작업과 닿는 항목 없음 — 구 Win32 UI 제거·한글 폰트 서브셋·탭 폭 고정 등은 원격 기능과 독립이라 그대로 대기에 둔다. 이전 plan(`2026-07-29-view-modes-and-panel-menu`)은 `## Next Steps
-
-- 권장 다음 액션: `T9부터 계속`으로 implement-task 재개 (T9 = 탭 소스 전환, 6파일 원자적 변경)
-- Suggested skills: pjc:implement-task
-- T9 착수 메모: `TabState.committed: PathBuf` → `TabSource`. 레거시 두 파일(`src/panel/panel.rs` 31곳·`src/app/window.rs` 15곳)은 **읽기 접근자 `committed()` + 쓰기 `set_committed()`**로 기계적으로 어댑트한다(D26 — 기능을 되살리지 않는다). 실행 경로는 `src/ui/panel.rs`다.
-
-## Phase Ledger`에 `Phase G 통과 (Must 100%)`가 있어 완료로 판정했고, 그 `## Deferred / Follow-up` 7건은 이미 대장에 이관돼 있다.
+**Deferred 대장 확인**: `docs/plans/deferred.md` `## 대기` 20건을 훑었다. 이번 작업과 닿는 항목 없음 — 구 Win32 UI 제거·한글 폰트 서브셋·탭 폭 고정 등은 원격 기능과 독립이라 그대로 대기에 둔다. 이전 plan(`2026-07-29-view-modes-and-panel-menu`)은 `## Phase Ledger`에 `Phase G 통과 (Must 100%)`가 있어 완료로 판정했고, 그 `## Deferred / Follow-up` 7건은 이미 대장에 이관돼 있다.
 
 **AGENTS.md 신선도**: `src/{ui,app,panel,fs}`·`docs/prd.md`·`docs/plans/` 실재 확인. 빌드·테스트 명령(`cargo build`/`test`/`clippy`/`fmt`)은 표준 cargo라 별도 스크립트 없음. 어긋남 0건.
 
@@ -518,6 +512,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Design**:
   - **배치**: `TabState.committed: PathBuf` → `TabSource`로 **원자적 전환**. 파일이 6개인 것은 이 전환을 쪼개면 중간 상태가 컴파일되지 않기 때문이며(공통 규칙의 명시적 예외), 실제 변경은 "타입 하나를 갈아끼우고 호출부를 따라가는" 단일 성격이다
   - **신규 심볼**: `TabsModel::sources()` — 기존 `paths()`를 대체(원격 탭에는 대응 `PathBuf`가 없다) / `PanelState`가 `Option<&ConnectionManager>`를 받아 원격 탭이면 열거 대신 원격 조회를 건다 / `ui::tabs::show_tab_strip`이 `TabSource`로 라벨을 만든다(배지는 T10)
+    - **구현 중 확정 (원안 대비 3건)**: ① **`PanelState`가 `Option<&ConnectionManager>`를 인자로 받지 않는다.** 대신 `request_remote_list(&ConnectionManager)`(목록 요청 — 불변 참조로 족하다)와 `apply_remote_listed(generation, entries, icons)`(도착한 목록 반영) **두 진입점**을 연다. 이유: 이벤트 폴링은 **가변** 참조가 필요하고 연결→패널 라우팅은 앱이 쥐어야 하는데, 인자로 받으면 `show()` 시그니처가 그 결정에 묶인다. **그래서 `src/ui/app.rs`는 이번 task에서 손대지 않았고, 라우팅 배선은 T10이 한다**(연결 단계 화면과 함께 들어와야 의미가 있다). ② **`TabsModel::paths()`를 지우지 않고 남겼다** — 세션 저장(T25가 `sources()`로 바꾼다)과 레거시 `panel/panel.rs`가 아직 쓴다. 원격 탭은 빈 경로로 나오며 그 사실을 doc에 적었다. ③ **`src/app/window.rs`는 손댈 것이 없었다** — grep 재확인 결과 그 파일은 `TabState`·`TabsModel`을 참조하지 않는다(전제 17이 센 15곳은 `Session` 구조체 리터럴이며 그것은 T25가 다룬다).
   - **의존 방향**: `ui::splitter`·`ui::app`이 `manager`를 패널까지 흘려준다. `panel::panel`(레거시)은 `TabSource::Local`로 최소 어댑트만 한다(D26)
   - **relay 일반화 (후속 task가 splitter를 다시 건드리지 않게 하는 조치)**: 지금 `ui::splitter::show_layout`은 `PanelOutcome`에서 **`menu`·`command` 두 필드만 골라** 위로 올린다(`src/ui/splitter.rs:96-110`). 그래서 나중에 필드가 늘 때마다 splitter를 함께 고쳐야 한다 — 여기서 **`PanelOutcome`을 통째로 `(PanelId, PanelOutcome)`로 올리도록 바꾼다.** T22(드래그 전송)·T23(원격 메뉴)이 실어 보내는 값은 경로 벡터를 담아 `Copy`인 `Command`(`ui/menu.rs:41`)에 들어갈 수 없으므로 `PanelOutcome`에 새 필드가 필요한데, relay가 일반화돼 있지 않으면 그 두 task가 각각 splitter를 다시 건드리게 된다(2차 리뷰 M3)
   - **다중 패널 병합 규칙**: 통째로 올리되 **필드별 first-wins를 유지한다** — 빈 필드만 채우는 방식으로 병합해, 한 프레임에 A패널이 메뉴를 내고 B패널이 명령·드롭을 낼 때 한쪽이 통째로 버려지지 않게 한다(현행 `splitter.rs:102-110`이 `menu`·`command`에 이미 쓰는 규칙을 새 필드까지 넓히는 것이다). 기존 테스트는 단일 패널 기준이라 이 회귀를 잡지 못하므로 **아래 Acceptance⑦로 따로 고정**한다 (3차 리뷰 m1)
@@ -821,6 +816,12 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
   - **결정(계획 문구 정정)**: `ListModel::rows()`를 두지 않았다 — 두 항목 타입을 **슬라이스 하나**로 내주려면 `dyn ListRow`가 필요한데, 그것이 바로 T7·T8이 피하려던 것이다(10만 항목에 가상 호출). 대신 `model()`이 `&ListModel`을 주고 호출부가 종류로 갈라 각각 슬라이스를 얻는다. 무복사는 포인터 동일성 테스트로 고정했다.
   - **결정**: 입력 구조체에 `local_paths: bool`을 더했다 — 원격 항목에 **로컬 경로로 하는 일**(썸네일 요청·셸 아이콘 정밀 조회)을 하지 않기 위한 것이다(D11). 값은 `model.is_local()`에서만 나와 호출부가 잘못 넣을 자리가 없다.
   - **결정**: `entry_at`·`selected_paths`가 원격 모델에서 `None`·빈 벡터다 — 셸 메뉴는 로컬 전용이라(D21), 원격 이름을 로컬 경로에 이어 붙여 넘기면 없는 파일을 셸에 묻게 된다.
+
+## Next Steps
+
+- 권장 다음 액션: `T10부터 계속`으로 implement-task 재개
+- Suggested skills: pjc:implement-task
+- T10 착수 메모: `PanelState`는 `request_remote_list(&ConnectionManager)`·`apply_remote_listed(generation, entries, icons)` 두 진입점을 이미 갖고 있다. **`ui/app.rs`가 연결 이벤트를 패널로 라우팅하는 배선이 T10 몫**이다(아래 T9 Design 갱신 참조).
 
 ## Phase Ledger
 
