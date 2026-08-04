@@ -3,7 +3,9 @@
 //! 전환 UI 없는 **고정 다크**다(사이드바 FR-15와 정합). 색 값은 사이드바(`sidebar.rs`)의
 //! 사설 팔레트와 통일한다. 각 색은 실제로 쓰는 task에서 추가한다(YAGNI).
 use windows::Win32::Foundation::{COLORREF, HWND};
-use windows::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
+use windows::Win32::Graphics::Dwm::{
+    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::core::{PCSTR, w};
 
@@ -77,6 +79,29 @@ pub fn allow_dark_for_window(hwnd: HWND) {
             let allow: extern "system" fn(HWND, i32) -> i32 = std::mem::transmute(proc);
             allow(hwnd, 1); // TRUE
         }
+    }
+}
+
+/// 최대화·복원·최소화 때 DWM이 넣는 전환 애니메이션을 이 창에서 끈다 (FR-22).
+///
+/// 그 애니메이션은 **바뀌기 전 창의 스냅샷과 새 화면을 겹쳐 교차 페이드**한다. 창 크기에 따라
+/// 패널·목록이 재배치되는 이 앱에서는 두 화면의 글자 위치가 크게 달라, 겹치는 동안 글자가
+/// 이중으로 보이며 화면이 떨리는 것처럼 보인다. 게다가 애니메이션이 도는 동안 새 화면을
+/// 내보내는 시각이 300ms 가까이 밀려 그 겹침이 오래 남는다(실측).
+///
+/// 끄면 최대화·복원이 애니메이션 없이 곧바로 바뀐다 — 창 장식을 앱이 직접 그리는 이 앱에서는
+/// OS 애니메이션과 어차피 어울리지 않는다. 미지원 OS에서는 실패하지만 앱 동작에는 영향 없다.
+pub fn disable_window_transitions(hwnd: HWND) {
+    // DWMWA_TRANSITIONS_FORCEDISABLED는 BOOL(4바이트 정수)을 받는다 — 1(TRUE)이 "끔"
+    let disabled: i32 = 1;
+    // 안전성: 유효한 최상위 창 핸들에 DWM 속성 설정. pvAttribute는 i32 1개를 가리키며 그 크기를 함께 전달
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            &disabled as *const i32 as *const core::ffi::c_void,
+            size_of::<i32>() as u32,
+        );
     }
 }
 

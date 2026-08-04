@@ -68,9 +68,8 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
     let bar = ui.max_rect();
 
     // 끌기 판정은 버튼이 놓인 좌·우 끝을 **뺀 빈 영역**에서만 한다.
-    // 바 전체를 잡으면 버튼을 누른 순간에도 끌기 신호가 함께 나간다 — egui는 클릭 위젯과
-    // 끌기 위젯을 동시에 히트로 잡고(`hit_test`), `is_pointer_button_down_on()`은 둘 중
-    // 하나만 걸려도 참이기 때문이다(`context.rs`). 그러면 OS 창 이동 루프가 열리면서
+    // 바 전체를 잡으면 버튼 위에서 끌었을 때 끌기 신호가 함께 나간다 — egui는 클릭 위젯과
+    // 끌기 위젯을 동시에 히트로 잡기 때문이다(`hit_test`). 그러면 OS 창 이동 루프가 열리면서
     // 그 프레임의 버튼 클릭이 삼켜진다
     let drag_left = bar.min.x + LEFT_GROUP_WIDTH;
     let drag_right = (bar.max.x - RIGHT_GROUP_WIDTH).max(drag_left);
@@ -85,9 +84,12 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
     );
     if drag.double_clicked() {
         outcome.window = Some(WindowRequest::ToggleMaximize);
-    } else if drag.is_pointer_button_down_on() {
-        // 더블클릭한 프레임에는 끌기를 요청하지 않는다 — 둘 다 보내면 OS 끌기 루프가
-        // 먼저 잡혀 더블클릭이 삼켜진다 (D4)
+    } else if drag.drag_started() {
+        // 누른 것만으로는 끌지 않는다 — 포인터가 실제로 움직여 egui가 끌기로 판정한
+        // 프레임에만 요청한다. 누르자마자(`is_pointer_button_down_on`) 보내면 클릭·더블클릭에서도
+        // OS 창 이동 루프가 열려, 손이 미세하게 흔들린 만큼 창이 따라 움직인 뒤 최대화가
+        // 겹쳐 화면이 떨리며 바뀐다. 시작 프레임 한 번이면 충분하다 —
+        // 그 뒤 창 이동은 OS 루프가 맡는다 (D4)
         outcome.window = Some(WindowRequest::Drag);
     }
 
@@ -384,5 +386,105 @@ mod tests {
             Some(egui::ResizeDirection::West)
         );
         assert_eq!(resize_direction(egui::pos2(4.1, 50.0), w, m), None);
+    }
+
+    // ── 타이틀바 끌기·더블클릭 판정 (헤드리스 egui) ──
+
+    /// 드래그 영역 안의 한 점 — 좌우 버튼군을 피한 빈 자리
+    const DRAG_POS: egui::Pos2 = egui::pos2(300.0, 18.0);
+
+    /// 타이틀바 한 프레임을 돌리고 이번 프레임의 창 요청을 돌려준다.
+    /// 창 조작 판정은 프레임에 걸친 포인터 상태에서 나오므로 한 프레임만으로는 볼 수 없다
+    fn run_frame(
+        ctx: &egui::Context,
+        time: f64,
+        events: Vec<egui::Event>,
+    ) -> Option<WindowRequest> {
+        let input = egui::RawInput {
+            time: Some(time),
+            events,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, TITLEBAR_HEIGHT),
+            )),
+            ..Default::default()
+        };
+        let mut request = None;
+        let _ = ctx.run_ui(input, |ui| {
+            request = show_titlebar(
+                ui,
+                "제목",
+                TitlebarState {
+                    maximized: false,
+                    sidebar_collapsed: false,
+                },
+            )
+            .window;
+        });
+        request
+    }
+
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn 제자리_클릭은_창을_끌지_않는다() {
+        // 누른 즉시 끌기를 요청하면 OS 창 이동 루프가 열려, 손이 미세하게 흔들린 만큼
+        // 창이 따라 움직인다 — 최대화 토글이 그 위에 겹치면 화면이 떨리며 바뀐다
+        let ctx = egui::Context::default();
+        let frames = [
+            run_frame(&ctx, 0.0, vec![egui::Event::PointerMoved(DRAG_POS)]),
+            run_frame(&ctx, 0.05, vec![press(DRAG_POS, true)]),
+            run_frame(&ctx, 0.10, vec![press(DRAG_POS, false)]),
+        ];
+        assert!(
+            !frames.contains(&Some(WindowRequest::Drag)),
+            "제자리 클릭에서 끌기를 요청했다: {frames:?}"
+        );
+    }
+
+    #[test]
+    fn 더블클릭은_끌기_없이_최대화만_토글한다() {
+        // 프레임 간격은 egui가 더블클릭으로 묶는 시간(`max_double_click_delay`, 0.3초) 안이어야 한다
+        let ctx = egui::Context::default();
+        let frames = [
+            run_frame(&ctx, 0.0, vec![egui::Event::PointerMoved(DRAG_POS)]),
+            run_frame(&ctx, 0.05, vec![press(DRAG_POS, true)]),
+            run_frame(&ctx, 0.10, vec![press(DRAG_POS, false)]),
+            run_frame(&ctx, 0.15, vec![press(DRAG_POS, true)]),
+            run_frame(&ctx, 0.20, vec![press(DRAG_POS, false)]),
+        ];
+        assert!(
+            !frames.contains(&Some(WindowRequest::Drag)),
+            "더블클릭 도중 끌기를 요청했다: {frames:?}"
+        );
+        assert!(
+            frames.contains(&Some(WindowRequest::ToggleMaximize)),
+            "더블클릭이 최대화 토글로 이어지지 않았다: {frames:?}"
+        );
+    }
+
+    #[test]
+    fn 충분히_움직이면_창을_끈다() {
+        // 끌기 자체는 살아 있어야 한다 — egui는 클릭도 받는 위젯에서 포인터가
+        // 조금 움직인 뒤에야 끌기로 판정한다(`max_click_dist`)
+        let ctx = egui::Context::default();
+        let moved = DRAG_POS + egui::vec2(20.0, 0.0);
+        let frames = [
+            run_frame(&ctx, 0.0, vec![egui::Event::PointerMoved(DRAG_POS)]),
+            run_frame(&ctx, 0.05, vec![press(DRAG_POS, true)]),
+            run_frame(&ctx, 0.10, vec![egui::Event::PointerMoved(moved)]),
+            run_frame(&ctx, 0.15, vec![egui::Event::PointerMoved(moved)]),
+        ];
+        assert!(
+            frames.contains(&Some(WindowRequest::Drag)),
+            "충분히 움직였는데 끌기를 요청하지 않았다: {frames:?}"
+        );
     }
 }

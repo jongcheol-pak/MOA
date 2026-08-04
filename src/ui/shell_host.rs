@@ -42,6 +42,12 @@ impl ShellHost {
         Some(ShellHost { hwnd })
     }
 
+    /// 이 앱 창의 핸들 — 창 자체를 다루는 Win32 설정(DWM 속성 등)에 쓴다.
+    /// HWND를 잡아 두는 곳이 여기뿐이라, 창 핸들이 필요한 쪽은 이 값을 빌려 간다
+    pub fn hwnd(&self) -> HWND {
+        self.hwnd
+    }
+
     /// 셸 컨텍스트 메뉴를 화면 좌표에 띄운다.
     /// `items`가 비면 폴더 배경 메뉴("새로 만들기" 포함)가 나온다.
     /// 메뉴가 닫힐 때까지 이 호출은 반환하지 않는다(TrackPopupMenuEx 모달 루프)

@@ -306,6 +306,10 @@ impl ExplorerApp {
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
+        // 최대화·복원 때 OS가 옛 화면과 새 화면을 겹쳐 페이드하면 글자가 이중으로 보인다 (FR-22)
+        if let Some(shell) = &shell {
+            crate::app::theme::disable_window_transitions(shell.hwnd());
+        }
         let mut app = ExplorerApp {
             com,
             shell,
