@@ -5,7 +5,8 @@
 //! `ui::list_details`) 이 파일은 상태를 들고 그 모듈에 넘긴 뒤, 돌아온 조작을 상태에 반영한다.
 use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
-use crate::panel::file_list::{SortKey, compare_entries};
+use crate::panel::file_list::{ListRow, SortKey, compare_rows};
+use crate::remote::types::RemoteEntry;
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_details::{self, Columns, DetailsInput};
 use crate::ui::list_grid::{self, GridInput};
@@ -18,11 +19,40 @@ use std::path::PathBuf;
 // 호출부(`ui::panel`)가 종전 경로를 그대로 쓰도록 여기서 다시 내보낸다
 pub use crate::ui::list_common::FileListAction;
 
+/// 목록이 담은 항목 — 로컬 폴더의 것이거나 원격 폴더의 것이다 (plan T8).
+///
+/// 하나의 슬라이스로 합치지 않는 이유: 두 항목 타입은 이름·시각을 담는 방식이 아예 달라
+/// (널 종단 UTF-16 + FILETIME ↔ `String` + 유닉스 초) 한 벌로 만들면 어느 한쪽이 손해를 본다.
+/// 대신 **정렬·표시 규칙만** `ListRow`로 공유하고, 그리기는 종류별로 한 번씩 찍어 낸다
+/// (트레이트 객체가 아니라 제네릭 — 10만 항목에 가상 호출을 넣지 않는다).
+pub enum ListModel {
+    Local(Vec<FileEntry>),
+    Remote(Vec<RemoteEntry>),
+}
+
+impl ListModel {
+    pub fn len(&self) -> usize {
+        match self {
+            ListModel::Local(rows) => rows.len(),
+            ListModel::Remote(rows) => rows.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// 로컬 폴더의 항목인가 — 전체 경로로 하는 일(썸네일·셸 아이콘)이 이것으로 갈린다
+    pub fn is_local(&self) -> bool {
+        matches!(self, ListModel::Local(_))
+    }
+}
+
 /// 파일 목록 뷰 — 항목·종류 문자열·아이콘 인덱스·선택 상태를 함께 소유한다.
 /// 셋은 인덱스로 짝지어지므로 따로 두면 정렬 시 어긋난다
 pub struct FileListView {
     dir: PathBuf,
-    entries: Vec<FileEntry>,
+    model: ListModel,
     /// 종류 열 문자열 (entries와 같은 인덱스) — 표시·정렬에 공용
     type_names: Vec<String>,
     /// 아이콘 인덱스 (entries와 같은 인덱스). 보이는 행에 도달했을 때 채운다(지연 조회)
@@ -51,7 +81,7 @@ impl FileListView {
     pub fn new() -> FileListView {
         FileListView {
             dir: PathBuf::new(),
-            entries: Vec::new(),
+            model: ListModel::Local(Vec::new()),
             type_names: Vec::new(),
             icon_indices: Vec::new(),
             sort_key: SortKey::Name,
@@ -90,56 +120,88 @@ impl FileListView {
     /// 갱신할 때마다 선택이 풀리면(FR-10), 여러 파일을 고르는 동안 다른 앱이 그 폴더에
     /// 파일 하나만 만들어도 고르던 것이 사라진다. 지워진 항목은 자연히 빠진다
     pub fn set_entries(&mut self, dir: PathBuf, entries: Vec<FileEntry>, icons: &mut IconCache) {
-        let keep: Option<HashSet<Vec<u16>>> = (dir == self.dir).then(|| {
-            self.selection
-                .iter()
-                .filter_map(|&index| self.entries.get(index))
-                .map(|entry| entry.name.clone())
-                .collect()
-        });
+        let keep = (dir == self.dir).then(|| self.selected_name_keys());
         self.dir = dir;
         self.type_names = entries
             .iter()
             .map(|e| icons.type_name(&e.extension(), e.is_dir))
             .collect();
         self.icon_indices = vec![None; entries.len()];
-        self.entries = entries;
+        self.model = ListModel::Local(entries);
         self.selection.clear();
         self.anchor = None;
         self.resort();
         if let Some(keep) = keep {
             // 기준점(anchor)은 복원하지 않는다 — 다음 클릭이 새로 잡으며,
             // 없는 상태가 엉뚱한 위치를 가리키는 것보다 낫다
-            self.selection = restore_selection(&self.entries, &keep);
+            self.selection = self.matching_selection(&keep);
         }
     }
 
+    /// 지금 담긴 항목들 — 종류별 분기가 필요한 호출부가 쓴다
+    pub fn model(&self) -> &ListModel {
+        &self.model
+    }
+
+    /// 로컬 항목 하나. **원격 목록이면 `None`**이다 — 셸 메뉴처럼 로컬 파일에만 있는 일의
+    /// 진입점이라, 원격을 억지로 끼워 넣으면 없는 경로를 셸에 넘기게 된다 (D21)
     pub fn entry_at(&self, index: usize) -> Option<&FileEntry> {
-        self.entries.get(index)
+        match &self.model {
+            ListModel::Local(rows) => rows.get(index),
+            ListModel::Remote(_) => None,
+        }
     }
 
     /// 항목 총 개수. 상태 줄이 `counts()`로 옮겨가 지금은 호출부가 없지만,
     /// 격자 보기(T10·T11)가 배치 계산에 총 개수를 쓰므로 남겨둔다
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.model.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.model.is_empty()
     }
 
     /// 폴더 수와 파일 수 — 목록 위 상태 줄에 쓴다
     pub fn counts(&self) -> (usize, usize) {
-        (self.dir_count, self.entries.len() - self.dir_count)
+        (self.dir_count, self.model.len() - self.dir_count)
     }
 
     /// 선택된 항목들의 전체 경로 — 셸 컨텍스트 메뉴 대상 (FR-8)
     pub fn selected_paths(&self) -> Vec<PathBuf> {
+        // 원격 항목에는 로컬 경로가 없다 — 셸 메뉴는 로컬 전용이고(D21), 원격 선택은
+        // 원격 경로로 다루는 별도 경로(T22·T23)가 맡는다
+        let ListModel::Local(rows) = &self.model else {
+            return Vec::new();
+        };
         self.selection
             .iter()
-            .filter_map(|&i| self.entries.get(i))
+            .filter_map(|&i| rows.get(i))
             .map(|e| self.dir.join(e.name_string()))
             .collect()
+    }
+
+    /// 지금 선택된 항목들의 이름 키 — 갱신 뒤 선택을 되살리는 데 쓴다
+    fn selected_name_keys(&self) -> HashSet<Vec<u16>> {
+        fn collect<R: ListRow>(rows: &[R], selection: &BTreeSet<usize>) -> HashSet<Vec<u16>> {
+            selection
+                .iter()
+                .filter_map(|&index| rows.get(index))
+                .map(|row| row.name_sort_key().into_owned())
+                .collect()
+        }
+        match &self.model {
+            ListModel::Local(rows) => collect(rows, &self.selection),
+            ListModel::Remote(rows) => collect(rows, &self.selection),
+        }
+    }
+
+    /// 이름 키가 남아 있는 항목들의 새 인덱스
+    fn matching_selection(&self, keep: &HashSet<Vec<u16>>) -> BTreeSet<usize> {
+        match &self.model {
+            ListModel::Local(rows) => restore_selection(rows, keep),
+            ListModel::Remote(rows) => restore_selection(rows, keep),
+        }
     }
 
     /// 현재 정렬 기준으로 항목을 다시 배열한다.
@@ -148,30 +210,14 @@ impl FileListView {
     /// `compare_entries` 반환값 전체를 뒤집으면 폴더 우선까지 뒤집힌다 (part1 D13)
     fn resort(&mut self) {
         let (key, asc) = (self.sort_key, self.ascending);
-        let mut rows: Vec<(FileEntry, String, Option<i32>)> = self
-            .entries
-            .drain(..)
-            .zip(self.type_names.drain(..))
-            .zip(self.icon_indices.drain(..))
-            .map(|((e, t), i)| (e, t, i))
-            .collect();
-        rows.sort_by(|(a, ta, _), (b, tb, _)| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => {
-                let ord = compare_entries(a, ta, b, tb, key);
-                if asc { ord } else { ord.reverse() }
-            }
-        });
-        for (e, t, i) in rows {
-            self.entries.push(e);
-            self.type_names.push(t);
-            self.icon_indices.push(i);
-        }
+        let (type_names, icon_indices) = (&mut self.type_names, &mut self.icon_indices);
         // 폴더 수는 여기서 센다 — 항목이 바뀌는 경로(`set_entries`)가 반드시 이 함수를 지나므로
         // 집계가 목록과 어긋날 수 없다. 정렬 때마다 다시 세지만 정렬은 사용자 클릭 시에만
         // 일어나고 비용도 이미 정렬(O(n log n))에 묻힌다
-        self.dir_count = self.entries.iter().filter(|entry| entry.is_dir).count();
+        self.dir_count = match &mut self.model {
+            ListModel::Local(rows) => sort_rows(rows, type_names, icon_indices, key, asc),
+            ListModel::Remote(rows) => sort_rows(rows, type_names, icon_indices, key, asc),
+        };
         // 정렬로 인덱스가 바뀌므로 선택·기준점을 유지할 수 없다
         self.selection.clear();
         self.anchor = None;
@@ -222,76 +268,179 @@ impl FileListView {
         thumbnails: &ThumbnailTextures,
         visible: &mut Vec<PathBuf>,
     ) -> FileListAction {
-        // 자세히 보기만 열·머리글을 갖는다 — 나머지는 격자 렌더가 맡는다 (FR-23)
-        let (action, sort_click, select_request, clear_selection) = if self.view_mode.is_details() {
-            let outcome = list_details::show(
-                ui,
-                DetailsInput {
-                    dir: &self.dir,
-                    entries: &self.entries,
-                    type_names: &self.type_names,
-                    icon_indices: &mut self.icon_indices,
-                    selection: &self.selection,
-                    sort_key: self.sort_key,
-                    ascending: self.ascending,
-                    columns: &mut self.columns,
-                },
-                icons,
-                textures,
-            );
-            (
-                outcome.action,
-                outcome.sort_click,
-                outcome.select_request,
-                outcome.clear_selection,
-            )
-        } else {
-            let outcome = list_grid::show(
-                ui,
-                GridInput {
-                    dir: &self.dir,
-                    entries: &self.entries,
-                    icon_indices: &mut self.icon_indices,
-                    selection: &self.selection,
-                    type_names: &self.type_names,
-                    mode: self.view_mode,
-                    thumbnails,
-                    visible,
-                },
-                icons,
-                textures,
-            );
-            (
-                outcome.action,
-                None,
-                outcome.select_request,
-                outcome.clear_selection,
-            )
+        // 필드를 미리 풀어 둔다 — 모델을 빌리는 동안 나머지 필드도 함께 빌려야 한다
+        let FileListView {
+            dir,
+            model,
+            type_names,
+            icon_indices,
+            selection,
+            sort_key,
+            ascending,
+            columns,
+            view_mode,
+            ..
+        } = self;
+        let request = RenderRequest {
+            dir,
+            type_names,
+            icon_indices,
+            selection,
+            sort_key: *sort_key,
+            ascending: *ascending,
+            columns,
+            view_mode: *view_mode,
+            thumbnails,
+            visible,
+            local_paths: model.is_local(),
         };
+        let outcome = match model {
+            ListModel::Local(rows) => render_rows(ui, rows, request, icons, textures),
+            ListModel::Remote(rows) => render_rows(ui, rows, request, icons, textures),
+        };
+
         // 상태 변경은 그리기가 끝난 뒤에 한다 — 그리는 동안에는 목록이 빌려진 상태다
-        if let Some(key) = sort_click {
+        if let Some(key) = outcome.sort_click {
             self.apply_sort(key);
-        } else if let Some((index, modifiers)) = select_request {
+        } else if let Some((index, modifiers)) = outcome.select_request {
             // 정렬이 일어나면 인덱스가 통째로 바뀌므로 같은 프레임의 선택은 버린다
             self.select(index, modifiers);
         }
-        if clear_selection {
+        if outcome.clear_selection {
             self.selection.clear();
             self.anchor = None;
         }
-        action
+        outcome.action
     }
 }
 
 /// 갱신 전 선택 이름들이 새 목록의 어느 자리인지 되찾는다 (정렬이 끝난 뒤의 인덱스).
-/// 목록 길이에 비례해 한 번만 훑는다 — 10만 항목에서 선택이 많아도 비용이 튀지 않는다
-fn restore_selection(entries: &[FileEntry], keep: &HashSet<Vec<u16>>) -> BTreeSet<usize> {
-    entries
-        .iter()
+/// 목록 길이에 비례해 한 번만 훑는다 — 10만 항목에서 선택이 많아도 비용이 튀지 않는다.
+///
+/// 이름을 **정렬 키(널 종단 UTF-16)로 견주는** 이유: 로컬 이름은 원래 그 모양이라
+/// 표시 문자열로 바꿔 견주면 변환 손실이 끼어들 수 있다
+fn restore_selection<R: ListRow>(rows: &[R], keep: &HashSet<Vec<u16>>) -> BTreeSet<usize> {
+    rows.iter()
         .enumerate()
-        .filter(|(_, entry)| keep.contains(&entry.name))
+        .filter(|(_, row)| keep.contains(&*row.name_sort_key()))
         .map(|(index, _)| index)
         .collect()
+}
+
+/// 정렬 — 항목·종류 문자열·아이콘 인덱스를 함께 옮겨 인덱스 짝이 어긋나지 않게 한다.
+/// 돌려주는 값은 폴더 수다
+fn sort_rows<R: ListRow>(
+    rows: &mut Vec<R>,
+    type_names: &mut Vec<String>,
+    icon_indices: &mut Vec<Option<i32>>,
+    key: SortKey,
+    ascending: bool,
+) -> usize {
+    let mut zipped: Vec<(R, String, Option<i32>)> = rows
+        .drain(..)
+        .zip(type_names.drain(..))
+        .zip(icon_indices.drain(..))
+        .map(|((row, type_name), icon)| (row, type_name, icon))
+        .collect();
+    zipped.sort_by(|(a, ta, _), (b, tb, _)| match (a.is_dir(), b.is_dir()) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => {
+            let ord = compare_rows(a, ta, b, tb, key);
+            if ascending { ord } else { ord.reverse() }
+        }
+    });
+    let mut dir_count = 0;
+    for (row, type_name, icon) in zipped {
+        if row.is_dir() {
+            dir_count += 1;
+        }
+        rows.push(row);
+        type_names.push(type_name);
+        icon_indices.push(icon);
+    }
+    dir_count
+}
+
+/// 그리기에 필요한 것들 — 모델 종류마다 같은 것을 넘기므로 한 묶음으로 든다
+struct RenderRequest<'a> {
+    dir: &'a std::path::Path,
+    type_names: &'a [String],
+    icon_indices: &'a mut Vec<Option<i32>>,
+    selection: &'a BTreeSet<usize>,
+    sort_key: SortKey,
+    ascending: bool,
+    columns: &'a mut Columns,
+    view_mode: ViewMode,
+    thumbnails: &'a ThumbnailTextures,
+    visible: &'a mut Vec<PathBuf>,
+    local_paths: bool,
+}
+
+/// 이번 프레임에 그리고 돌려받은 것 — 상태 반영은 호출부가 한다
+struct RenderOutcome {
+    action: FileListAction,
+    sort_click: Option<SortKey>,
+    select_request: Option<(usize, egui::Modifiers)>,
+    clear_selection: bool,
+}
+
+/// 보기 모드에 맞는 렌더 모듈에 넘긴다. **모델 종류마다 한 번씩 찍히는 유일한 자리**다
+fn render_rows<R: ListRow>(
+    ui: &mut egui::Ui,
+    rows: &[R],
+    request: RenderRequest<'_>,
+    icons: &mut IconCache,
+    textures: &mut IconTextures,
+) -> RenderOutcome {
+    // 자세히 보기만 열·머리글을 갖는다 — 나머지는 격자 렌더가 맡는다 (FR-23)
+    if request.view_mode.is_details() {
+        let outcome = list_details::show(
+            ui,
+            DetailsInput {
+                dir: request.dir,
+                entries: rows,
+                type_names: request.type_names,
+                icon_indices: request.icon_indices,
+                selection: request.selection,
+                sort_key: request.sort_key,
+                ascending: request.ascending,
+                columns: request.columns,
+                local_paths: request.local_paths,
+            },
+            icons,
+            textures,
+        );
+        RenderOutcome {
+            action: outcome.action,
+            sort_click: outcome.sort_click,
+            select_request: outcome.select_request,
+            clear_selection: outcome.clear_selection,
+        }
+    } else {
+        let outcome = list_grid::show(
+            ui,
+            GridInput {
+                dir: request.dir,
+                entries: rows,
+                icon_indices: request.icon_indices,
+                selection: request.selection,
+                type_names: request.type_names,
+                mode: request.view_mode,
+                thumbnails: request.thumbnails,
+                visible: request.visible,
+                local_paths: request.local_paths,
+            },
+            icons,
+            textures,
+        );
+        RenderOutcome {
+            action: outcome.action,
+            sort_click: None,
+            select_request: outcome.select_request,
+            clear_selection: outcome.clear_selection,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -313,16 +462,21 @@ mod tests {
     fn view(rows: Vec<(FileEntry, &str)>) -> FileListView {
         let mut v = FileListView::new();
         v.icon_indices = vec![None; rows.len()];
+        let mut entries = Vec::with_capacity(rows.len());
         for (e, t) in rows {
-            v.entries.push(e);
+            entries.push(e);
             v.type_names.push(t.to_owned());
         }
+        v.model = ListModel::Local(entries);
         v.resort();
         v
     }
 
     fn names(v: &FileListView) -> Vec<String> {
-        v.entries.iter().map(|e| e.name_string()).collect()
+        match v.model() {
+            ListModel::Local(rows) => rows.iter().map(|e| e.name_string()).collect(),
+            ListModel::Remote(rows) => rows.iter().map(|e| e.name.clone()).collect(),
+        }
     }
 
     #[test]
@@ -475,5 +629,83 @@ mod tests {
         v.apply_sort(SortKey::Size); // 다른 열 → 오름차순
         assert!(v.ascending);
         assert_eq!(v.sort_key, SortKey::Size);
+    }
+
+    fn remote(name: &str, is_dir: bool, size: u64) -> RemoteEntry {
+        RemoteEntry {
+            name: name.to_owned(),
+            is_dir,
+            is_symlink: false,
+            link_target: None,
+            size,
+            modified: Some(1_700_000_000),
+            mode: None,
+            owner: None,
+        }
+    }
+
+    /// 원격 항목을 담은 뷰 — 정렬까지 마친 상태로 돌려준다
+    fn remote_view(rows: Vec<(RemoteEntry, &str)>) -> FileListView {
+        let mut v = FileListView::new();
+        v.icon_indices = vec![None; rows.len()];
+        let mut entries = Vec::with_capacity(rows.len());
+        for (row, type_name) in rows {
+            entries.push(row);
+            v.type_names.push(type_name.to_owned());
+        }
+        v.model = ListModel::Remote(entries);
+        v.resort();
+        v
+    }
+
+    #[test]
+    fn 원격_모델도_같은_규칙으로_정렬되고_세어진다() {
+        let v = remote_view(vec![
+            (remote("app.js", false, 4096), "JS 파일"),
+            (remote("public_html", true, 0), "폴더"),
+        ]);
+        assert_eq!(names(&v), vec!["public_html", "app.js"], "폴더가 앞선다");
+        assert_eq!(v.counts(), (1, 1));
+        assert_eq!(v.len(), 2);
+        assert!(!v.is_empty());
+    }
+
+    #[test]
+    fn 원격_모델은_로컬_전용_진입점을_내주지_않는다() {
+        // 셸 메뉴는 로컬 파일에만 있는 일이다 (D21) — 없는 경로를 넘기면 안 된다
+        let mut v = remote_view(vec![(remote("app.js", false, 10), "JS 파일")]);
+        assert!(v.entry_at(0).is_none());
+        v.selection.insert(0);
+        assert!(v.selected_paths().is_empty());
+    }
+
+    #[test]
+    fn 모델을_읽어도_항목이_복사되지_않는다() {
+        // 10만 항목에서 매 프레임 복사하면 그 자체로 프레임이 무너진다 (NFR-3).
+        // 크기와 무관하게 "같은 자리를 가리키는가"로 확인한다
+        let v = view(vec![
+            (entry("a.txt", false, 1, 0), "텍스트"),
+            (entry("b.txt", false, 2, 0), "텍스트"),
+        ]);
+        let ListModel::Local(rows) = v.model() else {
+            panic!("로컬 모델이어야 한다");
+        };
+        let first = rows.as_ptr();
+        let ListModel::Local(again) = v.model() else {
+            panic!("로컬 모델이어야 한다");
+        };
+        assert_eq!(first, again.as_ptr(), "모델을 읽을 때마다 복사되고 있다");
+    }
+
+    #[test]
+    fn 공개_표면은_그대로다() {
+        // T9가 배선하기 전까지 `ui::panel`이 이 다섯 가지를 종전 시그니처로 부른다
+        let mut icons = IconCache::new();
+        let mut v = FileListView::new();
+        v.set_entries(PathBuf::from(r"C:\테스트"), Vec::new(), &mut icons);
+        assert!(v.entry_at(0).is_none());
+        assert!(v.selected_paths().is_empty());
+        assert_eq!(v.counts(), (0, 0));
+        assert_eq!(v.len(), 0);
     }
 }

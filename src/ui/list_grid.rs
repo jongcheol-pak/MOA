@@ -3,9 +3,8 @@
 //! 배치 계산은 `ui::view_mode`(순수 로직)가 하고 이 모듈은 그 자리에 그리기만 한다.
 //! 선택·더블클릭·우클릭은 `ui::list_details`(자세히 보기)와 **같은 규칙**을 따른다 —
 //! 보기 모드를 바꿨다고 조작법이 달라지면 안 되기 때문이다.
-use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::{IconCache, IconSize};
-use crate::panel::file_list::{format_filetime, format_size_kb};
+use crate::panel::file_list::{ListRow, format_filetime, format_size_kb};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_common::{FileListAction, elided_galley_rows};
 use crate::ui::theme;
@@ -32,9 +31,9 @@ const LINE_GAP: f32 = 2.0;
 const CONTENT_META_WIDTH: f32 = 240.0;
 
 /// 격자 렌더에 필요한 목록 상태 — 소유하지 않고 빌려 쓴다
-pub struct GridInput<'a> {
+pub struct GridInput<'a, R: ListRow> {
     pub dir: &'a Path,
-    pub entries: &'a [FileEntry],
+    pub entries: &'a [R],
     /// 보이는 항목에 도달했을 때 채우는 지연 캐시라 가변으로 받는다
     pub icon_indices: &'a mut Vec<Option<i32>>,
     pub selection: &'a BTreeSet<usize>,
@@ -47,6 +46,9 @@ pub struct GridInput<'a> {
     /// 최근 사용으로 올린다** — 보이는 것만 담아야 큰 폴더에서 요청이 폭주하지 않고,
     /// 이미 준비된 것까지 담아야 보고 있는 썸네일이 축출되지 않는다
     pub visible: &'a mut Vec<PathBuf>,
+    /// 항목이 로컬 파일인가. 원격이면 **전체 경로로 하는 일**(썸네일 요청·셸 아이콘 정밀 조회)을
+    /// 하지 않는다 — 원격은 썸네일 비대상이고, 이름을 로컬 경로에 이어 붙이면 없는 파일을 묻게 된다 (D11)
+    pub local_paths: bool,
 }
 
 /// 이번 프레임에 일어난 조작 — 목록 상태 변경은 호출부가 한다
@@ -61,9 +63,9 @@ pub struct GridOutcome {
 ///
 /// 가로로 채우는 모드는 세로로 길어지고, 세로로 채우는 모드(목록)는 가로로 길어진다 —
 /// 어느 쪽이든 `ScrollArea::both()`면 필요한 축만 스크롤 막대가 생긴다
-pub fn show(
+pub fn show<R: ListRow>(
     ui: &mut egui::Ui,
-    input: GridInput<'_>,
+    input: GridInput<'_, R>,
     icons: &mut IconCache,
     textures: &mut IconTextures,
 ) -> GridOutcome {
@@ -78,8 +80,9 @@ pub fn show(
         mode,
         thumbnails,
         visible,
+        local_paths,
     } = input;
-    let wants_thumbnails = mode.uses_thumbnails();
+    let wants_thumbnails = local_paths && mode.uses_thumbnails();
     let count = entries.len();
     // 모드가 요구하는 크기보다 작지 않은 이미지 리스트를 고른다 — 늘린 아이콘은 뭉개진다 (T9)
     let himl = icons.himl_for(IconSize::for_px(mode.icon_px()));
@@ -138,8 +141,8 @@ pub fn show(
 
             let entry = &entries[index];
             // 썸네일은 파일만 — 폴더는 폴더 아이콘이 맞다
-            let thumb = if wants_thumbnails && !entry.is_dir {
-                let path = dir.join(entry.name_string());
+            let thumb = if wants_thumbnails && !entry.is_dir() {
+                let path = dir.join(entry.name());
                 let ready = thumbnails.get(&path).map(|tex| tex.id());
                 // **텍스처가 이미 있어도 담는다** — 이 목록은 "요청 대상"이자 "지금 화면에
                 // 보인다"는 신호다. 없을 때만 담으면 텍스처가 올라간 뒤로는 최근 사용
@@ -153,7 +156,8 @@ pub fn show(
             let texture = match thumb {
                 Some(id) => Some(id),
                 None => {
-                    let icon_index = resolve_icon(dir, entry, index, icon_indices, icons);
+                    let icon_index =
+                        resolve_icon(dir, entry, index, icon_indices, icons, local_paths);
                     textures.get(&ctx, himl, icon_index).map(|tex| tex.id())
                 }
             };
@@ -191,22 +195,19 @@ pub fn show(
 
 /// 보이는 항목에 한해 아이콘 인덱스를 조회한다 — 로드 시 전체를 미리 계산하면
 /// exe가 많은 폴더에서 로드가 길어진다(PoC 실측 585ms → 84ms)
-fn resolve_icon(
+fn resolve_icon<R: ListRow>(
     dir: &Path,
-    entry: &FileEntry,
+    entry: &R,
     index: usize,
     icon_indices: &mut [Option<i32>],
     icons: &mut IconCache,
+    local_paths: bool,
 ) -> i32 {
     match icon_indices[index] {
         Some(cached) => cached,
         None => {
-            let full = dir.join(entry.name_string());
-            let looked_up = icons.icon_index(
-                &entry.extension(),
-                entry.is_dir,
-                Some(&full.to_string_lossy()),
-            );
+            let full = local_paths.then(|| dir.join(entry.name()).to_string_lossy().into_owned());
+            let looked_up = icons.icon_index(&entry.extension(), entry.is_dir(), full.as_deref());
             icon_indices[index] = Some(looked_up);
             looked_up
         }
@@ -217,11 +218,11 @@ fn resolve_icon(
 ///
 /// 가로로 흐르는 큰 아이콘들은 **아이콘 위·이름 아래**(가운데 정렬)로 놓고,
 /// 한 줄짜리 칸(작은 아이콘·목록)은 **아이콘 왼쪽·이름 오른쪽**으로 놓는다
-fn draw_cell(
+fn draw_cell<R: ListRow>(
     ui: &mut egui::Ui,
     cell: egui::Rect,
     mode: ViewMode,
-    entry: &FileEntry,
+    entry: &R,
     type_name: &str,
     texture: Option<egui::TextureId>,
     font: egui::FontId,
@@ -243,7 +244,7 @@ fn draw_cell(
         let text_left = icon_rect.right() + ROW_ICON_GAP;
         let galley = elided_galley_rows(
             ui.painter(),
-            entry.name_string(),
+            entry.name(),
             font,
             (cell.right() - CELL_PAD_X - text_left).max(0.0),
             1,
@@ -266,13 +267,7 @@ fn draw_cell(
     }
     // 이름은 아이콘 아래, 두 줄까지 (plan 시각 속성 표)
     let text_width = (cell.width() - CELL_PAD_X * 2.0).max(0.0);
-    let galley = elided_galley_rows(
-        ui.painter(),
-        entry.name_string(),
-        font,
-        text_width,
-        GRID_NAME_ROWS,
-    );
+    let galley = elided_galley_rows(ui.painter(), entry.name(), font, text_width, GRID_NAME_ROWS);
     let text_x = cell.center().x - galley.size().x / 2.0;
     ui.painter().galley(
         egui::pos2(text_x, icon_rect.bottom() + ICON_TEXT_GAP),
@@ -287,11 +282,11 @@ fn draw_cell(
 /// 내용은 **이름**을 왼쪽에 두고 **수정한 날짜·크기**를 오른쪽 끝에 붙인다.
 /// 폴더는 크기 칸이 비는데(자세히 보기와 같은 규칙) 그 줄을 지우지 않고 비워 둬야
 /// 항목마다 줄 위치가 흔들리지 않는다
-fn draw_multiline_cell(
+fn draw_multiline_cell<R: ListRow>(
     ui: &mut egui::Ui,
     cell: egui::Rect,
     mode: ViewMode,
-    entry: &FileEntry,
+    entry: &R,
     type_name: &str,
     texture: Option<egui::TextureId>,
     font: egui::FontId,
@@ -306,10 +301,10 @@ fn draw_multiline_cell(
         ui.painter().image(id, icon_rect, uv, egui::Color32::WHITE);
     }
     let text_left = icon_rect.right() + ROW_ICON_GAP;
-    let size_text = if entry.is_dir {
+    let size_text = if entry.is_dir() {
         String::new()
     } else {
-        format_size_kb(entry.size)
+        format_size_kb(entry.size())
     };
 
     if mode == ViewMode::Content {
@@ -317,7 +312,7 @@ fn draw_multiline_cell(
         let meta_left = (cell.right() - CELL_PAD_X - CONTENT_META_WIDTH).max(text_left);
         let name = elided_galley_rows(
             ui.painter(),
-            entry.name_string(),
+            entry.name(),
             font.clone(),
             (meta_left - ROW_ICON_GAP - text_left).max(0.0),
             1,
@@ -327,13 +322,13 @@ fn draw_multiline_cell(
             name,
             theme::TEXT,
         );
-        let meta = [format_filetime(entry.modified), size_text];
+        let meta = [format_filetime(entry.modified_key()), size_text];
         draw_stacked(ui, &meta, meta_left, cell, font, CONTENT_META_WIDTH);
         return;
     }
 
     // 타일 — 이름·종류·크기 세 줄
-    let lines = [entry.name_string(), type_name.to_owned(), size_text];
+    let lines = [entry.name(), type_name.to_owned(), size_text];
     let width = (cell.right() - CELL_PAD_X - text_left).max(0.0);
     draw_stacked(ui, &lines, text_left, cell, font, width);
 }
@@ -441,6 +436,7 @@ mod tests {
                     mode,
                     thumbnails: &textures,
                     visible: &mut visible,
+                    local_paths: true,
                 },
                 &mut icons,
                 &mut icon_textures,
@@ -504,6 +500,7 @@ mod tests {
                     mode: ViewMode::MediumIcons,
                     thumbnails: &textures,
                     visible: &mut visible,
+                    local_paths: true,
                 },
                 &mut icons,
                 &mut icon_textures,
@@ -616,5 +613,69 @@ mod tests {
         ] {
             assert_eq!(mode.flow(), Flow::Horizontal, "{mode:?}");
         }
+    }
+
+    #[test]
+    fn 원격_항목도_격자로_그려진다() {
+        // 렌더가 구체 타입을 모르게 됐는지 확인한다 — 원격 항목은 썸네일 비대상이라
+        // 로컬 경로로 하는 일(썸네일 요청)을 하지 않아야 한다 (D11)
+        use crate::remote::types::RemoteEntry;
+
+        let ctx = egui::Context::default();
+        crate::ui::app::install_fonts(&ctx);
+        let rows = vec![
+            RemoteEntry {
+                name: "public_html".to_owned(),
+                is_dir: true,
+                is_symlink: false,
+                link_target: None,
+                size: 0,
+                modified: Some(1_700_000_000),
+                mode: Some(0o755),
+                owner: Some("deploy".to_owned()),
+            },
+            RemoteEntry {
+                name: "app.bundle.js".to_owned(),
+                is_dir: false,
+                is_symlink: false,
+                link_target: None,
+                size: 4096,
+                modified: Some(1_700_000_100),
+                mode: Some(0o644),
+                owner: Some("deploy".to_owned()),
+            },
+        ];
+        let mut icon_indices = vec![None; rows.len()];
+        let type_names: Vec<String> = vec!["폴더".to_owned(), "JS 파일".to_owned()];
+        let selection = BTreeSet::new();
+        let mut visible = Vec::new();
+        let mut icons = IconCache::new();
+        let mut icon_textures = IconTextures::new();
+        let textures = ThumbnailTextures::new();
+        let dir = PathBuf::new();
+
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            show(
+                ui,
+                GridInput {
+                    dir: &dir,
+                    entries: &rows,
+                    icon_indices: &mut icon_indices,
+                    selection: &selection,
+                    type_names: &type_names,
+                    mode: ViewMode::LargeIcons,
+                    thumbnails: &textures,
+                    visible: &mut visible,
+                    local_paths: false,
+                },
+                &mut icons,
+                &mut icon_textures,
+            );
+        });
+
+        assert!(
+            visible.is_empty(),
+            "원격 항목은 썸네일을 요청하지 않아야 한다: {visible:?}"
+        );
     }
 }

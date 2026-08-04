@@ -3,9 +3,8 @@
 //! `ui::file_list`가 목록 상태(항목·선택·정렬)를 소유하고, 이 모듈은 **자세히 보기의 그리기와
 //! 열 조작만** 담당한다. 상태를 바꾸지 않고 이번 프레임의 조작을 `DetailsOutcome`으로 돌려준다 —
 //! 그리기 루프가 목록을 빌린 채로는 선택·정렬을 고칠 수 없기 때문이다.
-use crate::fs::enumerate::FileEntry;
 use crate::fs::icons::IconCache;
-use crate::panel::file_list::{SortKey, format_filetime, format_size_kb};
+use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size_kb};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::{FileListAction, elided_galley};
 use crate::ui::theme;
@@ -122,9 +121,9 @@ fn x_offsets(widths: &[f32; Columns::COUNT]) -> [f32; Columns::COUNT] {
 }
 
 /// 자세히 보기가 그리는 데 필요한 목록 상태 — 소유하지 않고 빌려 쓴다
-pub struct DetailsInput<'a> {
+pub struct DetailsInput<'a, R: ListRow> {
     pub dir: &'a Path,
-    pub entries: &'a [FileEntry],
+    pub entries: &'a [R],
     pub type_names: &'a [String],
     /// 보이는 행에 도달했을 때 채우는 지연 캐시라 가변으로 받는다
     pub icon_indices: &'a mut Vec<Option<i32>>,
@@ -132,6 +131,9 @@ pub struct DetailsInput<'a> {
     pub sort_key: SortKey,
     pub ascending: bool,
     pub columns: &'a mut Columns,
+    /// 항목이 로컬 파일인가. 원격이면 **전체 경로로 하는 일**(셸 아이콘 정밀 조회)을 하지 않는다 —
+    /// 원격 이름을 로컬 경로에 이어 붙이면 있지도 않은 파일을 셸에 묻게 된다 (D11)
+    pub local_paths: bool,
 }
 
 /// 이번 프레임에 일어난 조작 — 목록 상태 변경은 호출부가 한다
@@ -151,9 +153,9 @@ pub struct DetailsOutcome {
 /// 헤더와 행을 **하나의 `ScrollArea::both()` 안에** 넣는다 — 따로 두면 가로 스크롤 시
 /// 머리글과 본문의 x가 어긋난다. 대신 세로 스크롤에서도 머리글이 함께 올라간다
 /// (세로만 고정하려면 두 영역의 오프셋을 수동 동기화해야 해 이번 범위 밖 — plan Deferred)
-pub fn show(
+pub fn show<R: ListRow>(
     ui: &mut egui::Ui,
-    input: DetailsInput<'_>,
+    input: DetailsInput<'_, R>,
     icons: &mut IconCache,
     textures: &mut IconTextures,
 ) -> DetailsOutcome {
@@ -170,6 +172,7 @@ pub fn show(
         sort_key,
         ascending,
         columns,
+        local_paths,
     } = input;
 
     let scroll = egui::ScrollArea::both().auto_shrink([false, false]);
@@ -253,12 +256,10 @@ pub fn show(
             let icon_index = match icon_indices[index] {
                 Some(cached) => cached,
                 None => {
-                    let full = dir.join(entry.name_string());
-                    let looked_up = icons.icon_index(
-                        &entry.extension(),
-                        entry.is_dir,
-                        Some(&full.to_string_lossy()),
-                    );
+                    let full =
+                        local_paths.then(|| dir.join(entry.name()).to_string_lossy().into_owned());
+                    let looked_up =
+                        icons.icon_index(&entry.extension(), entry.is_dir(), full.as_deref());
                     icon_indices[index] = Some(looked_up);
                     looked_up
                 }
@@ -277,14 +278,14 @@ pub fn show(
                 );
             }
 
-            let size_text = if entry.is_dir {
+            let size_text = if entry.is_dir() {
                 String::new()
             } else {
-                format_size_kb(entry.size)
+                format_size_kb(entry.size())
             };
             let cells = [
                 (
-                    entry.name_string(),
+                    entry.name(),
                     left + offsets[0] + NAME_X,
                     widths[0] - NAME_X - CELL_PAD,
                 ),
@@ -299,7 +300,7 @@ pub fn show(
                     widths[2] - CELL_PAD * 2.0,
                 ),
                 (
-                    format_filetime(entry.modified),
+                    format_filetime(entry.modified_key()),
                     left + offsets[3] + CELL_PAD,
                     widths[3] - CELL_PAD * 2.0,
                 ),
