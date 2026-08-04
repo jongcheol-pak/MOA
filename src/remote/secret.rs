@@ -43,8 +43,7 @@ pub fn seal(plain: &str) -> Option<Vec<u8>> {
         .ok()
         .map(|()| copy_and_free(&mut output))
     };
-    // 평문이 담겼던 임시 버퍼를 그 자리에서 덮는다
-    input.fill(0);
+    zeroize(&mut input);
     sealed
 }
 
@@ -75,10 +74,24 @@ pub fn unseal(sealed: &[u8]) -> Option<String> {
         .ok()
         .map(|()| copy_and_free(&mut output))?
     };
-    let text = String::from_utf8(plain.clone()).ok();
-    // 풀어낸 평문 사본을 남기지 않는다
-    plain.fill(0);
+    // **사본을 만들지 않는다** — `String::from_utf8`은 실패할 때 그 바이트를 오류에 담아 가는데,
+    // 그 사본은 우리가 지울 길이 없다. 빌려서 읽고 필요한 것만 새로 만든다
+    let text = std::str::from_utf8(&plain).ok().map(str::to_owned);
+    zeroize(&mut plain);
     text
+}
+
+/// 평문이 담겼던 버퍼를 0으로 덮는다.
+///
+/// **평범한 대입으로는 부족하다** — 그 뒤로 아무도 읽지 않는 저장이라 최적화가 통째로 지울 수
+/// 있고, 그러면 평문이 그대로 메모리에 남는다. volatile 쓰기로 지우고 울타리를 세워 그 저장이
+/// 사라지지 않게 한다(이것 하나 때문에 소거 전용 패키지를 들이지 않는다).
+fn zeroize(buffer: &mut [u8]) {
+    for byte in buffer.iter_mut() {
+        // 안전성: 유효한 가변 참조에서 얻은 포인터라 정렬·범위가 보장된다
+        unsafe { std::ptr::write_volatile(byte, 0) };
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
 /// API가 잡아 준 출력 블롭을 복사하고 그 메모리를 돌려준다.
@@ -87,6 +100,8 @@ pub fn unseal(sealed: &[u8]) -> Option<String> {
 /// `output`은 `CryptProtectData`/`CryptUnprotectData`가 **성공했을 때** 채운 블롭이어야 한다.
 /// 그 밖의 값을 넘기면 잘못된 포인터를 읽는다.
 unsafe fn copy_and_free(output: &mut CRYPT_INTEGER_BLOB) -> Vec<u8> {
+    // 길이 0이라도 `from_raw_parts`는 널이 아닌 포인터를 요구한다 — 계약을 코드로 못 박는다
+    debug_assert!(!output.pbData.is_null(), "성공한 블롭은 널일 수 없다");
     let copied =
         unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
     // 돌려주지 않으면 봉인할 때마다 조금씩 샌다

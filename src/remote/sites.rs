@@ -67,7 +67,7 @@ impl SiteStore {
     /// 이미 만들어진 기록을 넣는다 (세션 복원용). 식별자는 그대로 쓰고 이름만 겹치지 않게 한다
     pub fn insert(&mut self, mut record: SiteRecord) {
         record.name = self.unique_name(&record.name, Some(record.id));
-        self.next_id = self.next_id.max(record.id.0 + 1);
+        self.next_id = self.next_id.max(record.id.0.saturating_add(1));
         match self.sites.iter_mut().find(|site| site.id == record.id) {
             Some(existing) => *existing = record,
             None => self.sites.push(record),
