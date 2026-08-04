@@ -11,6 +11,7 @@ pub mod list_details;
 pub mod list_grid;
 pub mod menu;
 pub mod panel;
+pub mod remote_states;
 pub mod session;
 pub mod shell_host;
 pub mod sidebar;

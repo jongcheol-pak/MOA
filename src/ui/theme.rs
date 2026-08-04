@@ -37,6 +37,53 @@ pub const PANE_BORDER_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x5A, 0x5A
 /// 탐색기 탭은 폴더를 가리키므로 색으로 종류가 드러나는 편이 낫고, 무채색 단계로는 표현할 수 없다
 pub const FOLDER_ICON: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xB3, 0x4D);
 
+// ── 원격 연결 화면의 색 (디자인 README `### Colors` 1:1) ──
+// 여기 값들은 **디자인 문서가 정본**이다 — 화면마다 비슷한 색을 새로 고르면 같은 상태가
+// 자리마다 다른 색으로 보인다.
+
+/// 강조 파랑 — 선택된 탭 밑줄·진행 막대·라디오 선택
+pub const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x9E, 0xFF);
+
+/// 연결됨(성공) 계열 — 점 / 글자 / 채움 / 테두리
+pub const OK_DOT: egui::Color32 = egui::Color32::from_rgb(0x4A, 0xDE, 0x80);
+pub const OK_TEXT: egui::Color32 = egui::Color32::from_rgb(0x7F, 0xD6, 0xA2);
+pub const OK_FILL: egui::Color32 = egui::Color32::from_rgb(0x16, 0x24, 0x1C);
+pub const OK_BORDER: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
+
+/// 연결 중(경고) 계열 — 점·글자가 같은 색이다
+pub const WARN: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xB3, 0x4D);
+pub const WARN_FILL: egui::Color32 = egui::Color32::from_rgb(0x24, 0x1F, 0x14);
+pub const WARN_BORDER: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x56, 0x2F);
+
+/// 오류 계열 — 어두운 배경 위 글자는 `ERROR_TEXT`가 따로 있다
+pub const ERROR: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x6B, 0x6B);
+pub const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x8A, 0x8A);
+pub const ERROR_FILL: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x1A, 0x1A);
+pub const ERROR_BORDER: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x26, 0x26);
+
+/// 기본 버튼(연결) — 채움 / 테두리 / 글자 / hover
+pub const PRIMARY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
+pub const PRIMARY_BORDER: egui::Color32 = egui::Color32::from_rgb(0x3E, 0x8A, 0x66);
+pub const PRIMARY_TEXT: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xFF, 0xF2);
+pub const PRIMARY_HOT: egui::Color32 = egui::Color32::from_rgb(0x38, 0x7E, 0x5D);
+
+/// 입력·목록 웰 배경 — 사이트 관리자의 입력칸과 목록이 이 색 위에 앉는다
+pub const WELL_BG: egui::Color32 = egui::Color32::from_rgb(0x15, 0x15, 0x15);
+
+/// 행 hover / 메뉴 hover
+pub const ROW_HOT: egui::Color32 = egui::Color32::from_rgb(0x2E, 0x2E, 0x2E);
+pub const MENU_HOT: egui::Color32 = egui::Color32::from_rgb(0x38, 0x38, 0x38);
+
+/// 테두리 — 옅은 것 / 컨트롤
+pub const BORDER_SUBTLE: egui::Color32 = egui::Color32::from_rgb(0x2C, 0x2C, 0x2C);
+pub const BORDER_CONTROL: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x3A);
+
+/// 보조 글자 — 밝은 순서대로. `HEADER_TEXT`(#C8C8C8)·`TEXT_DIM`(#6A6A6A)이 그 사이를 메운다
+pub const TEXT_BUTTON: egui::Color32 = egui::Color32::from_rgb(0xD8, 0xD8, 0xD8);
+pub const TEXT_LOG: egui::Color32 = egui::Color32::from_rgb(0xB4, 0xB4, 0xB4);
+pub const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(0x9A, 0x9A, 0x9A);
+pub const TEXT_FAINT: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x8A, 0x8A);
+
 /// 고정 다크 팔레트를 egui 컨텍스트에 적용한다.
 /// egui 기본 다크를 토대로, 위 상수로 현행 앱과 같은 색을 덮어쓴다.
 pub fn apply_dark(ctx: &egui::Context) {

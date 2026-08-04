@@ -820,9 +820,12 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ## Next Steps
 
-- 권장 다음 액션: `T10부터 계속`으로 implement-task 재개 (T9까지 완료)
+- 권장 다음 액션: **`T10부터 계속`** 으로 implement-task 재개 (T0~T9 완료, T10은 **진행 중**)
 - Suggested skills: pjc:implement-task
-- T10 착수 메모: `PanelState`는 `request_remote_list(&ConnectionManager)`·`apply_remote_listed(generation, entries, icons)` 두 진입점을 이미 갖고 있다. **`ui/app.rs`가 연결 이벤트를 패널로 라우팅하는 배선이 T10 몫**이다(아래 T9 Design 갱신 참조).
+- **T10 진행 상태 (커밋 `checkpoint: T10 partial`)**:
+  - **끝난 것**: `ui/theme.rs`에 디자인 팔레트 토큰 25개 추가(강조 파랑·성공/경고/오류 3계열·기본 버튼·입력 웰·행/메뉴 hover·테두리 2종·보조 글자 4단계). `ui/remote_states.rs` 신설 — 배지 문구·색(`badge_label`/`badge_colors`/`show_badge`/`badge_width`), 자리 표시 막대(`show_skeleton`), 연결 중 취소(`show_cancel`), 빈 탭 안내(`show_empty`), 실패 화면(`show_failed` → `FailedAction`), 호스트 키 대화(`show_hostkey_dialog` → `Option<HostKeyDecision>`), 미연결 항목 수 `—`(`UNKNOWN_COUNT`). 단위 테스트 5건.
+  - **남은 것**: ① `ui/tabs.rs`가 배지를 그리려면 **탭의 프로토콜**이 필요한데 `TabSource::Remote`는 `SiteId`만 든다 — `show_tab_strip`에 사이트 조회 수단(`&SiteStore` 또는 (이름, 프로토콜) 조회 클로저)을 넘기는 배선이 필요하다. ② `ui/panel.rs`가 단계별 본문(스켈레톤·빈 탭·실패)을 목록 대신 그리도록 분기 + 미연결 항목 수 `—`. ③ **`ui/app.rs` 라우팅** — `ConnectionManager::poll()` 결과를 탭의 `conn`으로 패널에 흘리고(`apply_remote_listed`), `ConnPhase`를 `TabPhase`로 투영, 호스트 키 대화를 띄워 `HostKeyDecision`을 세션에 되돌린다. ④ 마지막 원격 탭을 닫으면 그 연결 끊기(Acceptance ⑥). ⑤ Acceptance ①~⑧ 테스트 + **V-9 시각 충실도 대조**(인벤토리 #11~21·#95·#96).
+  - 배지·문구 문자열은 이미 인벤토리 원문 그대로 상수로 고정돼 있어, 남은 일은 **배선과 그리기 위치**다.
 
 - T9 완료: `TabState`가 `committed: PathBuf` 대신 `source: TabSource`를 든다. 레거시 `panel/panel.rs`는 `committed()`/`set_committed()` 접근자로 기계 어댑트(D26). splitter가 패널 결과를 **통째로** 올리고 필드별 first-wins로 병합한다. 신규 단위 테스트 10개(377→387).
   - **결정(계획 문구 정정)**: `PanelState`가 `Option<&ConnectionManager>`를 인자로 받지 않고 `request_remote_list`/`apply_remote_listed` **두 진입점**을 연다 — 이벤트 폴링은 가변 참조가 필요하고 연결→패널 라우팅은 앱이 쥐어야 해서, 인자로 받으면 `show()` 시그니처가 그 결정에 묶인다. **`ui/app.rs` 배선은 T10 몫**(T9 Design에 기록).
