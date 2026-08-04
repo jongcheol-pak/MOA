@@ -573,8 +573,12 @@ impl PanelState {
         };
         match result {
             Ok(_) => {
-                let dir = self.dir().to_path_buf();
-                self.start_load(dir, PendingNav::None, ctx);
+                // 만드는 동안 사용자가 원격 탭으로 옮겨 갔을 수 있다 — 그때 활성 탭 기준으로
+                // 다시 읽으면 빈 경로를 열거하게 된다. 로컬 탭일 때만 다시 읽는다
+                if let Some(dir) = self.tabs.active().source.local_path() {
+                    let dir = dir.to_path_buf();
+                    self.start_load(dir, PendingNav::None, ctx);
+                }
             }
             Err(error) => {
                 self.status = format!("새 {kind}을(를) 만들지 못했습니다 — {error}");
@@ -1143,5 +1147,96 @@ mod tests {
         assert!(panel.tabs.switch(0));
         assert!(!panel.is_remote());
         assert_eq!(panel.dir(), std::path::Path::new(r"C:\테스트"));
+    }
+
+    /// 원격 탭 하나를 더해 활성으로 만든 패널
+    fn panel_with_remote_tab(path: &str) -> PanelState {
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new(path),
+        ));
+        assert!(panel.is_remote(), "원격 탭이 활성이어야 한다");
+        panel
+    }
+
+    #[test]
+    fn 원격_탭에서_새로_고침은_로컬_열거를_걸지_않는다() {
+        let ctx = egui::Context::default();
+        let mut panel = panel_with_remote_tab("/var/www");
+        panel.refresh(&ctx);
+        assert!(
+            panel.pending_dir.as_os_str().is_empty(),
+            "원격 탭에서 로컬 열거가 시작됐다: {:?}",
+            panel.pending_dir
+        );
+    }
+
+    #[test]
+    fn 원격_탭의_상위_이동은_원격_경로로_가고_루트에서_머문다() {
+        // plan T9 Edge Case — 루트를 넘어가지 않는다
+        let ctx = egui::Context::default();
+        let mut panel = panel_with_remote_tab("/var/www");
+
+        panel.handle_nav(NavAction::Up, &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var")
+        );
+        panel.handle_nav(NavAction::Up, &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/")
+        );
+        // 루트에서 한 번 더 눌러도 그대로다
+        panel.handle_nav(NavAction::Up, &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/")
+        );
+        // 로컬 열거도 걸리지 않았다
+        assert!(panel.pending_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn 원격_탭에서는_셸_메뉴를_요청하지_않는다() {
+        // 셸은 로컬 PIDL만 다룬다 (D21)
+        let ctx = egui::Context::default();
+        let mut panel = panel_with_remote_tab("/var/www");
+        let request = panel.handle_list_action(
+            FileListAction::Context {
+                index: None,
+                pos: egui::pos2(0.0, 0.0),
+            },
+            &ctx,
+        );
+        assert!(request.is_none(), "원격 탭에서 셸 메뉴가 요청됐다");
+
+        // 항목 열기도 로컬 경로를 만들지 않는다
+        let opened = panel.handle_list_action(FileListAction::Open(0), &ctx);
+        assert!(opened.is_none());
+        assert!(panel.pending_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn 원격_탭을_보는_동안_로컬_감시_통지는_무시된다() {
+        // 이전 폴더의 감시가 아직 살아 있어도 원격 화면이 로컬 목록으로 덮이면 안 된다
+        let ctx = egui::Context::default();
+        let mut panel = panel_with_remote_tab("/var/www");
+        let (tx, rx) = std::sync::mpsc::channel();
+        panel.watch = Some(DirWatch {
+            watcher: crate::fs::watcher::DirWatcher::start(
+                std::path::PathBuf::from(r"C:\테스트"),
+                tx,
+                None,
+            ),
+            rx,
+        });
+
+        panel.poll_watch(&ctx);
+        assert!(
+            panel.pending_dir.as_os_str().is_empty(),
+            "감시 통지로 로컬 열거가 시작됐다"
+        );
     }
 }
