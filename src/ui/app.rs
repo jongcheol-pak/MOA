@@ -16,7 +16,8 @@ use crate::remote::ftp::FtpSession;
 use crate::remote::manager::ConnectionManager;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
-use crate::remote::types::{RemotePath, RemoteSession, SiteId};
+use crate::remote::types::{LogonType, RemotePath, RemoteSession, SiteId};
+use crate::remote::url::RemoteUrl;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
@@ -820,6 +821,35 @@ impl ExplorerApp {
         }
     }
 
+    /// 주소창에 적은 원격 주소로 새 탭을 연다 (FR-34).
+    ///
+    /// **이미 등록된 서버면 그 사이트를 쓴다** — 프로토콜·호스트·포트가 같으면 같은 서버이고,
+    /// 그때마다 사이트를 새로 만들면 목록이 같은 서버로 뒤덮인다.
+    /// 처음 보는 주소는 **숨긴 사이트**로 들인다: 연결에 필요한 설정(사용자·포트)을 담을 곳이
+    /// 있어야 하지만, 한 번 적어 본 주소가 사이드바에 눌러앉지는 않게 한다(사이트 관리자에는 보인다)
+    fn open_remote_url(&mut self, target: PanelId, url: RemoteUrl) {
+        let port = url.effective_port();
+        let site = match matching_site(&self.sites, &url) {
+            Some(site) => site,
+            None => {
+                let site = self.sites.add(&url.host);
+                if let Some(record) = self.sites.get_mut(site) {
+                    record.protocol = url.protocol;
+                    record.host = url.host.clone();
+                    record.port = port;
+                    if let Some(user) = &url.user {
+                        record.logon = LogonType::Normal;
+                        record.user = user.clone();
+                    }
+                }
+                // 주소로 한 번 열어 본 서버가 사이드바에 눌러앉지 않게 한다
+                self.sites.hide(site);
+                site
+            }
+        };
+        self.open_site_tab_at(site, Some(target), url.path);
+    }
+
     /// 사이트를 그 패널의 **새 원격 탭**으로 열고 연결을 건다 (FR-33·FR-34·FR-38).
     ///
     /// 진입점 셋(탭 스트립 드롭다운·주소창 URL·사이드바 드래그)이 모두 여기로 착지한다 —
@@ -827,14 +857,19 @@ impl ExplorerApp {
     ///
     /// 사이트가 그 사이 지워졌으면 아무 일도 하지 않는다 (plan Edge Case: 드래그 도중 삭제)
     fn open_site_tab(&mut self, site: SiteId, target: Option<PanelId>) {
+        // 서버가 정한 홈에서 시작한다 — 연결이 서면 워커가 실제 위치를 알려 준다
+        self.open_site_tab_at(site, target, RemotePath::root());
+    }
+
+    /// 위와 같되 시작 위치를 지정한다 — 주소에 경로가 함께 적힌 경우(`sftp://host/pub`)
+    fn open_site_tab_at(&mut self, site: SiteId, target: Option<PanelId>, path: RemotePath) {
         if self.sites.get(site).is_none() {
             return;
         }
-        // 서버가 정한 홈에서 시작한다 — 연결이 서면 워커가 실제 위치를 알려 준다
         let Some(panel) = self.command_panel_mut(target) else {
             return;
         };
-        panel.open_remote_tab(site, RemotePath::root());
+        panel.open_remote_tab(site, path);
         // 방금 만든 탭이 활성이라 연결이 그 탭에 붙는다
         self.connect_site(site);
     }
@@ -866,6 +901,23 @@ impl ExplorerApp {
         }
         Some(id)
     }
+}
+
+/// 이 주소와 **같은 서버**로 이미 등록된 사이트 — 프로토콜·호스트·포트가 모두 같아야 한다.
+///
+/// 호스트 대소문자는 구분하지 않는다(DNS가 그렇다). 사용자 이름은 견주지 않는다 —
+/// 같은 서버에 다른 계정으로 붙는 것은 흔하고, 그때마다 사이트를 새로 만들면 목록이 뒤덮인다
+fn matching_site(sites: &SiteStore, url: &RemoteUrl) -> Option<SiteId> {
+    let port = url.effective_port();
+    sites
+        .sites()
+        .iter()
+        .find(|record| {
+            record.protocol == url.protocol
+                && record.host.eq_ignore_ascii_case(&url.host)
+                && record.port == port
+        })
+        .map(|record| record.id)
 }
 
 /// 연결 단계를 탭이 보이는 단계로 옮긴다.
@@ -928,6 +980,7 @@ impl eframe::App for ExplorerApp {
         let mut menu = None;
         let mut panel_command = None;
         let mut remote_action = None;
+        let mut remote_url = None;
         let mut closed_conns = Vec::new();
         // 타이틀바를 먼저 그린다 — 남는 영역이 아래 CentralPanel의 몫이 된다 (FR-22)
         let titlebar_command = self.show_titlebar(ui, &ctx);
@@ -1006,6 +1059,7 @@ impl eframe::App for ExplorerApp {
                 menu = outcome.menu;
                 panel_command = outcome.command;
                 remote_action = outcome.remote;
+                remote_url = outcome.remote_url;
                 closed_conns = outcome.closed_conns;
             }
             // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
@@ -1016,6 +1070,9 @@ impl eframe::App for ExplorerApp {
             }
             if let Some((target, action)) = remote_action {
                 self.apply_remote_action(target, action);
+            }
+            if let Some((target, url)) = remote_url {
+                self.open_remote_url(target, url);
             }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {
@@ -1182,6 +1239,40 @@ mod tests {
         let ids = restored.layout.panel_ids();
         assert_eq!(restored.panels[&ids[0]].dir(), Path::new(r"D:\"));
         assert_eq!(restored.panels[&ids[1]].dir(), Path::new(r"C:\"));
+    }
+
+    #[test]
+    fn 같은_서버의_주소는_사이트를_새로_만들지_않는다() {
+        // 주소창으로 같은 서버를 여러 번 열어도 사이트 목록이 그 서버로 뒤덮이면 안 된다
+        use crate::remote::types::Protocol;
+        use crate::remote::url::parse_remote_url;
+
+        let mut sites = SiteStore::new();
+        let id = sites.add("배포 서버");
+        if let Some(record) = sites.get_mut(id) {
+            record.protocol = Protocol::Sftp;
+            record.host = "example.test".to_owned();
+            record.port = 22;
+        }
+
+        let 같은_서버 = parse_remote_url("sftp://example.test/pub").expect("파싱");
+        assert_eq!(matching_site(&sites, &같은_서버), Some(id));
+        // 호스트 대소문자는 구분하지 않는다
+        let 대문자 = parse_remote_url("sftp://EXAMPLE.test").expect("파싱");
+        assert_eq!(matching_site(&sites, &대문자), Some(id));
+        // 계정이 달라도 같은 서버다
+        let 다른_계정 = parse_remote_url("sftp://other@example.test").expect("파싱");
+        assert_eq!(matching_site(&sites, &다른_계정), Some(id));
+
+        // 포트·프로토콜·호스트가 다르면 다른 서버다
+        for 다른 in [
+            "sftp://example.test:2222",
+            "ftp://example.test",
+            "sftp://other.test",
+        ] {
+            let url = parse_remote_url(다른).expect("파싱");
+            assert_eq!(matching_site(&sites, &url), None, "{다른}");
+        }
     }
 
     #[test]

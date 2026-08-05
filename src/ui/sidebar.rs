@@ -478,9 +478,10 @@ impl WorkspaceSidebar {
         connected: bool,
         actions: &mut Vec<SidebarAction>,
     ) {
+        // 끌 수도 있다 — 패널 탭 스트립에 놓으면 그 패널의 새 탭으로 열린다 (FR-38·인벤토리 #15)
         let (rect, resp) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), SITE_ROW_HEIGHT),
-            egui::Sense::click(),
+            egui::Sense::click_and_drag(),
         );
         ui.add_space(SITE_ROW_GAP);
         let selected = self.selected_site == Some(record.id);
@@ -539,6 +540,14 @@ impl WorkspaceSidebar {
         } else if resp.clicked() {
             self.selected_site = Some(record.id);
             actions.push(SidebarAction::SelectSite(record.id));
+        }
+        // 끌기 시작을 알린다 — 받는 쪽(탭 스트립)이 놓는 순간 이 값을 가져간다.
+        // 좌표를 주고받지 않는 이유는 스트립이 스크롤 안에 있어 화면 좌표가 흔들리기 때문이다
+        if resp.drag_started() {
+            egui::DragAndDrop::set_payload(ui.ctx(), record.id);
+        }
+        if resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         show_site_context_menu(&resp, record, actions);
     }

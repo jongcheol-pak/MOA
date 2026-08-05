@@ -3,6 +3,7 @@
 //! 입력 정규화는 `panel::address_bar::normalize_input`을 그대로 쓴다(따옴표·상대 경로 처리).
 use crate::panel::address_bar::normalize_input;
 use crate::panel::history::History;
+use crate::remote::url::{RemoteUrl, parse_remote_url};
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -22,6 +23,11 @@ pub enum NavAction {
     Forward,
     Up,
     Goto(PathBuf),
+    /// 원격 주소를 입력했다 (FR-34) — 새 원격 탭으로 연다.
+    ///
+    /// 로컬 경로와 **같은 입력칸**에서 갈린다: `://`가 있고 아는 스킴이면 여기로,
+    /// 아니면 위 `Goto`로 간다(`C:tp` 같은 폴더 이름이 원격으로 오해받지 않게 한다)
+    GotoRemote(RemoteUrl),
 }
 
 /// 주소 스트립 상태 — 편집 중인 문자열만 보유한다(경로 정본은 패널이 갖는다)
@@ -95,10 +101,13 @@ impl AddressBar {
             }
             if resp.lost_focus() {
                 // 포커스를 잃으면 편집을 접고 현재 경로로 되돌린다(엔터로 확정하지 않은 입력은 버린다)
-                if ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && let Some(path) = normalize_input(current, &self.buffer)
-                {
-                    action = Some(NavAction::Goto(path));
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    // 원격 주소를 먼저 본다 — 로컬 정규화는 `sftp://`를 상대 경로로 오해한다
+                    if let Some(url) = parse_remote_url(&self.buffer) {
+                        action = Some(NavAction::GotoRemote(url));
+                    } else if let Some(path) = normalize_input(current, &self.buffer) {
+                        action = Some(NavAction::Goto(path));
+                    }
                 }
                 self.editing = false;
             }

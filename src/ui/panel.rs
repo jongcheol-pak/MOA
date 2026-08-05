@@ -14,6 +14,7 @@ use crate::panel::tabs::{CloseOutcome, TabPhase, TabSource, TabState, TabsModel}
 use crate::remote::connection::{ConnCommand, ConnectionId};
 use crate::remote::manager::ConnectionManager;
 use crate::remote::types::{RemoteEntry, RemotePath, SiteId};
+use crate::remote::url::RemoteUrl;
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
@@ -171,6 +172,11 @@ pub struct PanelOutcome {
     pub command: Option<Command>,
     /// 원격 단계 화면에서 고른 조치 (FR-29·FR-32)
     pub remote: Option<RemoteAction>,
+    /// 주소창에 적은 원격 주소 (FR-34) — 사이트로 해소해 새 탭을 여는 것은 앱의 몫이다.
+    ///
+    /// 패널이 직접 열지 못하는 이유: 주소에는 `SiteId`가 없고, 어느 사이트로 볼지(이미 등록된
+    /// 서버인지 새로 만들지)는 사이트 목록을 쥔 앱만 판정할 수 있다
+    pub remote_url: Option<RemoteUrl>,
     /// 마지막 원격 탭이 닫혀 이 패널이 더 쓰지 않게 된 연결 (FR-32).
     ///
     /// `remote`와 **따로 두는 이유**: 한 프레임에 둘 다 일어날 수 있는데 한 필드로 합치면
@@ -225,6 +231,8 @@ pub struct PanelState {
     watch: Option<DirWatch>,
     /// 진행 중인 새 폴더·새 파일 생성 (FR-25)
     create: CreateOp,
+    /// 주소창에 적힌 원격 주소 — 이번 프레임의 결과로 앱에 올려 보낸다
+    pending_remote_url: Option<RemoteUrl>,
     /// 원격 목록 요청의 세대 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
     /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다
     remote_generation: u64,
@@ -256,6 +264,7 @@ impl PanelState {
             tree_visible: false,
             watch: None,
             create: CreateOp::new(),
+            pending_remote_url: None,
             remote_generation: 0,
             thumbs: ThumbnailCache::new(),
             thumb_textures: ThumbnailTextures::new(),
@@ -762,6 +771,8 @@ impl PanelState {
                 }
             },
             NavAction::Goto(path) => self.navigate(path, ctx),
+            // 주소로 여는 일은 앱이 한다 — 여기서는 값만 받아 둔다
+            NavAction::GotoRemote(url) => self.pending_remote_url = Some(url),
         }
     }
 
@@ -879,6 +890,7 @@ impl PanelState {
             // 새 탭 생성·연결은 앱이 한다 (T13 착지 규약)
             command: strip.open_site.map(Command::OpenSiteTab).or(strip.command),
             remote: remote_action,
+            remote_url: self.pending_remote_url.take(),
             closed_conn,
         }
     }

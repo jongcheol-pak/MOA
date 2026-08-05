@@ -6,6 +6,7 @@
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::remote::connection::ConnectionId;
+use crate::remote::url::RemoteUrl;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction};
@@ -49,6 +50,8 @@ pub struct LayoutOutcome {
     pub command: Option<(PanelId, Command)>,
     /// 원격 단계 화면에서 고른 조치와 그 패널 (T10) — 대상 판정은 `command`와 같은 이유다
     pub remote: Option<(PanelId, RemoteAction)>,
+    /// 주소창에 적힌 원격 주소와 그 패널 (FR-34)
+    pub remote_url: Option<(PanelId, RemoteUrl)>,
     /// 마지막 원격 탭이 닫혀 아무도 쓰지 않게 된 연결들 (FR-32)
     pub closed_conns: Vec<ConnectionId>,
 }
@@ -63,6 +66,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         menu,
         command,
         remote,
+        remote_url,
         closed_conn,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
@@ -79,6 +83,12 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         && let Some(remote) = remote
     {
         outcome.remote = Some((id, remote));
+    }
+    // 주소는 한 프레임에 하나만 확정된다 — 입력칸이 패널마다 하나뿐이다
+    if outcome.remote_url.is_none()
+        && let Some(url) = remote_url
+    {
+        outcome.remote_url = Some((id, url));
     }
     // 닫힌 연결은 **모아서** 올린다 — 한 프레임에 여러 패널이 각자의 마지막 원격 탭을 닫을 수
     // 있고, first-wins로 하나만 남기면 나머지 연결의 워커·소켓이 그대로 남는다
@@ -250,6 +260,7 @@ mod tests {
                 }),
                 command: None,
                 remote: None,
+                remote_url: None,
                 closed_conn: None,
             },
         );
@@ -260,6 +271,7 @@ mod tests {
                 menu: None,
                 command: Some(Command::NewFolder),
                 remote: None,
+                remote_url: None,
                 closed_conn: None,
             },
         );
@@ -292,6 +304,7 @@ mod tests {
                     }),
                     command: Some(Command::NewFolder),
                     remote: None,
+                    remote_url: None,
                     closed_conn: None,
                 },
             );
@@ -316,6 +329,7 @@ mod tests {
                     menu: None,
                     command: None,
                     remote: Some(RemoteAction::Retry),
+                    remote_url: None,
                     closed_conn: Some(conn),
                 },
             );
