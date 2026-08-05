@@ -10,6 +10,7 @@
 //! **모든 원격 I/O는 연결별 워커 스레드에서 일어난다** — UI 스레드는 채널을 폴링만 한다
 //! (NFR-10). async 런타임은 쓰지 않는다: `suppaftp`·`ssh2` 둘 다 동기 API라
 //! `std::thread` + 채널로 충분하다 (AGENTS 동시성 규약).
+pub mod charset;
 pub mod connection;
 pub mod ftp;
 pub mod hostkey;

@@ -8,6 +8,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    # MultiByteToWideChar/WideCharToMultiByte — 원격 파일명의 CP949 변환 (FR-46).
+    # 표가 1만 7천 자를 넘어 손으로 담을 것이 못 되므로 OS 코드 페이지에 맡긴다
+    "Win32_Globalization",
     # CryptProtectData/CryptUnprotectData — 사이트 비밀번호 DPAPI 봉인 (FR-28)
     "Win32_Security_Cryptography",
     # DwmSetWindowAttribute — 다크 타이틀바(DWMWA_USE_IMMERSIVE_DARK_MODE)

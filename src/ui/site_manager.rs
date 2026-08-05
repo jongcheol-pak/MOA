@@ -7,8 +7,11 @@
 //! 다만 사이트 목록 자체의 변경(이름 바꾸기·삭제·복제·등록)은 `SiteStore`를 직접 고친다:
 //! 평문 비밀번호를 봉인해 담을 수 있는 곳이 `SiteStore::set_password`뿐이라(FR-28),
 //! 초안을 값으로 넘기면 봉인 경로가 화면 쪽에 한 벌 더 생긴다.
+use crate::remote::charset;
 use crate::remote::sites::SiteStore;
-use crate::remote::types::{Encryption, LogonType, Protocol, SiteId};
+use crate::remote::types::{
+    CONNECTION_LIMIT_RANGE, Charset, Encryption, LogonType, Protocol, SiteId, TransferMode,
+};
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -82,6 +85,28 @@ const PORT_LABEL_MARGIN: f32 = 6.0;
 /// 포트 필드 폭 (`:434`)
 const PORT_WIDTH: f32 = 96.0;
 
+/// 두 번째·세 번째 탭의 안쪽 여백과 세로 간격 (`:441`·`:470`)
+const TAB_BODY_PAD: f32 = 2.0;
+const TRANSFER_GAP: f32 = 14.0;
+const CHARSET_GAP: f32 = 12.0;
+/// 라디오 3개 사이 (`:443` `gap:28px`)
+const RADIO_GAP: f32 = 28.0;
+/// 라디오·체크 행의 들여쓰기 (`:443`·`:452` `padding-left:4px`)
+const MARK_INDENT: f32 = 4.0;
+/// 체크박스 행 위 여분 (`:452` `margin-top:6px`)
+const CHECK_MARGIN_TOP: f32 = 6.0;
+/// 스피너 행 들여쓰기 (`:456` `padding-left:34px`)
+const SPINNER_INDENT: f32 = 34.0;
+/// `인코딩(E):` 행 들여쓰기 (`:480` `padding-left:26px`)
+const ENCODING_INDENT: f32 = 26.0;
+/// `인코딩(E):` 필드 (`:482`)
+const ENCODING_WIDTH: f32 = 210.0;
+const ENCODING_HEIGHT: f32 = 26.0;
+/// 각주 위 여분 (`:484` `margin-top:14px`)
+const FOOTNOTE_MARGIN_TOP: f32 = 14.0;
+/// 한 줄 텍스트가 차지하는 높이 — 13px 글자 기준
+const TEXT_ROW_HEIGHT: f32 = 18.0;
+
 /// 바닥 — 58px · 위 테두리 `#2C2C2C` · 우측 정렬 gap 10px · 버튼 30px `padding 0 24px` (`:495-498`)
 const FOOTER_HEIGHT: f32 = 58.0;
 const FOOTER_PAD_X: f32 = 18.0;
@@ -108,6 +133,19 @@ const LABEL_PASSWORD: &str = "비밀번호(W):";
 const FOOTER_CONNECT: &str = "연결(C)";
 const FOOTER_OK: &str = "확인(O)";
 const FOOTER_CANCEL: &str = "취소";
+// 전송 설정 탭 (인벤토리 #76~81)
+const LABEL_TRANSFER_MODE: &str = "전송 모드(T):";
+const LABEL_LIMIT: &str = "동시 연결 수 제한(L)";
+const LABEL_LIMIT_VALUE: &str = "최대 동시 연결 수(M):";
+// 문자셋 탭 (인벤토리 #82~87)
+const CHARSET_HEADING: &str = "서버에서 파일명에 사용하는 문자셋";
+const CHARSET_LABEL: &str = "인코딩:";
+const LABEL_ENCODING: &str = "인코딩(E):";
+const CHARSET_FOOTNOTE: &str =
+    "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다.";
+/// 알아듣지 못하는 인코딩 이름을 적었을 때 (plan Edge Case) — 조용히 UTF-8로 처리하면
+/// 파일명이 깨진 채로 굳는다. 상태 표시줄은 아직 없어(T21) 이 자리에서 알린다
+const CHARSET_UNKNOWN_HINT: &str = "이 이름은 알지 못해 UTF-8로 처리합니다.";
 /// 호스트를 비운 채 등록하려 할 때 (plan Edge Case) — 무엇을 해야 하는지까지 알린다
 const ERROR_NO_HOST: &str = "호스트 주소를 입력해야 등록할 수 있습니다.";
 /// 비밀번호 봉인이 실패했을 때 — 평문으로 대신 담지 않는다 (FR-28)
@@ -135,6 +173,16 @@ const ENCRYPTION_OPTIONS: [(Encryption, &str); 4] = [
 /// 로그온 유형 선택지 (인벤토리 #73, `:1014`) — 키 파일은 이번 범위 밖이라 둘뿐이다
 const LOGON_OPTIONS: [(LogonType, &str); 2] =
     [(LogonType::Normal, "일반"), (LogonType::Anonymous, "익명")];
+
+/// 전송 모드 라디오 3종 (인벤토리 #77~79, `:852`)
+const TRANSFER_OPTIONS: [(TransferMode, &str); 3] = [
+    (TransferMode::Default, "기본(E)"),
+    (TransferMode::Active, "능동형(A)"),
+    (TransferMode::Passive, "수동형(P)"),
+];
+
+/// 문자셋 라디오 2종 (인벤토리 #84·#85, `:867`)
+const CHARSET_OPTIONS: [&str; 2] = ["UTF-8(U)", "문자셋 직접 설정(C)"];
 
 /// 포트가 가질 수 있는 범위 — 0은 실제 포트가 아니다
 const PORT_RANGE: std::ops::RangeInclusive<u32> = 1..=65535;
@@ -197,6 +245,15 @@ struct Draft {
     /// 평문 비밀번호 — 화면에서는 `●`로 가려지고, 등록할 때 `SiteStore::set_password`가 봉인한다.
     /// 대화가 닫히면 초안과 함께 버려진다 (FR-28)
     password: String,
+    transfer_mode: TransferMode,
+    /// `동시 연결 수 제한(L)` 체크 (인벤토리 #80)
+    limit_on: bool,
+    /// 스피너 값 — 체크를 껐다 켜도 적어 둔 값이 남게 기록과 따로 든다 (인벤토리 #81)
+    limit: u8,
+    /// `문자셋 직접 설정(C)`을 골랐는가 (인벤토리 #85)
+    charset_custom: bool,
+    /// `인코딩(E):`에 적은 이름 (인벤토리 #86)
+    encoding: String,
 }
 
 impl Default for Draft {
@@ -211,6 +268,11 @@ impl Default for Draft {
             logon: LogonType::default(),
             user: String::new(),
             password: String::new(),
+            transfer_mode: TransferMode::default(),
+            limit_on: false,
+            limit: *CONNECTION_LIMIT_RANGE.start(),
+            charset_custom: false,
+            encoding: String::new(),
         }
     }
 }
@@ -233,6 +295,17 @@ impl Draft {
             logon: record.logon,
             user: record.user.clone(),
             password: store.password(id).unwrap_or_default(),
+            transfer_mode: record.transfer_mode,
+            limit_on: record.connection_limit.is_some(),
+            // 제한이 꺼져 있으면 스피너는 최솟값에서 시작한다
+            limit: record
+                .connection_limit
+                .unwrap_or(*CONNECTION_LIMIT_RANGE.start()),
+            charset_custom: matches!(record.charset, Charset::Named(_)),
+            encoding: match &record.charset {
+                Charset::Utf8 => String::new(),
+                Charset::Named(name) => name.clone(),
+            },
         })
     }
 
@@ -252,6 +325,35 @@ impl Draft {
     /// 사용자·비밀번호를 입력할 수 있는가 — 익명은 서버가 정한 계정을 쓴다 (인벤토리 #74·#75)
     fn credentials_enabled(&self) -> bool {
         self.logon == LogonType::Normal
+    }
+
+    /// `최대 동시 연결 수(M)`를 조작할 수 있는가 — 제한 체크가 켜졌을 때만이다 (인벤토리 #81)
+    fn limit_enabled(&self) -> bool {
+        self.limit_on
+    }
+
+    /// `인코딩(E):`를 조작할 수 있는가 — 직접 설정을 골랐을 때만이다 (인벤토리 #86)
+    fn encoding_enabled(&self) -> bool {
+        self.charset_custom
+    }
+
+    /// 초안이 정한 문자셋 — 직접 설정이 아니면 UTF-8이다 (D23)
+    fn charset(&self) -> Charset {
+        if self.charset_custom {
+            Charset::Named(self.encoding.trim().to_owned())
+        } else {
+            Charset::Utf8
+        }
+    }
+
+    /// 초안이 정한 동시 연결 상한 — 체크가 꺼져 있으면 제한 없음이다 (FR-45·D4)
+    fn connection_limit(&self) -> Option<u8> {
+        self.limit_on.then(|| {
+            self.limit.clamp(
+                *CONNECTION_LIMIT_RANGE.start(),
+                *CONNECTION_LIMIT_RANGE.end(),
+            )
+        })
     }
 }
 
@@ -356,6 +458,11 @@ impl SiteManager {
             record.encryption = self.draft.encryption;
             record.logon = self.draft.logon;
             record.user = self.draft.user.clone();
+            // 전송 설정·문자셋 탭의 값 — `최대 동시 연결 수(M)`는 여기서 기록에 담겨야
+            // 연결 관리자의 채널 배정에 그대로 닿는다 (FR-45·D4)
+            record.transfer_mode = self.draft.transfer_mode;
+            record.connection_limit = self.draft.connection_limit();
+            record.charset = self.draft.charset();
         }
         // 익명은 비밀번호를 쓰지 않는다 — 남아 있던 것을 함께 지운다
         let password = if self.draft.credentials_enabled() {
@@ -525,7 +632,7 @@ impl SiteManager {
         let (picked, rename_done) = self.show_list(ui, left, store, connected);
         let action = self.show_list_buttons(ui, left);
         self.show_tabs(ui, right);
-        self.show_general(ui, right);
+        self.show_tab_body(ui, right);
         BodyOutcome {
             picked,
             action,
@@ -711,13 +818,160 @@ impl SiteManager {
         }
     }
 
-    /// `일반` 탭의 폼 (`:421-436`, 인벤토리 #69~75).
-    ///
-    /// 다른 두 탭은 T16이 채운다 — 지금은 빈 자리로 둔다
-    fn show_general(&mut self, ui: &mut egui::Ui, column: egui::Rect) {
-        if self.tab != ManagerTab::General {
-            return;
+    /// 지금 고른 탭의 본문을 그린다 — 셋 중 하나만 그려진다
+    fn show_tab_body(&mut self, ui: &mut egui::Ui, column: egui::Rect) {
+        match self.tab {
+            ManagerTab::General => self.show_general(ui, column),
+            ManagerTab::Transfer => self.show_transfer(ui, self.form_rect(column)),
+            ManagerTab::Charset => self.show_charset(ui, self.form_rect(column)),
         }
+    }
+
+    /// 탭 본문이 앉는 자리 (`:421` — 탭 줄 아래 `padding 16px 2px 0`)
+    fn form_rect(&self, column: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(
+                column.left() + FORM_PAD_X,
+                column.top() + TAB_HEIGHT + FORM_PAD_TOP,
+            ),
+            egui::pos2(column.right() - FORM_PAD_X, column.bottom()),
+        )
+    }
+
+    /// `전송 설정` 탭 (`:440-467`, 인벤토리 #76~81).
+    ///
+    /// 여기서 정한 `최대 동시 연결 수(M)`가 그대로 `SiteRecord`에 담겨 연결 관리자의
+    /// 채널 배정이 된다 (FR-45·D4) — 화면만 있고 동작에 닿지 않으면 그 요구가 성립하지 않는다
+    fn show_transfer(&mut self, ui: &mut egui::Ui, form: egui::Rect) {
+        let left = form.left() + TAB_BODY_PAD;
+        let mut top = form.top() + TAB_BODY_PAD;
+
+        text_row(
+            ui,
+            left,
+            top,
+            form.width(),
+            LABEL_TRANSFER_MODE,
+            theme::HEADER_TEXT,
+        );
+        top += TEXT_ROW_HEIGHT + TRANSFER_GAP;
+
+        // 전송 모드 라디오 3개 — 가로로 늘어선다 (`:443`)
+        let mut row = self.row(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(left + MARK_INDENT, top),
+                egui::vec2(form.width() - MARK_INDENT, widgets::FORM_FIELD_HEIGHT),
+            ),
+        );
+        row.spacing_mut().item_spacing.x = RADIO_GAP;
+        let mut picked_mode = None;
+        for (mode, label) in TRANSFER_OPTIONS {
+            if widgets::radio_row(&mut row, label, self.draft.transfer_mode == mode) {
+                picked_mode = Some(mode);
+            }
+        }
+        if let Some(mode) = picked_mode {
+            self.draft.transfer_mode = mode;
+        }
+        top += widgets::FORM_FIELD_HEIGHT + TRANSFER_GAP + CHECK_MARGIN_TOP;
+
+        // 동시 연결 수 제한 — 이 체크가 아래 스피너의 활성 여부를 가른다 (Acceptance ②)
+        let mut row = self.row(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(left + MARK_INDENT, top),
+                egui::vec2(form.width() - MARK_INDENT, widgets::FORM_FIELD_HEIGHT),
+            ),
+        );
+        if widgets::check_row(&mut row, LABEL_LIMIT, self.draft.limit_on) {
+            self.draft.limit_on = !self.draft.limit_on;
+        }
+        top += widgets::FORM_FIELD_HEIGHT + TRANSFER_GAP;
+
+        let limit_on = self.draft.limit_enabled();
+        let mut row = self.row(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(left + SPINNER_INDENT, top),
+                egui::vec2(form.width() - SPINNER_INDENT, widgets::SPINNER_HEIGHT),
+            ),
+        );
+        widgets::form_inline_label(&mut row, LABEL_LIMIT_VALUE, limit_on);
+        self.draft.limit =
+            widgets::spinner_field(&mut row, self.draft.limit, CONNECTION_LIMIT_RANGE, limit_on);
+    }
+
+    /// `문자셋` 탭 (`:469-486`, 인벤토리 #82~87)
+    fn show_charset(&mut self, ui: &mut egui::Ui, form: egui::Rect) {
+        let left = form.left() + TAB_BODY_PAD;
+        let mut top = form.top() + TAB_BODY_PAD;
+
+        for text in [CHARSET_HEADING, CHARSET_LABEL] {
+            text_row(ui, left, top, form.width(), text, theme::HEADER_TEXT);
+            top += TEXT_ROW_HEIGHT + CHARSET_GAP;
+        }
+
+        // 라디오 2개 — 세로로 쌓인다 (`:473-479`)
+        for (index, label) in CHARSET_OPTIONS.into_iter().enumerate() {
+            let custom = index == 1;
+            let mut row = self.row(
+                ui,
+                egui::Rect::from_min_size(
+                    egui::pos2(left + MARK_INDENT, top),
+                    egui::vec2(form.width() - MARK_INDENT, widgets::FORM_FIELD_HEIGHT),
+                ),
+            );
+            if widgets::radio_row(&mut row, label, self.draft.charset_custom == custom) {
+                self.draft.charset_custom = custom;
+            }
+            top += widgets::FORM_FIELD_HEIGHT + CHARSET_GAP;
+        }
+
+        // 인코딩 이름 — 직접 설정일 때만 활성이다 (Acceptance ③)
+        let custom = self.draft.encoding_enabled();
+        let mut row = self.row(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(left + ENCODING_INDENT, top),
+                egui::vec2(form.width() - ENCODING_INDENT, ENCODING_HEIGHT),
+            ),
+        );
+        widgets::form_inline_label(&mut row, LABEL_ENCODING, custom);
+        widgets::text_field(
+            &mut row,
+            "encoding",
+            &mut self.draft.encoding,
+            egui::vec2(ENCODING_WIDTH, ENCODING_HEIGHT),
+            custom,
+            false,
+        );
+        top += ENCODING_HEIGHT + FOOTNOTE_MARGIN_TOP;
+
+        // 알아듣지 못하는 이름이면 그 사실을 알린다 (plan Edge Case)
+        if custom && !charset::is_known(&self.draft.charset()) {
+            text_row(
+                ui,
+                left,
+                top,
+                form.width(),
+                CHARSET_UNKNOWN_HINT,
+                theme::WARN,
+            );
+            top += TEXT_ROW_HEIGHT + CHARSET_GAP;
+        }
+        text_row(
+            ui,
+            left,
+            top,
+            form.width(),
+            CHARSET_FOOTNOTE,
+            theme::TEXT_MUTED,
+        );
+    }
+
+    /// `일반` 탭의 폼 (`:421-436`, 인벤토리 #69~75)
+    fn show_general(&mut self, ui: &mut egui::Ui, column: egui::Rect) {
         let form = egui::Rect::from_min_max(
             egui::pos2(
                 column.left() + FORM_PAD_X,
@@ -774,7 +1028,7 @@ impl SiteManager {
             &mut row,
             "host",
             &mut self.draft.host,
-            host_width,
+            egui::vec2(host_width, widgets::FORM_FIELD_HEIGHT),
             true,
             false,
         );
@@ -784,7 +1038,7 @@ impl SiteManager {
             &mut row,
             "port",
             &mut self.draft.port,
-            PORT_WIDTH,
+            egui::vec2(PORT_WIDTH, widgets::FORM_FIELD_HEIGHT),
             true,
             false,
         )
@@ -832,7 +1086,7 @@ impl SiteManager {
             &mut row,
             "user",
             &mut self.draft.user,
-            field_width,
+            egui::vec2(field_width, widgets::FORM_FIELD_HEIGHT),
             credentials,
             false,
         );
@@ -843,7 +1097,7 @@ impl SiteManager {
             &mut row,
             "password",
             &mut self.draft.password,
-            field_width,
+            egui::vec2(field_width, widgets::FORM_FIELD_HEIGHT),
             credentials,
             true,
         );
@@ -1025,6 +1279,17 @@ fn paint_row_icon(ui: &egui::Ui, rect: egui::Rect, dot: egui::Color32) -> f32 {
     icon.right() + LIST_ROW_GAP
 }
 
+/// 탭 본문의 한 줄 텍스트 — 폭을 넘으면 말줄임한다
+fn text_row(ui: &egui::Ui, left: f32, top: f32, width: f32, text: &str, color: egui::Color32) {
+    let galley = ui.painter().layout(
+        text.to_owned(),
+        egui::FontId::proportional(widgets::FORM_FONT_PX),
+        color,
+        width,
+    );
+    ui.painter().galley(egui::pos2(left, top), galley, color);
+}
+
 /// 선택지 표에서 지금 값의 표기를 찾는다 — 표에 없으면 첫 항목(있을 수 없는 경우의 안전값)
 fn option_label<T: PartialEq>(options: &[(T, &'static str)], current: T) -> &'static str {
     options
@@ -1037,6 +1302,7 @@ fn option_label<T: PartialEq>(options: &[(T, &'static str)], current: T) -> &'st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::manager::ConnectionManager;
 
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
@@ -1313,6 +1579,110 @@ mod tests {
         manager.close();
         assert!(!manager.is_open());
         assert_eq!(manager.draft, Draft::default());
+    }
+
+    #[test]
+    fn 두_번째_세_번째_탭_문구도_인벤토리_원문_그대로다() {
+        // 인벤토리 #76~87 (원본 `:442`·`:852`·`:454`·`:457`·`:471-472`·`:867`·`:481`·`:484`)
+        assert_eq!(LABEL_TRANSFER_MODE, "전송 모드(T):");
+        assert_eq!(TRANSFER_OPTIONS[0].1, "기본(E)");
+        assert_eq!(TRANSFER_OPTIONS[1].1, "능동형(A)");
+        assert_eq!(TRANSFER_OPTIONS[2].1, "수동형(P)");
+        assert_eq!(LABEL_LIMIT, "동시 연결 수 제한(L)");
+        assert_eq!(LABEL_LIMIT_VALUE, "최대 동시 연결 수(M):");
+        assert_eq!(CHARSET_HEADING, "서버에서 파일명에 사용하는 문자셋");
+        assert_eq!(CHARSET_LABEL, "인코딩:");
+        assert_eq!(CHARSET_OPTIONS[0], "UTF-8(U)");
+        assert_eq!(CHARSET_OPTIONS[1], "문자셋 직접 설정(C)");
+        assert_eq!(LABEL_ENCODING, "인코딩(E):");
+        assert_eq!(
+            CHARSET_FOOTNOTE,
+            "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다."
+        );
+        // 인코딩 필드 폭·높이도 원본 값이다 (`:482`)
+        assert_eq!(ENCODING_WIDTH, 210.0);
+        assert_eq!(ENCODING_HEIGHT, 26.0);
+    }
+
+    #[test]
+    fn 제한을_켜야_최대_연결_수를_고칠_수_있다() {
+        // Acceptance ② (인벤토리 #81) — 꺼져 있으면 흐림 + 조작 불가
+        let mut draft = Draft::default();
+        assert!(!draft.limit_enabled());
+        assert_eq!(draft.connection_limit(), None, "꺼져 있으면 제한 없음이다");
+        draft.limit_on = true;
+        draft.limit = 4;
+        assert!(draft.limit_enabled());
+        assert_eq!(draft.connection_limit(), Some(4));
+    }
+
+    #[test]
+    fn 직접_설정을_골라야_인코딩을_적을_수_있다() {
+        // Acceptance ③ (인벤토리 #86)
+        let mut draft = Draft::default();
+        assert!(!draft.encoding_enabled());
+        assert_eq!(draft.charset(), Charset::Utf8);
+        draft.charset_custom = true;
+        draft.encoding = "  CP949  ".to_owned();
+        assert!(draft.encoding_enabled());
+        // 앞뒤 공백은 떼고 담는다 — 이름 대조에 걸리면 알아듣지 못한다
+        assert_eq!(draft.charset(), Charset::Named("CP949".to_owned()));
+    }
+
+    #[test]
+    fn 스피너_값은_범위를_벗어나지_않는다() {
+        // Acceptance ④ — 1~10
+        let mut draft = Draft {
+            limit_on: true,
+            limit: 200,
+            ..Draft::default()
+        };
+        assert_eq!(draft.connection_limit(), Some(10));
+        draft.limit = 0;
+        assert_eq!(draft.connection_limit(), Some(1));
+    }
+
+    #[test]
+    fn 설정한_최대_연결_수가_채널_배정에_그대로_닿는다() {
+        // Acceptance ⑤ (FR-45) — 화면 값이 `SiteRecord`를 거쳐 연결 관리자에 닿는 경로를 고정한다.
+        // 이 사슬이 끊기면 UI만 있고 동작은 예전 그대로가 된다
+        let mut store = SiteStore::new();
+        let mut manager = SiteManager::new();
+        manager.open_new();
+        manager.draft.host = "example.test".to_owned();
+        manager.draft.limit_on = true;
+        manager.draft.limit = 2;
+        manager.draft.transfer_mode = TransferMode::Passive;
+        manager.draft.charset_custom = true;
+        manager.draft.encoding = "CP949".to_owned();
+
+        let id = manager.commit(&mut store).expect("등록");
+        let record = store.get(id).expect("사이트").clone();
+        assert_eq!(record.connection_limit, Some(2));
+        assert_eq!(record.transfer_mode, TransferMode::Passive);
+        assert_eq!(record.charset, Charset::Named("CP949".to_owned()));
+
+        // 상한 2 = 탐색 1 + 전송 1 (D4)
+        let connections = ConnectionManager::new(std::sync::Arc::new(|| {}));
+        assert_eq!(connections.transfer_slots(&record), 1);
+    }
+
+    #[test]
+    fn 편집_상태로_불러오면_두_탭_값도_따라온다() {
+        let mut store = SiteStore::new();
+        let id = store.add("배포 서버");
+        if let Some(record) = store.get_mut(id) {
+            record.host = "example.test".to_owned();
+            record.connection_limit = Some(5);
+            record.transfer_mode = TransferMode::Active;
+            record.charset = Charset::Named("EUC-KR".to_owned());
+        }
+        let draft = Draft::load(&store, id).expect("초안");
+        assert!(draft.limit_enabled());
+        assert_eq!(draft.limit, 5);
+        assert_eq!(draft.transfer_mode, TransferMode::Active);
+        assert!(draft.encoding_enabled());
+        assert_eq!(draft.encoding, "EUC-KR");
     }
 
     #[test]

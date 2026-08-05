@@ -53,6 +53,8 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [ ] **[SUGGEST] 원격 목록 정렬의 이름 키 할당** (T7 quality 리뷰 m2) — `ListRow::name_sort_key`가 원격 항목마다 널 종단 UTF-16을 새로 만든다(비교마다 최대 2회). 로컬·원격이 **같은 정렬 규칙**(`StrCmpLogicalW`)을 쓰기 위한 대가다. T9/T10에서 배선할 때 **정렬이 UI 스레드에서 돌지 않게** 하고(NFR-13: 파싱·정렬은 워커), 1만 항목에서 T26이 실측해 필요하면 키를 미리 만들어 두는 쪽으로 바꾼다
 - [ ] **[SUGGEST] `remote::testing`이 릴리스 빌드에 포함된다** (T4 quality 리뷰 m2) — 가짜 서버·세션 400여 줄이 배포 exe에 그대로 들어간다. `tests/`가 라이브러리를 일반 빌드로 링크해서 `#[cfg(test)]`를 쓸 수 없기 때문이다. Cargo feature(`test-util`)로 가르는 것이 깔끔하지만 이 프로젝트에 feature 관례가 전혀 없어 이번엔 두었다 — T26에서 exe 크기를 잴 때 함께 판단한다
 - [ ] **[SUGGEST] `src/ui/panel.rs`가 1673줄** (T10 quality 리뷰 m2) — 1500줄 분리 검토선을 넘었다. 이번엔 쪼개지 않았다: `PanelState`라는 단일 책임이고 절반 이상이 테스트 모듈이라, 지금 나누면 관련 로직의 지역성만 잃는다(AGENTS "억지 분리는 지역성을 해침"). 원격 관련 task(T11 열 확장·T22 드래그·T23 원격 메뉴)가 더 얹히면 **단계별 화면 분기와 원격 배선을 떼는 쪽**으로 재검토한다
+- [ ] **원격 목록에 문자셋을 실제로 적용하기 (FR-46의 남은 절반)** — T16이 `remote::charset`(UTF-8·CP949·Latin-1 왕복)과 `문자셋` 탭·저장까지 마쳤지만, **목록 경로에 잇지 못했다**: `suppaftp`가 목록 줄을 `String::from_utf8_lossy`로 이미 디코딩해 내주고(`sync_ftp.rs:747`·`:841`) `ssh2`는 `from_utf8().unwrap()`으로 옮겨(T3 관측) **원본 바이트가 우리 손에 오지 않는다**. 지금 상태에서 CP949 서버의 한글 파일명은 여전히 깨져 보인다(치환 문자). 잇는 길은 ⓐ `suppaftp`의 저수준 데이터 스트림을 직접 읽어 LIST 원문 바이트를 우리가 파싱 ⓑ `ssh2` 대신 바이트 경로를 주는 SFTP 크레이트 검토 — 둘 다 T16 범위를 넘어 별도 task가 필요하다. 위 「SFTP 목록의 비UTF-8 파일명」 항목과 같은 뿌리다
+- [ ] **[SUGGEST] `src/ui/site_manager.rs`가 1696줄** (T16 hook 경고) — 1500줄 분리 검토선을 넘었다. 이번엔 쪼개지 않았다: `SiteManager`라는 단일 책임이고 절반 이상(약 900줄)이 테스트 모듈이라, 지금 나누면 관련 로직의 지역성만 잃는다(AGENTS "억지 분리는 지역성을 해침" — T10의 `panel.rs` 판단과 같다). 사이트 관리자에 더 얹히는 task는 남아 있지 않으므로 이 크기에서 멈춘다
 - [ ] **[SUGGEST] 사이트 관리자 초안의 평문 비밀번호를 지우지 않는다** (T15 quality 리뷰 m1) — 대화가 열려 있는 동안 `Draft.password`가 힙에 남고, 초안을 갈아 끼우거나 닫을 때 `remote::secret`의 `zeroize` 관례를 잇지 않는다. DPAPI는 저장(at-rest) 보호가 목적이고 `SiteStore::password()`도 이미 `String`을 그대로 내주므로 이번엔 두었다 — 런타임 메모리까지 지우려면 그 반환 경로부터 함께 바꿔야 해서 T15 범위를 넘는다
 - [ ] **사이트 관리자 단축키 `Ctrl+S`** — 디자인 README `Interactions & behavior`가 "wire the real accelerators in the host app"으로 예고했으나 PRD FR-27·T15 Acceptance 어디에도 없어 이번엔 넣지 않았다(진입점은 연결 메뉴 `새 사이트 추가…`와 실패 화면 `설정 열기` 둘로 충분히 닿는다). 단축키 표를 손대는 task에서 함께 검토한다
 - [ ] 원격 목록 가상 스크롤의 원격 전용 튜닝 — 로컬과 같은 렌더 경로를 쓰므로 기본 성능은 따라오지만, 1만 항목 이상에서 재측정 후 필요하면
@@ -713,12 +715,15 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T16. 사이트 관리자 — 전송 설정·문자셋 탭 + 토스트 [Type C]
 
-- **Files**: `src/ui/site_manager.rs`, `src/ui/toast.rs`(신규), `src/ui/widgets.rs`, `src/remote/charset.rs`(신규), `src/ui/app.rs`
+- **Files**: `src/ui/site_manager.rs`, `src/ui/toast.rs`(신규), `src/ui/widgets.rs`, `src/remote/charset.rs`(신규), `src/ui/app.rs`, `src/ui/mod.rs`·`src/remote/mod.rs`(모듈 등록), `Cargo.toml`(구현 중 편입 — 아래 정정 ①)
 - **Design**:
   - **배치**: 두 탭은 `site_manager` 안에, 토스트는 창 전역이라 `ui::toast`
   - **신규 심볼**: `widgets::radio_row`(14px 원·6px 점)·`check_row`(14px 사각)·`spinner_field`(92px·▲▼) / `Toast{text,until}` + `show_toast`(3200ms) / `remote::charset`의 **`encode_name`/`decode_name`**(UTF-8·CP949·Latin-1 3종 + 폴백, D23) — **`Charset` 타입 자체는 T1이 이미 `remote::types`에 도입했다**(`SiteRecord`가 담아야 해서). 이 task는 함수만 더하고 타입을 재정의하지 않는다
   - **의존 방향**: `remote::charset`은 `remote::{ftp,sftp}`가 파일명 인·디코딩에 쓴다
   - **비추상화 선언**: 인코딩을 플러그인화하지 않는다 — 3종 표로 충분하고, 늘어나면 그때 외부 크레이트를 검토한다
+  - **구현 중 확정 (원안 대비 2건)**:
+    - ① **CP949를 "내장 표"가 아니라 Windows 코드 페이지 변환으로 처리한다** — CP949 표는 1만 7천 자를 넘어 손으로 담을 것이 못 된다. `MultiByteToWideChar`/`WideCharToMultiByte`(코드 페이지 949)에 맡기면 **신규 패키지 0**이라는 D23의 목적은 그대로이면서 표를 짊어지지 않는다(Windows 전용 앱이라 이식성 손실도 없다). `windows` 크레이트에 `Win32_Globalization` 기능을 더했다(사전 승인 1의 비파괴 의존성 변경 — T2의 `deprecated` 추가와 같은 성격). UTF-8·Latin-1은 규칙이 단순해 순수 Rust로 옮긴다.
+    - ② **`remote::{ftp,sftp}`에 아직 잇지 못한다 (실측으로 드러난 라이브러리 제약)** — `suppaftp`는 목록 줄을 `String::from_utf8_lossy`로 이미 디코딩해 내주고(`sync_ftp.rs:747`·`:841`), `ssh2`는 경로를 `from_utf8().unwrap()`으로 옮긴다(T3 관측). **우리 손에 원본 바이트가 오는 지점이 없다.** 그래서 이 task는 변환 함수·UI·저장까지 완성하고(Acceptance ①~⑥ 충족, ⑦은 함수 왕복으로 판정 — D25가 정한 방식 그대로), **목록 경로 배선은 Deferred로 올린다.** 배선하려면 두 크레이트의 저수준 API(원시 데이터 스트림)를 직접 다루거나 대체 크레이트를 검토해야 해 T16 범위를 넘는다.
 - **Acceptance**: ① 인벤토리 #76~87의 문구가 원문 그대로다. ② `동시 연결 수 제한(L)`이 꺼져 있으면 `최대 동시 연결 수(M)` 필드·라벨이 **흐림 + 조작 불가**, 켜면 활성(#81). ③ `문자셋 직접 설정(C)`이 아닐 때 `인코딩(E):`가 흐림(#86). ④ 스피너가 1~10으로 클램프된다. ⑤ **설정한 M이 `SiteRecord`에 저장되어 T4의 채널 배정에 그대로 전달된다**(FR-45 — UI 값이 연결 동작에 닿는 경로를 단위 테스트로 고정). ⑥ 토스트가 3200ms 후 사라지고 문구가 `<host> 등록됨 · 더블클릭하여 연결`이다(#91). ⑦ CP949로 인코딩된 한글 파일명이 옳게 디코딩되고 왕복한다.
 - **Edge Cases**: 모르는 인코딩 이름 → UTF-8 폴백 + 상태 줄 알림 / 인코딩 필드가 빈 값인데 직접 설정 선택 → UTF-8로 동작 / 토스트 연달아 → 마지막 것만 보이고 타이머 갱신 / 전송 모드를 바꿨는데 이미 연결됨 → 다음 연결부터 적용(안내) / 잘못된 바이트 시퀀스 → 치환 문자로 표시하되 **원본 바이트를 보존**해 조작은 가능하게.
 - **Halt Forecast**: 없음 — 결정 분기 0(위 Design·Decisions가 선택을 확정했다), 외부·비가역·파괴 요소 없음.

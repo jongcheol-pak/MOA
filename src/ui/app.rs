@@ -29,6 +29,7 @@ use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
 use crate::ui::splitter;
 use crate::ui::theme;
 use crate::ui::titlebar::{self, WindowRequest};
+use crate::ui::toast::{self, Toast};
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -321,6 +322,8 @@ pub struct ExplorerApp {
     hostkey: HostKeyGate,
     /// 사이트 관리자 대화 (FR-27) — 연결 메뉴의 `새 사이트 추가…`와 실패 화면의 `설정 열기`가 연다
     site_manager: SiteManager,
+    /// 짧게 떴다 사라지는 알림 (FR-43) — 창 전역이라 워크스페이스를 넘나든다
+    toast: Toast,
 }
 
 impl ExplorerApp {
@@ -363,6 +366,7 @@ impl ExplorerApp {
             sites: SiteStore::new(),
             hostkey: HostKeyGate::new(),
             site_manager: SiteManager::new(),
+            toast: Toast::new(),
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -653,10 +657,17 @@ impl ExplorerApp {
         let connected = self.connected_sites();
         let outcome = self.site_manager.show(ctx, &mut self.sites, &connected);
         match outcome {
-            // 토스트는 T16이 붙인다 — 그때 이 자리에서 `<host> 등록됨 …`을 띄운다 (인벤토리 #91)
-            SiteManagerOutcome::None
-            | SiteManagerOutcome::Close
-            | SiteManagerOutcome::Register(_) => {}
+            SiteManagerOutcome::None | SiteManagerOutcome::Close => {}
+            // 등록만 했으면 그 사실을 짧게 알린다 (인벤토리 #89·#91)
+            SiteManagerOutcome::Register(site) => {
+                let host = self
+                    .sites
+                    .get(site)
+                    .map(|record| record.host.clone())
+                    .unwrap_or_default();
+                let now = ctx.input(|input| input.time);
+                self.toast.show(toast::registered_text(&host), now);
+            }
             SiteManagerOutcome::RegisterAndConnect(site) => {
                 if let Some(area) = area {
                     self.open_site_tab(site, None, area);
@@ -1159,6 +1170,8 @@ impl eframe::App for ExplorerApp {
         self.hostkey.show(&ctx);
         // 사이트 관리자도 자체 레이어를 쓴다 (FR-27)
         self.show_site_manager(&ctx, layout_area);
+        // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
+        self.toast.show_ui(&ctx);
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
         // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다

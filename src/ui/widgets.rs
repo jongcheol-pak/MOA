@@ -224,12 +224,11 @@ pub fn text_field(
     ui: &mut egui::Ui,
     id_salt: &str,
     value: &mut String,
-    width: f32,
+    size: egui::Vec2,
     enabled: bool,
     masked: bool,
 ) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, FORM_FIELD_HEIGHT), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     paint_well(ui, rect, enabled);
     let inner = inner_rect(rect);
     if !enabled {
@@ -360,6 +359,215 @@ pub fn dropdown_field(
     chosen
 }
 
+// ── 라디오·체크·스피너 (원본 `FileExplorer-FTP.dc.html:446-447`·`:453`·`:458-463`) ──
+
+/// 라디오 원 지름과 안쪽 점 (`:446-447`)
+const RADIO_SIZE: f32 = 14.0;
+const RADIO_DOT: f32 = 6.0;
+/// 체크 사각 한 변과 글리프 (`:453`)
+const CHECK_SIZE: f32 = 14.0;
+const CHECK_GLYPH: &str = "✓";
+const CHECK_GLYPH_PX: f32 = 10.0;
+/// 표시와 글자 사이 (`:445`·`:452` `gap:8px`)
+const MARK_GAP: f32 = 8.0;
+/// 고르지 않은 라디오·체크의 테두리 (`:854`·`:861` `#5A5A5A`)
+const MARK_EDGE_OFF: egui::Color32 = egui::Color32::from_rgb(0x5A, 0x5A, 0x5A);
+/// 스피너 필드 (`:458-463`)
+pub const SPINNER_WIDTH: f32 = 92.0;
+pub const SPINNER_HEIGHT: f32 = 26.0;
+/// ▲▼ 칸 폭과 글리프 크기
+const SPINNER_ARROW_WIDTH: f32 = 16.0;
+const SPINNER_ARROW_PX: f32 = 8.0;
+
+/// 라디오 한 줄 — 원 + 라벨. 눌렸으면 `true` (인벤토리 #77~79·#84·#85).
+///
+/// egui의 `radio_value`를 쓰지 않는 이유: 그것은 원 크기·점 지름·색이 스타일에 묶여 있어
+/// 디자인 값(14px 원·6px 점·선택 `#4A9EFF`)으로 맞추려면 결국 직접 그리게 된다
+pub fn radio_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+    let text = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(FORM_FONT_PX),
+        theme::TEXT,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(RADIO_SIZE + MARK_GAP + text.size().x, FORM_FIELD_HEIGHT),
+        egui::Sense::click(),
+    );
+    let painter = ui.painter();
+    let center = egui::pos2(rect.left() + RADIO_SIZE / 2.0, rect.center().y);
+    painter.circle_stroke(
+        center,
+        RADIO_SIZE / 2.0,
+        egui::Stroke::new(
+            1.0,
+            if selected {
+                theme::ACCENT
+            } else {
+                MARK_EDGE_OFF
+            },
+        ),
+    );
+    if selected {
+        painter.circle_filled(center, RADIO_DOT / 2.0, theme::ACCENT);
+    }
+    painter.galley(
+        egui::pos2(
+            rect.left() + RADIO_SIZE + MARK_GAP,
+            rect.center().y - text.size().y / 2.0,
+        ),
+        text,
+        theme::TEXT,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
+/// 체크박스 한 줄 — 사각 + 라벨. 눌렸으면 `true` (인벤토리 #80)
+pub fn check_row(ui: &mut egui::Ui, label: &str, checked: bool) -> bool {
+    let text = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(FORM_FONT_PX),
+        theme::TEXT,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(CHECK_SIZE + MARK_GAP + text.size().x, FORM_FIELD_HEIGHT),
+        egui::Sense::click(),
+    );
+    let painter = ui.painter();
+    let box_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y - CHECK_SIZE / 2.0),
+        egui::vec2(CHECK_SIZE, CHECK_SIZE),
+    );
+    painter.rect(
+        box_rect,
+        0.0,
+        if checked {
+            theme::ACCENT
+        } else {
+            theme::WELL_BG
+        },
+        egui::Stroke::new(
+            1.0,
+            if checked {
+                theme::ACCENT
+            } else {
+                MARK_EDGE_OFF
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    if checked {
+        painter.text(
+            box_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            CHECK_GLYPH,
+            egui::FontId::proportional(CHECK_GLYPH_PX),
+            egui::Color32::WHITE,
+        );
+    }
+    painter.galley(
+        egui::pos2(
+            rect.left() + CHECK_SIZE + MARK_GAP,
+            rect.center().y - text.size().y / 2.0,
+        ),
+        text,
+        theme::TEXT,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
+/// 값을 ▲▼로 올리고 내리는 필드 (인벤토리 #81).
+///
+/// 값은 **범위 안으로 클램프**해 돌려준다 — 화살표를 계속 눌러도 밖으로 나가지 않는다.
+/// 비활성이면 화살표가 반응하지 않고 채움·글자가 흐려진다
+pub fn spinner_field(
+    ui: &mut egui::Ui,
+    value: u8,
+    range: std::ops::RangeInclusive<u8>,
+    enabled: bool,
+) -> u8 {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(SPINNER_WIDTH, SPINNER_HEIGHT),
+        egui::Sense::hover(),
+    );
+    paint_well(ui, rect, enabled);
+    let arrows = egui::Rect::from_min_max(
+        egui::pos2(rect.right() - SPINNER_ARROW_WIDTH, rect.top() + 1.0),
+        egui::pos2(rect.right() - 1.0, rect.bottom() - 1.0),
+    );
+    let text_color = if enabled {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+    // 값은 화살표 칸을 뺀 자리에 오른쪽 정렬한다 (`:459`)
+    ui.painter().text(
+        egui::pos2(arrows.left() - FORM_FIELD_PAD_X, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        value.to_string(),
+        egui::FontId::proportional(FORM_FONT_PX),
+        text_color,
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(arrows.left() - 0.5, rect.top()),
+            egui::pos2(arrows.left() - 0.5, rect.bottom()),
+        ],
+        egui::Stroke::new(1.0, theme::BORDER_CONTROL),
+    );
+
+    let mut next = value.clamp(*range.start(), *range.end());
+    let half = arrows.height() / 2.0;
+    for (index, glyph) in ["▲", "▼"].into_iter().enumerate() {
+        let cell = egui::Rect::from_min_size(
+            egui::pos2(arrows.left(), arrows.top() + index as f32 * half),
+            egui::vec2(arrows.width(), half),
+        );
+        let response = ui.interact(
+            cell,
+            ui.id().with(("spinner", index)),
+            if enabled {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+        if enabled && response.hovered() {
+            ui.painter().rect_filled(cell, 0.0, theme::ROW_HOT);
+        }
+        ui.painter().text(
+            cell.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            egui::FontId::proportional(SPINNER_ARROW_PX),
+            if enabled {
+                theme::TEXT_MUTED
+            } else {
+                theme::TEXT_DIM
+            },
+        );
+        if response.clicked() {
+            next = if index == 0 {
+                next.saturating_add(1)
+            } else {
+                next.saturating_sub(1)
+            };
+        }
+    }
+    // 두 화살표 사이 구분선 (`:462`)
+    ui.painter().line_segment(
+        [
+            egui::pos2(arrows.left(), arrows.center().y),
+            egui::pos2(arrows.right(), arrows.center().y),
+        ],
+        egui::Stroke::new(1.0, theme::BORDER_CONTROL),
+    );
+    next.clamp(*range.start(), *range.end())
+}
+
 /// 드롭다운 팝업의 한 줄 — 눌렸으면 `true`
 fn menu_row(ui: &mut egui::Ui, label: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(
@@ -448,12 +656,51 @@ mod tests {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let before = ui.cursor().min.x;
-                    let response = text_field(ui, "테스트", &mut value, width, enabled, false);
+                    let response = text_field(
+                        ui,
+                        "테스트",
+                        &mut value,
+                        egui::vec2(width, FORM_FIELD_HEIGHT),
+                        enabled,
+                        false,
+                    );
                     size = egui::vec2(ui.cursor().min.x - before, response.rect.height());
                 });
             });
         });
         size
+    }
+
+    #[test]
+    fn 라디오_체크_스피너_치수는_원본과_같다() {
+        // 원본 `:446-447`(14px 원·6px 점)·`:453`(14px 사각)·`:458-463`(92×26·▲▼ 16px)
+        assert_eq!(RADIO_SIZE, 14.0);
+        assert_eq!(RADIO_DOT, 6.0);
+        assert_eq!(CHECK_SIZE, 14.0);
+        assert_eq!(MARK_GAP, 8.0);
+        assert_eq!(SPINNER_WIDTH, 92.0);
+        assert_eq!(SPINNER_HEIGHT, 26.0);
+        assert_eq!(SPINNER_ARROW_WIDTH, 16.0);
+    }
+
+    /// 스피너를 한 프레임 그리고 돌려준 값을 본다 (아무것도 누르지 않은 상태)
+    fn spinner_once(value: u8, range: std::ops::RangeInclusive<u8>) -> u8 {
+        let ctx = egui::Context::default();
+        let mut out = value;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                out = spinner_field(ui, value, range.clone(), true);
+            });
+        });
+        out
+    }
+
+    #[test]
+    fn 스피너는_범위_밖의_값을_끌어당긴다() {
+        // Acceptance ④ — 화살표를 계속 눌러도, 저장된 값이 이상해도 1~10 안에 머문다
+        assert_eq!(spinner_once(5, 1..=10), 5);
+        assert_eq!(spinner_once(0, 1..=10), 1);
+        assert_eq!(spinner_once(200, 1..=10), 10);
     }
 
     #[test]
