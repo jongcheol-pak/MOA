@@ -177,7 +177,10 @@ pub fn show_status_bar(
 
     // ── 왼쪽부터 ──
     let mut left = rect.left() + PAD_X;
-    let queue_caret = if dock.panel == Some(DockPanel::Queue) {
+    // 큐 캐럿은 **도크가 열려 있으면** 아래를 가리킨다 — 로그를 보고 있어도 마찬가지다.
+    // 원본이 그렇게 정했다(`:1034` `queueCaret: isQueue || isLog ? "▼" : "▲"`) — 이 캐럿은
+    // "큐를 보고 있다"가 아니라 "아래 도크가 열려 있다"는 뜻이다
+    let queue_caret = if dock.is_open() {
         CARET_OPEN
     } else {
         CARET_CLOSED
@@ -512,10 +515,11 @@ mod tests {
     fn 캐럿이_도크_상태를_따라간다() {
         // Acceptance ③ — 닫힘 `▲`, 열림 `▼`
         let ctx = egui::Context::default();
+        // 큐 캐럿은 도크가 열려 있으면 ▼다 — 로그를 보고 있어도(원본 `:1034`)
         for (panel, queue_caret, log_caret) in [
             (None, CARET_CLOSED, CARET_CLOSED),
             (Some(DockPanel::Queue), CARET_OPEN, CARET_CLOSED),
-            (Some(DockPanel::Log), CARET_CLOSED, CARET_OPEN),
+            (Some(DockPanel::Log), CARET_OPEN, CARET_OPEN),
         ] {
             let dock = DockState {
                 panel,
@@ -535,7 +539,7 @@ mod tests {
                 });
             });
             assert_eq!(
-                if dock.panel == Some(DockPanel::Queue) {
+                if dock.is_open() {
                     CARET_OPEN
                 } else {
                     CARET_CLOSED

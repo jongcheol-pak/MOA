@@ -104,12 +104,18 @@ fn group_digits(value: u64) -> String {
     out
 }
 
-/// 속도 표기 — 원본 `12.4 MB/s` (`:704`)
+/// 속도 표기 — 원본 `12.4 MB/s` (`:704`).
+///
+/// GB/s까지 올린다 — 로컬 네트워크·SSD 사이에서는 실제로 그 단위가 나오는데, MB/s에서 멈추면
+/// `2048.0 MB/s` 같은 읽기 어려운 숫자가 된다 (plan T21 Edge Case)
 pub fn format_speed(bytes_per_sec: u64) -> String {
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
     const MB: f64 = 1024.0 * 1024.0;
     const KB: f64 = 1024.0;
     let value = bytes_per_sec as f64;
-    if value >= MB {
+    if value >= GB {
+        format!("{:.1} GB/s", value / GB)
+    } else if value >= MB {
         format!("{:.1} MB/s", value / MB)
     } else if value >= KB {
         format!("{:.1} KB/s", value / KB)
@@ -608,6 +614,8 @@ mod tests {
         assert_eq!(format_speed(13_002_342), "12.4 MB/s");
         assert_eq!(format_speed(2048), "2.0 KB/s");
         assert_eq!(format_speed(512), "512 B/s");
+        // 로컬 네트워크·SSD 사이에서는 GB/s가 실제로 나온다 (T21 Edge Case)
+        assert_eq!(format_speed(2 * 1024 * 1024 * 1024), "2.0 GB/s");
     }
 
     fn queue_with_two_sites() -> (TransferQueue, SiteStore, SiteId, SiteId) {
