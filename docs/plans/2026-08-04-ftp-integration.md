@@ -320,6 +320,25 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 **⏳ 미확인 — F-8 인계**: 열 메뉴가 실제로 186px로 뜨는지·행 높이 26px 체감·체크 글리프가 12px 자리에 정렬되는지·권한/소유자 열을 켰을 때 가로 스크롤이 나타나는 모습(렌더 확인 필요).
 
+### V-9 대조 결과 — T12 (사이드바 연결 섹션)
+
+**정적 축 전부 ✅** — 원본 `FileExplorer-FTP.dc.html` ↔ `src/ui/sidebar.rs` 양쪽 지목.
+
+| 인벤토리 | 원본 | 구현 | 판정 |
+|---|---|---|---|
+| #1 섹션 제목 `연결` | `:58` | `CONNECT_LABEL` + `show_connect_header` | ✅ |
+| #2 `⟳` 새로 고침 | `:60`(24×24·14px) | `PLUS_SIZE`·`REFRESH_FONT_PX` + `header_glyph` | ✅ |
+| #3 `+` 연결 메뉴 | `:61`(24×24·**15px**) | `CONNECT_PLUS_FONT_PX` | ✅ |
+| #4 사이트 행 | `:66`(36px·padding 0 8px·gap 8px·border-left 2px·hover `#282828`) | `SITE_ROW_HEIGHT`·`SITE_PAD_X`·`SITE_GAP`·`SITE_EDGE_WIDTH`·`theme::CARD_HOT` | ✅ |
+| #5 점·이름·프로토콜 | `:67-69`(7px 원·13px 말줄임·12px `#6A6A6A` 우측) | `SITE_DOT`·`SITE_NAME_PX`·`SITE_PROTO_PX`·`theme::TEXT_DIM` | ✅ |
+| #6~#8 연결 메뉴 | `:367-378`(246px·캡션 `등록된 사이트`·행 28px·`새 사이트 추가…`) | `CONNECT_MENU_WIDTH`·`CONNECT_MENU_CAPTION`·`MENU_ROW_HEIGHT`·`NEW_SITE_LABEL` | ✅ |
+| #9·#10 사이트 컨텍스트 메뉴 | `:355-361`(180px·사이트명 캡션·`삭제`+`Del`) | `SITE_MENU_WIDTH`·`HIDE_SITE_LABEL`·`HIDE_SITE_SHORTCUT` | ✅ |
+| 사이드바 폭 260px | README §1 | `app/settings.rs::SIDEBAR_DEFAULT_WIDTH` | ✅ |
+
+**구현 중 원본 재대조로 바로잡은 것**: 연결 헤더의 `+`가 워크스페이스 헤더와 같은 14px로 그려지고 있었다 — 원본은 `⟳` 14px / `+` 15px로 **다르다**(`:60`·`:61`, 시각 속성 표도 같다).
+
+**⏳ 미확인 — F-8 인계**: 두 섹션이 한 스크롤에서 이어지는 모습·연결 헤더의 `margin-top:14px` 체감·선택 시 왼쪽 2px 띠·사이트 행 hover 색·두 팝업 메뉴의 실제 폭(246px·180px)과 행 높이.
+
 ## Decisions
 
 | # | 결정 | 선택 | 근거(Source) |

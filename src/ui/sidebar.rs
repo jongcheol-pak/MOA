@@ -635,7 +635,20 @@ fn show_site_context_menu(
                     .color(theme::TEXT_DIM),
             )
             .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
-        if ui.add(remove).clicked() {
+        // 지우는 조작이라 마우스를 올리면 빨갛다 (원본 `:358`) — 되돌릴 수 없는 일과
+        // 같은 색을 써서, 무심코 누르기 전에 한 번 더 보이게 한다
+        let clicked = ui
+            .scope(|ui| {
+                let widgets = &mut ui.style_mut().visuals.widgets;
+                for state in [&mut widgets.hovered, &mut widgets.active] {
+                    state.weak_bg_fill = theme::CLOSE_HOT;
+                    state.bg_fill = theme::CLOSE_HOT;
+                }
+                ui.add(remove)
+            })
+            .inner
+            .clicked();
+        if clicked {
             actions.push(SidebarAction::HideSite(record.id));
             ui.close();
         }
