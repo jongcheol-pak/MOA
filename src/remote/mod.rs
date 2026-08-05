@@ -20,6 +20,7 @@ pub mod sftp;
 pub mod sites;
 pub mod testing;
 pub mod types;
+pub mod url;
 
 use std::io::{Read, Write};
 
