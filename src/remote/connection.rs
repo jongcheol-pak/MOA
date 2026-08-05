@@ -313,7 +313,14 @@ impl Connection {
         // 비었거나 워커가 사라지면 `try_recv`가 실패하고 그 자리에서 끝난다
         while let Ok(event) = self.rx.try_recv() {
             match &event {
-                ConnEvent::Phase(phase) => self.phase = phase.clone(),
+                ConnEvent::Phase(phase) => {
+                    // 끊기거나 실패한 연결은 더 이상 암호화된 것이 아니다 — 참으로 남으면
+                    // 새 호출부가 생겼을 때 조용히 거짓 표시가 된다 (F-7 2라운드 m4)
+                    if !matches!(phase, ConnPhase::Ready | ConnPhase::Connecting) {
+                        self.secure = false;
+                    }
+                    self.phase = phase.clone();
+                }
                 ConnEvent::Secure(secure) => self.secure = *secure,
                 ConnEvent::Log { kind, text } => self.log.push(*kind, text.clone()),
                 _ => {}

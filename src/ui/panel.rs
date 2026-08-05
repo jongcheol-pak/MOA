@@ -712,6 +712,23 @@ impl PanelState {
         }
     }
 
+    /// 활성 탭이 바뀌었으니 그 탭이 보는 곳을 다시 읽는다 (F-7 3라운드 B1).
+    ///
+    /// **목록은 탭이 아니라 패널 하나가 든다** — 그래서 탭만 바꾸고 목록을 그대로 두면
+    /// 주소창은 이 탭을, 목록은 저 탭의 폴더를 보이게 된다. 그 위에서 연 원격 메뉴는
+    /// **화면에 없는 경로**에 삭제·권한 변경을 걸 수 있다(로컬은 종전부터 다시 읽어 왔고,
+    /// 원격만 빠져 있었다)
+    fn reload_active_tab(&mut self, ctx: &egui::Context) {
+        match self.tabs.active().source.local_path() {
+            Some(path) => {
+                let path = path.to_path_buf();
+                self.start_load(path, PendingNav::None, ctx);
+            }
+            // 원격은 연결을 아는 앱이 청한다 — 여기서는 깃발만 세운다
+            None => self.remote_dirty = true,
+        }
+    }
+
     /// 그 세대의 조회가 실패해 옮기기를 무른다 — 자리가 없거나 **다른 요청의 것**이면 그대로 둔다.
     ///
     /// 지금 보고 있는 곳이 `옮겨 간 곳` 그대로일 때만 손댄다 — 그 사이 탭을 바꿨거나 다시
@@ -766,13 +783,6 @@ impl PanelState {
         manager
             .send(conn, ConnCommand::List { generation, path })
             .then_some(generation)
-    }
-
-    /// 이 세대의 답을 기다리고 있는가 — 위치는 보지 않는다.
-    ///
-    /// 실패 알림에는 경로가 실리지 않아(어느 요청이었는지는 세대가 말한다) 이 판정이 따로 필요하다
-    pub fn awaits_generation(&self, generation: u64) -> bool {
-        generation == self.remote_generation
     }
 
     /// 이 패널이 그 목록 답을 기다리고 있는가 — 세대와 **보고 있는 위치**가 모두 맞아야 한다.
@@ -843,12 +853,8 @@ impl PanelState {
             TabAction::Switch(index) => {
                 if self.tabs.switch(index) {
                     // 탭마다 소스가 다르므로 전환하면 그 탭의 것을 다시 읽는다.
-                    // 히스토리는 이미 그 탭의 것이라 손대지 않는다.
-                    // **원격 탭이면 로컬 열거를 걸지 않는다** — 목록은 연결 워커가 돌려준다
-                    if let Some(path) = self.tabs.active().source.local_path() {
-                        let path = path.to_path_buf();
-                        self.start_load(path, PendingNav::None, ctx);
-                    }
+                    // 히스토리는 이미 그 탭의 것이라 손대지 않는다
+                    self.reload_active_tab(ctx);
                 }
             }
             TabAction::Close(index) => {
@@ -864,9 +870,8 @@ impl PanelState {
                         TabSource::Local(_) => None,
                     });
                 if let CloseOutcome::Removed(_) = self.tabs.close(index) {
-                    if was_active && let Some(path) = self.tabs.active().source.local_path() {
-                        let path = path.to_path_buf();
-                        self.start_load(path, PendingNav::None, ctx);
+                    if was_active {
+                        self.reload_active_tab(ctx);
                     }
                     // 이 패널의 마지막 원격 탭이었으면 연결을 접는다 (FR-32·README §3)
                     if let Some(conn) = closing
@@ -2210,5 +2215,41 @@ mod tests {
         assert!(!panel.take_remote_dirty());
         // 돌아갈 자리는 한 번만 쓴다
         assert!(!panel.revert_remote_path(generation));
+    }
+
+    #[test]
+    fn 원격_탭을_바꾸면_그_탭의_목록을_다시_읽는다() {
+        // F-7 3라운드 B1 — 목록은 탭이 아니라 패널 하나가 든다. 탭만 바꾸고 목록을 그대로 두면
+        // 주소창은 이 탭을, 목록은 저 탭의 폴더를 보인다 — 그 위에서 연 원격 메뉴가
+        // **화면에 없는 경로**에 삭제·권한 변경을 건다
+        let ctx = egui::Context::default();
+        let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+        // 원격 탭 하나를 더 연다 (`Ctrl+T`는 지금 보는 원격 위치를 복제한다)
+        panel.handle_tab(TabAction::New, &ctx);
+        panel.set_remote_path(RemotePath::new("/var/log"));
+        panel.take_remote_dirty();
+
+        // 첫 원격 탭으로 돌아간다 — 그 탭이 보는 곳을 다시 읽어야 한다
+        let first = panel
+            .tabs
+            .sources()
+            .iter()
+            .position(|source| matches!(source, TabSource::Remote { .. }))
+            .expect("원격 탭");
+        panel.handle_tab(TabAction::Switch(first), &ctx);
+        assert!(
+            panel.take_remote_dirty(),
+            "원격 탭으로 바꿨는데 목록을 다시 읽지 않는다"
+        );
+
+        // 로컬 탭으로 바꾸면 로컬 열거가 도므로 이 깃발은 서지 않는다
+        let local = panel
+            .tabs
+            .sources()
+            .iter()
+            .position(|source| matches!(source, TabSource::Local(_)))
+            .expect("로컬 탭");
+        panel.handle_tab(TabAction::Switch(local), &ctx);
+        assert!(!panel.take_remote_dirty(), "로컬 탭에 원격 조회를 청했다");
     }
 }

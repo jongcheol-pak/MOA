@@ -128,18 +128,18 @@ pub fn status_message(view: &StatusView<'_>) -> (String, egui::Color32) {
     if let Some(notice) = view.notice {
         return (notice.to_owned(), theme::ERROR);
     }
-    // 펼치는 동안에는 그 사실을 먼저 알린다 — 아직 큐에 든 것이 없어 진행 문구는 비어 있다
+    // 펼치는 동안에는 그 사실을 먼저 알린다 — 큐에 들어가기 전이라 진행 문구로는 드러나지
+    // 않는 구간이다(이미 도는 전송이 있으면 그 문구를 잠깐 가린다).
+    // **건수를 적지 않는다** — 셀 수 있는 것은 끌어다 놓은 묶음 수이지 파일 수가 아니라,
+    // `1건`이 1만 개를 뜻할 수 있어 오해를 부른다 (F-7 2라운드 m1)
     if view.expanding > 0 {
-        return (
-            format!("{EXPANDING_LABEL} {}건", view.expanding),
-            theme::TEXT_MUTED,
-        );
+        return (EXPANDING_LABEL.to_owned(), theme::TEXT_MUTED);
     }
     (format_current(view.queue), theme::HEADER_TEXT)
 }
 
 /// 폴더를 펼치는 중임을 알리는 문구 (T22 Edge Case)
-const EXPANDING_LABEL: &str = "펼치는 중";
+const EXPANDING_LABEL: &str = "펼치는 중…";
 
 /// 연결 상태 문구와 색 (인벤토리 #58) — `● sftp web-prod 연결됨 · TLS` 꼴.
 ///
@@ -659,7 +659,7 @@ mod tests {
             notice: None,
         };
         let (text, color) = status_message(&view);
-        assert_eq!(text, "펼치는 중 3건");
+        assert_eq!(text, "펼치는 중…", "건수는 묶음 수라 적지 않는다");
         assert_eq!(color, theme::TEXT_MUTED);
 
         // 다 펼치면 사라진다
