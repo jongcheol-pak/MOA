@@ -566,6 +566,11 @@ fn list_tree(worker: &mut Worker, root: &RemotePath) -> Vec<(RemotePath, u64)> {
     let mut found = Vec::new();
     let mut pending = vec![(root.clone(), 0usize)];
     while let Some((dir, depth)) = pending.pop() {
+        // 큰 트리를 훑는 중에도 앱은 닫힐 수 있다 — 종료 신호를 살피지 않으면
+        // 창을 닫아도 워커가 서버를 계속 훑는다 (T4가 백오프 대기에서 겪은 것과 같다)
+        if worker.shutdown.load(Ordering::SeqCst) {
+            return found;
+        }
         if depth >= TREE_MAX_DEPTH {
             worker.log(
                 LogKind::Status,
@@ -739,6 +744,64 @@ mod tests {
     /// 테스트가 쓰는 임시 파일 — 프로세스 번호를 넣어 동시에 도는 다른 실행과 겹치지 않게 한다
     fn temp_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("fe_t4_{label}_{}.bin", std::process::id()))
+    }
+
+    #[test]
+    fn 폴더를_재귀로_훑어_파일만_올린다() {
+        // T22 Acceptance ④의 원격 절반 — 화면이 한 겹씩 청하지 않고 워커가 한 번에 끝낸다.
+        // 읽지 못하는 가지는 건너뛰고(권한 없는 폴더는 흔하다) 나머지는 그대로 돌려준다
+        let server = FakeServer::new();
+        server.set_entries(
+            "/pub",
+            vec![
+                fake_entry("겉.txt", false),
+                fake_entry("안쪽", true),
+                fake_entry("못읽는곳", true),
+            ],
+        );
+        server.set_entries(
+            "/pub/안쪽",
+            vec![fake_entry("속.bin", false), fake_entry("..", true)],
+        );
+        // `/pub/못읽는곳`은 등록하지 않는다 — 가짜 서버가 "없는 폴더"로 답해 그 가지가 실패한다
+        let mut connection = spawn(&server, fast_retry());
+        // 훑기도 서버와 말하는 일이라 연결이 먼저다
+        connection.send(ConnCommand::Connect);
+        connection.send(ConnCommand::ListTree {
+            generation: 3,
+            root: RemotePath::new("/pub"),
+        });
+
+        // 연결 단계 이벤트가 먼저 오므로 **훑기 결과가 나올 때까지** 모은다
+        let mut events = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            events.extend(connection.poll());
+            if events
+                .iter()
+                .any(|event| matches!(event, ConnEvent::TreeListed { .. }))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let listed = events.iter().find_map(|event| match event {
+            ConnEvent::TreeListed {
+                generation,
+                root,
+                files,
+            } if *generation == 3 => Some((root.clone(), files.clone())),
+            _ => None,
+        });
+        let (root, mut files) = listed.expect("훑기 결과가 오지 않았다");
+        assert_eq!(root, RemotePath::new("/pub"));
+        files.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        let paths: Vec<&str> = files.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["/pub/겉.txt", "/pub/안쪽/속.bin"],
+            "폴더는 담지 않고 파일만, 실패한 가지는 건너뛴다"
+        );
     }
 
     /// 조건이 참이 될 때까지 짧게 기다린다. 시간이 아니라 **관측된 상태**로 판정하기 위한 것이다

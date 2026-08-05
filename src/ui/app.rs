@@ -346,6 +346,11 @@ pub struct ExplorerApp {
     pending_trees: HashMap<u64, (SiteId, RemotePath, PathBuf)>,
     /// 훑기 요청 번호 — 목록 조회의 세대 번호와 섞이지 않게 따로 센다
     next_tree: u64,
+    /// 로컬 폴더를 펼친 결과가 오는 통로 (FR-38) — 펼치기는 워커 스레드가 한다
+    expand_tx: std::sync::mpsc::Sender<Expanded>,
+    expand_rx: std::sync::mpsc::Receiver<Expanded>,
+    /// 워커가 일을 마쳤을 때 화면을 깨우는 통로 — 연결 관리자에 준 것과 같다
+    repaint: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl ExplorerApp {
@@ -364,6 +369,11 @@ impl ExplorerApp {
         if let Some(shell) = &shell {
             crate::app::theme::disable_window_transitions(shell.hwnd());
         }
+        let (expand_tx, expand_rx) = std::sync::mpsc::channel();
+        let repaint: Arc<dyn Fn() + Send + Sync> = {
+            let ctx = cc.egui_ctx.clone();
+            Arc::new(move || ctx.request_repaint())
+        };
         let mut app = ExplorerApp {
             com,
             shell,
@@ -395,6 +405,9 @@ impl ExplorerApp {
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
+            expand_tx,
+            expand_rx,
+            repaint,
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -826,25 +839,39 @@ impl ExplorerApp {
     fn apply_drop(&mut self, drop: DropOutcome) {
         match &drop.target {
             DropTarget::Remote { site, dir } => {
-                for item in &drop.items {
-                    // 종류가 같으면(원격 → 원격) 아무 일도 하지 않는다
-                    if list_common::drop_direction(item, &drop.target).is_none() {
-                        continue;
-                    }
-                    let DragItem::Local { path, .. } = item else {
-                        continue;
-                    };
-                    for (file, relative) in transfer::expand_for_transfer(path) {
-                        let size = std::fs::metadata(&file).map(|meta| meta.len()).unwrap_or(0);
-                        self.queue.enqueue(
-                            *site,
-                            TransferDirection::Upload,
-                            file,
-                            dir.join(&relative),
-                            size,
-                        );
-                    }
+                // 폴더를 펼치는 것은 디렉터리를 재귀로 읽는 일이라 **워커 스레드**가 한다
+                // (AGENTS: UI 스레드 블로킹 I/O 금지 — 큰 폴더면 프레임이 멈춘다).
+                // 결과는 채널로 받아 다음 프레임에 큐로 옮긴다 (`DirLoad`와 같은 방식)
+                let roots: Vec<PathBuf> = drop
+                    .items
+                    .iter()
+                    .filter(|item| list_common::drop_direction(item, &drop.target).is_some())
+                    .filter_map(|item| match item {
+                        DragItem::Local { path, .. } => Some(path.clone()),
+                        DragItem::Remote { .. } => None,
+                    })
+                    .collect();
+                if roots.is_empty() {
+                    return;
                 }
+                let tx = self.expand_tx.clone();
+                let (site, dir) = (*site, dir.clone());
+                let wake = self.repaint.clone();
+                std::thread::spawn(move || {
+                    let mut files = Vec::new();
+                    let mut skipped = 0;
+                    for root in roots {
+                        let expanded = transfer::expand_for_transfer(&root);
+                        skipped += expanded.skipped;
+                        for (path, relative) in expanded.files {
+                            let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+                            files.push((path, dir.join(&relative), size));
+                        }
+                    }
+                    if tx.send((site, files, skipped)).is_ok() {
+                        wake();
+                    }
+                });
             }
             DropTarget::Local(local_dir) => {
                 let Some(site) = drop.source_site else {
@@ -1390,6 +1417,21 @@ impl eframe::App for ExplorerApp {
         // 보이지 않는 워크스페이스의 원격 탭이 옛 단계로 굳는다
         let now = ctx.input(|input| input.time);
         self.poll_remote(now);
+        // 펼쳐진 로컬 폴더를 큐로 옮긴다 (FR-38)
+        while let Ok((site, files, skipped)) = self.expand_rx.try_recv() {
+            for (local, remote, size) in files {
+                self.queue
+                    .enqueue(site, TransferDirection::Upload, local, remote, size);
+            }
+            // 읽지 못한 폴더가 있으면 그 사실을 알린다 — 조용히 빼면 사용자는
+            // 그 파일들이 왜 큐에 없는지 알 길이 없다 (plan Edge Case)
+            if skipped > 0 {
+                self.toast.show(
+                    format!("읽을 수 없는 폴더 {skipped}개는 건너뛰었습니다"),
+                    now,
+                );
+            }
+        }
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
         self.runner
             .start_ready(&mut self.queue, &self.manager, &self.sites, now);
@@ -1553,6 +1595,12 @@ impl eframe::App for ExplorerApp {
         }
     }
 }
+
+/// 로컬 폴더를 펼친 결과 — 올릴 파일들과 **읽지 못해 건너뛴 폴더 수**.
+///
+/// 건너뛴 것을 함께 나르는 이유: 권한 없는 폴더 하나 때문에 나머지를 버리지는 않지만,
+/// 조용히 빼면 사용자는 그 파일들이 왜 큐에 없는지 알 길이 없다 (plan Edge Case)
+type Expanded = (SiteId, Vec<(PathBuf, RemotePath, u64)>, usize);
 
 /// 시작 폴더 — 인자로 폴더를 받으면 그곳에서, 없으면 홈 폴더에서 시작한다
 /// (탐색기의 "여기서 열기"처럼 쓰이며, 대량 폴더 성능 측정에도 이 경로를 쓴다)

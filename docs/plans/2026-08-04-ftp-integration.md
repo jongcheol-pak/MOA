@@ -911,12 +911,13 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T22. 패널 간 드래그 전송 [Type C]
 
-- **Files**: `src/ui/list_common.rs`, `src/ui/list_details.rs`, `src/ui/list_grid.rs`, `src/ui/panel.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/list_common.rs`, `src/ui/list_details.rs`, `src/ui/list_grid.rs`, `src/ui/panel.rs`, `src/ui/app.rs`, **구현 중 편입**: `src/ui/file_list.rs`(끌기 시작을 올리는 반환 타입·`drag_items`), **`src/ui/splitter.rs`**(아래 relay 정정), `src/remote/connection.rs`(원격 폴더 훑기 명령), `src/remote/transfer.rs`(로컬 폴더 펼치기)
 - **Design**:
   - **배치**: egui의 `dnd_drag_source`/`dnd_drop_zone`을 목록에 붙인다(사이트 드래그는 T13에서 이미 도입한 `DragPayload`를 공유)
   - **신규 심볼**: `DragPayload::Files{source_panel, items}` / `PanelOutcome`에 `drop: Option<DropOutcome>` 필드 추가 / `DropOutcome::Enqueue{from,to,items}` / `expand_for_transfer` — 폴더를 파일 단위로 펼친다(깊이 상한 40)
   - **의존 방향**: `ui::app`이 결과를 받아 `remote::queue`에 넣는다. 목록 모듈은 payload만 만든다
-  - **relay**: 경로 벡터를 실은 값이라 `Copy`인 `Command`에 담을 수 없어 `PanelOutcome`에 필드를 더한다. **T9가 `show_layout`을 "`PanelOutcome`을 통째로 올리도록" 일반화해 두었으므로 이 task는 `ui/splitter.rs`를 건드리지 않는다**(2차 리뷰 M3의 처리 방식)
+  - **relay**: 경로 벡터를 실은 값이라 `Copy`인 `Command`에 담을 수 없어 `PanelOutcome`에 필드를 더한다. ~~이 task는 `ui/splitter.rs`를 건드리지 않는다~~ → **건드려야 한다**(구현 중 정정): `merge_panel_outcome`이 `PanelOutcome`을 **구조 분해**하므로 필드를 더하면 컴파일이 깨진다. 그 파일의 기존 주석도 "필드가 늘 때마다 함께 고쳐야 한다(T22·T23이 그렇다)"고 이미 예고해 두었다 — 계획 문구가 그것을 반영하지 못했다
+  - **구현 중 확정 (원안 대비 3건)**: ① **페이로드가 `DragPayload` 열거형이 아니라 `FileDrag` 타입 하나**다 — egui의 드래그 페이로드는 **타입으로 구분**되므로(T13의 `SiteId` 페이로드와 자연히 갈린다) 열거형으로 묶으면 두 종류가 한 타입을 공유하게 되어 오히려 분기가 는다. ② **패널 번호를 싣지 않는다** — 받는 쪽이 알아야 하는 것은 "로컬인가 원격인가"뿐이고(같은 쪽끼리는 범위 밖), 번호를 실으면 그 사이 패널이 닫혔을 때 가리키는 곳이 사라진다. 대신 원격 출처의 `SiteId`를 싣는다(받을 서버를 알아야 한다). ③ **원격 폴더 펼치기는 워커가 한다** — `ConnCommand::ListTree`/`ConnEvent::TreeListed`를 더해 워커 스레드가 재귀로 훑는다(깊이 40). 화면이 한 겹씩 청하면 목록 응답 라우팅과 뒤섞이고 프레임마다 상태를 이어 붙여야 한다. 로컬 펼치기(`expand_for_transfer`)도 **별도 스레드**에서 돈다(AGENTS: UI 스레드 블로킹 I/O 금지)
   - **비추상화 선언**: 일반 드래그 프레임워크를 만들지 않는다 — payload가 둘뿐이다
 - **Acceptance**: ① 로컬 → 원격은 **업로드**, 원격 → 로컬은 **다운로드**가 큐에 들어간다. ② 로컬→로컬, 같은 연결의 원격→원격은 **아무 일도 하지 않는다**(Out of Scope). ③ 여러 항목을 고른 상태로 끌면 전부 들어간다. ④ 폴더를 끌면 재귀로 펼쳐 파일 단위로 들어간다(T17 규약). ⑤ OS(탐색기)에서 끌어온 드롭은 무시된다(Out of Scope 유지).
 - **Edge Cases**: 드래그 도중 원본 패널이 닫힘 → 취소 / 연결이 끊긴 원격 패널에 놓음 → 큐에 넣되 대기로 두고 연결 후 진행 / 자기 자신에게 놓음 → 무시 / 1만 항목 드래그 → 펼치는 동안 진행 표시 / 재귀 중 권한 거부 → 그 가지만 건너뛰고 로그에 남긴다 / 순환 심볼릭 링크 → 깊이 40으로 끊는다.

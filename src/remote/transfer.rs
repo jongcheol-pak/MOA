@@ -44,22 +44,29 @@ pub fn resume_offset(local_size: u64, remote_size: u64) -> u64 {
 ///
 /// **깊이 상한 40** — 순환 심볼릭 링크(정션 포함)에서 영원히 도는 것을 막는다(plan Edge Case).
 /// 읽지 못하는 가지는 건너뛴다 — 권한 없는 폴더 하나 때문에 나머지를 버릴 이유가 없다
-pub fn expand_for_transfer(root: &Path) -> Vec<(PathBuf, String)> {
+pub fn expand_for_transfer(root: &Path) -> Expanded {
     const MAX_DEPTH: usize = 40;
     let name = root
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     if root.is_file() {
-        return vec![(root.to_path_buf(), name)];
+        return Expanded {
+            files: vec![(root.to_path_buf(), name)],
+            skipped: 0,
+        };
     }
     let mut found = Vec::new();
+    let mut skipped = 0usize;
     let mut pending = vec![(root.to_path_buf(), name, 0usize)];
     while let Some((dir, prefix, depth)) = pending.pop() {
         if depth >= MAX_DEPTH {
+            skipped += 1;
             continue;
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
+            // 권한 없는 폴더는 흔하다 — 그 가지만 건너뛰되 **몇 개를 건너뛰었는지는 남긴다**
+            skipped += 1;
             continue;
         };
         for entry in entries.flatten() {
@@ -73,7 +80,19 @@ pub fn expand_for_transfer(root: &Path) -> Vec<(PathBuf, String)> {
             }
         }
     }
-    found
+    Expanded {
+        files: found,
+        skipped,
+    }
+}
+
+/// 펼친 결과 — 올릴 파일들과 읽지 못해 건너뛴 폴더 수
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Expanded {
+    /// `(파일 경로, 뿌리에서의 상대 경로)`
+    pub files: Vec<(PathBuf, String)>,
+    /// 권한이 없거나 너무 깊어 건너뛴 폴더 수 — 호출부가 사용자에게 알린다
+    pub skipped: usize,
 }
 
 /// 받는 중인 파일의 임시 이름 — `report.zip` → `report.zip.part`
@@ -451,8 +470,10 @@ mod tests {
         std::fs::write(root.join("겉.txt"), b"a").expect("파일");
         std::fs::write(root.join("안쪽").join("속.bin"), b"bb").expect("파일");
 
-        let mut found = expand_for_transfer(&root);
-        found.sort_by(|a, b| a.1.cmp(&b.1));
+        let mut expanded = expand_for_transfer(&root);
+        expanded.files.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(expanded.skipped, 0, "읽지 못한 폴더가 없어야 한다");
+        let found = expanded.files;
         let names: Vec<&str> = found.iter().map(|(_, rel)| rel.as_str()).collect();
         let root_name = root
             .file_name()
@@ -471,8 +492,8 @@ mod tests {
 
         // 파일 하나를 넘기면 그 하나만 돌려준다
         let single = expand_for_transfer(&root.join("겉.txt"));
-        assert_eq!(single.len(), 1);
-        assert_eq!(single[0].1, "겉.txt");
+        assert_eq!(single.files.len(), 1);
+        assert_eq!(single.files[0].1, "겉.txt");
         let _ = std::fs::remove_dir_all(&root);
     }
 
