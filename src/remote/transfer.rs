@@ -137,9 +137,11 @@ impl TransferRunner {
         sites: &SiteStore,
         now: f64,
     ) {
-        // 지우지 못한 `.part`가 있으면 먼저 다시 시도한다 — 매 프레임 불리는 자리라
-        // 파일을 붙들고 있던 쪽이 놓는 순간 곧바로 정리된다
-        self.sweep_pending_delete();
+        // 지우지 못한 `.part`가 있을 때만 다시 시도한다 — 이 자리는 매 프레임 불리므로
+        // 목록이 비었으면 파일시스템을 건드리지 않는다 (AGENTS: UI 스레드 블로킹 I/O)
+        if !self.pending_delete.is_empty() {
+            self.sweep_pending_delete();
+        }
         if queue.is_paused() {
             return;
         }
@@ -169,23 +171,22 @@ impl TransferRunner {
                 let Some(item) = queue.get(id) else {
                     continue;
                 };
-                let (working_path, offset) = match item.direction {
-                    // 받다 만 것이 있으면 그 크기에서 이어받는다
-                    TransferDirection::Download => {
-                        let part = part_path(&item.local);
-                        let done = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-                        (part, resume_offset(done, item.size))
-                    }
+                let working_path = match item.direction {
+                    // 받는 중에는 `.part`에 쓴다. **이어받기 지점은 워커가 정한다** —
+                    // 받다 만 파일의 크기를 재는 것은 파일시스템 호출이라 화면 쪽에서 하면
+                    // 프레임이 멈춘다 (AGENTS: UI 스레드 블로킹 I/O 금지 — T19 quality 리뷰 M1)
+                    TransferDirection::Download => part_path(&item.local),
                     // 올리기는 원본을 읽기만 한다 — 이어 올리기 지점은 서버가 가진 크기라
-                    // 큐가 담아 둔 값(`size`)이 아니라 워커가 APPE로 처리한다 (T2 결정)
-                    TransferDirection::Upload => (item.local.clone(), 0),
+                    // 워커가 APPE로 처리한다 (T2 결정)
+                    TransferDirection::Upload => item.local.clone(),
                 };
                 let request = TransferRequest {
                     id,
                     direction: item.direction,
                     remote: item.remote.clone(),
                     local: working_path.clone(),
-                    offset,
+                    offset: 0,
+                    remote_size: item.size,
                 };
                 if !manager.send(conn, ConnCommand::Transfer(request)) {
                     // 워커가 죽었다 — 대기로 두면 다음 연결에서 다시 나간다
@@ -201,13 +202,8 @@ impl TransferRunner {
                         progress: ProgressSink::new(now),
                     },
                 );
-                queue.update(
-                    id,
-                    TransferState::Active {
-                        sent: offset,
-                        speed: 0,
-                    },
-                );
+                // 이어받는 중이면 워커의 첫 진행 보고가 곧바로 실제 지점을 알려 준다
+                queue.update(id, TransferState::Active { sent: 0, speed: 0 });
             }
         }
     }
@@ -581,15 +577,10 @@ mod tests {
         });
         runner.start_ready(&mut queue, &manager, &sites, 0.0);
         assert_eq!(runner.in_flight(), 1, "이어받기가 시작되지 않았다");
-        assert_eq!(
-            queue.get(id).expect("항목").state,
-            TransferState::Active {
-                sent: ALREADY,
-                speed: 0
-            },
-            "받아 둔 만큼에서 이어가야 한다"
-        );
 
+        // 이어받는 중의 진행 보고는 **파일 전체 기준**이어야 한다 — 이번에 옮긴 만큼만
+        // 올리면 화면의 진행률이 뒤로 튄다 (T19 quality 리뷰 M1과 함께 고친 것)
+        let mut first_report = None;
         let mut now = 0.0;
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline && runner.in_flight() > 0 {
@@ -597,6 +588,7 @@ mod tests {
                 now += 0.1;
                 match event {
                     ConnEvent::TransferProgress { id, transferred } => {
+                        first_report.get_or_insert(transferred);
                         runner.on_progress(&mut queue, id, transferred, now)
                     }
                     ConnEvent::TransferDone { id, result } => {
@@ -608,6 +600,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
 
+        if let Some(first) = first_report {
+            assert!(
+                first >= ALREADY,
+                "진행 보고가 받아 둔 만큼을 빼먹었다: {first} < {ALREADY}"
+            );
+        }
         assert!(
             queue.get(id).expect("항목").state.is_done(),
             "이어받기가 끝나지 않았다: {:?}",

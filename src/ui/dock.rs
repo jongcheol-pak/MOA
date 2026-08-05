@@ -17,8 +17,8 @@ use eframe::egui;
 pub const DOCK_HEIGHT: f32 = 268.0;
 /// 도크가 열려도 패널 그리드에 남겨 두는 최소 높이 (plan Edge Case: 창이 낮을 때)
 const GRID_MIN_HEIGHT: f32 = 120.0;
-/// 탭 스트립
-const STRIP_HEIGHT: f32 = 28.0;
+/// 탭 스트립 — 호출부가 본문 자리를 계산할 때 함께 쓴다
+pub const STRIP_HEIGHT: f32 = 28.0;
 const STRIP_PAD_RIGHT: f32 = 6.0;
 const TAB_PAD_X: f32 = 14.0;
 const TAB_FONT_PX: f32 = 13.0;
@@ -171,11 +171,10 @@ pub fn show_strip(
             Some(filter) => !showing_log && state.filter == filter,
             None => showing_log,
         };
-        let response = ui.interact(
-            tab,
-            ui.id().with(("dock_tab", text.text())),
-            egui::Sense::click(),
-        );
+        // id를 **라벨이 아니라 그 배후의 값**으로 잡는다 — 라벨에는 건수가 들어 있어
+        // 누르는 사이에 전송이 끝나면 id가 바뀌어 클릭이 씹힌다 (T19 quality 리뷰 M2)
+        let key = filter.map(|filter| filter as u8);
+        let response = ui.interact(tab, ui.id().with(("dock_tab", key)), egui::Sense::click());
         if active {
             ui.painter().rect_filled(tab, 0.0, theme::SURFACE_BG);
         }
@@ -280,6 +279,40 @@ mod tests {
             dock_height(100.0),
             0.0,
             "남길 자리가 없으면 도크가 사라진다"
+        );
+    }
+
+    #[test]
+    fn 도크는_아래쪽_패널로_자리를_떼야_그리드가_남는다() {
+        // T19 quality 리뷰 B1 — 사각형을 직접 잡아 `allocate_rect`로 떼면 위→아래 배치에서
+        // 커서가 **화면 바닥 너머**로 밀려 뒤에 오는 그리드가 높이 0이 된다.
+        // 앱이 기대는 것은 egui의 아래쪽 패널이 남은 자리를 줄여 준다는 성질이라, 그것을 고정한다
+        let ctx = egui::Context::default();
+        let mut before = 0.0;
+        let mut after = 0.0;
+        let height = 100.0;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                before = ui.available_rect_before_wrap().height();
+                egui::Panel::bottom(egui::Id::new("도크 자리 시험"))
+                    .resizable(false)
+                    .default_size(height)
+                    .size_range(egui::Rangef::new(height, height))
+                    .frame(egui::Frame::NONE)
+                    .show(ui, |ui| {
+                        ui.label("도크");
+                    });
+                after = ui.available_rect_before_wrap().height();
+            });
+        });
+        assert!(before > 0.0, "시험 자체가 성립하지 않았다");
+        assert!(
+            after > 0.0,
+            "도크를 뗀 뒤 그리드 자리가 사라졌다 — 파일 목록이 통째로 보이지 않게 된다"
+        );
+        assert!(
+            (before - after - height).abs() < 1.0,
+            "뗀 높이가 도크 높이와 다르다: {before} → {after}"
         );
     }
 

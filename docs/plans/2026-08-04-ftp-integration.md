@@ -431,7 +431,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 | #33 큐 우측 버튼 `⏸`·`✕`·`▼` 26×26 | `:268-270` | `dock.rs:37-39`·`ICON_SIZE`(`:26`) | ✅ |
 | #34 로그 우측 버튼 `⧉`·`▼` | `:305-306` | `dock.rs:41` + `show_strip`의 화면별 분기 | ✅ |
 | #35 연결별 첫 탭 `전체 (N)`(점 없음) | `:724`·`:730`, 스크린샷 `02` | `queue_panel.rs:45` + `show_site_tabs`(`site.is_some()`일 때만 점) | ✅ |
-| #36 연결별 나머지 `<이름> (N)` + 상태 점 6px | `:273-276`·`:724` | `show_site_tabs`(`SITE_DOT`·`counts_by_site`) | ✅ |
+| #36 연결별 나머지 `<이름> (N)` + 상태 점 6px | `:273-276`·`:724`·**`:728`**(점 색 규칙) | `show_site_tabs`(`SITE_DOT`·`counts_by_site`) + `site_dot_color` | ✅ (아래 정정 2) |
 | #37~#43 머리글 7개 | `:280` | `queue_panel.rs:47-55` | ✅ |
 | #44 방향 글리프 `↑`/`↓`(색 다름) | `:284`·`:699` | `queue_panel.rs:57-58`·`direction_mark` | ✅ |
 | #45~#47 상태 문구(`전송 중 · <속도>`·`대기 중`·`완료`) | `:705-710` | `queue_panel.rs:60-62`·`state_text`(`:125`) | ✅ |
@@ -442,6 +442,8 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 | 얼룩(홀수 행) | `:721` | `stripe`(`queue_panel.rs:78`) | ✅ (아래 정정) |
 
 **원본 대조로 바로잡은 것 1건**: **얼룩의 "홀수"가 어느 쪽인지** — plan 시각 속성 표는 "홀수 행 `#252525`"라고만 적었는데, 원본은 `i % 2 === 1`로 **거른 뒤 0부터 센 자리**가 홀수인 행을 칠한다(`:721`). 사람이 1부터 세면 짝수 행이다. 원본 코드를 따랐고 그 사실을 테스트 이름에 남겼다(`얼룩은_거른_뒤의_홀수_자리다`).
+
+**리뷰가 잡은 것 1건 (정정 2)**: **연결별 탭의 점 색을 "연결이 있는가"로 갈랐다** — 원본(`:728`)은 `phase === "error"`일 때만 빨강이고 연결 중·연결됨·연결 없음은 전부 초록이다. 실패한 연결도 탭을 닫기 전까지 매니저에 남으므로, 유무로 가르면 **실패한 사이트가 초록**으로 뒤집힌다(spec 리뷰 M1). 판정을 `site_dot_color(failed, site)`로 빼고 앱이 `ConnPhase::Failed`만 모아 넘기게 고쳤다.
 
 **이 구현이 정한 것 1건 (디자인 미제공)**: 큐 행의 **우클릭 메뉴** `다시 시도`·`전송 취소` — plan 신규 심볼 `QueueAction::{Retry,Cancel}`에는 있으나 원본에 진입점이 없다(`⏸`·`✕`는 큐 전체를 다룬다). 호스트 키 대화(#96)와 같은 취급으로, 문구가 이 구현의 신규 문구임을 코드 주석에 적었다.
 
@@ -822,11 +824,11 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T19. 전송 큐 패널 UI [Type C]
 
-- **Files**: `src/ui/dock.rs`(신규), `src/ui/queue_panel.rs`(신규), `src/ui/widgets.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/dock.rs`(신규), `src/ui/queue_panel.rs`(신규), `src/ui/widgets.rs`, `src/ui/app.rs`, `src/ui/mod.rs`(모듈 등록), **`src/remote/{connection,transfer}.rs`**(리뷰 반영으로 편입 — 이어받기 지점 계산을 UI 스레드에서 워커로 옮겼다. 아래 정정 ③)
 - **Design**:
   - **배치**: `ui::dock`(268px 도크 셸 + 탭 스트립 — 큐·로그가 공유, D19) + `ui::queue_panel`(표 본문)
   - **신규 심볼**: `DockPanel{Queue,Log}` + `show_dock` → `DockOutcome` / `show_queue` → `QueueAction{Pause,ClearAll,Retry(TransferId),Cancel(TransferId)}` / `widgets::progress_bar(width,height,ratio,color)` — 큐 셀(110×6)·상태 표시줄(240×6) 공용
-    - **구현 중 확정 (원안 대비 2건)**: ① **조작 타입을 둘로 나눴다** — `dock::show_strip → Option<DockAction>{TogglePause,ClearDone,CopyLog}`(셸의 우측 버튼)과 `queue_panel::show_queue → Option<QueueAction>{Retry,Cancel}`(표의 행)이다. 원안은 넷을 `show_queue` 하나가 돌려주게 적었는데, 그러면 **셸이 그린 버튼의 결과를 본문 함수가 돌려주는** 모양이 되어 Design의 배치("탭 스트립·아이콘은 `ui::dock` 소관")와 어긋난다. 로그 화면(T20)도 같은 셸을 쓰므로 셸의 조작은 셸이 돌려주는 것이 맞다. ② **`DockView`가 "연결된 사이트"가 아니라 "실패한 사이트"를 받는다** — 원본의 점 색 규칙이 `phase === "error"`만 빨강이라(`:728`), 연결 객체의 유무로 가르면 실패한 사이트가 초록으로 뒤집힌다(spec 리뷰 M1).
+    - **구현 중 확정 (원안 대비 3건)**: ③ **이어받기 지점 계산을 워커로 옮겼다** — 실행기(T18)가 `.part` 크기를 `std::fs::metadata`로 재는데, T19가 그것을 **매 프레임 도는 UI 스레드**에 배선하면서 AGENTS의 "UI 스레드 파일시스템 블로킹 호출 금지"를 어기게 됐다(quality 리뷰 M1). `TransferRequest`에 `remote_size`를 더해 **워커가** 오프셋을 정하고, 진행 보고도 `base + moved`로 올려 이어받는 중에도 화면 값이 파일 전체 기준이 되게 했다(종전에는 이어받기 뒤 진행률이 뒤로 튀었다 — 함께 드러난 결함). ① **조작 타입을 둘로 나눴다** — `dock::show_strip → Option<DockAction>{TogglePause,ClearDone,CopyLog}`(셸의 우측 버튼)과 `queue_panel::show_queue → Option<QueueAction>{Retry,Cancel}`(표의 행)이다. 원안은 넷을 `show_queue` 하나가 돌려주게 적었는데, 그러면 **셸이 그린 버튼의 결과를 본문 함수가 돌려주는** 모양이 되어 Design의 배치("탭 스트립·아이콘은 `ui::dock` 소관")와 어긋난다. 로그 화면(T20)도 같은 셸을 쓰므로 셸의 조작은 셸이 돌려주는 것이 맞다. ② **`DockView`가 "연결된 사이트"가 아니라 "실패한 사이트"를 받는다** — 원본의 점 색 규칙이 `phase === "error"`만 빨강이라(`:728`), 연결 객체의 유무로 가르면 실패한 사이트가 초록으로 뒤집힌다(spec 리뷰 M1).
   - **의존 방향**: `ui::queue_panel` → `remote::queue`(읽기) + `ui::theme`
   - **비추상화 선언**: 표를 일반 테이블 컴포넌트로 만들지 않는다 — 열 폭이 디자인에 고정돼 있고 자세히 보기 표와 요구가 다르다
 - **Acceptance**: ① 도크 268px·탭 스트립 28px·연결별 탭 행 28px·머리글 22px·행 24px. ② 열 폭 `34/1fr/300/120/84/118/150`. ③ 탭 문구가 `전송 큐 (N)`·`서버 로그`·`성공 (N)`·`실패 (N)`이고 활성 색이 `#E8E8E8`/`#7FD6A2`/`#FF8A8A`(#29~32). ④ **연결별 탭이 `전체 (N)`·`<이름> (N)` 형태로 건수를 담는다**(전제 19·#35·#36). ⑤ 성공·실패 탭이 같은 항목 집합을 거른다(건수 합 = 전체). ⑥ 얼룩이 **홀수 행** `#252525`. ⑦ 진행 막대 색이 상태별로 갈린다. ⑧ 위젯 ID 충돌 0.

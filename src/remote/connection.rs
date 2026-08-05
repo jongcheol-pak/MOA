@@ -89,8 +89,14 @@ pub struct TransferRequest {
     pub direction: TransferDirection,
     pub remote: RemotePath,
     pub local: PathBuf,
-    /// 이어받기 시작점 — 0이면 처음부터
+    /// 이어받기 시작점 — 0이면 처음부터.
+    ///
+    /// **받기는 이 값을 쓰지 않는다** — 받다 만 파일의 크기를 재는 것은 파일시스템 호출이라
+    /// 화면 쪽에서 하면 프레임이 멈춘다(AGENTS: UI 스레드 블로킹 I/O 금지). 그래서 **워커가**
+    /// 아래 `remote_size`와 실제 파일 크기로 직접 정한다. 보내기는 호출부가 정한 값을 쓴다
     pub offset: u64,
+    /// 서버가 가진 파일 크기 — 받기에서 이어받기 지점을 정하는 데 쓴다(0이면 모른다)
+    pub remote_size: u64,
 }
 
 /// 워커에게 보내는 명령
@@ -530,30 +536,44 @@ fn run_transfer(worker: &mut Worker, request: TransferRequest) -> bool {
 }
 
 fn transfer(worker: &mut Worker, request: &TransferRequest) -> RemoteResult<u64> {
+    // 받기의 이어받기 지점은 **여기서** 정한다 — 받다 만 파일의 크기를 재는 것은
+    // 파일시스템 호출이고, 그것을 화면 쪽에서 하면 프레임이 멈춘다 (AGENTS)
+    let offset = match request.direction {
+        TransferDirection::Download => {
+            let done = std::fs::metadata(&request.local)
+                .map(|meta| meta.len())
+                .unwrap_or(0);
+            crate::remote::transfer::resume_offset(done, request.remote_size)
+        }
+        TransferDirection::Upload => request.offset,
+    };
     let mut progress = ThrottledProgress {
         tx: worker.tx.clone(),
         wake: Arc::clone(&worker.wake),
         id: request.id,
         cancel: Arc::clone(&worker.cancel),
         last_sent: Instant::now(),
+        // 이어받는 중이면 화면이 보는 값은 **파일 전체 기준**이어야 한다 —
+        // 이번에 옮긴 바이트만 올리면 진행률이 뒤로 튄다
+        base: offset,
     };
 
     match request.direction {
         TransferDirection::Download => {
-            let mut file = open_for_download(&request.local, request.offset)?;
+            let mut file = open_for_download(&request.local, offset)?;
             worker
                 .session
-                .download(&request.remote, &mut file, request.offset, &mut progress)
+                .download(&request.remote, &mut file, offset, &mut progress)
+                .map(|moved| moved + offset)
         }
         TransferDirection::Upload => {
             let mut file = File::open(&request.local).map_err(local_error)?;
-            if request.offset > 0 {
-                file.seek(SeekFrom::Start(request.offset))
-                    .map_err(local_error)?;
+            if offset > 0 {
+                file.seek(SeekFrom::Start(offset)).map_err(local_error)?;
             }
             worker
                 .session
-                .upload(&request.remote, &mut file, request.offset, &mut progress)
+                .upload(&request.remote, &mut file, offset, &mut progress)
         }
     }
 }
@@ -586,6 +606,8 @@ struct ThrottledProgress {
     id: TransferId,
     cancel: Arc<AtomicBool>,
     last_sent: Instant,
+    /// 이미 받아 둔 만큼 — 보고 값에 더해 **파일 전체 기준**으로 올린다
+    base: u64,
 }
 
 impl Progress for ThrottledProgress {
@@ -596,7 +618,7 @@ impl Progress for ThrottledProgress {
                 .tx
                 .send(ConnEvent::TransferProgress {
                     id: self.id,
-                    transferred,
+                    transferred: self.base + transferred,
                 })
                 .is_ok()
             {
@@ -928,6 +950,7 @@ mod tests {
             remote: RemotePath::new("/a.txt"),
             local: local.clone(),
             offset: 0,
+            remote_size: 0,
         }));
         connection.send(ConnCommand::List {
             generation: 2,
@@ -976,6 +999,7 @@ mod tests {
             remote: RemotePath::new("/big.bin"),
             local: local.clone(),
             offset: 0,
+            remote_size: 0,
         }));
         wait_until(Duration::from_secs(2), || {
             server.calls().iter().any(|name| name == "download")

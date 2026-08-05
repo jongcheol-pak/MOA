@@ -674,8 +674,10 @@ impl ExplorerApp {
 
     /// 하단 도크 — 전송 큐·서버 로그가 번갈아 쓰는 자리 (FR-36·FR-40·D19).
     ///
-    /// **레이아웃보다 먼저 그린다** — 남는 자리가 패널 그리드의 몫이 되어야 도크가 그리드를
-    /// 덮지 않는다. 창이 낮으면 도크가 줄어든다(`dock::dock_height`)
+    /// **egui의 아래쪽 패널로 뗀다** — 사이드바(`Panel::left`)와 같은 방식이다. 직접 사각형을
+    /// 잡아 `allocate_rect`로 떼면 위→아래 배치에서 커서가 **화면 바닥 너머**로 밀려,
+    /// 뒤에 오는 패널 그리드가 높이 0이 된다(egui 0.35 `advance_after_rects` — T19 quality
+    /// 리뷰 B1에서 실측). 창이 낮으면 도크가 줄어든다(`dock::dock_height`)
     fn show_dock(&mut self, ui: &mut egui::Ui) {
         if !self.dock.is_open() {
             return;
@@ -685,10 +687,31 @@ impl ExplorerApp {
             return;
         }
         let failed = self.failed_sites();
-        let full = ui.available_rect_before_wrap();
-        let rect =
-            egui::Rect::from_min_max(egui::pos2(full.left(), full.bottom() - height), full.max);
-        // 도크가 차지한 만큼을 레이아웃에서 뗀다
+        let panel = egui::Panel::bottom(egui::Id::new("transfer_dock"))
+            .resizable(false)
+            .default_size(height)
+            .size_range(egui::Rangef::new(height, height))
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let rect = ui.max_rect();
+                self.show_dock_body(ui, rect, &failed)
+            });
+        let (dock_action, queue_action) = panel.inner;
+        if let Some(action) = dock_action {
+            self.apply_dock_action(action);
+        }
+        if let Some(action) = queue_action {
+            self.apply_queue_action(action);
+        }
+    }
+
+    /// 도크 안쪽 — 탭 스트립과 본문. 조작은 값으로 돌려주고 호출부가 실행한다
+    fn show_dock_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        failed: &[SiteId],
+    ) -> (Option<DockAction>, Option<QueueAction>) {
         let mut dock_ui = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(rect)
@@ -704,12 +727,13 @@ impl ExplorerApp {
             egui::Stroke::new(1.0, theme::PANE_BORDER),
         );
 
-        let strip = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 28.0));
+        let strip =
+            egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), dock::STRIP_HEIGHT));
         let body = egui::Rect::from_min_max(egui::pos2(rect.left(), strip.bottom()), rect.max);
-        let (dock_action, queue_action) = {
+        {
             let view = DockView {
                 queue: &self.queue,
-                failed: &failed,
+                failed,
             };
             let dock_action = dock::show_strip(&mut dock_ui, strip, &mut self.dock, &view);
             let queue_action = match self.dock.panel {
@@ -720,15 +744,7 @@ impl ExplorerApp {
                 _ => None,
             };
             (dock_action, queue_action)
-        };
-        if let Some(action) = dock_action {
-            self.apply_dock_action(action);
         }
-        if let Some(action) = queue_action {
-            self.apply_queue_action(action);
-        }
-        // 도크 자리를 레이아웃에서 뗀다 — 이 뒤에 오는 그리드가 남은 위쪽만 쓴다
-        ui.allocate_rect(rect, egui::Sense::hover());
     }
 
     /// 도크 탭 스트립의 조작 (인벤토리 #33·#34)
