@@ -44,6 +44,11 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// 안 끝나면 스레드를 떼어 놓는다(프로세스 종료가 정리한다)
 const STOP_GRACE: Duration = Duration::from_millis(200);
 
+/// 폴더를 재귀로 훑을 때의 깊이 상한 (plan T22 Edge Case — 순환 심볼릭 링크).
+///
+/// 40이면 실제 디렉터리 구조에는 넉넉하고, 링크가 자기를 가리켜도 그 안에서 멈춘다
+const TREE_MAX_DEPTH: usize = 40;
+
 /// 연결이 다시 시도할 규칙.
 ///
 /// 서버가 "지금은 안 된다"(FTP 421 등)고 답하거나 네트워크가 잠깐 끊긴 것은 다시 걸면 되는
@@ -107,6 +112,15 @@ pub enum ConnCommand {
     List {
         generation: u64,
         path: RemotePath,
+    },
+    /// 폴더 하나를 **재귀로 훑어** 그 아래 파일을 모두 찾는다 (FR-38 — 폴더 드래그).
+    ///
+    /// 화면이 한 겹씩 요청해 가며 훑지 않는 이유: 그러면 목록 응답 라우팅과 뒤섞이고,
+    /// 한 폴더를 훑는 동안 프레임마다 상태를 이어 붙여야 한다. 워커는 어차피 블로킹이라
+    /// 여기서 한 번에 끝내는 편이 단순하다
+    ListTree {
+        generation: u64,
+        root: RemotePath,
     },
     Cwd(RemotePath),
     Mkdir(RemotePath),
@@ -173,6 +187,14 @@ pub enum ConnEvent {
     OpDone {
         op: OpKind,
         result: Result<(), RemoteError>,
+    },
+    /// `ListTree`의 답 — 찾은 **파일**들의 전체 경로와 크기다(폴더는 담지 않는다).
+    ///
+    /// 훑는 중 실패한 가지는 조용히 건너뛴다(권한 없는 폴더가 흔하다) — 그 사실은 서버 로그에 남는다
+    TreeListed {
+        generation: u64,
+        root: RemotePath,
+        files: Vec<(RemotePath, u64)>,
     },
     TransferProgress {
         id: TransferId,
@@ -414,6 +436,16 @@ fn worker(mut worker: Worker) {
                     break;
                 }
             }
+            ConnCommand::ListTree { generation, root } => {
+                let files = list_tree(&mut worker, &root);
+                if !worker.emit(ConnEvent::TreeListed {
+                    generation,
+                    root,
+                    files,
+                }) {
+                    break;
+                }
+            }
             ConnCommand::Transfer(request) => {
                 if !run_transfer(&mut worker, request) {
                     break;
@@ -526,6 +558,47 @@ fn finish_op(worker: &Worker, op: OpKind, result: RemoteResult<()>) -> bool {
 /// 전송 한 건 — 로컬 파일을 열고 세션에 스트림을 넘긴다 (NFR-12).
 ///
 /// 진행률은 `PROGRESS_INTERVAL`마다 묶어 보내고, 취소 신호는 64KB 경계마다 본다.
+/// 폴더 아래의 파일을 모두 찾는다 — 깊이 상한 `TREE_MAX_DEPTH`.
+///
+/// **끊지 않으면 순환 심볼릭 링크에서 영원히 돈다** (plan Edge Case). 실패한 가지는
+/// 건너뛴다 — 권한 없는 폴더 하나 때문에 나머지를 통째로 버릴 이유가 없다
+fn list_tree(worker: &mut Worker, root: &RemotePath) -> Vec<(RemotePath, u64)> {
+    let mut found = Vec::new();
+    let mut pending = vec![(root.clone(), 0usize)];
+    while let Some((dir, depth)) = pending.pop() {
+        if depth >= TREE_MAX_DEPTH {
+            worker.log(
+                LogKind::Status,
+                format!("{} 아래는 너무 깊어 건너뜁니다", dir.as_str()),
+            );
+            continue;
+        }
+        let entries = match worker.session.list(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                worker.log(
+                    LogKind::Error,
+                    format!("{} 를 읽지 못했습니다: {err}", dir.as_str()),
+                );
+                continue;
+            }
+        };
+        for entry in entries {
+            // 상위 이동은 따라가지 않는다 — 따라가면 트리를 벗어나 위로 올라간다
+            if entry.name == ".." || entry.name == "." {
+                continue;
+            }
+            let path = dir.join(&entry.name);
+            if entry.is_dir {
+                pending.push((path, depth + 1));
+            } else {
+                found.push((path, entry.size));
+            }
+        }
+    }
+    found
+}
+
 fn run_transfer(worker: &mut Worker, request: TransferRequest) -> bool {
     worker.cancel.store(false, Ordering::SeqCst);
     let id = request.id;

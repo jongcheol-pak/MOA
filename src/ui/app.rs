@@ -11,18 +11,21 @@ use crate::app::settings::{
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
 use crate::panel::tabs::TabPhase;
-use crate::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
+use crate::remote::connection::{
+    ConnCommand, ConnEvent, ConnPhase, ConnectionId, TransferDirection,
+};
 use crate::remote::ftp::FtpSession;
 use crate::remote::log::LogBuffer;
 use crate::remote::manager::ConnectionManager;
 use crate::remote::queue::TransferQueue;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
-use crate::remote::transfer::TransferRunner;
+use crate::remote::transfer::{self, TransferRunner};
 use crate::remote::types::{LogonType, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::list_common::{self, DragItem, DropOutcome, DropTarget};
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
@@ -339,6 +342,10 @@ pub struct ExplorerApp {
     dock: DockState,
     /// 클립보드로 내보낼 것 — 그리기 도중에는 `ctx`를 빌릴 수 없어 프레임 끝에 보낸다
     pending_clipboard: Option<String>,
+    /// 훑어 달라고 청한 원격 폴더들 — 답이 오면 그 아래 파일을 큐에 넣는다 (FR-38)
+    pending_trees: HashMap<u64, (SiteId, RemotePath, PathBuf)>,
+    /// 훑기 요청 번호 — 목록 조회의 세대 번호와 섞이지 않게 따로 센다
+    next_tree: u64,
 }
 
 impl ExplorerApp {
@@ -386,6 +393,8 @@ impl ExplorerApp {
             runner: TransferRunner::new(),
             dock: DockState::default(),
             pending_clipboard: None,
+            pending_trees: HashMap::new(),
+            next_tree: 0,
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -809,6 +818,87 @@ impl ExplorerApp {
         }
     }
 
+    /// 끌어다 놓은 것을 전송 큐에 넣는다 (FR-38).
+    ///
+    /// **로컬 → 원격은 올리기, 원격 → 로컬은 받기**다. 로컬끼리·원격끼리는 아무 일도 하지
+    /// 않는다(PRD Out of Scope) — 항목의 종류와 놓은 자리의 종류가 같으면 걸러진다.
+    /// 폴더는 파일 단위로 펼쳐 넣는다(T17 규약): 로컬은 그 자리에서, 원격은 워커에 훑기를 맡긴다
+    fn apply_drop(&mut self, drop: DropOutcome) {
+        match &drop.target {
+            DropTarget::Remote { site, dir } => {
+                for item in &drop.items {
+                    // 종류가 같으면(원격 → 원격) 아무 일도 하지 않는다
+                    if list_common::drop_direction(item, &drop.target).is_none() {
+                        continue;
+                    }
+                    let DragItem::Local { path, .. } = item else {
+                        continue;
+                    };
+                    for (file, relative) in transfer::expand_for_transfer(path) {
+                        let size = std::fs::metadata(&file).map(|meta| meta.len()).unwrap_or(0);
+                        self.queue.enqueue(
+                            *site,
+                            TransferDirection::Upload,
+                            file,
+                            dir.join(&relative),
+                            size,
+                        );
+                    }
+                }
+            }
+            DropTarget::Local(local_dir) => {
+                let Some(site) = drop.source_site else {
+                    return;
+                };
+                for item in &drop.items {
+                    // 종류가 같으면(로컬 → 로컬) 아무 일도 하지 않는다
+                    if list_common::drop_direction(item, &drop.target).is_none() {
+                        continue;
+                    }
+                    let DragItem::Remote { path, is_dir, size } = item else {
+                        continue;
+                    };
+                    if *is_dir {
+                        self.request_tree(site, path.clone(), local_dir.clone());
+                        continue;
+                    }
+                    self.queue.enqueue(
+                        site,
+                        TransferDirection::Download,
+                        local_dir.join(path.file_name().unwrap_or_default()),
+                        path.clone(),
+                        *size,
+                    );
+                }
+            }
+        }
+    }
+
+    /// 원격 폴더를 훑어 달라고 워커에 청한다 (FR-38).
+    ///
+    /// 화면이 한 겹씩 요청해 가며 훑지 않는 이유: 목록 응답 라우팅과 뒤섞이고 프레임마다
+    /// 상태를 이어 붙여야 한다. 워커는 어차피 블로킹이라 한 번에 끝내는 편이 단순하다
+    fn request_tree(&mut self, site: SiteId, root: RemotePath, local_dir: PathBuf) {
+        let Some(conn) = self.site_connection(site) else {
+            return;
+        };
+        let generation = self.next_tree;
+        self.next_tree += 1;
+        self.pending_trees
+            .insert(generation, (site, root.clone(), local_dir));
+        self.manager
+            .send(conn, ConnCommand::ListTree { generation, root });
+    }
+
+    /// 그 사이트의 연결 하나 — 여럿이면 먼저 연 것을 쓴다
+    fn site_connection(&self, site: SiteId) -> Option<ConnectionId> {
+        self.manager
+            .ids()
+            .iter()
+            .copied()
+            .find(|id| self.manager.get(*id).is_some_and(|conn| conn.site == site))
+    }
+
     /// 로그 화면이 보여 줄 연결 — **지금 보고 있는 원격 탭의 것**이 먼저다.
     ///
     /// 그 탭이 로컬이면 마지막으로 연 연결을 보인다: 로그를 여는 까닭은 대개 방금 무슨 일이
@@ -1053,6 +1143,32 @@ impl ExplorerApp {
                         panel.apply_remote_listed(generation, &path, entries, icons);
                     }
                 }
+                // 훑기 결과 — 찾은 파일을 통째로 큐에 넣는다 (FR-38)
+                ConnEvent::TreeListed {
+                    generation,
+                    root,
+                    files,
+                } => {
+                    if let Some((site, _, local_dir)) = self.pending_trees.remove(&generation) {
+                        for (path, size) in files {
+                            // 서버 쪽 구조를 로컬에도 그대로 만든다 — 뿌리 폴더 이름부터 붙인다
+                            let relative = path
+                                .as_str()
+                                .strip_prefix(root.as_str())
+                                .unwrap_or(path.file_name().unwrap_or_default())
+                                .trim_start_matches('/');
+                            let root_name = root.file_name().unwrap_or_default();
+                            let local = local_dir.join(root_name).join(relative.replace('/', "\\"));
+                            self.queue.enqueue(
+                                site,
+                                TransferDirection::Download,
+                                local,
+                                path,
+                                size,
+                            );
+                        }
+                    }
+                }
                 // 전송 소식은 실행기가 큐에 반영한다 (FR-37)
                 ConnEvent::TransferProgress { id, transferred } => {
                     self.runner
@@ -1295,6 +1411,8 @@ impl eframe::App for ExplorerApp {
         let mut remote_action = None;
         let mut remote_url = None;
         let mut closed_conns = Vec::new();
+        // 목록에 끌어다 놓은 것 (FR-38) — 큐에 넣는 것은 그리기가 끝난 뒤다
+        let mut dropped = None;
         // 사이트 관리자의 `연결(C)`이 쓸 분할 영역 — 모달은 CentralPanel 밖에서 그리므로
         // 안에서 정해지는 이 값을 밖으로 들고 나온다
         let mut layout_area = None;
@@ -1387,6 +1505,7 @@ impl eframe::App for ExplorerApp {
                 remote_action = outcome.remote;
                 remote_url = outcome.remote_url;
                 closed_conns = outcome.closed_conns;
+                dropped = outcome.drop;
             }
             // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
             // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
@@ -1399,6 +1518,11 @@ impl eframe::App for ExplorerApp {
             }
             if let Some((target, url)) = remote_url {
                 self.open_remote_url(target, url, area);
+            }
+            // 끌어다 놓은 것을 큐에 넣는다 — 어느 패널에 놓였는지는 쓰지 않는다(항목의
+            // 종류와 놓은 자리의 종류만으로 방향이 정해진다)
+            if let Some((_, drop)) = dropped.take() {
+                self.apply_drop(drop);
             }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {

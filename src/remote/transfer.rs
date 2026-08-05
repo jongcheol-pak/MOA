@@ -37,6 +37,45 @@ pub fn resume_offset(local_size: u64, remote_size: u64) -> u64 {
     local_size
 }
 
+/// 로컬 폴더를 파일 단위로 펼친다 (FR-38 — 폴더 드래그, T17 규약).
+///
+/// 돌려주는 것은 `(파일 경로, 뿌리에서의 상대 경로)`다 — 상대 경로가 있어야 서버 쪽에
+/// 같은 모양으로 놓을 수 있다. 파일 하나를 넘기면 그 하나만 돌려준다.
+///
+/// **깊이 상한 40** — 순환 심볼릭 링크(정션 포함)에서 영원히 도는 것을 막는다(plan Edge Case).
+/// 읽지 못하는 가지는 건너뛴다 — 권한 없는 폴더 하나 때문에 나머지를 버릴 이유가 없다
+pub fn expand_for_transfer(root: &Path) -> Vec<(PathBuf, String)> {
+    const MAX_DEPTH: usize = 40;
+    let name = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if root.is_file() {
+        return vec![(root.to_path_buf(), name)];
+    }
+    let mut found = Vec::new();
+    let mut pending = vec![(root.to_path_buf(), name, 0usize)];
+    while let Some((dir, prefix, depth)) = pending.pop() {
+        if depth >= MAX_DEPTH {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let child = format!("{prefix}/{}", entry.file_name().to_string_lossy());
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => pending.push((path, child, depth + 1)),
+                // 심볼릭 링크는 따라가지 않는다 — 가리키는 곳이 트리 밖일 수 있다
+                Ok(kind) if kind.is_file() => found.push((path, child)),
+                _ => {}
+            }
+        }
+    }
+    found
+}
+
 /// 받는 중인 파일의 임시 이름 — `report.zip` → `report.zip.part`
 pub fn part_path(local: &Path) -> PathBuf {
     let mut name = local.as_os_str().to_os_string();
@@ -401,6 +440,40 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         events
+    }
+
+    #[test]
+    fn 폴더는_파일_단위로_펼쳐진다() {
+        // Acceptance ④ — 큐는 파일 단위만 안다 (T17 규약)
+        let root = temp_dir().join(format!("expand_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("안쪽")).expect("폴더");
+        std::fs::write(root.join("겉.txt"), b"a").expect("파일");
+        std::fs::write(root.join("안쪽").join("속.bin"), b"bb").expect("파일");
+
+        let mut found = expand_for_transfer(&root);
+        found.sort_by(|a, b| a.1.cmp(&b.1));
+        let names: Vec<&str> = found.iter().map(|(_, rel)| rel.as_str()).collect();
+        let root_name = root
+            .file_name()
+            .expect("이름")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            names,
+            vec![
+                format!("{root_name}/겉.txt").as_str(),
+                format!("{root_name}/안쪽/속.bin").as_str()
+            ],
+            "상대 경로가 뿌리 이름부터 시작해야 서버에 같은 모양으로 놓인다"
+        );
+        assert!(found.iter().all(|(path, _)| path.is_file()));
+
+        // 파일 하나를 넘기면 그 하나만 돌려준다
+        let single = expand_for_transfer(&root.join("겉.txt"));
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].1, "겉.txt");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

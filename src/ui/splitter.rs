@@ -8,6 +8,7 @@ use crate::fs::icons::IconCache;
 use crate::remote::connection::ConnectionId;
 use crate::remote::url::RemoteUrl;
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::list_common::DropOutcome;
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction};
 use crate::ui::remote_states::RemoteView;
@@ -54,6 +55,8 @@ pub struct LayoutOutcome {
     pub remote_url: Option<(PanelId, RemoteUrl)>,
     /// 마지막 원격 탭이 닫혀 아무도 쓰지 않게 된 연결들 (FR-32)
     pub closed_conns: Vec<ConnectionId>,
+    /// 목록에 끌어다 놓은 것과 그 패널 (FR-38)
+    pub drop: Option<(PanelId, DropOutcome)>,
 }
 
 /// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
@@ -68,6 +71,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         remote,
         remote_url,
         closed_conn,
+        drop,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
@@ -83,6 +87,13 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         && let Some(remote) = remote
     {
         outcome.remote = Some((id, remote));
+    }
+    // 드롭도 한 프레임에 하나뿐이다 — 마우스 버튼은 하나이고 놓는 자리도 하나다.
+    // 어느 패널에 놓였는지 함께 담는다(같은 패널 안의 드래그를 앱이 걸러 낸다)
+    if outcome.drop.is_none()
+        && let Some(drop) = drop
+    {
+        outcome.drop = Some((id, drop));
     }
     // 주소는 한 프레임에 하나만 확정된다 — 입력칸이 패널마다 하나뿐이다
     if outcome.remote_url.is_none()
@@ -262,6 +273,7 @@ mod tests {
                 remote: None,
                 remote_url: None,
                 closed_conn: None,
+                drop: None,
             },
         );
         merge_panel_outcome(
@@ -273,6 +285,7 @@ mod tests {
                 remote: None,
                 remote_url: None,
                 closed_conn: None,
+                drop: None,
             },
         );
 
@@ -306,6 +319,7 @@ mod tests {
                     remote: None,
                     remote_url: None,
                     closed_conn: None,
+                    drop: None,
                 },
             );
         }
@@ -331,6 +345,7 @@ mod tests {
                     remote: Some(RemoteAction::Retry),
                     remote_url: None,
                     closed_conn: Some(conn),
+                    drop: None,
                 },
             );
         }

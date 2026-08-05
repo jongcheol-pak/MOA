@@ -57,6 +57,8 @@ pub struct GridOutcome {
     pub action: FileListAction,
     pub select_request: Option<(usize, egui::Modifiers)>,
     pub clear_selection: bool,
+    /// 이 항목에서 끌기가 시작됐다 (FR-38) — 무엇을 실을지는 호출부가 정한다
+    pub drag_started: Option<usize>,
 }
 
 /// 격자 보기를 그린다.
@@ -114,7 +116,14 @@ pub fn show<R: ListRow>(
             if !ui.is_rect_visible(cell) {
                 continue;
             }
-            let resp = ui.interact(cell, ui.id().with(("cell", index)), egui::Sense::click());
+            let resp = ui.interact(
+                cell,
+                ui.id().with(("cell", index)),
+                egui::Sense::click_and_drag(),
+            );
+            if resp.drag_started() {
+                outcome.drag_started = Some(index);
+            }
             if resp.clicked() {
                 outcome.select_request = Some((index, ui.input(|i| i.modifiers)));
             }

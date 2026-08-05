@@ -267,6 +267,8 @@ pub struct DetailsOutcome {
     pub clear_selection: bool,
     /// 열 메뉴에서 뒤집기로 고른 열 — 상태 변경은 호출부가 한다 (인벤토리 #27·#28)
     pub column_toggle: Option<ColumnKind>,
+    /// 이 행에서 끌기가 시작됐다 (FR-38) — 무엇을 실을지는 호출부가 정한다
+    pub drag_started: Option<usize>,
 }
 
 /// 자세히 보기를 그린다.
@@ -346,7 +348,14 @@ pub fn show<R: ListRow>(
                 egui::pos2(left, row_top),
                 egui::vec2(content_width, ROW_HEIGHT),
             );
-            let resp = ui.interact(rect, ui.id().with(("row", index)), egui::Sense::click());
+            let resp = ui.interact(
+                rect,
+                ui.id().with(("row", index)),
+                egui::Sense::click_and_drag(),
+            );
+            if resp.drag_started() {
+                outcome.drag_started = Some(index);
+            }
             if resp.clicked() {
                 outcome.select_request = Some((index, ui.input(|i| i.modifiers)));
             }

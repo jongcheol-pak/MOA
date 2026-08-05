@@ -18,6 +18,7 @@ use crate::remote::url::RemoteUrl;
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
+use crate::ui::list_common::{DropOutcome, DropTarget, FileDrag};
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::remote_states::{self, FailedAction, RemoteView};
 use crate::ui::shell_host;
@@ -182,6 +183,8 @@ pub struct PanelOutcome {
     /// `remote`와 **따로 두는 이유**: 한 프레임에 둘 다 일어날 수 있는데 한 필드로 합치면
     /// 먼저 채워진 쪽에 밀려 연결이 닫히지 않은 채 워커와 소켓이 남는다
     pub closed_conn: Option<ConnectionId>,
+    /// 이 패널의 목록에 끌어다 놓은 것 (FR-38) — 큐에 넣는 것은 앱의 몫이다
+    pub drop: Option<DropOutcome>,
 }
 
 /// 원격 단계 화면에서 사용자가 고른 조치 — 실행은 앱이 한다(연결을 앱이 쥔다)
@@ -864,7 +867,7 @@ impl PanelState {
         } else {
             area
         };
-        let (action, remote_action) = ui
+        let (action, remote_action, drop) = ui
             .scope_builder(
                 egui::UiBuilder::new().id_salt("content").max_rect(content),
                 |ui| {
@@ -892,6 +895,7 @@ impl PanelState {
             remote: remote_action,
             remote_url: self.pending_remote_url.take(),
             closed_conn,
+            drop,
         }
     }
 
@@ -905,7 +909,7 @@ impl PanelState {
         ui: &mut egui::Ui,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-    ) -> (FileListAction, Option<RemoteAction>) {
+    ) -> (FileListAction, Option<RemoteAction>, Option<DropOutcome>) {
         // 단계를 먼저 떼어 둔다 — 아래에서 목록(`&mut self.list`)을 그리는 동안 탭을 빌릴 수 없다
         let phase = match &self.tabs.active().source {
             TabSource::Remote { phase, .. } => Some(phase.clone()),
@@ -949,7 +953,7 @@ impl PanelState {
         match phase {
             Some(TabPhase::New) => {
                 remote_states::show_empty(ui);
-                (FileListAction::None, None)
+                (FileListAction::None, None, None)
             }
             Some(TabPhase::Connecting) => {
                 // 취소는 자리 표시 막대 **위** 오른쪽에 둔다 (원본 `:223-228`의 상태 줄)
@@ -962,6 +966,7 @@ impl PanelState {
                 (
                     FileListAction::None,
                     cancelled.then_some(RemoteAction::CancelConnect),
+                    None,
                 )
             }
             Some(TabPhase::Error { message }) => {
@@ -970,31 +975,83 @@ impl PanelState {
                     FailedAction::OpenSettings => RemoteAction::OpenSettings,
                     FailedAction::ViewLog => RemoteAction::ViewLog,
                 });
-                (FileListAction::None, action)
+                (FileListAction::None, action, None)
             }
             // 연결된 원격 탭은 로컬과 **같은 목록 부품**으로 그린다 (T8)
-            Some(TabPhase::Ok) | None => (self.show_list(ui, icons, textures), None),
+            Some(TabPhase::Ok) | None => {
+                let (action, drop) = self.show_list(ui, icons, textures);
+                (action, None, drop)
+            }
         }
     }
 
-    /// 파일 목록 본문 — 로컬 탭과 연결된 원격 탭이 함께 쓴다
+    /// 파일 목록 본문 — 로컬 탭과 연결된 원격 탭이 함께 쓴다.
+    ///
+    /// 목록 위에서 시작한 끌기와 이 목록에 놓인 드롭도 여기서 다룬다 (FR-38) —
+    /// 두 쪽 다 "지금 이 탭이 어디를 보고 있는가"를 알아야 해서 목록 부품이 아니라 패널의 몫이다
     fn show_list(
         &mut self,
         ui: &mut egui::Ui,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-    ) -> FileListAction {
+    ) -> (FileListAction, Option<DropOutcome>) {
         // 이번 프레임에 화면에 보인 파일들을 받는다. `request`는 아직 없으면 만들라고
         // 시키고, 이미 있으면 최근 사용으로 올린다 — 보이는 썸네일이 축출되지 않게 하는
         // 유일한 지점이다(그리기는 텍스처만 보고 픽셀 캐시를 건드리지 않는다)
         let mut visible = Vec::new();
-        let action = self
+        let list_rect = ui.available_rect_before_wrap();
+        let interaction = self
             .list
             .show(ui, icons, textures, &self.thumb_textures, &mut visible);
         for path in visible {
             self.thumbs.request(&path);
         }
-        action
+
+        // 끌기 시작 — 무엇을 싣는지는 지금 보고 있는 곳이 정한다
+        if let Some(index) = interaction.drag_started {
+            let source = &self.tabs.active().source;
+            let remote_dir = source.remote_path().cloned();
+            let source_site = match source {
+                TabSource::Remote { site, .. } => Some(*site),
+                TabSource::Local(_) => None,
+            };
+            let items = self.list.drag_items(index, remote_dir.as_ref());
+            if !items.is_empty() {
+                egui::DragAndDrop::set_payload(ui.ctx(), FileDrag { items, source_site });
+            }
+        }
+
+        // 드롭 — 이 목록 위에서 손을 놓았는가
+        let drop = self.take_drop(ui, list_rect);
+        (interaction.action, drop)
+    }
+
+    /// 이 목록 위에 놓인 드롭을 거둔다 (FR-38).
+    ///
+    /// 놓은 자리가 이 패널의 목록 밖이면 아무것도 가져가지 않는다 — 페이로드를 남겨 두어야
+    /// 실제로 놓인 패널이 가져간다
+    fn take_drop(&mut self, ui: &egui::Ui, list_rect: egui::Rect) -> Option<DropOutcome> {
+        let released = ui.input(|input| input.pointer.any_released());
+        if !released {
+            return None;
+        }
+        let pointer = ui.input(|input| input.pointer.interact_pos())?;
+        if !list_rect.contains(pointer) {
+            return None;
+        }
+        let drag = egui::DragAndDrop::take_payload::<FileDrag>(ui.ctx())?;
+        let target = match &self.tabs.active().source {
+            TabSource::Local(dir) => DropTarget::Local(dir.clone()),
+            TabSource::Remote { site, path, .. } => DropTarget::Remote {
+                site: *site,
+                dir: path.clone(),
+            },
+        };
+        Some(DropOutcome {
+            items: drag.items.clone(),
+            source_site: drag.source_site,
+            target,
+        })
     }
 }
 

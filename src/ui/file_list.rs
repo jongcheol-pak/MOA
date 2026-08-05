@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 // 조작 타입은 보기 모드별 렌더 모듈이 함께 쓰므로 공용 모듈에 둔다.
 // 호출부(`ui::panel`)가 종전 경로를 그대로 쓰도록 여기서 다시 내보낸다
+use crate::ui::list_common::DragItem;
 pub use crate::ui::list_common::FileListAction;
 
 /// 목록이 담은 항목 — 로컬 폴더의 것이거나 원격 폴더의 것이다 (plan T8).
@@ -286,7 +287,7 @@ impl FileListView {
         textures: &mut IconTextures,
         thumbnails: &ThumbnailTextures,
         visible: &mut Vec<PathBuf>,
-    ) -> FileListAction {
+    ) -> ListInteraction {
         // 필드를 미리 풀어 둔다 — 모델을 빌리는 동안 나머지 필드도 함께 빌려야 한다
         let FileListView {
             dir,
@@ -334,8 +335,62 @@ impl FileListView {
             self.selection.clear();
             self.anchor = None;
         }
-        outcome.action
+        ListInteraction {
+            action: outcome.action,
+            drag_started: outcome.drag_started,
+        }
     }
+
+    /// 끌어 옮길 항목들 (FR-38).
+    ///
+    /// 끌기 시작한 항목이 **선택 밖이면 그것 하나만** 끈다 — 탐색기와 같은 규칙이다.
+    /// 선택 안이면 선택 전체가 따라간다.
+    ///
+    /// 원격 목록은 자기가 어느 폴더를 보고 있는지 모른다(그것은 탭이 든다) — 그래서
+    /// `remote_dir`를 받는다. 로컬 목록은 `dir`를 스스로 안다
+    pub fn drag_items(
+        &self,
+        started: usize,
+        remote_dir: Option<&crate::remote::types::RemotePath>,
+    ) -> Vec<DragItem> {
+        let indices: Vec<usize> = if self.selection.contains(&started) {
+            self.selection.iter().copied().collect()
+        } else {
+            vec![started]
+        };
+        match &self.model {
+            ListModel::Local(rows) => indices
+                .iter()
+                .filter_map(|index| rows.get(*index))
+                .map(|row| DragItem::Local {
+                    path: self.dir.join(row.name()),
+                    is_dir: row.is_dir(),
+                })
+                .collect(),
+            ListModel::Remote(rows) => {
+                let Some(dir) = remote_dir else {
+                    return Vec::new();
+                };
+                indices
+                    .iter()
+                    .filter_map(|index| rows.get(*index))
+                    .map(|row| DragItem::Remote {
+                        path: dir.join(&row.name()),
+                        is_dir: row.is_dir(),
+                        size: row.size(),
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
+/// 목록에서 이번 프레임에 일어난 것 — 조작 하나와 끌기 시작 여부
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ListInteraction {
+    pub action: FileListAction,
+    /// 끌기가 시작된 항목 — 무엇을 실을지는 `drag_items`가 정한다
+    pub drag_started: Option<usize>,
 }
 
 /// 갱신 전 선택 이름들이 새 목록의 어느 자리인지 되찾는다 (정렬이 끝난 뒤의 인덱스).
@@ -410,6 +465,8 @@ struct RenderOutcome {
     column_toggle: Option<ColumnKind>,
     select_request: Option<(usize, egui::Modifiers)>,
     clear_selection: bool,
+    /// 끌기가 시작된 항목 (FR-38)
+    drag_started: Option<usize>,
 }
 
 /// 보기 모드에 맞는 렌더 모듈에 넘긴다. **모델 종류마다 한 번씩 찍히는 유일한 자리**다
@@ -448,6 +505,7 @@ fn render_rows<R: ListRow>(
             column_toggle: outcome.column_toggle,
             select_request: outcome.select_request,
             clear_selection: outcome.clear_selection,
+            drag_started: outcome.drag_started,
         }
     } else {
         let outcome = list_grid::show(
@@ -473,6 +531,7 @@ fn render_rows<R: ListRow>(
             column_toggle: None,
             select_request: outcome.select_request,
             clear_selection: outcome.clear_selection,
+            drag_started: outcome.drag_started,
         }
     }
 }

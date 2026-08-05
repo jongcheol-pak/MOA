@@ -22,6 +22,89 @@ pub enum FileListAction {
     },
 }
 
+/// 끌어 옮기는 항목 하나 (FR-38).
+///
+/// **로컬과 원격을 한 타입에 섞지 않는다** — 로컬은 파일시스템 경로, 원격은 서버 경로이고
+/// 크기도 원격만 미리 안다. 하나로 뭉치면 받는 쪽이 매번 "이게 어느 쪽이지"를 되묻게 된다
+#[derive(Debug, Clone, PartialEq)]
+pub enum DragItem {
+    Local {
+        path: std::path::PathBuf,
+        is_dir: bool,
+    },
+    Remote {
+        path: crate::remote::types::RemotePath,
+        is_dir: bool,
+        size: u64,
+    },
+}
+
+impl DragItem {
+    pub fn is_dir(&self) -> bool {
+        match self {
+            DragItem::Local { is_dir, .. } | DragItem::Remote { is_dir, .. } => *is_dir,
+        }
+    }
+
+    /// 옮겨 놓을 때 쓸 이름 — 경로의 마지막 조각
+    pub fn name(&self) -> String {
+        match self {
+            DragItem::Local { path, .. } => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            DragItem::Remote { path, .. } => path.file_name().unwrap_or_default().to_owned(),
+        }
+    }
+}
+
+/// 목록에서 끌기 시작할 때 싣는 값 (FR-38).
+///
+/// **패널 번호를 싣지 않는다** — 받는 쪽이 알아야 하는 것은 "어디서 왔나"가 아니라
+/// "로컬인가 원격인가"뿐이고(로컬↔로컬·원격↔원격은 이번 범위 밖이다), 번호를 실으면
+/// 그 사이 패널이 닫혔을 때 가리키는 곳이 사라진다
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileDrag {
+    pub items: Vec<DragItem>,
+    /// 원격에서 끌어온 것이면 그 사이트 — 받는 쪽이 어느 서버에서 받을지 알아야 한다
+    pub source_site: Option<crate::remote::types::SiteId>,
+}
+
+/// 끌어다 놓은 자리 — 그 패널이 지금 보고 있는 폴더다
+#[derive(Debug, Clone, PartialEq)]
+pub enum DropTarget {
+    Local(std::path::PathBuf),
+    Remote {
+        site: crate::remote::types::SiteId,
+        dir: crate::remote::types::RemotePath,
+    },
+}
+
+/// 드롭 한 번의 결과 — 실제로 큐에 넣는 것은 앱이 한다 (plan T22 의존 방향)
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropOutcome {
+    pub items: Vec<DragItem>,
+    /// 원격에서 끌어왔으면 그 사이트
+    pub source_site: Option<crate::remote::types::SiteId>,
+    pub target: DropTarget,
+}
+
+/// 끌어다 놓은 항목 하나가 실제로 옮겨지는가, 옮겨진다면 어느 방향인가 (FR-38).
+///
+/// **로컬 → 원격은 올리기, 원격 → 로컬은 받기**뿐이다. 로컬끼리·원격끼리는 `None`이다 —
+/// 로컬↔로컬 이동·복사와 원격↔원격 전송은 PRD Out of Scope다(같은 자리에 놓은 경우도 여기 든다)
+pub fn drop_direction(
+    item: &DragItem,
+    target: &DropTarget,
+) -> Option<crate::remote::connection::TransferDirection> {
+    use crate::remote::connection::TransferDirection;
+    match (item, target) {
+        (DragItem::Local { .. }, DropTarget::Remote { .. }) => Some(TransferDirection::Upload),
+        (DragItem::Remote { .. }, DropTarget::Local(_)) => Some(TransferDirection::Download),
+        _ => None,
+    }
+}
+
 /// 텍스트를 **한 줄로만** 배치하고, 폭을 넘으면 끝을 `…`로 줄인 갤리를 만든다.
 ///
 /// `Painter::layout`을 쓰면 안 된다 — 그 함수의 폭 인자는 자르는 폭이 아니라 **줄바꿈 폭**이라
@@ -82,6 +165,61 @@ pub fn elided_galley_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::connection::TransferDirection;
+    use crate::remote::types::{RemotePath, SiteId};
+
+    fn local_item() -> DragItem {
+        DragItem::Local {
+            path: std::path::PathBuf::from(r"C:\work\app.js"),
+            is_dir: false,
+        }
+    }
+
+    fn remote_item() -> DragItem {
+        DragItem::Remote {
+            path: RemotePath::new("/var/www/app.js"),
+            is_dir: false,
+            size: 10,
+        }
+    }
+
+    fn local_target() -> DropTarget {
+        DropTarget::Local(std::path::PathBuf::from(r"C:\down"))
+    }
+
+    fn remote_target() -> DropTarget {
+        DropTarget::Remote {
+            site: SiteId(1),
+            dir: RemotePath::new("/var/www"),
+        }
+    }
+
+    #[test]
+    fn 로컬에서_원격으로_끌면_올리기다() {
+        // Acceptance ①
+        assert_eq!(
+            drop_direction(&local_item(), &remote_target()),
+            Some(TransferDirection::Upload)
+        );
+        assert_eq!(
+            drop_direction(&remote_item(), &local_target()),
+            Some(TransferDirection::Download)
+        );
+    }
+
+    #[test]
+    fn 같은_쪽끼리_끌면_아무_일도_없다() {
+        // Acceptance ② — 로컬↔로컬·원격↔원격은 PRD Out of Scope다(자기 자신에게 놓은 것도 포함)
+        assert_eq!(drop_direction(&local_item(), &local_target()), None);
+        assert_eq!(drop_direction(&remote_item(), &remote_target()), None);
+    }
+
+    #[test]
+    fn 끌_항목의_이름은_경로의_마지막_조각이다() {
+        assert_eq!(local_item().name(), "app.js");
+        assert_eq!(remote_item().name(), "app.js");
+        assert!(!local_item().is_dir());
+    }
 
     /// 갤리에 실제로 구워진 색 — `Painter::galley`에 넘기는 색은 이 값이 `PLACEHOLDER`일 때만 쓰인다
     fn baked_color(galley: &egui::Galley) -> egui::Color32 {
