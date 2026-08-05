@@ -1,4 +1,6 @@
-//! 워크스페이스 사이드바 — 좌측 2줄 카드 목록 (FR-15~FR-19).
+//! 좌측 사이드바 — 워크스페이스 2줄 카드 목록(FR-15~FR-19)과 그 아래 **연결 섹션**(FR-28·FR-33)을
+//! 한 스크롤에 잇는다. 원본 디자인도 사이드바 전체가 한 컬럼이라, 워크스페이스가 많으면
+//! 연결 섹션이 아래로 밀리며 함께 스크롤된다.
 //!
 //! 아래 시각 상수·색은 현행 Win32 판(`app::sidebar`)에서 **그대로 옮긴 것**이다
 //! (part2 D3 — 사용자가 승인한 화면이라 이식에서 임의로 바꾸지 않는다).
@@ -233,33 +235,28 @@ impl WorkspaceSidebar {
     ) {
         let can_remove = list.len() > 1;
         // 스크롤은 `show`가 두 섹션을 함께 감싼다 — 여기서 또 열면 스크롤이 중첩된다
-        {
-            let ui = &mut *ui;
-            {
-                let mut first_top = None;
-                for index in 0..list.len() {
-                    let (row, resp) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), ITEM_HEIGHT),
-                        egui::Sense::click_and_drag(),
-                    );
-                    ui.add_space(ITEM_GAP);
-                    if first_top.is_none() {
-                        first_top = Some(row.top());
-                    }
-                    let card = egui::Rect::from_min_max(
-                        egui::pos2(row.left() + ITEM_MARGIN_X, row.top()),
-                        egui::pos2((row.right() - ITEM_MARGIN_X).max(row.left()), row.bottom()),
-                    );
-                    if self.editing.as_ref().is_some_and(|(i, _)| *i == index) {
-                        self.show_edit(ui, card, index, actions);
-                    } else {
-                        draw_card(ui, card, list, index, resp.hovered(), icons, textures);
-                        self.handle_item_input(ui, &resp, index, list, can_remove, actions);
-                    }
-                }
-                self.finish_drag(ui, list, first_top, actions);
+        let mut first_top = None;
+        for index in 0..list.len() {
+            let (row, resp) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), ITEM_HEIGHT),
+                egui::Sense::click_and_drag(),
+            );
+            ui.add_space(ITEM_GAP);
+            if first_top.is_none() {
+                first_top = Some(row.top());
+            }
+            let card = egui::Rect::from_min_max(
+                egui::pos2(row.left() + ITEM_MARGIN_X, row.top()),
+                egui::pos2((row.right() - ITEM_MARGIN_X).max(row.left()), row.bottom()),
+            );
+            if self.editing.as_ref().is_some_and(|(i, _)| *i == index) {
+                self.show_edit(ui, card, index, actions);
+            } else {
+                draw_card(ui, card, list, index, resp.hovered(), icons, textures);
+                self.handle_item_input(ui, &resp, index, list, can_remove, actions);
             }
         }
+        self.finish_drag(ui, list, first_top, actions);
     }
 
     /// 카드 하나에 대한 클릭·컨텍스트 메뉴·드래그 입력
