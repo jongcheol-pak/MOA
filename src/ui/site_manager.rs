@@ -139,9 +139,9 @@ const LOGON_OPTIONS: [(LogonType, &str); 2] =
 /// 포트가 가질 수 있는 범위 — 0은 실제 포트가 아니다
 const PORT_RANGE: std::ops::RangeInclusive<u32> = 1..=65535;
 
-/// 대화의 우측 탭 (인벤토리 #66~68)
+/// 대화의 우측 탭 (인벤토리 #66~68). 바깥에서 탭을 지정해 여는 진입점이 없어 모듈 안에 둔다
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ManagerTab {
+enum ManagerTab {
     #[default]
     General,
     Transfer,
@@ -290,11 +290,26 @@ impl SiteManager {
         self.open
     }
 
-    /// 대화를 연다 — **새 사이트 초안**으로 시작한다.
+    /// 설정을 고치러 대화를 연다.
     ///
-    /// 진입점(연결 메뉴의 `새 사이트 추가…`·실패 화면의 `설정 열기`)이 모두 "지금 없는 설정을
-    /// 만들거나 고치러" 오는 자리라, 목록에서 고르기 전까지는 아무 사이트도 건드리지 않는다
-    pub fn open(&mut self) {
+    /// `select`가 없으면 목록의 **첫 사이트**를 고른 채 뜬다 (인벤토리 #62 기본값) — 등록된
+    /// 사이트가 하나도 없으면 새 초안이다. 실패 화면의 `설정 열기`(인벤토리 #19)는 방금 실패한
+    /// 사이트를 지정해 부른다: 고치러 온 사용자가 목록에서 그것을 다시 찾게 하지 않는다
+    pub fn open(&mut self, store: &SiteStore, select: Option<SiteId>) {
+        self.open_new();
+        let target = select
+            .filter(|id| store.get(*id).is_some())
+            .or_else(|| store.sites().first().map(|record| record.id));
+        if let Some(id) = target {
+            self.select(store, id);
+        }
+    }
+
+    /// `새 사이트 추가…`(인벤토리 #8) — **빈 초안**으로 연다.
+    ///
+    /// 이 진입점만 첫 항목을 고르지 않는다. 여기서 기존 사이트를 골라 두면 `확인(O)`이 그것을
+    /// 덮어쓰게 되어, 디자인이 `새 사이트` 버튼을 없앤 뒤(README §9) 남은 유일한 추가 경로가 사라진다
+    pub fn open_new(&mut self) {
         self.open = true;
         self.tab = ManagerTab::default();
         self.selected = None;
@@ -1130,9 +1145,49 @@ mod tests {
         let mut store = SiteStore::new();
         let id = store.add("배포 서버");
         let mut manager = SiteManager::new();
-        manager.open();
+        manager.open_new();
         manager.select(&store, id);
         (manager, store, id)
+    }
+
+    #[test]
+    fn 설정을_고치러_열면_첫_사이트가_골라져_있다() {
+        // 인벤토리 #62 기본값 — 원본도 `selectedSite: 0`으로 뜬다
+        let mut store = SiteStore::new();
+        let first = store.add("배포 서버");
+        let second = store.add("스테이징");
+        if let Some(record) = store.get_mut(second) {
+            record.host = "staging.test".to_owned();
+        }
+        let mut manager = SiteManager::new();
+
+        manager.open(&store, None);
+        assert_eq!(manager.selected, Some(first));
+
+        // 지정한 사이트가 있으면 그것을 고른다 (실패 화면의 `설정 열기` — 인벤토리 #19)
+        manager.open(&store, Some(second));
+        assert_eq!(manager.selected, Some(second));
+        assert_eq!(manager.draft.host, "staging.test");
+
+        // 그 사이 지워진 사이트를 지정하면 첫 항목으로 물러선다
+        manager.open(&store, Some(SiteId(99)));
+        assert_eq!(manager.selected, Some(first));
+
+        // 등록된 사이트가 없으면 새 초안이다
+        manager.open(&SiteStore::new(), None);
+        assert_eq!(manager.selected, None);
+        assert_eq!(manager.draft, Draft::default());
+    }
+
+    #[test]
+    fn 새_사이트_추가는_아무것도_고르지_않고_연다() {
+        // 인벤토리 #8 — 여기서 기존 사이트를 골라 두면 `확인(O)`이 그것을 덮어쓴다
+        let mut store = SiteStore::new();
+        store.add("배포 서버");
+        let mut manager = SiteManager::new();
+        manager.open_new();
+        assert!(manager.is_open());
+        assert_eq!(manager.selected, None);
     }
 
     #[test]
@@ -1162,7 +1217,7 @@ mod tests {
         // plan Edge Case — 사이트 0개에서 `삭제(D)`
         let mut store = SiteStore::new();
         let mut manager = SiteManager::new();
-        manager.open();
+        manager.open_new();
         for action in [
             ListAction::StartRename,
             ListAction::Delete,
@@ -1179,7 +1234,7 @@ mod tests {
         // plan Edge Case — 조용히 실패하면 사용자는 등록된 줄 안다
         let mut store = SiteStore::new();
         let mut manager = SiteManager::new();
-        manager.open();
+        manager.open_new();
         manager.draft.host = "   ".to_owned();
         assert_eq!(manager.commit(&mut store), None);
         assert_eq!(manager.error.as_deref(), Some(ERROR_NO_HOST));
@@ -1191,7 +1246,7 @@ mod tests {
         // Acceptance ⑤·⑥의 저장 쪽 — 이름은 호스트로 잡고 평문은 남지 않는다 (FR-28)
         let mut store = SiteStore::new();
         let mut manager = SiteManager::new();
-        manager.open();
+        manager.open_new();
         manager.draft.host = "example.test".to_owned();
         manager.draft.port = "2222".to_owned();
         manager.draft.protocol = Protocol::Sftp;
@@ -1216,7 +1271,7 @@ mod tests {
     fn 익명으로_등록하면_비밀번호를_담지_않는다() {
         let mut store = SiteStore::new();
         let mut manager = SiteManager::new();
-        manager.open();
+        manager.open_new();
         manager.draft.host = "example.test".to_owned();
         manager.draft.password = "쓰지않을값".to_owned();
         manager.draft.logon = LogonType::Anonymous;
@@ -1252,7 +1307,7 @@ mod tests {
     fn 대화를_닫으면_초안이_사라진다() {
         // plan Edge Case — `Esc`로 닫으면 초안 폐기. 평문 비밀번호도 여기서 함께 버려진다
         let mut manager = SiteManager::new();
-        manager.open();
+        manager.open_new();
         manager.draft.host = "example.test".to_owned();
         manager.draft.password = "버려질값".to_owned();
         manager.close();

@@ -499,7 +499,8 @@ impl ExplorerApp {
             SidebarAction::RefreshSites => {}
             // 연결 메뉴는 사이드바가 직접 띄운다 — 이 조작은 알림일 뿐이다
             SidebarAction::OpenConnectMenu => {}
-            SidebarAction::OpenSiteManager => self.site_manager.open(),
+            // `새 사이트 추가…`라 빈 초안으로 연다 (인벤토리 #8)
+            SidebarAction::OpenSiteManager => self.site_manager.open_new(),
         }
     }
 
@@ -854,7 +855,12 @@ impl ExplorerApp {
             RemoteAction::CancelConnect => {
                 self.manager.send(conn, ConnCommand::Disconnect);
             }
-            RemoteAction::OpenSettings => self.site_manager.open(),
+            // 방금 실패한 그 사이트를 고른 채 연다 — 고치러 온 사용자가 목록에서 다시 찾지
+            // 않게 한다 (인벤토리 #19)
+            RemoteAction::OpenSettings => {
+                let site = self.manager.get(conn).map(|connection| connection.site);
+                self.site_manager.open(&self.sites, site);
+            }
             // 서버 로그 패널은 T20이 만든다 — 그때 이 자리에서 연다
             RemoteAction::ViewLog => {}
         }
