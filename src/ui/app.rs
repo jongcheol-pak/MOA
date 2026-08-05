@@ -165,17 +165,27 @@ impl WorkspaceView {
     /// 지정한 패널을 나눈다. 새 패널은 원래 패널과 같은 폴더에서 시작한다.
     ///
     /// 패널마다 있는 분할 버튼은 **자기 패널**을 대상으로 하므로 활성 패널과 다를 수 있다 (D3)
-    fn split_panel(&mut self, target: PanelId, dir: SplitDir, place: SplitPlace, area: LayoutRect) {
+    /// 나뉘었으면 새 패널의 id — **공간이 부족하면 `None`**이다.
+    ///
+    /// 반환하는 이유: 연결 시 좌우 분할(FR-35)은 분할이 서지 못했을 때 현재 패널의 새 탭으로
+    /// 물러서야 하는데, 성공 여부를 알 수 없으면 그 판단을 할 수 없다 (T14 Acceptance ④)
+    fn split_panel(
+        &mut self,
+        target: PanelId,
+        dir: SplitDir,
+        place: SplitPlace,
+        area: LayoutRect,
+    ) -> Option<PanelId> {
         let start = self
             .panels
             .get(&target)
             .map(|p| p.dir().to_path_buf())
             .unwrap_or_else(start_dir);
-        // 공간이 부족하면 나눌 수 없다 — 조용히 무시한다(사용자는 창을 키우면 된다)
-        if let Ok(new_id) = self.layout.split(target, dir, place, area) {
-            self.panels.insert(new_id, PanelState::new(start));
-            self.active = new_id;
-        }
+        // 공간이 부족하면 나눌 수 없다 (사용자는 창을 키우면 된다)
+        let new_id = self.layout.split(target, dir, place, area).ok()?;
+        self.panels.insert(new_id, PanelState::new(start));
+        self.active = new_id;
+        Some(new_id)
     }
 
     /// 지정한 패널을 닫는다. 마지막 하나는 닫히지 않는다 (FR-2).
@@ -453,7 +463,7 @@ impl ExplorerApp {
     }
 
     /// 사이드바 조작 반영 — 목록 변경은 전부 여기서만 일어난다
-    fn handle_sidebar(&mut self, action: SidebarAction) {
+    fn handle_sidebar(&mut self, action: SidebarAction, area: LayoutRect) {
         match action {
             SidebarAction::Select(index) => {
                 self.workspaces.set_active(index);
@@ -474,7 +484,9 @@ impl ExplorerApp {
             // 어느 사이트를 골랐는지는 사이드바가 스스로 들고 그린다 — 앱이 따로 둘 상태가 없다
             SidebarAction::SelectSite(_) => {}
             SidebarAction::ConnectSite(site) => {
-                self.connect_site(site);
+                // 진입점 셋과 **같은 경로**로 보낸다 — 사이드바만 분할 없이 연결하면
+                // 여는 방법에 따라 배치가 달라진다
+                self.open_site_tab(site, None, area);
             }
             // 목록에서 감출 뿐 사이트는 남는다 (README §1) — 사이트 관리자에 그대로 보인다
             SidebarAction::HideSite(site) => self.sites.hide(site),
@@ -674,7 +686,7 @@ impl ExplorerApp {
             }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
-            Command::OpenSiteTab(site) => self.open_site_tab(site, target),
+            Command::OpenSiteTab(site) => self.open_site_tab(site, target, area),
             Command::Refresh => self.refresh_panel(target, ctx),
             Command::CloseTab => self.close_tab(target, ctx),
             Command::NewTab
@@ -827,7 +839,7 @@ impl ExplorerApp {
     /// 그때마다 사이트를 새로 만들면 목록이 같은 서버로 뒤덮인다.
     /// 처음 보는 주소는 **숨긴 사이트**로 들인다: 연결에 필요한 설정(사용자·포트)을 담을 곳이
     /// 있어야 하지만, 한 번 적어 본 주소가 사이드바에 눌러앉지는 않게 한다(사이트 관리자에는 보인다)
-    fn open_remote_url(&mut self, target: PanelId, url: RemoteUrl) {
+    fn open_remote_url(&mut self, target: PanelId, url: RemoteUrl, area: LayoutRect) {
         let port = url.effective_port();
         let site = match matching_site(&self.sites, &url) {
             Some(site) => site,
@@ -847,7 +859,7 @@ impl ExplorerApp {
                 site
             }
         };
-        self.open_site_tab_at(site, Some(target), url.path);
+        self.open_site_tab_at(site, Some(target), url.path, area);
     }
 
     /// 사이트를 그 패널의 **새 원격 탭**으로 열고 연결을 건다 (FR-33·FR-34·FR-38).
@@ -856,17 +868,34 @@ impl ExplorerApp {
     /// 여는 방법마다 다른 경로를 두면 셋이 조금씩 다르게 동작하게 된다.
     ///
     /// 사이트가 그 사이 지워졌으면 아무 일도 하지 않는다 (plan Edge Case: 드래그 도중 삭제)
-    fn open_site_tab(&mut self, site: SiteId, target: Option<PanelId>) {
+    fn open_site_tab(&mut self, site: SiteId, target: Option<PanelId>, area: LayoutRect) {
         // 서버가 정한 홈에서 시작한다 — 연결이 서면 워커가 실제 위치를 알려 준다
-        self.open_site_tab_at(site, target, RemotePath::root());
+        self.open_site_tab_at(site, target, RemotePath::root(), area);
     }
 
-    /// 위와 같되 시작 위치를 지정한다 — 주소에 경로가 함께 적힌 경우(`sftp://host/pub`)
-    fn open_site_tab_at(&mut self, site: SiteId, target: Option<PanelId>, path: RemotePath) {
+    /// 위와 같되 시작 위치를 지정한다 — 주소에 경로가 함께 적힌 경우(`sftp://host/pub`).
+    ///
+    /// **연결은 활성 패널을 좌우로 나눠 오른쪽에 연다** (FR-35·README) — 로컬과 원격을 나란히
+    /// 두고 주고받는 것이 이 기능의 쓰임이라, 같은 패널에서 열면 그 배치를 사용자가 매번 손으로
+    /// 만들어야 한다. **나눌 자리가 없으면 현재 패널의 새 탭**으로 물러선다 (Acceptance ④) —
+    /// 조용히 아무 일도 일어나지 않으면 사용자는 연결 자체가 실패한 줄 안다
+    fn open_site_tab_at(
+        &mut self,
+        site: SiteId,
+        target: Option<PanelId>,
+        path: RemotePath,
+        area: LayoutRect,
+    ) {
         if self.sites.get(site).is_none() {
             return;
         }
-        let Some(panel) = self.command_panel_mut(target) else {
+        let view = self.ensure_active_view();
+        let source = target.unwrap_or(view.active);
+        // 기존 분할 구조는 그대로 두고 대상 패널만 나눈다 (Acceptance ②)
+        let opened = view
+            .split_panel(source, SplitDir::Horizontal, SplitPlace::After, area)
+            .unwrap_or(source);
+        let Some(panel) = view.panels.get_mut(&opened) else {
             return;
         };
         panel.open_remote_tab(site, path);
@@ -995,6 +1024,7 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
+            let mut sidebar_actions = Vec::new();
             if !self.sidebar_collapsed {
                 // 연결 상태를 먼저 모은다 — 아래 클로저가 `self`를 통째로 빌린다
                 let connected = self.connected_sites();
@@ -1018,12 +1048,15 @@ impl eframe::App for ExplorerApp {
                         )
                     });
                 self.sidebar_width = panel.response.rect.width();
-                for action in panel.inner {
-                    self.handle_sidebar(action);
-                }
+                // 조작은 모아 두었다가 아래에서 처리한다 — 연결은 분할 영역을 알아야 하는데
+                // 그 영역은 **사이드바를 뺀 나머지**라 여기서는 아직 정해지지 않았다
+                sidebar_actions = panel.inner;
             }
 
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
+            for action in sidebar_actions {
+                self.handle_sidebar(action, area);
+            }
             // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
             // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
             // 모달이 떠 있는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
@@ -1072,7 +1105,7 @@ impl eframe::App for ExplorerApp {
                 self.apply_remote_action(target, action);
             }
             if let Some((target, url)) = remote_url {
-                self.open_remote_url(target, url);
+                self.open_remote_url(target, url, area);
             }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {
@@ -1239,6 +1272,74 @@ mod tests {
         let ids = restored.layout.panel_ids();
         assert_eq!(restored.panels[&ids[0]].dir(), Path::new(r"D:\"));
         assert_eq!(restored.panels[&ids[1]].dir(), Path::new(r"C:\"));
+    }
+
+    #[test]
+    fn 연결하면_활성_패널이_오른쪽으로_나뉜다() {
+        // Acceptance ①③ — 로컬과 원격을 나란히 두는 것이 이 기능의 쓰임이다 (FR-35)
+        let area = rect(0, 0, 1200, 800);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let source = view.active;
+        let before = pane_rect(&view, source, area);
+
+        let opened = view
+            .split_panel(source, SplitDir::Horizontal, SplitPlace::After, area)
+            .expect("공간이 넉넉하면 나뉜다");
+
+        assert_eq!(view.layout.panel_count(), 2, "패널 수가 늘지 않았다");
+        assert_eq!(view.active, opened, "새 패널이 활성이 아니다");
+        // 새 패널은 **원래 패널의 오른쪽**에 온다
+        let left = pane_rect(&view, source, area);
+        let right = pane_rect(&view, opened, area);
+        assert!(left.x < right.x, "새 패널이 왼쪽에 생겼다");
+        assert_eq!(left.x, before.x, "원래 패널이 옮겨졌다");
+    }
+
+    #[test]
+    fn 연결해도_기존_분할_구조는_그대로다() {
+        // Acceptance ② — 4분할 상태에서 연결해도 나머지 패널의 자리가 흔들리면 안 된다 (FR-1 회귀)
+        let area = rect(0, 0, 1600, 900);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let first = view.active;
+        let second = view
+            .split_panel(first, SplitDir::Horizontal, SplitPlace::After, area)
+            .expect("분할 1");
+        let third = view
+            .split_panel(second, SplitDir::Vertical, SplitPlace::After, area)
+            .expect("분할 2");
+        let untouched: Vec<(PanelId, LayoutRect)> = [first, third]
+            .into_iter()
+            .map(|id| (id, pane_rect(&view, id, area)))
+            .collect();
+
+        // 이제 두 번째 패널을 대상으로 연결한다
+        view.split_panel(second, SplitDir::Horizontal, SplitPlace::After, area)
+            .expect("분할 3");
+
+        assert_eq!(view.layout.panel_count(), 4);
+        for (id, before) in untouched {
+            assert_eq!(
+                pane_rect(&view, id, area),
+                before,
+                "대상이 아닌 패널의 자리가 바뀌었다"
+            );
+        }
+    }
+
+    #[test]
+    fn 나눌_자리가_없으면_분할하지_않는다() {
+        // Acceptance ④ — 이때 호출부는 현재 패널의 새 탭으로 물러선다
+        let tiny = rect(0, 0, crate::app::layout::MIN_PANE_SIZE, 400);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let source = view.active;
+
+        assert_eq!(
+            view.split_panel(source, SplitDir::Horizontal, SplitPlace::After, tiny),
+            None,
+            "좁은 화면에서 분할이 섰다"
+        );
+        assert_eq!(view.layout.panel_count(), 1, "패널이 늘었다");
+        assert_eq!(view.active, source, "활성 패널이 바뀌었다");
     }
 
     #[test]
