@@ -176,35 +176,49 @@ mod tests {
         assert_eq!(MENU_CAPTION, "연결 사이트를 새 탭으로");
     }
 
+    /// 탭 스트립과 같은 가로 배치에서 `▾`가 차지한 폭을 잰다.
+    /// 세로 배치로 재면 커서가 y로만 움직여 "그리지 않았다"와 구분되지 않는다
+    fn caret_width_in_strip(sites: &SiteStore) -> f32 {
+        let ctx = egui::Context::default();
+        let mut width = 0.0;
+        ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // 항목 사이 기본 간격이 폭에 섞이지 않게 한다
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let before = ui.cursor().min.x;
+                    show_site_dropdown(ui, sites, &[], 28.0);
+                    width = ui.cursor().min.x - before;
+                });
+            });
+        });
+        width
+    }
+
     #[test]
     fn 사이트가_없으면_버튼을_그리지_않는다() {
         // Acceptance ① — 눌러도 빈 목록만 나오는 버튼은 자리만 차지한다
-        let ctx = egui::Context::default();
-        let empty = SiteStore::new();
-        let mut drew = true;
-        ctx.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let before = ui.cursor().min.x;
-                show_site_dropdown(ui, &empty, &[], 28.0);
-                drew = ui.cursor().min.x != before;
-            });
-        });
-        assert!(!drew, "사이트가 없는데 `▾` 자리를 잡았다");
+        assert_eq!(
+            caret_width_in_strip(&SiteStore::new()),
+            0.0,
+            "사이트가 없는데 `▾` 자리를 잡았다"
+        );
     }
 
     #[test]
     fn 사이트가_있으면_버튼이_자리를_잡는다() {
-        let ctx = egui::Context::default();
         let mut sites = SiteStore::new();
         sites.add("배포 서버");
-        let mut width = 0.0;
-        ctx.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let before = ui.cursor().min.x;
-                show_site_dropdown(ui, &sites, &[], 28.0);
-                width = ui.cursor().min.x - before;
-            });
-        });
-        assert_eq!(width, CARET_WIDTH, "`▾` 버튼 폭이 원본과 다르다");
+        assert_eq!(
+            caret_width_in_strip(&sites),
+            CARET_WIDTH,
+            "`▾` 버튼 폭이 원본과 다르다"
+        );
+
+        // 숨긴 사이트만 남으면 다시 사라진다 — 목록이 비는 것과 같다
+        let mut hidden = SiteStore::new();
+        let id = hidden.add("배포 서버");
+        hidden.hide(id);
+        assert_eq!(caret_width_in_strip(&hidden), 0.0);
     }
 }
