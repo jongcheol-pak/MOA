@@ -46,13 +46,15 @@ const FAIL_ICON_SIZE: f32 = 34.0;
 const FAIL_GAP: f32 = 14.0;
 /// 실패 화면 좌우 여백
 const FAIL_PAD_X: f32 = 28.0;
-/// 실패 화면 버튼 높이
+/// 실패 화면 버튼 높이·좌우 여백 (HTML:249)
 const FAIL_BUTTON_HEIGHT: f32 = 28.0;
+const FAIL_BUTTON_PAD_X: f32 = 16.0;
 /// 사유 문구가 길 때 보일 최대 줄 수 — 그보다 길면 말줄임한다
 const FAIL_REASON_MAX_ROWS: usize = 3;
 
-/// 연결 중 취소 버튼 높이 (HTML:228)
+/// 연결 중 취소 버튼 높이·좌우 여백 (HTML:228)
 const CANCEL_BUTTON_HEIGHT: f32 = 22.0;
+const CANCEL_PAD_X: f32 = 10.0;
 
 /// 미연결 원격 패널의 항목 수 표기 (인벤토리 #95)
 pub const UNKNOWN_COUNT: &str = "—";
@@ -202,11 +204,60 @@ pub fn show_skeleton(ui: &mut egui::Ui) {
     }
 }
 
+/// 디자인의 보조 버튼 — 채움 `#252525` · 테두리 `#3A3A3A` · hover `#2E2E2E` · 모서리 반경 0.
+///
+/// egui 기본 버튼 색(`#2A2A2A`·기본 테두리·hover `#383838`)과 다르므로 스타일을 **국소로**
+/// 덮는다. 전역 팔레트를 바꾸면 기존 화면의 버튼까지 함께 바뀐다.
+/// 글자색은 자리마다 달라(취소 `#C8C8C8` · 실패 화면 `#D8D8D8`) 인자로 받는다
+/// 폭은 **글자에 맞춘다** — 원본이 폭 대신 좌우 여백(`padding 0 Npx`)으로 정하기 때문이다
+fn design_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    text_color: egui::Color32,
+    pad_x: f32,
+    height: f32,
+) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = egui::vec2(pad_x, 0.0);
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        for (state, fill) in [
+            (&mut widgets.inactive, theme::HEADER_BG),
+            (&mut widgets.hovered, theme::ROW_HOT),
+            (&mut widgets.active, theme::ROW_HOT),
+        ] {
+            state.weak_bg_fill = fill;
+            state.bg_fill = fill;
+            state.bg_stroke = egui::Stroke::new(1.0, theme::BORDER_CONTROL);
+            state.corner_radius = egui::CornerRadius::ZERO;
+            // 눌렸을 때 커지지 않는다 — 디자인은 상태에 따라 크기가 변하지 않는다
+            state.expansion = 0.0;
+        }
+        ui.add(
+            egui::Button::new(egui::RichText::new(label).color(text_color))
+                .min_size(egui::vec2(0.0, height)),
+        )
+    })
+    .inner
+}
+
+/// `design_button`이 차지할 폭 — 가운데 정렬처럼 **그리기 전에** 폭을 알아야 하는 자리가 쓴다
+fn design_button_width(ui: &egui::Ui, label: &str, pad_x: f32) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(label.to_owned(), font, theme::TEXT)
+        .size()
+        .x
+        + pad_x * 2.0
+}
+
 /// 연결 중 취소 버튼 — 눌렸으면 `true` (인벤토리 #21)
 pub fn show_cancel(ui: &mut egui::Ui) -> bool {
-    ui.add_sized(
-        egui::vec2(60.0, CANCEL_BUTTON_HEIGHT),
-        egui::Button::new(egui::RichText::new(CANCEL_LABEL).color(theme::TEXT_BUTTON)),
+    design_button(
+        ui,
+        CANCEL_LABEL,
+        theme::HEADER_TEXT,
+        CANCEL_PAD_X,
+        CANCEL_BUTTON_HEIGHT,
     )
     .clicked()
 }
@@ -291,24 +342,33 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
 
         ui.add_space(FAIL_GAP);
         ui.horizontal(|ui| {
-            // 가운데 정렬 — `vertical_centered` 안이라도 가로 묶음은 스스로 맞춰야 한다
-            let buttons = 2.0 * 96.0 + ui.spacing().item_spacing.x;
+            // 가운데 정렬 — `vertical_centered` 안이라도 가로 묶음은 스스로 맞춰야 한다.
+            // 버튼 폭이 글자에 맞춰지므로 미리 재어 둔다
+            let buttons: f32 = [FAIL_RETRY, FAIL_SETTINGS]
+                .iter()
+                .map(|label| design_button_width(ui, label, FAIL_BUTTON_PAD_X))
+                .sum::<f32>()
+                + ui.spacing().item_spacing.x;
             ui.add_space(((ui.available_width() - buttons) / 2.0).max(0.0));
-            if ui
-                .add_sized(
-                    egui::vec2(96.0, FAIL_BUTTON_HEIGHT),
-                    egui::Button::new(egui::RichText::new(FAIL_RETRY).color(theme::TEXT_BUTTON)),
-                )
-                .clicked()
+            if design_button(
+                ui,
+                FAIL_RETRY,
+                theme::TEXT_BUTTON,
+                FAIL_BUTTON_PAD_X,
+                FAIL_BUTTON_HEIGHT,
+            )
+            .clicked()
             {
                 action = Some(FailedAction::Retry);
             }
-            if ui
-                .add_sized(
-                    egui::vec2(96.0, FAIL_BUTTON_HEIGHT),
-                    egui::Button::new(egui::RichText::new(FAIL_SETTINGS).color(theme::TEXT_BUTTON)),
-                )
-                .clicked()
+            if design_button(
+                ui,
+                FAIL_SETTINGS,
+                theme::TEXT_BUTTON,
+                FAIL_BUTTON_PAD_X,
+                FAIL_BUTTON_HEIGHT,
+            )
+            .clicked()
             {
                 action = Some(FailedAction::OpenSettings);
             }
