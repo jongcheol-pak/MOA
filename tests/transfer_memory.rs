@@ -109,6 +109,13 @@ fn 일기가바이트_동시_네_건을_옮겨도_메모리가_버퍼_몫에_머
 
     assert_eq!(moved, STREAMS as u64 * GIB, "네 건이 다 옮겨지지 않았다");
     let growth = peak.load(Ordering::SeqCst).saturating_sub(baseline);
+    // 실측값을 남긴다 (T26 Acceptance ③ — `--nocapture`로 볼 수 있다)
+    println!(
+        "NFR-12 실측: 유휴 {}MB → 최고 {}MB (증가 {}KB)",
+        baseline / (1024 * 1024),
+        peak.load(Ordering::SeqCst) / (1024 * 1024),
+        growth / 1024
+    );
     assert!(
         growth < LIMIT,
         "전송 중 작업 집합이 {}MB 늘었다 — 임계는 {}MB다 (파일을 통째로 버퍼에 올리고 있지 않은지 보라)",

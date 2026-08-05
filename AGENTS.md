@@ -5,7 +5,7 @@
 ## Stack
 - **언어**: Rust stable (1.80+)
 - **에디션**: 2024
-- **주요 crates**: eframe/egui (UI — glow 백엔드), windows (windows-rs — Win32·COM·셸 API), serde + serde_json (설정 직렬화)
+- **주요 crates**: eframe/egui (UI — glow 백엔드), windows (windows-rs — Win32·COM·셸 API), serde + serde_json (설정 직렬화), suppaftp (FTP·FTPS), ssh2 (SFTP)
 - **빌드 도구**: Cargo
 - **대상 플랫폼**: Windows 11 이상, x64 전용 (GUI 앱, 콘솔 창 없음)
 
@@ -19,7 +19,18 @@
 - **Format**: `cargo fmt`
 
 ## 데이터 접근
-- **DB/스토어**: 없음 (설정은 `%APPDATA%\FileExplorer\settings.json` 로컬 파일)
+- **DB/스토어**: 없음 (설정은 `%APPDATA%\FileExplorer\settings.json` 로컬 파일 — 스키마 v3, v2는 승격해 읽는다)
+- **비밀번호**: `%APPDATA%` 파일에 **DPAPI로 봉인해서만** 담는다 (`remote::secret`). 평문을 파일·로그·문서에 남기지 않는다
+
+## 원격 기능 테스트
+- **기본은 실서버가 필요 없다** — `remote::testing`의 가짜 서버·세션이 지연·무응답·연결 거절·대량 목록·`SITE CHMOD` 미지원까지 흉내 낸다. `cargo test`만으로 전부 돈다.
+- **실서버로 확인하고 싶을 때**는 환경변수에 주소를 담아 수동으로 돌린다 — 값은 **각자 환경의 것**이며 저장소·문서·커밋 어디에도 적지 않는다.
+  ```
+  $env:FE_TEST_FTP_URL  = "ftp://<사용자>:<비밀번호>@<호스트>:<포트>/<경로>"
+  $env:FE_TEST_SFTP_URL = "sftp://<사용자>:<비밀번호>@<호스트>:<포트>/<경로>"
+  cargo run --release     # 앱을 띄워 그 주소로 직접 연결해 본다
+  ```
+  두 변수가 없으면 자동 테스트는 그대로 전부 통과한다(가짜 서버만 쓴다).
 
 ## Repository Structure
 
@@ -33,6 +44,7 @@
 │   ├── ui/                  # egui(eframe/glow) UI 계층 — 화면·입력 전부
 │   ├── app/                 # 순수 로직 — 워크스페이스·분할 레이아웃·세션 스키마
 │   ├── panel/               # 순수 모델 — 탭·히스토리·정렬/표시 규칙
+│   ├── remote/              # 원격 연결 — FTP/FTPS/SFTP 세션, 연결 워커, 전송 큐, 사이트 저장소
 │   └── fs/                  # 디렉터리 열거·감시·아이콘·셸 연동
 └── tests/                   # 통합 테스트
 ```
