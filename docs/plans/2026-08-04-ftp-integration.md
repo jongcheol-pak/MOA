@@ -627,6 +627,9 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [x] T24 원격 폴더 트리 [C]
 - [x] T25 세션 v3 저장/복원 [D]
 - [x] T26 NFR 실측 · 문서 갱신 [C]
+- [ ] T27 협상 결과로 `· TLS` 표기 [C] — F-7 BLOCKER B1
+- [ ] T28 원격 이동 실패를 알리고 되돌리기 [C] — F-7 BLOCKER B2
+- [ ] T29 펼치는 중 표시 + 기록 정정 [B] — F-7 MAJOR M1·M3·M4·MINOR m3
 
 ### T0. 선행 정리 — rustfmt 드리프트 [Type B]
 
@@ -985,6 +988,27 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Edge Cases**: 측정값이 NFR을 못 넘김 → 원인을 구간별로 좁혀 기록하고 Deferred로 올린다(이전 NFR-1 조사와 같은 절차) / 측정 환경의 편차 → 3회 측정 중앙값.
 - **Halt Forecast**: **(ii-b)** 측정 결과 NFR을 구조적으로 못 넘기는 것이 드러나면(예: 백엔드 교체 필요) 멈추고 보고한다.
 
+### T27. 협상 결과로 `· TLS` 표기 [Type C] — F-7 BLOCKER B1
+
+- **Files**: `src/remote/types.rs`, `src/remote/ftp.rs`, `src/remote/sftp.rs`, `src/remote/connection.rs`, `src/ui/app.rs`
+- **Design**: `RemoteSession`에 `is_secure()`를 더한다(기본 `false`). FTP는 `AUTH TLS`가 실제로 선 경우에만 참, SFTP는 항상 참. 워커가 연결 직후 그 값을 `ConnEvent::Secure(bool)`로 올리고 `Connection`이 들고 있으며, 상태 표시줄은 **설정값이 아니라 그 값**을 읽는다.
+- **Acceptance**: ① `ExplicitIfAvailable`로 붙였는데 서버가 TLS를 거부해 평문으로 되연결되면 상태 표시줄에 `· TLS`가 **붙지 않는다**(가짜 세션으로 단언). ② 암호화된 연결에서는 그대로 붙는다. ③ 연결 전·실패에는 붙지 않는다.
+- **Halt Forecast**: 없음 — 내부 계약만 넓히고 공개 API·외부 호출은 건드리지 않는다.
+
+### T28. 원격 이동 실패를 알리고 되돌리기 [Type C] — F-7 BLOCKER B2
+
+- **Files**: `src/ui/panel.rs`, `src/ui/app.rs`
+- **Design**: `set_remote_path`가 **직전 경로를 기억**한다. 패널이 청한 목록이 실패하면(`ConnEvent::ListFailed`) 그 패널의 경로를 직전 값으로 되돌리고 사유를 상태 줄에 남긴다(FR-39 실패가 이미 쓰는 `notice` 경로 재사용).
+- **Acceptance**: ① 조회가 실패하면 탭·주소창이 **이전 폴더로 돌아간다**(보이는 목록과 경로가 어긋나지 않는다). ② 사유가 상태 줄에 남는다. ③ 트리 요청의 실패는 종전대로 그 노드에만 표시된다(회귀 없음). ④ 되돌릴 직전 경로가 없으면 경로는 그대로 두고 사유만 남긴다.
+- **Halt Forecast**: 없음.
+
+### T29. 펼치는 중 표시 + 기록 정정 [Type B] — F-7 MAJOR M1·M3·M4 · MINOR m3
+
+- **Files**: `src/ui/app.rs`, `src/ui/status_bar.rs`, `notes.md`, `docs/plans/deferred.md`, 이 plan
+- **Design**: 로컬 폴더를 펼치는 동안 상태 줄에 `펼치는 중 N건`을 보인다(실패 사유 다음, 진행 문구보다 앞). 그리고 잘못 적힌 기록을 고친다 — notes.md의 "원격 탭을 현재 패널에 연다"(실제는 **활성 패널 좌우 분할**, 공간 부족 시에만 현재 패널) · Deferred의 샘플 호스트 항목에 **이력 제거 비용**(파일 수정만으로는 지워지지 않음) 명기 · 드래그 Edge Case 문구를 구현에 맞게 정정.
+- **Acceptance**: ① 펼치는 중에 상태 줄이 그 사실을 보이고 끝나면 사라진다(순수 함수로 단언). ② notes.md·Deferred·plan 문구가 구현과 일치한다.
+- **Halt Forecast**: 없음.
+
 ## 검증 방법
 
 - 각 task: `cargo build` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → `cargo fmt --check` (경고 0)
@@ -1233,6 +1257,8 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - T0~T26 **전 task 완료**. 남은 것: Phase F + Phase G(PRD 재검증) + F-8(시각 확인 인계분).
 
 ## Retry Ledger
+
+- **F-7 재진입 1회차** (2026-08-05): `plan-completion-reviewer`가 BLOCKER 2(B1 거짓 TLS 표기 · B2 원격 이동 실패 무음) · MAJOR 4 · MINOR 4를 냈다. B1·B2는 이번 변경이 유발한 결함이라 이연 불가 → **T27·T28**로 등록. M1·M3·M4·m3은 **T29**로 묶었다. M2(FR-46 문자셋)는 라이브러리 교체가 필요해 루프 범위를 넘으므로 **사용자 결정 사항으로 최종 보고에 올린다**(재구현 vs PRD 재한정). m1(실화면 확인 절반)·m2(DirWatcher 회수)는 각각 F-8·Deferred 유지.
 
 - T22: 리뷰 지적 수정 사이클 2회(① spec MAJOR 2 — 원격 훑기 테스트 부재·로컬 권한 거부 무음 ② quality MAJOR 2 + MINOR 2 + SUGGEST 1 — 주석 오귀속·미사용 헬퍼·대기 누수·이름 충돌). **UI 스레드 블로킹 I/O와 워커 종료 신호는 리뷰가 오기 전에 선제 수정**했다(T19에서 같은 지적을 받은 뒤라 패턴을 알아봤다). 빌드 실패 6회(구조 분해·필드 추가에 따른 호출부 연쇄 — 전부 같은 성격), 테스트 실패 2회(자체 발견 — 파이썬 치환이 경로 리터럴의 ``를 제어문자로 바꾼 것 / 훑기 테스트가 연결 전에 명령을 보낸 것).
 - T21: 리뷰 지적 수정 사이클 1회(spec MAJOR 1 + MINOR 3 · quality MAJOR 1). quality의 지적(토글 id에 캐럿이 든 문구)은 **리뷰가 오기 전에 같은 것을 스스로 찾아 고치던 중**이었다 — T19에서 같은 지적을 받은 뒤라 패턴을 알아봤다. 빌드 실패 1회(clippy `too_many_arguments` — 인자를 튜플로 묶어 해소), 테스트 실패 1회(자체 발견 — 요약 예상값을 손으로 계산해 틀렸다. 실제 값으로 정정하고 경계 사례를 더했다).
