@@ -15,7 +15,7 @@ pub const SESSION_VERSION: u32 = 2;
 
 /// 사이드바 기본·최소·최대 폭(px, 96DPI 기준 — plan `## 시각 요소 분해`).
 /// 저장값 검증이 이 범위를 쓰므로 세션 모듈이 소유하고, 사이드바 창(T4·T7)이 같은 상수를 참조한다
-pub const SIDEBAR_DEFAULT_WIDTH: i32 = 232;
+pub const SIDEBAR_DEFAULT_WIDTH: i32 = 260;
 pub const SIDEBAR_MIN_WIDTH: i32 = 160;
 pub const SIDEBAR_MAX_WIDTH: i32 = 480;
 

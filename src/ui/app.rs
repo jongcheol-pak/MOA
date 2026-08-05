@@ -470,7 +470,34 @@ impl ExplorerApp {
             SidebarAction::Reorder(from, to) => {
                 self.workspaces.reorder(from, to);
             }
+            // 어느 사이트를 골랐는지는 사이드바가 스스로 들고 그린다 — 앱이 따로 둘 상태가 없다
+            SidebarAction::SelectSite(_) => {}
+            SidebarAction::ConnectSite(site) => {
+                self.connect_site(site);
+            }
+            // 목록에서 감출 뿐 사이트는 남는다 (README §1) — 사이트 관리자에 그대로 보인다
+            SidebarAction::HideSite(site) => self.sites.hide(site),
+            // 사이트 목록은 메모리에 있어 지금은 다시 읽을 것이 없다.
+            // 파일로 오가는 저장이 붙는 T15에서 이 자리가 다시 읽기가 된다
+            SidebarAction::RefreshSites => {}
+            // 연결 메뉴는 사이드바가 직접 띄운다 — 이 조작은 알림일 뿐이다
+            SidebarAction::OpenConnectMenu => {}
+            // 사이트 관리자 화면은 T15가 만든다 — 그때 여기서 연다
+            SidebarAction::OpenSiteManager => {}
         }
+    }
+
+    /// 지금 연결이 열려 있는 사이트들 — 사이드바의 상태 점이 이것으로 갈린다.
+    ///
+    /// 사이드바에 `ConnectionManager`를 통째로 넘기지 않는 이유: 사이드바가 알아야 하는 것은
+    /// "이 사이트에 연결이 있는가" 하나뿐이라, 연결 계층을 알게 하면 의존만 넓어진다
+    fn connected_sites(&self) -> Vec<SiteId> {
+        self.manager
+            .ids()
+            .iter()
+            .filter_map(|id| self.manager.get(*id))
+            .map(|connection| connection.site)
+            .collect()
     }
 
     /// 창 위치·크기를 따라간다. 최대화 중에는 갱신하지 않는다 —
@@ -896,6 +923,8 @@ impl eframe::App for ExplorerApp {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
             if !self.sidebar_collapsed {
+                // 연결 상태를 먼저 모은다 — 아래 클로저가 `self`를 통째로 빌린다
+                let connected = self.connected_sites();
                 // 사이드바가 자기 배경·여백을 직접 그리므로 egui 기본 프레임은 끈다
                 let panel = egui::Panel::left(egui::Id::new("workspace_sidebar"))
                     .resizable(true)
@@ -906,8 +935,14 @@ impl eframe::App for ExplorerApp {
                     ))
                     .frame(egui::Frame::NONE)
                     .show(ui, |ui| {
-                        self.sidebar
-                            .show(ui, &self.workspaces, &mut self.icons, &mut self.textures)
+                        self.sidebar.show(
+                            ui,
+                            &self.workspaces,
+                            &self.sites,
+                            &connected,
+                            &mut self.icons,
+                            &mut self.textures,
+                        )
                     });
                 self.sidebar_width = panel.response.rect.width();
                 for action in panel.inner {

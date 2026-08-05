@@ -8,7 +8,10 @@
 //! 사용자 조작은 `SidebarAction` 값으로 돌려준다. 실제 변경은 `ui::app`이 한다.
 use crate::app::workspace::WorkspaceList;
 use crate::fs::icons::IconCache;
+use crate::remote::sites::SiteStore;
+use crate::remote::types::{SiteId, SiteRecord};
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::theme;
 use eframe::egui;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
@@ -38,16 +41,41 @@ const DRAG_THRESHOLD: f32 = 8.0;
 /// 드롭 위치 삽입선 두께
 const INSERT_LINE_HEIGHT: f32 = 2.0;
 
-const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(0x1B, 0x1B, 0x1B);
-const COLOR_ITEM: egui::Color32 = egui::Color32::from_rgb(0x23, 0x23, 0x23);
-const COLOR_ITEM_SELECTED: egui::Color32 = egui::Color32::from_rgb(0x2E, 0x2E, 0x2E);
-const COLOR_ITEM_HOVER: egui::Color32 = egui::Color32::from_rgb(0x28, 0x28, 0x28);
-const COLOR_ITEM_BORDER: egui::Color32 = egui::Color32::from_rgb(0x2C, 0x2C, 0x2C);
-const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x9E, 0xFF);
-const COLOR_NAME: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xE8, 0xE8);
-const COLOR_SUBTITLE: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x8A, 0x8A);
-const COLOR_HEADER: egui::Color32 = egui::Color32::from_rgb(0x9A, 0x9A, 0x9A);
-const COLOR_HEADER_HOT: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xE8, 0xE8);
+// ── 연결 섹션 시각 토큰 (원본 `FileExplorer-FTP.dc.html:57-69`) ──
+/// 연결 헤더가 워크스페이스 목록과 떨어지는 간격 (`margin-top:14px`)
+const CONNECT_HEADER_TOP: f32 = 14.0;
+/// 연결 섹션 제목 (인벤토리 #1)
+const CONNECT_LABEL: &str = "연결";
+/// 새로 고침 글리프 크기 — `+`(15px)보다 한 단계 작다 (인벤토리 #2)
+const REFRESH_FONT_PX: f32 = 14.0;
+/// 헤더 우측 두 버튼 사이 간격
+const HEADER_BUTTON_GAP: f32 = 2.0;
+/// 사이트 행 높이·행간 (인벤토리 #4)
+const SITE_ROW_HEIGHT: f32 = 36.0;
+const SITE_ROW_GAP: f32 = 2.0;
+/// 사이트 행 좌우 여백과 요소 사이 간격
+const SITE_PAD_X: f32 = 8.0;
+const SITE_GAP: f32 = 8.0;
+/// 선택된 사이트의 왼쪽 강조 테두리 두께
+const SITE_EDGE_WIDTH: f32 = 2.0;
+/// 상태 점 지름
+const SITE_DOT: f32 = 7.0;
+/// 사이트 이름·프로토콜 글자 크기 (인벤토리 #4·#5)
+const SITE_NAME_PX: f32 = 13.0;
+const SITE_PROTO_PX: f32 = 12.0;
+/// 연결 메뉴 폭·캡션 (인벤토리 #6, 원본 `:367-368`)
+const CONNECT_MENU_WIDTH: f32 = 246.0;
+const CONNECT_MENU_CAPTION: &str = "등록된 사이트";
+/// 사이트 우클릭 메뉴 폭 (인벤토리 #9, 원본 `:355`)
+const SITE_MENU_WIDTH: f32 = 180.0;
+/// 두 메뉴가 함께 쓰는 행 높이와 캡션 글자 크기 (원본 `:356`·`:368`·`:371`)
+const MENU_ROW_HEIGHT: f32 = 28.0;
+const MENU_CAPTION_PX: f32 = 12.0;
+/// 연결 메뉴 하단 항목 (인벤토리 #8)
+const NEW_SITE_LABEL: &str = "새 사이트 추가…";
+/// 사이트 컨텍스트 메뉴의 삭제와 그 단축키 표기 (인벤토리 #10)
+const HIDE_SITE_LABEL: &str = "삭제";
+const HIDE_SITE_SHORTCUT: &str = "Del";
 
 /// 사이드바에서 올라온 사용자 조작. 목록을 바꾸는 일은 전부 호출부의 몫이다.
 ///
@@ -61,6 +89,21 @@ pub enum SidebarAction {
     Remove(usize),
     /// `from` 항목을 목록의 `to` 자리로 옮긴다 (`WorkspaceList::reorder`와 같은 계약)
     Reorder(usize, usize),
+
+    // ── 연결 섹션 (FR-28·FR-33, 인벤토리 #1~10) ──
+    /// 사이트 행 클릭 — 고르기만 한다
+    SelectSite(SiteId),
+    /// 사이트 행 더블클릭·연결 메뉴 선택 — 이 사이트로 연결한다 (인벤토리 #4·#7)
+    ConnectSite(SiteId),
+    /// **사이드바 목록에서만 감춘다** — 사이트 자체는 남는다 (README §1, 인벤토리 #10)
+    HideSite(SiteId),
+    /// 헤더 `⟳` (인벤토리 #2)
+    RefreshSites,
+    /// 헤더 `+` (인벤토리 #3) — 연결 메뉴는 사이드바가 직접 띄우므로 이 조작은
+    /// 메뉴가 열렸다는 사실만 알린다(호출부가 상태 줄 등에 쓸 수 있다)
+    OpenConnectMenu,
+    /// `새 사이트 추가…` (인벤토리 #8) — 사이트 관리자를 연다
+    OpenSiteManager,
 }
 
 /// 드래그 정렬 진행 상태
@@ -73,6 +116,8 @@ struct Drag {
 
 /// 사이드바의 화면 상태 — 편집 중인 이름과 드래그만 갖는다
 pub struct WorkspaceSidebar {
+    /// 연결 섹션에서 고른 사이트 — 왼쪽 강조 테두리가 붙는다 (인벤토리 #4)
+    selected_site: Option<SiteId>,
     /// 인라인 편집 중인 (인덱스, 입력 중인 이름)
     editing: Option<(usize, String)>,
     /// 편집을 시작한 프레임에 입력칸으로 포커스를 옮기기 위한 표시
@@ -92,6 +137,7 @@ impl Default for WorkspaceSidebar {
 impl WorkspaceSidebar {
     pub fn new() -> WorkspaceSidebar {
         WorkspaceSidebar {
+            selected_site: None,
             editing: None,
             focus_edit: false,
             edit_added: false,
@@ -109,18 +155,28 @@ impl WorkspaceSidebar {
         &mut self,
         ui: &mut egui::Ui,
         list: &WorkspaceList,
+        sites: &SiteStore,
+        connected: &[SiteId],
         icons: &mut IconCache,
         textures: &mut IconTextures,
     ) -> Vec<SidebarAction> {
-        ui.painter().rect_filled(ui.max_rect(), 0.0, COLOR_BG);
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, theme::WINDOW_BG);
         if self.edit_added {
             // 호출부가 추가를 처리해 활성이 새 항목으로 옮겨진 뒤다
             self.edit_added = false;
             self.begin_edit(list.active_index(), list);
         }
         let mut actions = Vec::new();
-        self.show_header(ui, &mut actions);
-        self.show_items(ui, list, icons, textures, &mut actions);
+        // 두 섹션을 **한 스크롤 안에** 세로로 잇는다 — 원본도 사이드바 전체가 한 컬럼이라
+        // 워크스페이스가 많으면 연결 섹션이 아래로 밀리며 함께 스크롤된다 (원본 `:36-69`)
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                self.show_header(ui, &mut actions);
+                self.show_items(ui, list, icons, textures, &mut actions);
+                self.show_connections(ui, sites, connected, &mut actions);
+            });
         if actions.contains(&SidebarAction::Add) {
             self.edit_added = true;
         }
@@ -138,7 +194,7 @@ impl WorkspaceSidebar {
             egui::Align2::LEFT_CENTER,
             HEADER_LABEL,
             egui::FontId::proportional(HEADER_FONT_PX),
-            COLOR_HEADER,
+            theme::TEXT_MUTED,
         );
         let plus = egui::Rect::from_min_size(
             egui::pos2(
@@ -156,9 +212,9 @@ impl WorkspaceSidebar {
             "+",
             egui::FontId::proportional(HEADER_FONT_PX),
             if resp.hovered() {
-                COLOR_HEADER_HOT
+                theme::TEXT
             } else {
-                COLOR_HEADER
+                theme::TEXT_MUTED
             },
         );
         if resp.clicked() {
@@ -176,9 +232,10 @@ impl WorkspaceSidebar {
         actions: &mut Vec<SidebarAction>,
     ) {
         let can_remove = list.len() > 1;
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        // 스크롤은 `show`가 두 섹션을 함께 감싼다 — 여기서 또 열면 스크롤이 중첩된다
+        {
+            let ui = &mut *ui;
+            {
                 let mut first_top = None;
                 for index in 0..list.len() {
                     let (row, resp) = ui.allocate_exact_size(
@@ -201,7 +258,8 @@ impl WorkspaceSidebar {
                     }
                 }
                 self.finish_drag(ui, list, first_top, actions);
-            });
+            }
+        }
     }
 
     /// 카드 하나에 대한 클릭·컨텍스트 메뉴·드래그 입력
@@ -293,7 +351,7 @@ impl WorkspaceSidebar {
                 ),
             ),
             0.0,
-            COLOR_ACCENT,
+            theme::ACCENT,
         );
         if ui.input(|i| !i.pointer.any_down()) {
             if let Some(to) = reorder_target(drag.from, insert_at) {
@@ -314,7 +372,7 @@ impl WorkspaceSidebar {
         let Some((_, mut buffer)) = self.editing.take() else {
             return;
         };
-        ui.painter().rect_filled(card, 0.0, COLOR_ITEM_SELECTED);
+        ui.painter().rect_filled(card, 0.0, theme::ROW_HOT);
         let edit_rect = egui::Rect::from_min_max(
             egui::pos2(card.left() + TEXT_X, card.top() + NAME_TOP),
             egui::pos2(
@@ -342,6 +400,150 @@ impl WorkspaceSidebar {
 
     /// 메뉴에서 워크스페이스를 추가했을 때도 `+` 버튼과 같이 곧바로 이름을 고치게 한다 (FR-16).
     /// 새 항목의 인덱스는 호출부가 추가를 끝낸 다음 프레임에야 정해진다
+    /// 연결 섹션 — 헤더(`⟳`·`+`)와 사이트 목록 (인벤토리 #1~10).
+    ///
+    /// **숨긴 사이트는 여기 나오지 않는다** — 지운 것이 아니라 사이드바에서만 감춘 것이라
+    /// 사이트 관리자에는 그대로 남는다 (README §1)
+    fn show_connections(
+        &mut self,
+        ui: &mut egui::Ui,
+        sites: &SiteStore,
+        connected: &[SiteId],
+        actions: &mut Vec<SidebarAction>,
+    ) {
+        ui.add_space(CONNECT_HEADER_TOP);
+        self.show_connect_header(ui, sites, actions);
+        // 사이트가 하나도 없으면 헤더만 남는다 (plan Edge Case)
+        for record in sites.visible() {
+            let live = connected.contains(&record.id);
+            self.show_site_row(ui, record, live, actions);
+        }
+    }
+
+    /// `연결` 제목과 우측 두 버튼 — 새로 고침(`⟳`)·연결 메뉴(`+`) (인벤토리 #1~3)
+    fn show_connect_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        sites: &SiteStore,
+        actions: &mut Vec<SidebarAction>,
+    ) {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), HEADER_HEIGHT),
+            egui::Sense::hover(),
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + ITEM_MARGIN_X, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            CONNECT_LABEL,
+            egui::FontId::proportional(HEADER_FONT_PX),
+            theme::TEXT_MUTED,
+        );
+
+        let top = rect.top() + (HEADER_HEIGHT - PLUS_SIZE) / 2.0;
+        let plus_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - PLUS_MARGIN - PLUS_SIZE, top),
+            egui::Vec2::splat(PLUS_SIZE),
+        );
+        let refresh_rect = egui::Rect::from_min_size(
+            egui::pos2(plus_rect.left() - HEADER_BUTTON_GAP - PLUS_SIZE, top),
+            egui::Vec2::splat(PLUS_SIZE),
+        );
+
+        let refresh = ui
+            .interact(
+                refresh_rect,
+                ui.id().with("sites_refresh"),
+                egui::Sense::click(),
+            )
+            .on_hover_text("사이트 목록 새로 고침");
+        header_glyph(ui, refresh_rect, "⟳", REFRESH_FONT_PX, refresh.hovered());
+        if refresh.clicked() {
+            actions.push(SidebarAction::RefreshSites);
+        }
+
+        let plus = ui
+            .interact(plus_rect, ui.id().with("sites_add"), egui::Sense::click())
+            .on_hover_text("연결");
+        header_glyph(ui, plus_rect, "+", HEADER_FONT_PX, plus.hovered());
+        if plus.clicked() {
+            actions.push(SidebarAction::OpenConnectMenu);
+        }
+        show_connect_menu(&plus, sites, actions);
+    }
+
+    /// 사이트 한 줄 — 클릭은 고르기, 더블클릭은 연결, 우클릭은 메뉴 (인벤토리 #4·#5·#9·#10)
+    fn show_site_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        record: &SiteRecord,
+        connected: bool,
+        actions: &mut Vec<SidebarAction>,
+    ) {
+        let (rect, resp) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), SITE_ROW_HEIGHT),
+            egui::Sense::click(),
+        );
+        ui.add_space(SITE_ROW_GAP);
+        let selected = self.selected_site == Some(record.id);
+        if selected {
+            ui.painter().rect_filled(rect, 0.0, theme::ROW_HOT);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(rect, 0.0, theme::CARD_HOT);
+        }
+        // 고른 사이트만 왼쪽에 강조 띠가 붙는다 (원본 `border-left`)
+        if selected {
+            let edge =
+                egui::Rect::from_min_size(rect.min, egui::vec2(SITE_EDGE_WIDTH, rect.height()));
+            ui.painter().rect_filled(edge, 0.0, theme::ACCENT);
+        }
+
+        let dot_center = egui::pos2(
+            rect.left() + SITE_EDGE_WIDTH + SITE_PAD_X + SITE_DOT / 2.0,
+            rect.center().y,
+        );
+        // 연결돼 있으면 초록 점 — 아니면 흐린 점 (README `### Colors`)
+        let dot_color = if connected {
+            theme::OK_DOT
+        } else {
+            theme::TEXT_DIM
+        };
+        ui.painter()
+            .circle_filled(dot_center, SITE_DOT / 2.0, dot_color);
+
+        // 프로토콜을 먼저 오른쪽에 붙인다 — 이름이 길어도 밀려나지 않는다 (plan Edge Case)
+        let proto = record.protocol.label();
+        let proto_galley = ui.painter().layout_no_wrap(
+            proto.to_owned(),
+            egui::FontId::proportional(SITE_PROTO_PX),
+            theme::TEXT_DIM,
+        );
+        let proto_left = rect.right() - SITE_PAD_X - proto_galley.size().x;
+        ui.painter().galley(
+            egui::pos2(proto_left, rect.center().y - proto_galley.size().y / 2.0),
+            proto_galley,
+            theme::TEXT_DIM,
+        );
+
+        let name_left = dot_center.x + SITE_DOT / 2.0 + SITE_GAP;
+        let name_width = (proto_left - SITE_GAP - name_left).max(0.0);
+        let name = elide(ui, &record.name, SITE_NAME_PX, theme::TEXT, name_width);
+        ui.painter().galley(
+            egui::pos2(name_left, rect.center().y - name.size().y / 2.0),
+            name,
+            theme::TEXT,
+        );
+
+        // 더블클릭이 연결이다 — 클릭은 고르기만 한다(잘못 눌러 연결이 열리지 않게)
+        if resp.double_clicked() {
+            self.selected_site = Some(record.id);
+            actions.push(SidebarAction::ConnectSite(record.id));
+        } else if resp.clicked() {
+            self.selected_site = Some(record.id);
+            actions.push(SidebarAction::SelectSite(record.id));
+        }
+        show_site_context_menu(&resp, record, actions);
+    }
+
     pub fn edit_after_add(&mut self) {
         self.edit_added = true;
     }
@@ -361,6 +563,86 @@ impl WorkspaceSidebar {
 }
 
 /// 카드 하나를 그린다 (배경·강조 바·아이콘·이름·부제)
+/// 헤더 우측 아이콘 글리프 — 평소 흐리고 마우스를 올리면 밝아진다 (인벤토리 #2·#3)
+fn header_glyph(ui: &egui::Ui, rect: egui::Rect, glyph: &str, size: f32, hovered: bool) {
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        egui::FontId::proportional(size),
+        if hovered {
+            theme::TEXT
+        } else {
+            theme::TEXT_MUTED
+        },
+    );
+}
+
+/// 연결 메뉴 — `+` 버튼에서 열린다 (인벤토리 #6~8).
+///
+/// 목록에 **숨긴 사이트는 넣지 않는다** — 사이드바에서 감춘 것을 여기서 다시 보이면
+/// 감춘 의미가 없다
+fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec<SidebarAction>) {
+    egui::Popup::menu(plus).show(|ui| {
+        ui.set_width(CONNECT_MENU_WIDTH);
+        ui.label(
+            egui::RichText::new(CONNECT_MENU_CAPTION)
+                .size(MENU_CAPTION_PX)
+                .color(theme::TEXT_DIM),
+        );
+        for record in sites.visible() {
+            let button = egui::Button::new(egui::RichText::new(&record.name).color(theme::TEXT))
+                .right_text(
+                    egui::RichText::new(record.protocol.label())
+                        .size(SITE_PROTO_PX)
+                        .color(theme::TEXT_DIM),
+                )
+                .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+            if ui.add(button).clicked() {
+                actions.push(SidebarAction::ConnectSite(record.id));
+                ui.close();
+            }
+        }
+        ui.separator();
+        let add = egui::Button::new(egui::RichText::new(NEW_SITE_LABEL).color(theme::TEXT))
+            .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        if ui.add(add).clicked() {
+            actions.push(SidebarAction::OpenSiteManager);
+            ui.close();
+        }
+    });
+}
+
+/// 사이트 우클릭 메뉴 — 사이트 이름 머리와 삭제 하나뿐이다 (인벤토리 #9·#10).
+///
+/// 여기서 지우는 것은 **사이드바 바로가기**다 — 사이트 자체는 사이트 관리자에 남는다
+fn show_site_context_menu(
+    row: &egui::Response,
+    record: &SiteRecord,
+    actions: &mut Vec<SidebarAction>,
+) {
+    egui::Popup::context_menu(row).show(|ui| {
+        ui.set_width(SITE_MENU_WIDTH);
+        ui.label(
+            egui::RichText::new(&record.name)
+                .size(MENU_CAPTION_PX)
+                .color(theme::TEXT_DIM),
+        );
+        ui.separator();
+        let remove = egui::Button::new(egui::RichText::new(HIDE_SITE_LABEL).color(theme::TEXT))
+            .right_text(
+                egui::RichText::new(HIDE_SITE_SHORTCUT)
+                    .size(SITE_PROTO_PX)
+                    .color(theme::TEXT_DIM),
+            )
+            .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        if ui.add(remove).clicked() {
+            actions.push(SidebarAction::HideSite(record.id));
+            ui.close();
+        }
+    });
+}
+
 fn draw_card(
     ui: &egui::Ui,
     card: egui::Rect,
@@ -373,25 +655,25 @@ fn draw_card(
     let item = &list.items()[index];
     let is_active = index == list.active_index();
     let fill = if is_active {
-        COLOR_ITEM_SELECTED
+        theme::ROW_HOT
     } else if hovered {
-        COLOR_ITEM_HOVER
+        theme::CARD_HOT
     } else {
-        COLOR_ITEM
+        theme::CARD_BG
     };
     let painter = ui.painter();
     painter.rect_filled(card, 0.0, fill);
     painter.rect_stroke(
         card,
         0.0,
-        egui::Stroke::new(1.0, COLOR_ITEM_BORDER),
+        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
         egui::StrokeKind::Inside,
     );
     if is_active {
         painter.rect_filled(
             egui::Rect::from_min_size(card.min, egui::vec2(ACCENT_BAR_WIDTH, card.height())),
             0.0,
-            COLOR_ACCENT,
+            theme::ACCENT,
         );
     }
 
@@ -413,21 +695,21 @@ fn draw_card(
 
     let text_left = card.left() + TEXT_X;
     let text_width = (card.right() - TEXT_RIGHT_PAD - text_left).max(0.0);
-    let name = elide(ui, &item.name, NAME_FONT_PX, COLOR_NAME, text_width);
+    let name = elide(ui, &item.name, NAME_FONT_PX, theme::TEXT, text_width);
     let name_top = card.top() + NAME_TOP;
     ui.painter()
-        .galley(egui::pos2(text_left, name_top), name, COLOR_NAME);
+        .galley(egui::pos2(text_left, name_top), name, theme::TEXT);
     let subtitle = elide(
         ui,
         &item.subtitle,
         SUBTITLE_FONT_PX,
-        COLOR_SUBTITLE,
+        theme::TEXT_FAINT,
         text_width,
     );
     ui.painter().galley(
         egui::pos2(text_left, name_top + NAME_FONT_PX + 4.0 + SUBTITLE_GAP),
         subtitle,
-        COLOR_SUBTITLE,
+        theme::TEXT_FAINT,
     );
 }
 
@@ -481,6 +763,100 @@ fn reorder_target(from: usize, insert_at: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 사이드바를 한 프레임 그리고 화면에 나온 글자를 모은다
+    fn draw_sidebar(sites: &SiteStore, connected: &[SiteId]) -> Vec<String> {
+        fn collect(shape: &egui::Shape, found: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut sidebar = WorkspaceSidebar::new();
+        let list = WorkspaceList::new();
+        let mut icons = IconCache::new();
+        let mut textures = IconTextures::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                sidebar.show(ui, &list, sites, connected, &mut icons, &mut textures);
+            });
+        });
+        let mut found = Vec::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    #[test]
+    fn 연결_섹션_문구는_인벤토리_원문_그대로다() {
+        // 인벤토리 #1·#6·#8·#10 — 다듬으면 화면과 명세가 갈린다
+        assert_eq!(CONNECT_LABEL, "연결");
+        assert_eq!(CONNECT_MENU_CAPTION, "등록된 사이트");
+        assert_eq!(NEW_SITE_LABEL, "새 사이트 추가…");
+        assert_eq!(HIDE_SITE_LABEL, "삭제");
+        assert_eq!(HIDE_SITE_SHORTCUT, "Del");
+    }
+
+    #[test]
+    fn 연결_섹션_치수는_원본과_같다() {
+        // 인벤토리 #4·#5·#6·#9 · 시각 속성 표
+        assert_eq!(SITE_ROW_HEIGHT, 36.0);
+        assert_eq!(SITE_DOT, 7.0);
+        assert_eq!(SITE_EDGE_WIDTH, 2.0);
+        assert_eq!(SITE_PROTO_PX, 12.0);
+        assert_eq!(CONNECT_HEADER_TOP, 14.0);
+        assert_eq!(CONNECT_MENU_WIDTH, 246.0);
+        assert_eq!(SITE_MENU_WIDTH, 180.0);
+        assert_eq!(MENU_ROW_HEIGHT, 28.0);
+    }
+
+    #[test]
+    fn 연결_섹션은_사이트를_이름과_프로토콜로_보인다() {
+        // Acceptance ① — 등록된 사이트가 헤더 아래에 줄로 선다
+        let mut sites = SiteStore::new();
+        sites.add("배포 서버");
+        let texts = draw_sidebar(&sites, &[]);
+        assert!(texts.iter().any(|t| t == CONNECT_LABEL), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "배포 서버"), "{texts:?}");
+        // 새 사이트의 기본 프로토콜은 FTP다
+        assert!(texts.iter().any(|t| t == "ftp"), "{texts:?}");
+    }
+
+    #[test]
+    fn 사이트가_없으면_헤더만_남는다() {
+        // plan Edge Case — 빈 목록에서도 섹션이 사라지지 않는다
+        let texts = draw_sidebar(&SiteStore::new(), &[]);
+        assert!(texts.iter().any(|t| t == CONNECT_LABEL), "{texts:?}");
+    }
+
+    #[test]
+    fn 숨긴_사이트는_사이드바에서만_사라진다() {
+        // Acceptance ③ · README §1 — 사이트 관리자 목록에는 그대로 남아야 한다
+        let mut sites = SiteStore::new();
+        let id = sites.add("배포 서버");
+        sites.hide(id);
+
+        assert!(sites.get(id).is_some(), "사이트가 저장소에서 지워졌다");
+        assert_eq!(sites.visible().count(), 0);
+        let texts = draw_sidebar(&sites, &[]);
+        assert!(
+            !texts.iter().any(|t| t == "배포 서버"),
+            "숨긴 사이트가 사이드바에 남았다: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn 사이드바_기본_폭은_260이다() {
+        // Acceptance ⑤ · D24 — 저장된 폭이 있으면 그것이 이긴다(세션 복원이 덮어쓴다)
+        assert_eq!(crate::app::settings::SIDEBAR_DEFAULT_WIDTH, 260);
+    }
 
     #[test]
     fn 삽입_위치는_카드_중앙을_기준으로_갈린다() {
