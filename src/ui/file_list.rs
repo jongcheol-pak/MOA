@@ -147,6 +147,18 @@ impl FileListView {
     ///
     /// 로컬과 달리 **선택을 되살리지 않는다** — 원격 목록은 사용자가 새로 고침을 눌렀을 때만
     /// 바뀌고(변경 감시가 없다 — Deferred), 그때는 선택이 풀리는 것이 자연스럽다
+    /// 목록을 비운다 — 아직 무엇을 보여 줄지 모르는 구간에서 **옛 항목이 남지 않게** 한다.
+    ///
+    /// 선택도 함께 지운다: 지우지 않으면 없는 항목을 고른 상태가 되어, 다음 목록이 도착했을 때
+    /// 엉뚱한 줄이 골라진 것처럼 보인다
+    pub fn clear_entries(&mut self) {
+        self.type_names.clear();
+        self.icon_indices.clear();
+        self.model = ListModel::Remote(Vec::new());
+        self.selection.clear();
+        self.anchor = None;
+    }
+
     pub fn set_remote_entries(&mut self, entries: Vec<RemoteEntry>, icons: &mut IconCache) {
         self.type_names = entries
             .iter()

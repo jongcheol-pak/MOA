@@ -724,8 +724,14 @@ impl PanelState {
                 let path = path.to_path_buf();
                 self.start_load(path, PendingNav::None, ctx);
             }
-            // 원격은 연결을 아는 앱이 청한다 — 여기서는 깃발만 세운다
-            None => self.remote_dirty = true,
+            None => {
+                // 원격은 연결을 아는 앱이 청한다 — 여기서는 깃발만 세운다.
+                // **답이 오기 전까지 목록을 비운다** — 옛 탭의 항목을 남겨 두면 그 몇 백 밀리초
+                // 동안(또는 조회가 실패하면 계속) 주소창과 목록이 다른 곳을 가리키고,
+                // 그 위에서 연 메뉴가 화면에 없는 경로에 삭제·권한 변경을 건다 (F-7 4라운드 M1)
+                self.list.clear_entries();
+                self.remote_dirty = true;
+            }
         }
     }
 
@@ -2240,6 +2246,16 @@ mod tests {
         assert!(
             panel.take_remote_dirty(),
             "원격 탭으로 바꿨는데 목록을 다시 읽지 않는다"
+        );
+        // 답이 오기 전까지 목록은 비어 있어야 한다 — 옛 탭의 항목이 남으면 그 사이에
+        // 연 메뉴가 화면에 없는 경로를 겨눈다 (F-7 4라운드 M1)
+        assert_eq!(
+            panel
+                .list
+                .selected_remote(&RemotePath::new("/var/www"))
+                .len(),
+            0,
+            "전환 직후 옛 항목이 남아 있다"
         );
 
         // 로컬 탭으로 바꾸면 로컬 열거가 도므로 이 깃발은 서지 않는다

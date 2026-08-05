@@ -1386,10 +1386,26 @@ mod tests {
     }
 
     #[test]
-    fn 연결_전에는_암호화로_보지_않는다() {
-        // 연결이 서기 전·실패한 연결에는 `· TLS`가 붙지 않아야 한다
+    fn 연결_전과_끊긴_뒤에는_암호화로_보지_않는다() {
+        // 연결이 서기 전에는 물론, **끊기거나 실패한 뒤에도** 암호화된 것으로 보면 안 된다
+        // (F-7 2라운드 m4 — 참으로 남으면 새 호출부가 생겼을 때 조용히 거짓 표시가 된다)
         let server = FakeServer::new();
-        let connection = spawn(&server, fast_retry());
-        assert!(!connection.is_secure());
+        let mut connection = spawn(&server, fast_retry());
+        assert!(!connection.is_secure(), "연결 전인데 암호화로 보았다");
+
+        connection.send(ConnCommand::Connect);
+        wait_until(Duration::from_secs(3), || {
+            connection.poll();
+            matches!(connection.phase(), ConnPhase::Ready)
+        });
+        assert!(connection.is_secure(), "선 연결을 암호화가 아니라고 보았다");
+
+        // 연결을 접으면 다시 거짓이 된다
+        connection.send(ConnCommand::Disconnect);
+        wait_until(Duration::from_secs(3), || {
+            connection.poll();
+            matches!(connection.phase(), ConnPhase::Closed)
+        });
+        assert!(!connection.is_secure(), "끊긴 연결을 암호화로 보았다");
     }
 }
