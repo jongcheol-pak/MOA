@@ -23,6 +23,8 @@ windows = { version = "0.62.2", features = [
     # OVERLAPPED·GetOverlappedResult — ReadDirectoryChangesW(변경 감시)가 요구
     "Win32_System_IO",
     "Win32_System_LibraryLoader",
+    # GetProcessMemoryInfo — 전송 중 작업 집합 실측 (NFR-12 임계 D27 판정)
+    "Win32_System_ProcessStatus",
     # Registry는 직접 사용 안 함 — SHELLEXECUTEINFOW(hkeyClass: HKEY) 구조체 정의가 요구 (없으면 E0432)
     "Win32_System_Registry",
     # 이벤트·대기 (CreateEventW·WaitForMultipleObjects) — 변경 감시 정지 신호
