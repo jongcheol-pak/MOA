@@ -568,6 +568,36 @@ pub fn spinner_field(
     next.clamp(*range.start(), *range.end())
 }
 
+// ── 진행 막대 (원본 `FileExplorer-FTP.dc.html:290`·`:323`) ──
+
+/// 진행 막대의 빈 트랙 색 — 큐 셀과 상태 표시줄이 같은 값을 쓴다
+const PROGRESS_TRACK: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x2A, 0x2A);
+
+/// 진행 막대 — 트랙 위에 비율만큼 채운다.
+///
+/// 큐 셀(110×6)과 상태 표시줄(240×6)이 같은 부품을 쓴다 — 폭·높이·색을 인자로 받는 이유다.
+/// `ratio`가 `None`이면 **트랙만 그린다**(크기를 몰라 진행률을 셀 수 없는 전송 — `—`로 보이는 것과 같은 뜻)
+pub fn progress_bar(
+    ui: &mut egui::Ui,
+    size: egui::Vec2,
+    ratio: Option<f32>,
+    fill: egui::Color32,
+) -> egui::Rect {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, PROGRESS_TRACK);
+    if let Some(ratio) = ratio {
+        let width = rect.width() * ratio.clamp(0.0, 1.0);
+        if width > 0.0 {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(width, rect.height())),
+                0.0,
+                fill,
+            );
+        }
+    }
+    rect
+}
+
 /// 드롭다운 팝업의 한 줄 — 눌렸으면 `true`
 fn menu_row(ui: &mut egui::Ui, label: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(

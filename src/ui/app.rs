@@ -14,13 +14,17 @@ use crate::panel::tabs::TabPhase;
 use crate::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
 use crate::remote::ftp::FtpSession;
 use crate::remote::manager::ConnectionManager;
+use crate::remote::queue::TransferQueue;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
+use crate::remote::transfer::TransferRunner;
 use crate::remote::types::{LogonType, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
+use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
+use crate::ui::queue_panel::{self, QueueAction};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
@@ -324,6 +328,12 @@ pub struct ExplorerApp {
     site_manager: SiteManager,
     /// 짧게 떴다 사라지는 알림 (FR-43) — 창 전역이라 워크스페이스를 넘나든다
     toast: Toast,
+    /// 전송 큐 (FR-36) — 연결과 같은 이유로 앱이 쥔다(워크스페이스를 넘나든다)
+    queue: TransferQueue,
+    /// 큐를 실제 전송으로 옮기는 실행기 (FR-37)
+    runner: TransferRunner,
+    /// 하단 도크의 화면 상태 (FR-36·FR-40)
+    dock: DockState,
 }
 
 impl ExplorerApp {
@@ -367,6 +377,9 @@ impl ExplorerApp {
             hostkey: HostKeyGate::new(),
             site_manager: SiteManager::new(),
             toast: Toast::new(),
+            queue: TransferQueue::new(),
+            runner: TransferRunner::new(),
+            dock: DockState::default(),
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -645,6 +658,95 @@ impl ExplorerApp {
         }
     }
 
+    /// 하단 도크 — 전송 큐·서버 로그가 번갈아 쓰는 자리 (FR-36·FR-40·D19).
+    ///
+    /// **레이아웃보다 먼저 그린다** — 남는 자리가 패널 그리드의 몫이 되어야 도크가 그리드를
+    /// 덮지 않는다. 창이 낮으면 도크가 줄어든다(`dock::dock_height`)
+    fn show_dock(&mut self, ui: &mut egui::Ui) {
+        if !self.dock.is_open() {
+            return;
+        }
+        let height = dock::dock_height(ui.available_height());
+        if height <= 0.0 {
+            return;
+        }
+        let connected = self.connected_sites();
+        let full = ui.available_rect_before_wrap();
+        let rect =
+            egui::Rect::from_min_max(egui::pos2(full.left(), full.bottom() - height), full.max);
+        // 도크가 차지한 만큼을 레이아웃에서 뗀다
+        let mut dock_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        dock_ui.set_clip_rect(rect);
+        dock_ui.painter().rect_filled(rect, 0.0, theme::SURFACE_BG);
+        dock_ui.painter().line_segment(
+            [
+                egui::pos2(rect.left(), rect.top() + 0.5),
+                egui::pos2(rect.right(), rect.top() + 0.5),
+            ],
+            egui::Stroke::new(1.0, theme::PANE_BORDER),
+        );
+
+        let strip = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 28.0));
+        let body = egui::Rect::from_min_max(egui::pos2(rect.left(), strip.bottom()), rect.max);
+        let (dock_action, queue_action) = {
+            let view = DockView {
+                queue: &self.queue,
+                connected: &connected,
+            };
+            let dock_action = dock::show_strip(&mut dock_ui, strip, &mut self.dock, &view);
+            let queue_action = match self.dock.panel {
+                Some(DockPanel::Queue) => {
+                    queue_panel::show_queue(&mut dock_ui, body, &mut self.dock, &view, &self.sites)
+                }
+                // 로그 화면은 T20이 채운다
+                _ => None,
+            };
+            (dock_action, queue_action)
+        };
+        if let Some(action) = dock_action {
+            self.apply_dock_action(action);
+        }
+        if let Some(action) = queue_action {
+            self.apply_queue_action(action);
+        }
+        // 도크 자리를 레이아웃에서 뗀다 — 이 뒤에 오는 그리드가 남은 위쪽만 쓴다
+        ui.allocate_rect(rect, egui::Sense::hover());
+    }
+
+    /// 도크 탭 스트립의 조작 (인벤토리 #33·#34)
+    fn apply_dock_action(&mut self, action: DockAction) {
+        match action {
+            DockAction::TogglePause => {
+                if self.queue.is_paused() {
+                    self.runner.resume(&mut self.queue);
+                } else {
+                    self.runner.pause(&mut self.queue, &self.manager);
+                }
+            }
+            DockAction::ClearDone => self.queue.clear_done(),
+            // 로그 복사는 T20이 붙인다
+            DockAction::CopyLog => {}
+        }
+    }
+
+    /// 큐 행에서 고른 조작 (T19 우클릭 메뉴)
+    fn apply_queue_action(&mut self, action: QueueAction) {
+        match action {
+            // 실패한 것을 대기로 되돌리면 다음 `start_ready`가 다시 건다
+            QueueAction::Retry(id) => self
+                .queue
+                .update(id, crate::remote::queue::TransferState::Wait),
+            QueueAction::Cancel(id) => {
+                self.runner.cancel(&self.manager, id);
+                self.queue.cancel(id);
+            }
+        }
+    }
+
     /// 사이트 관리자 대화 (FR-27) — 등록 결과를 받아 연결까지 잇는다.
     ///
     /// `area`는 `연결(C)`이 패널을 좌우로 나눌 때 쓴다(T14와 같은 착지점). 아직 배치를 모르는
@@ -796,7 +898,7 @@ impl ExplorerApp {
     ///
     /// **모든 워크스페이스의 패널**에 뿌린다. 이벤트는 한 번만 오므로 지금 보이지 않는
     /// 워크스페이스를 건너뛰면 그쪽 탭이 영영 옛 단계로 남는다
-    fn poll_remote(&mut self) {
+    fn poll_remote(&mut self, now: f64) {
         for (conn, event) in self.manager.poll() {
             match event {
                 ConnEvent::Phase(phase) => {
@@ -829,8 +931,17 @@ impl ExplorerApp {
                         panel.apply_remote_listed(generation, &path, entries, icons);
                     }
                 }
+                // 전송 소식은 실행기가 큐에 반영한다 (FR-37)
+                ConnEvent::TransferProgress { id, transferred } => {
+                    self.runner
+                        .on_progress(&mut self.queue, id, transferred, now)
+                }
+                ConnEvent::TransferDone { id, result } => {
+                    self.runner
+                        .on_done(&mut self.queue, id, result.map_err(|err| err.to_string()))
+                }
                 // 서버 로그는 `Connection`이 자기 버퍼에 이미 쌓는다(화면은 T20이 만든다).
-                // 전송·파일 작업 결과는 T21·T23이 받는다
+                // 파일 작업 결과는 T23이 받는다
                 _ => {}
             }
         }
@@ -1028,6 +1139,9 @@ impl eframe::App for ExplorerApp {
     /// 종료 직전 — 지금 상태를 `%APPDATA%\FileExplorer\settings.json`에 저장한다 (FR-11·NFR-7).
     /// 저장 실패(디스크 풀·권한)는 조용히 넘어간다 — 종료를 막을 이유가 없다
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // 진행 중이던 전송을 대기로 되돌린다 — 저장된 큐가 "전송 중"이라 주장하면
+        // 다음 실행의 화면이 실제로는 아무것도 돌지 않는데 진행 중으로 보인다 (T18)
+        self.runner.shutdown(&mut self.queue);
         save_session(&self.collect_session());
     }
 
@@ -1036,7 +1150,11 @@ impl eframe::App for ExplorerApp {
         self.textures.begin_frame();
         // 연결 소식은 **워크스페이스와 무관하게** 받는다 — 채널에 쌓인 것을 건너뛰면
         // 보이지 않는 워크스페이스의 원격 탭이 옛 단계로 굳는다
-        self.poll_remote();
+        let now = ctx.input(|input| input.time);
+        self.poll_remote(now);
+        // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
+        self.runner
+            .start_ready(&mut self.queue, &self.manager, &self.sites, now);
         // 화면에 없는 워크스페이스는 폴링하지 않는다 — 전환하면 그때 밀린 결과가 반영된다
         let id = self.workspaces.active().id;
         if let Some(view) = self.views.get_mut(&id) {
@@ -1100,6 +1218,7 @@ impl eframe::App for ExplorerApp {
                 sidebar_actions = panel.inner;
             }
 
+            self.show_dock(ui);
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
             layout_area = Some(area);
             for action in sidebar_actions {
