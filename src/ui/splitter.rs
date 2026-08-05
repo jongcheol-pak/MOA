@@ -5,9 +5,11 @@
 //! egui의 `SidePanel`류 도킹 컨테이너는 쓰지 않는다 — 중첩 자유 분할을 표현하지 못한다.
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
+use crate::remote::connection::ConnectionId;
+use crate::remote::sites::SiteStore;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{Command, PanelMenuState};
-use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState};
+use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::HashMap;
@@ -45,6 +47,10 @@ pub struct LayoutOutcome {
     /// 있어 그 위에서 고르면 아래 깔린 패널이 활성이 된다 — 그대로 활성 패널에 적용하면
     /// 닫기·새 파일이 엉뚱한 패널에 간다 (plan D16)
     pub command: Option<(PanelId, Command)>,
+    /// 원격 단계 화면에서 고른 조치와 그 패널 (T10) — 대상 판정은 `command`와 같은 이유다
+    pub remote: Option<(PanelId, RemoteAction)>,
+    /// 마지막 원격 탭이 닫혀 아무도 쓰지 않게 된 연결들 (FR-32)
+    pub closed_conns: Vec<ConnectionId>,
 }
 
 /// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
@@ -53,7 +59,12 @@ pub struct LayoutOutcome {
 /// T23의 원격 메뉴가 그렇다). 대신 **필드별 first-wins**로 병합한다 — 한 프레임에 A패널이
 /// 메뉴를 내고 B패널이 명령을 내면 둘 다 살아남아야 하므로, 비어 있는 필드만 채운다
 fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOutcome) {
-    let PanelOutcome { menu, command } = panel;
+    let PanelOutcome {
+        menu,
+        command,
+        remote,
+        closed_conn,
+    } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
         outcome.menu = menu;
@@ -64,6 +75,14 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
     {
         outcome.command = Some((id, command));
     }
+    if outcome.remote.is_none()
+        && let Some(remote) = remote
+    {
+        outcome.remote = Some((id, remote));
+    }
+    // 닫힌 연결은 **모아서** 올린다 — 한 프레임에 여러 패널이 각자의 마지막 원격 탭을 닫을 수
+    // 있고, first-wins로 하나만 남기면 나머지 연결의 워커·소켓이 그대로 남는다
+    outcome.closed_conns.extend(closed_conn);
 }
 
 /// 분할된 패널들을 그리고 스플리터 드래그·활성 패널 전환을 처리한다.
@@ -79,6 +98,7 @@ pub fn show_layout(
     active: &mut PanelId,
     icons: &mut IconCache,
     textures: &mut IconTextures,
+    sites: &SiteStore,
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
@@ -115,7 +135,7 @@ pub fn show_layout(
         let requested = ui
             .scope_builder(builder, |ui| {
                 ui.set_clip_rect(pane);
-                panel.show(ui, ctx, icons, textures, menu_state)
+                panel.show(ui, ctx, icons, textures, sites, menu_state)
             })
             .inner;
         merge_panel_outcome(&mut outcome, *id, requested);
@@ -229,6 +249,8 @@ mod tests {
                     pos: egui::pos2(0.0, 0.0),
                 }),
                 command: None,
+                remote: None,
+                closed_conn: None,
             },
         );
         merge_panel_outcome(
@@ -237,6 +259,8 @@ mod tests {
             PanelOutcome {
                 menu: None,
                 command: Some(Command::NewFolder),
+                remote: None,
+                closed_conn: None,
             },
         );
 
@@ -267,6 +291,8 @@ mod tests {
                         pos: egui::pos2(0.0, 0.0),
                     }),
                     command: Some(Command::NewFolder),
+                    remote: None,
+                    closed_conn: None,
                 },
             );
         }
@@ -275,5 +301,31 @@ mod tests {
             Some(std::path::PathBuf::from(r"C:\먼저"))
         );
         assert_eq!(outcome.command.map(|(id, _)| id), Some(PanelId(1)));
+    }
+
+    #[test]
+    fn 닫힌_연결은_하나도_버리지_않고_모은다() {
+        // 두 패널이 같은 프레임에 각자의 마지막 원격 탭을 닫으면 연결도 둘 다 접혀야 한다 —
+        // first-wins로 하나만 남기면 나머지 워커·소켓이 그대로 남는다 (FR-32)
+        let mut outcome = LayoutOutcome::default();
+        for (id, conn) in [(PanelId(1), ConnectionId(7)), (PanelId(2), ConnectionId(9))] {
+            merge_panel_outcome(
+                &mut outcome,
+                id,
+                PanelOutcome {
+                    menu: None,
+                    command: None,
+                    remote: Some(RemoteAction::Retry),
+                    closed_conn: Some(conn),
+                },
+            );
+        }
+        assert_eq!(
+            outcome.closed_conns,
+            vec![ConnectionId(7), ConnectionId(9)],
+            "닫힌 연결이 버려졌다"
+        );
+        // 조치는 한 프레임에 하나만 — 먼저 낸 패널 것을 쓴다
+        assert_eq!(outcome.remote, Some((PanelId(1), RemoteAction::Retry)));
     }
 }

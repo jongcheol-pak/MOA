@@ -7,10 +7,13 @@
 //! 옮겨질 뿐이고, 어느 화면을 고치는지 한눈에 보이지 않게 된다 (plan T10 비추상화 선언).
 //!
 //! **조작은 값으로 돌려주고 여기서 실행하지 않는다** — 기존 패널 규약과 같다.
+use std::sync::mpsc::{Receiver, Sender, channel};
+
 use eframe::egui;
 
 use crate::panel::tabs::TabPhase;
 use crate::remote::hostkey::{HostKeyCheck, HostKeyDecision};
+use crate::remote::sftp::HostKeyPrompt;
 use crate::remote::types::Protocol;
 use crate::ui::theme;
 
@@ -54,6 +57,22 @@ const CANCEL_BUTTON_HEIGHT: f32 = 22.0;
 /// 미연결 원격 패널의 항목 수 표기 (인벤토리 #95)
 pub const UNKNOWN_COUNT: &str = "—";
 
+// ── 화면 문구 (인벤토리 원문 그대로 — 여기서 다듬으면 화면과 명세가 갈린다) ──
+/// 미연결 탭 안내 첫 줄 (인벤토리 #14). `sftp://호스트`만 다른 색이라 셋으로 나눠 든다
+const EMPTY_HINT_HEAD: &str = "주소창에 ";
+const EMPTY_HINT_SCHEME: &str = "sftp://호스트";
+const EMPTY_HINT_TAIL: &str = " 를 입력해 연결하세요";
+/// 미연결 탭 안내 둘째 줄 (인벤토리 #15)
+const EMPTY_HINT_DRAG: &str = "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다";
+/// 실패 화면 제목 (인벤토리 #16)
+const FAIL_TITLE: &str = "연결하지 못했습니다";
+/// 실패 화면 버튼·링크 (인벤토리 #18~20)
+const FAIL_RETRY: &str = "재시도";
+const FAIL_SETTINGS: &str = "설정 열기";
+const FAIL_VIEW_LOG: &str = "서버 로그 보기";
+/// 연결 중 취소 (인벤토리 #21)
+const CANCEL_LABEL: &str = "취소";
+
 /// 서버가 사유를 주지 않았을 때 보일 문구
 const FAIL_REASON_FALLBACK: &str = "서버가 응답하지 않았습니다.";
 /// 실패 사유 뒤에 늘 붙는 안내 (인벤토리 #17)
@@ -80,17 +99,41 @@ pub fn badge_label(phase: &TabPhase, protocol: Protocol) -> &'static str {
     }
 }
 
-/// 배지의 글자·테두리·채움 색
-fn badge_colors(phase: &TabPhase) -> (egui::Color32, egui::Color32, egui::Color32) {
+/// 배지의 점·글자·테두리·채움 색.
+///
+/// **점과 글자를 따로 두는 이유**: 디자인은 연결됨 상태에서 점을 `#4ADE80`, 글자를 `#7FD6A2`로
+/// 나눈다(README `### Colors`) — 하나로 합치면 점이 흐려져 상태가 눈에 덜 띈다
+fn badge_colors(phase: &TabPhase) -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
     match phase {
-        TabPhase::Ok => (theme::OK_TEXT, theme::OK_BORDER, theme::OK_FILL),
-        TabPhase::Connecting => (theme::WARN, theme::WARN_BORDER, theme::WARN_FILL),
-        TabPhase::Error { .. } => (theme::ERROR_TEXT, theme::ERROR_BORDER, theme::ERROR_FILL),
-        TabPhase::New => (theme::TEXT_MUTED, theme::BORDER_CONTROL, theme::HEADER_BG),
+        TabPhase::Ok => (
+            theme::OK_DOT,
+            theme::OK_TEXT,
+            theme::OK_BORDER,
+            theme::OK_FILL,
+        ),
+        // 연결 중은 점과 글자가 같은 색이다 (README `### Colors`)
+        TabPhase::Connecting => (
+            theme::WARN,
+            theme::WARN,
+            theme::WARN_BORDER,
+            theme::WARN_FILL,
+        ),
+        TabPhase::Error { .. } => (
+            theme::ERROR,
+            theme::ERROR_TEXT,
+            theme::ERROR_BORDER,
+            theme::ERROR_FILL,
+        ),
+        TabPhase::New => (
+            theme::TEXT_MUTED,
+            theme::TEXT_MUTED,
+            theme::BORDER_CONTROL,
+            theme::HEADER_BG,
+        ),
     }
 }
 
-/// 탭 이름 오른쪽에 붙는 배지 — 차지할 폭을 돌려준다.
+/// 탭 아이콘과 이름 사이에 놓이는 배지 — 차지할 폭을 돌려준다 (원본 `:99`의 배치).
 ///
 /// **이름을 밀어내지 않는다** — 탭이 좁아지면 이름이 먼저 줄고 배지는 제 폭을 지킨다
 /// (plan Edge Case). 그래서 호출부는 이 폭을 먼저 떼어 두고 남은 자리에 이름을 그린다.
@@ -107,7 +150,7 @@ pub fn badge_width(ui: &egui::Ui, phase: &TabPhase, protocol: Protocol) -> f32 {
 
 /// 배지를 그린다 (인벤토리 #11~13)
 pub fn show_badge(ui: &egui::Ui, rect: egui::Rect, phase: &TabPhase, protocol: Protocol) {
-    let (text_color, border, fill) = badge_colors(phase);
+    let (dot, text_color, border, fill) = badge_colors(phase);
     let painter = ui.painter();
     let badge = egui::Rect::from_center_size(
         rect.center(),
@@ -126,7 +169,7 @@ pub fn show_badge(ui: &egui::Ui, rect: egui::Rect, phase: &TabPhase, protocol: P
         badge.left() + BADGE_PAD_X + BADGE_DOT / 2.0,
         badge.center().y,
     );
-    painter.circle_filled(dot_center, BADGE_DOT / 2.0, text_color);
+    painter.circle_filled(dot_center, BADGE_DOT / 2.0, dot);
     painter.text(
         egui::pos2(dot_center.x + BADGE_DOT / 2.0 + BADGE_GAP, badge.center().y),
         egui::Align2::LEFT_CENTER,
@@ -163,7 +206,7 @@ pub fn show_skeleton(ui: &mut egui::Ui) {
 pub fn show_cancel(ui: &mut egui::Ui) -> bool {
     ui.add_sized(
         egui::vec2(60.0, CANCEL_BUTTON_HEIGHT),
-        egui::Button::new(egui::RichText::new("취소").color(theme::TEXT_BUTTON)),
+        egui::Button::new(egui::RichText::new(CANCEL_LABEL).color(theme::TEXT_BUTTON)),
     )
     .clicked()
 }
@@ -177,15 +220,12 @@ pub fn show_empty(ui: &mut egui::Ui) {
         // `sftp://` 부분만 초록으로 — 사용자가 무엇을 적어야 하는지 눈에 들어오게
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            ui.label(egui::RichText::new("주소창에 ").color(theme::TEXT_MUTED));
-            ui.label(egui::RichText::new("sftp://호스트").color(theme::OK_TEXT));
-            ui.label(egui::RichText::new(" 를 입력해 연결하세요").color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new(EMPTY_HINT_HEAD).color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new(EMPTY_HINT_SCHEME).color(theme::OK_TEXT));
+            ui.label(egui::RichText::new(EMPTY_HINT_TAIL).color(theme::TEXT_MUTED));
         });
         ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new("사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다")
-                .color(theme::TEXT_DIM),
-        );
+        ui.label(egui::RichText::new(EMPTY_HINT_DRAG).color(theme::TEXT_DIM));
     });
 }
 
@@ -228,7 +268,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
 
         ui.add_space(FAIL_GAP);
         ui.label(
-            egui::RichText::new("연결하지 못했습니다")
+            egui::RichText::new(FAIL_TITLE)
                 .size(14.0)
                 .color(theme::TEXT),
         );
@@ -257,7 +297,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
             if ui
                 .add_sized(
                     egui::vec2(96.0, FAIL_BUTTON_HEIGHT),
-                    egui::Button::new(egui::RichText::new("재시도").color(theme::TEXT_BUTTON)),
+                    egui::Button::new(egui::RichText::new(FAIL_RETRY).color(theme::TEXT_BUTTON)),
                 )
                 .clicked()
             {
@@ -266,7 +306,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
             if ui
                 .add_sized(
                     egui::vec2(96.0, FAIL_BUTTON_HEIGHT),
-                    egui::Button::new(egui::RichText::new("설정 열기").color(theme::TEXT_BUTTON)),
+                    egui::Button::new(egui::RichText::new(FAIL_SETTINGS).color(theme::TEXT_BUTTON)),
                 )
                 .clicked()
             {
@@ -278,7 +318,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
         if ui
             .add(
                 egui::Label::new(
-                    egui::RichText::new("서버 로그 보기")
+                    egui::RichText::new(FAIL_VIEW_LOG)
                         .size(12.0)
                         .color(theme::TEXT_DIM),
                 )
@@ -350,6 +390,97 @@ pub fn show_hostkey_dialog(
     decision
 }
 
+/// 워커가 올린 지문 확인 요청 — 화면이 대화를 띄우고 답을 돌려준다
+struct HostKeyRequest {
+    /// 어느 서버인가 (`호스트:포트`)
+    host: String,
+    check: HostKeyCheck,
+    /// 결정을 돌려보낼 통로. **이것이 버려지면 워커는 거절로 읽는다**
+    reply: Sender<HostKeyDecision>,
+}
+
+/// 연결 워커와 확인 대화를 잇는 통로 (D15).
+///
+/// `remote`는 화면을 모르고, 화면은 워커 스레드에서 그릴 수 없다 — 그래서 워커가 요청을 채널로
+/// 올리고 **그 자리에서 답을 기다린다**. 기다리는 것은 그 연결의 워커 하나뿐이라 다른 연결과
+/// 로컬 탐색은 그대로 돈다 (NFR-11).
+///
+/// **자동 수락 경로가 없다**: 통로가 끊기거나(앱 종료) 화면이 사라지면 거절로 떨어진다.
+pub struct HostKeyGate {
+    tx: Sender<HostKeyRequest>,
+    rx: Receiver<HostKeyRequest>,
+    /// 지금 대화로 떠 있는 요청 — 사용자가 고를 때까지 여기 머문다
+    pending: Option<HostKeyRequest>,
+}
+
+impl Default for HostKeyGate {
+    fn default() -> HostKeyGate {
+        HostKeyGate::new()
+    }
+}
+
+impl HostKeyGate {
+    pub fn new() -> HostKeyGate {
+        let (tx, rx) = channel();
+        HostKeyGate {
+            tx,
+            rx,
+            pending: None,
+        }
+    }
+
+    /// SFTP 세션에 넘길 확인 통로를 만든다. `host`는 대화에 그대로 보인다
+    pub fn prompt(&self, host: String) -> HostKeyPrompt {
+        let tx = self.tx.clone();
+        Box::new(move |check: &HostKeyCheck| {
+            let (reply, answer) = channel();
+            let request = HostKeyRequest {
+                host: host.clone(),
+                check: check.clone(),
+                reply,
+            };
+            if tx.send(request).is_err() {
+                // 물을 곳이 없으면 거절이다 — 조용히 수락하는 경로를 두지 않는다 (D15)
+                return HostKeyDecision::Reject;
+            }
+            // 사용자가 고를 때까지 이 연결의 워커만 기다린다.
+            // 앱이 닫히면 회신 통로가 끊겨 거절이 된다 (plan Edge Case: 대화 중 앱 종료 → 연결 취소)
+            answer.recv().unwrap_or(HostKeyDecision::Reject)
+        })
+    }
+
+    /// 확인 대화가 떠 있는가 — 모달이 뜬 동안 단축키를 받지 않기 위해 호출부가 본다
+    pub fn is_open(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// 대기 중인 요청이 있으면 대화를 띄우고, 사용자가 고르면 워커에 돌려준다.
+    ///
+    /// 매 프레임 호출한다. 요청이 없으면 아무것도 그리지 않는다
+    pub fn show(&mut self, ctx: &egui::Context) -> Option<HostKeyDecision> {
+        self.resolve(|host, check| show_hostkey_dialog(ctx, host, check))
+    }
+
+    /// 요청 수신 → 사용자 결정 → 워커 회신의 순서만 담는다.
+    ///
+    /// 묻는 방법을 인자로 받는 이유: 대화 그리기는 화면이 있어야 하지만 **이 순서 자체는
+    /// 서버도 화면도 없이 검증돼야 한다** — 회신이 끊기면 워커가 영영 기다린다
+    fn resolve(
+        &mut self,
+        ask: impl FnOnce(&str, &HostKeyCheck) -> Option<HostKeyDecision>,
+    ) -> Option<HostKeyDecision> {
+        if self.pending.is_none() {
+            self.pending = self.rx.try_recv().ok();
+        }
+        let request = self.pending.as_ref()?;
+        let decision = ask(&request.host, &request.check)?;
+        let request = self.pending.take()?;
+        // 워커가 그 사이 사라졌으면 보낼 곳이 없다 — 조용히 넘어간다
+        let _ = request.reply.send(decision);
+        Some(decision)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,11 +513,35 @@ mod tests {
         let ok = badge_colors(&TabPhase::Ok);
         let connecting = badge_colors(&TabPhase::Connecting);
         let new = badge_colors(&TabPhase::New);
-        assert_eq!(ok.0, theme::OK_TEXT);
-        assert_eq!(connecting.0, theme::WARN);
-        assert_eq!(new.0, theme::TEXT_MUTED);
+        // (점, 글자, 테두리, 채움) — 연결됨만 점과 글자가 다른 색이다 (README `### Colors`)
+        assert_eq!((ok.0, ok.1), (theme::OK_DOT, theme::OK_TEXT));
+        assert_ne!(ok.0, ok.1, "연결됨 배지의 점이 글자색으로 흐려졌다");
+        assert_eq!((connecting.0, connecting.1), (theme::WARN, theme::WARN));
+        assert_eq!(new.1, theme::TEXT_MUTED);
         assert_ne!(ok, connecting);
         assert_ne!(ok, new);
+    }
+
+    #[test]
+    fn 미연결_안내_문구는_원문_그대로다() {
+        // 인벤토리 #14·#15 — 색을 나누느라 셋으로 쪼갠 첫 줄도 이어 붙이면 원문과 같아야 한다
+        let first = format!("{EMPTY_HINT_HEAD}{EMPTY_HINT_SCHEME}{EMPTY_HINT_TAIL}");
+        assert_eq!(first, "주소창에 sftp://호스트 를 입력해 연결하세요");
+        assert_eq!(
+            EMPTY_HINT_DRAG,
+            "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다"
+        );
+    }
+
+    #[test]
+    fn 실패_화면과_취소_문구는_원문_그대로다() {
+        // 인벤토리 #16~21 — 다듬으면 화면과 명세가 갈린다
+        assert_eq!(FAIL_TITLE, "연결하지 못했습니다");
+        assert_eq!(FAIL_REASON_HINT, "암호화 설정이 서버와 다를 수도 있습니다.");
+        assert_eq!(FAIL_RETRY, "재시도");
+        assert_eq!(FAIL_SETTINGS, "설정 열기");
+        assert_eq!(FAIL_VIEW_LOG, "서버 로그 보기");
+        assert_eq!(CANCEL_LABEL, "취소");
     }
 
     #[test]
@@ -406,6 +561,49 @@ mod tests {
     fn 미연결_항목수는_줄표다() {
         // 인벤토리 #95 — 연결되지 않은 원격 패널은 개수를 모른다
         assert_eq!(UNKNOWN_COUNT, "—");
+    }
+
+    fn 미등록() -> HostKeyCheck {
+        HostKeyCheck::Unknown {
+            fingerprint: "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU".to_owned(),
+        }
+    }
+
+    #[test]
+    fn 물을_곳이_없으면_거절한다() {
+        // 화면이 사라진 뒤에도 워커는 답을 얻어야 한다 — 자동 수락으로 새면 D15가 무너진다
+        let gate = HostKeyGate::new();
+        let mut prompt = gate.prompt("example.test:22".to_owned());
+        drop(gate);
+        assert_eq!(prompt(&미등록()), HostKeyDecision::Reject);
+    }
+
+    #[test]
+    fn 화면이_고른_결정이_워커에게_돌아간다() {
+        // 워커는 답이 올 때까지 그 자리에서 기다린다 — 회신이 끊기면 연결이 영영 멈춘다
+        let mut gate = HostKeyGate::new();
+        let mut prompt = gate.prompt("example.test:22".to_owned());
+        let worker = std::thread::spawn(move || prompt(&미등록()));
+
+        // 요청이 올라오기 전에는 물을 것이 없다
+        assert_eq!(gate.resolve(|_, _| Some(HostKeyDecision::Accept)), None);
+        assert!(!gate.is_open());
+
+        // 요청이 도착하면 대화를 띄우고(여기서는 "고르는 중"), 고르기 전에는 회신하지 않는다
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !gate.is_open() && std::time::Instant::now() < deadline {
+            assert_eq!(gate.resolve(|_, _| None), None);
+        }
+        assert!(gate.is_open(), "워커가 올린 요청을 받지 못했다");
+
+        let answered = gate.resolve(|host, check| {
+            assert_eq!(host, "example.test:22");
+            assert_eq!(check, &미등록());
+            Some(HostKeyDecision::Accept)
+        });
+        assert_eq!(answered, Some(HostKeyDecision::Accept));
+        assert!(!gate.is_open(), "답한 요청이 남았다");
+        assert_eq!(worker.join().expect("워커 종료"), HostKeyDecision::Accept);
     }
 
     #[test]

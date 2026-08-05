@@ -10,9 +10,18 @@ use crate::app::settings::{
 };
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
+use crate::panel::tabs::TabPhase;
+use crate::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
+use crate::remote::ftp::FtpSession;
+use crate::remote::hostkey::KnownHosts;
+use crate::remote::manager::ConnectionManager;
+use crate::remote::sftp::SftpSession;
+use crate::remote::sites::SiteStore;
+use crate::remote::types::{RemoteSession, SiteId};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{self, Command};
-use crate::ui::panel::PanelState;
+use crate::ui::panel::{PanelState, RemoteAction};
+use crate::ui::remote_states::HostKeyGate;
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
@@ -292,6 +301,13 @@ pub struct ExplorerApp {
     /// 인덱스가 아니라 id로 잡는다 — 확인 대화는 프레임을 넘겨 살아 있는데,
     /// 그 사이 순서가 바뀌면 인덱스는 다른 워크스페이스를 가리킨다 (D12 ①과 같은 이유)
     pending_remove: Option<WorkspaceId>,
+    /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
+    /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
+    manager: ConnectionManager,
+    /// 등록된 사이트 (FR-27). 탭·사이드바가 이름·프로토콜을 여기서 읽는다
+    sites: SiteStore,
+    /// SFTP 지문 확인 대화와 연결 워커를 잇는 통로 (D15)
+    hostkey: HostKeyGate,
 }
 
 impl ExplorerApp {
@@ -325,6 +341,14 @@ impl ExplorerApp {
             window: DEFAULT_WINDOW,
             restore_window: None,
             pending_remove: None,
+            // 워커가 소식을 올리면 창을 다시 그리게 한다 — 입력이 없으면 egui는 프레임을
+            // 돌리지 않아, 이 신호가 없으면 목록이 사용자가 마우스를 움직일 때까지 안 나타난다
+            manager: ConnectionManager::new({
+                let ctx = cc.egui_ctx.clone();
+                Arc::new(move || ctx.request_repaint())
+            }),
+            sites: SiteStore::new(),
+            hostkey: HostKeyGate::new(),
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -622,12 +646,13 @@ impl ExplorerApp {
                 view.close_panel(panel, area);
             }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
+            // 이 둘은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
+            Command::Refresh => self.refresh_panel(target, ctx),
+            Command::CloseTab => self.close_tab(target, ctx),
             Command::NewTab
-            | Command::CloseTab
             | Command::Back
             | Command::Forward
             | Command::Up
-            | Command::Refresh
             | Command::NewFile
             | Command::NewFolder
             | Command::SetViewMode(_) => {
@@ -636,11 +661,9 @@ impl ExplorerApp {
                 };
                 match command {
                     Command::NewTab => panel.new_tab(ctx),
-                    Command::CloseTab => panel.close_tab(ctx),
                     Command::Back => panel.go_back(ctx),
                     Command::Forward => panel.go_forward(ctx),
                     Command::Up => panel.go_up(ctx),
-                    Command::Refresh => panel.refresh(ctx),
                     Command::NewFile => panel.new_file(ctx),
                     Command::NewFolder => panel.new_folder(ctx),
                     Command::SetViewMode(mode) => panel.set_view_mode(mode),
@@ -656,6 +679,162 @@ impl ExplorerApp {
         let view = self.ensure_active_view();
         let id = target.unwrap_or(view.active);
         view.panels.get_mut(&id)
+    }
+
+    /// 보고 있는 위치를 다시 읽는다 — 원격 탭은 서버에 다시 묻고, 로컬 탭은 폴더를 다시 연다.
+    ///
+    /// `apply_command`의 다른 명령들과 갈라 둔 이유: 원격 요청은 연결(`manager`)이 필요한데
+    /// `command_panel_mut`이 `self`를 통째로 빌려 그 안에서는 연결에 닿을 수 없다
+    fn refresh_panel(&mut self, target: Option<PanelId>, ctx: &egui::Context) {
+        self.ensure_active_view();
+        let id = self.workspaces.active().id;
+        let ExplorerApp { views, manager, .. } = self;
+        let Some(view) = views.get_mut(&id) else {
+            return;
+        };
+        let panel_id = target.unwrap_or(view.active);
+        let Some(panel) = view.panels.get_mut(&panel_id) else {
+            return;
+        };
+        if panel.is_remote() {
+            panel.request_remote_list(manager);
+        } else {
+            panel.refresh(ctx);
+        }
+    }
+
+    /// 활성 탭을 닫는다 — 그 탭이 패널의 마지막 원격 탭이었으면 연결도 함께 접는다 (FR-32)
+    fn close_tab(&mut self, target: Option<PanelId>, ctx: &egui::Context) {
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        if let Some(conn) = panel.close_tab(ctx) {
+            self.manager.close(conn);
+        }
+    }
+
+    /// 연결 워커가 올린 소식을 화면에 반영한다 (NFR-10 — UI 스레드는 채널만 확인한다).
+    ///
+    /// **모든 워크스페이스의 패널**에 뿌린다. 이벤트는 한 번만 오므로 지금 보이지 않는
+    /// 워크스페이스를 건너뛰면 그쪽 탭이 영영 옛 단계로 남는다
+    fn poll_remote(&mut self) {
+        for (conn, event) in self.manager.poll() {
+            match event {
+                ConnEvent::Phase(phase) => {
+                    let tab_phase = to_tab_phase(&phase);
+                    for view in self.views.values_mut() {
+                        for panel in view.panels.values_mut() {
+                            panel.set_phase_for(conn, &tab_phase);
+                        }
+                    }
+                    // 연결되면 곧바로 첫 목록을 청한다 — 그러지 않으면 연결만 되고 화면이 빈 채 남는다
+                    if matches!(phase, ConnPhase::Ready) {
+                        self.request_remote_list(conn);
+                    }
+                }
+                ConnEvent::Listed {
+                    generation,
+                    path,
+                    entries,
+                } => {
+                    let ExplorerApp { views, icons, .. } = self;
+                    // 요청 하나에 답 하나다 — 받을 패널을 먼저 고르고 목록은 **복사 없이** 한 번만 넘긴다
+                    let target = views
+                        .values_mut()
+                        .flat_map(|view| view.panels.values_mut())
+                        .find(|panel| {
+                            panel.active_conn() == Some(conn)
+                                && panel.awaits_remote_list(generation, &path)
+                        });
+                    if let Some(panel) = target {
+                        panel.apply_remote_listed(generation, &path, entries, icons);
+                    }
+                }
+                // 서버 로그는 `Connection`이 자기 버퍼에 이미 쌓는다(화면은 T20이 만든다).
+                // 전송·파일 작업 결과는 T21·T23이 받는다
+                _ => {}
+            }
+        }
+    }
+
+    /// 그 연결을 활성 탭으로 쓰는 패널들이 목록을 다시 청한다
+    fn request_remote_list(&mut self, conn: ConnectionId) {
+        let ExplorerApp { views, manager, .. } = self;
+        for view in views.values_mut() {
+            for panel in view.panels.values_mut() {
+                if panel.active_conn() == Some(conn) {
+                    panel.request_remote_list(manager);
+                }
+            }
+        }
+    }
+
+    /// 원격 단계 화면에서 고른 조치를 실행한다 (인벤토리 #18~21)
+    fn apply_remote_action(&mut self, target: PanelId, action: RemoteAction) {
+        let Some(conn) = self
+            .views
+            .get(&self.workspaces.active().id)
+            .and_then(|view| view.panels.get(&target))
+            .and_then(|panel| panel.active_conn())
+        else {
+            return;
+        };
+        match action {
+            // 워커는 살아 있고 명령만 다시 받는다 — 새 연결을 열면 탭이 옛 연결을 가리킨 채 남는다
+            RemoteAction::Retry => {
+                self.manager.send(conn, ConnCommand::Connect);
+            }
+            RemoteAction::CancelConnect => {
+                self.manager.send(conn, ConnCommand::Disconnect);
+            }
+            // 여는 화면이 아직 없다 — 사이트 관리자는 T14, 서버 로그 패널은 T20이 만든다.
+            // 그때 이 자리에서 연다(조치를 값으로 받는 경로는 여기까지 이미 이어져 있다)
+            RemoteAction::OpenSettings | RemoteAction::ViewLog => {}
+        }
+    }
+
+    /// 사이트에 연결하고 활성 원격 탭을 그 연결에 붙인다 (FR-28).
+    ///
+    /// **세션 조립이 화면 쪽에 있는 이유**: SFTP는 지문 확인 통로가 필요하고 그 통로는 화면이
+    /// 쥔다 — 연결 관리자가 세션을 만들면 `remote`가 화면을 알아야 한다 (T4 결정).
+    ///
+    /// 사이트를 새 탭으로 여는 진입점(사이드바·주소창·드롭다운)은 T12·T13이 붙인다
+    pub fn connect_site(&mut self, site: SiteId) -> Option<ConnectionId> {
+        let record = self.sites.get(site)?.clone();
+        // 익명 로그온이면 비밀번호가 없다 — 서버가 관례대로 무시한다
+        let password = self.sites.password(site).unwrap_or_default();
+        let session: Box<dyn RemoteSession> = if record.protocol.is_ssh() {
+            // 지문 표는 **연결할 때마다 읽는다** — 수락한 지문을 파일에 남기는 것은 워커이므로,
+            // 앱이 사본을 들고 있으면 방금 수락한 서버를 다음 연결에서 또 묻게 된다
+            Box::new(SftpSession::new(
+                KnownHosts::load(),
+                Some(self.hostkey.prompt(record.address())),
+            ))
+        } else {
+            Box::new(FtpSession::new())
+        };
+        let id = self.manager.open(&record, password, session);
+        let view = self.ensure_active_view();
+        let active = view.active;
+        if let Some(panel) = view.panels.get_mut(&active) {
+            panel.attach_conn(id);
+        }
+        Some(id)
+    }
+}
+
+/// 연결 단계를 탭이 보이는 단계로 옮긴다.
+///
+/// 둘을 따로 두는 이유는 탭이 **연결 없이도** 존재하기 때문이다(빈 탭·세션 복원 직후) —
+/// `Idle`·`Closed`는 "이 탭에는 지금 연결이 없다"와 같은 뜻이라 `New`로 모은다
+fn to_tab_phase(phase: &ConnPhase) -> TabPhase {
+    match phase {
+        ConnPhase::Idle | ConnPhase::Closed => TabPhase::New,
+        ConnPhase::Connecting => TabPhase::Connecting,
+        ConnPhase::Ready => TabPhase::Ok,
+        ConnPhase::Failed { detail } => TabPhase::Error {
+            message: detail.clone(),
+        },
     }
 }
 
@@ -685,6 +864,9 @@ impl eframe::App for ExplorerApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.track_window(ctx);
         self.textures.begin_frame();
+        // 연결 소식은 **워크스페이스와 무관하게** 받는다 — 채널에 쌓인 것을 건너뛰면
+        // 보이지 않는 워크스페이스의 원격 탭이 옛 단계로 굳는다
+        self.poll_remote();
         // 화면에 없는 워크스페이스는 폴링하지 않는다 — 전환하면 그때 밀린 결과가 반영된다
         let id = self.workspaces.active().id;
         if let Some(view) = self.views.get_mut(&id) {
@@ -700,6 +882,8 @@ impl eframe::App for ExplorerApp {
         let ctx = ui.ctx().clone();
         let mut menu = None;
         let mut panel_command = None;
+        let mut remote_action = None;
+        let mut closed_conns = Vec::new();
         // 타이틀바를 먼저 그린다 — 남는 영역이 아래 CentralPanel의 몫이 된다 (FR-22)
         let titlebar_command = self.show_titlebar(ui, &ctx);
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
@@ -736,8 +920,9 @@ impl eframe::App for ExplorerApp {
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
             // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
             // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
-            // 삭제를 묻는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
-            let shortcut_command = if self.pending_remove.is_some() {
+            // 모달이 떠 있는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
+            // (워크스페이스 삭제 확인 · 서버 지문 확인)
+            let shortcut_command = if self.pending_remove.is_some() || self.hostkey.is_open() {
                 None
             } else {
                 menu::poll_shortcuts(&ctx)
@@ -758,9 +943,12 @@ impl eframe::App for ExplorerApp {
                     &mut view.active,
                     &mut self.icons,
                     &mut self.textures,
+                    &self.sites,
                 );
                 menu = outcome.menu;
                 panel_command = outcome.command;
+                remote_action = outcome.remote;
+                closed_conns = outcome.closed_conns;
             }
             // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
             // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
@@ -768,10 +956,19 @@ impl eframe::App for ExplorerApp {
             if let Some((target, command)) = panel_command {
                 self.apply_command(command, Some(target), area, &ctx);
             }
+            if let Some((target, action)) = remote_action {
+                self.apply_remote_action(target, action);
+            }
+            // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
+            for conn in closed_conns {
+                self.manager.close(conn);
+            }
         });
 
         // 삭제 확인은 egui 모달이라 `CentralPanel` 밖에서 그려도 된다(자체 레이어를 쓴다)
         self.show_remove_confirm(&ctx);
+        // 서버 지문 확인도 같다. 사용자가 고를 때까지 그 연결의 워커는 기다리고 있다 (D15)
+        self.hostkey.show(&ctx);
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
         // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다

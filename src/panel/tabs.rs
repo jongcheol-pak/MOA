@@ -190,6 +190,12 @@ impl TabsModel {
         self.tabs.iter().map(|t| t.source.clone()).collect()
     }
 
+    /// 모든 탭의 소스를 훑는다 — 연결 단계 갱신처럼 **활성 탭에 한정되지 않는** 일에 쓴다.
+    /// 배경 탭이 옛 단계로 남으면 그 탭으로 돌아갔을 때 화면이 실제와 어긋난다
+    pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut TabSource> {
+        self.tabs.iter_mut().map(|tab| &mut tab.source)
+    }
+
     /// 탭별 로컬 경로 (탭 순서 유지). **원격 탭은 빈 경로**로 나온다 —
     /// 원격까지 담는 세션 저장은 T25가 `sources()`로 바꾼다
     pub fn paths(&self) -> Vec<PathBuf> {

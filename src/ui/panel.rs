@@ -10,14 +10,16 @@ use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
 use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
-use crate::panel::tabs::{CloseOutcome, TabSource, TabState, TabsModel};
-use crate::remote::connection::ConnCommand;
+use crate::panel::tabs::{CloseOutcome, TabPhase, TabSource, TabState, TabsModel};
+use crate::remote::connection::{ConnCommand, ConnectionId};
 use crate::remote::manager::ConnectionManager;
+use crate::remote::sites::SiteStore;
 use crate::remote::types::{RemoteEntry, RemotePath};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::menu::{Command, PanelMenuState};
+use crate::ui::remote_states::{self, FailedAction};
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
@@ -163,11 +165,31 @@ enum PendingNav {
 }
 
 /// 패널이 상위(레이아웃)에 올려보내는 요청.
-/// 둘 다 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
+/// 전부 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
 pub struct PanelOutcome {
     pub menu: Option<MenuRequest>,
     /// 패널 메뉴에서 고른 명령 — 대상은 **이 패널**이다 (plan D16)
     pub command: Option<Command>,
+    /// 원격 단계 화면에서 고른 조치 (FR-29·FR-32)
+    pub remote: Option<RemoteAction>,
+    /// 마지막 원격 탭이 닫혀 이 패널이 더 쓰지 않게 된 연결 (FR-32).
+    ///
+    /// `remote`와 **따로 두는 이유**: 한 프레임에 둘 다 일어날 수 있는데 한 필드로 합치면
+    /// 먼저 채워진 쪽에 밀려 연결이 닫히지 않은 채 워커와 소켓이 남는다
+    pub closed_conn: Option<ConnectionId>,
+}
+
+/// 원격 단계 화면에서 사용자가 고른 조치 — 실행은 앱이 한다(연결을 앱이 쥔다)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteAction {
+    /// 실패한 연결을 다시 건다 (인벤토리 #18)
+    Retry,
+    /// 사이트 관리자를 연다 (인벤토리 #19)
+    OpenSettings,
+    /// 서버 로그를 보인다 (인벤토리 #20)
+    ViewLog,
+    /// 연결 중인 것을 그만둔다 (인벤토리 #21)
+    CancelConnect,
 }
 
 /// 셸 컨텍스트 메뉴 요청 — 그리기가 모두 끝난 뒤 앱이 실행한다.
@@ -448,11 +470,13 @@ impl PanelState {
     /// 메뉴·단축키에서 온 탐색 명령 (FR-12).
     /// 탭 스트립·주소창 클릭과 **같은 경로**를 타므로 동작이 갈리지 않는다
     pub fn new_tab(&mut self, ctx: &egui::Context) {
+        // 새 탭은 연결을 접을 일이 없다
         self.handle_tab(TabAction::New, ctx);
     }
 
-    pub fn close_tab(&mut self, ctx: &egui::Context) {
-        self.handle_tab(TabAction::Close(self.tabs.active_index()), ctx);
+    /// 활성 탭을 닫는다. 그 탭이 이 패널의 마지막 원격 탭이었으면 접어야 할 연결을 돌려준다 (FR-32)
+    pub fn close_tab(&mut self, ctx: &egui::Context) -> Option<ConnectionId> {
+        self.handle_tab(TabAction::Close(self.tabs.active_index()), ctx)
     }
 
     pub fn go_back(&mut self, ctx: &egui::Context) {
@@ -492,6 +516,53 @@ impl PanelState {
     /// 활성 탭이 원격을 가리키는가 — 로컬에만 있는 일(열거·감시·썸네일·새 파일)이 이것으로 갈린다
     pub fn is_remote(&self) -> bool {
         self.tabs.active().source.is_remote()
+    }
+
+    /// 활성 탭이 쓰는 연결 — 로컬 탭이거나 아직 연결하지 않았으면 `None`
+    pub fn active_conn(&self) -> Option<ConnectionId> {
+        match &self.tabs.active().source {
+            TabSource::Remote { conn, .. } => *conn,
+            TabSource::Local(_) => None,
+        }
+    }
+
+    /// 이 패널의 탭 중 그 연결을 쓰는 것이 있는가 — 연결을 접어도 되는지 판정한다 (FR-32)
+    fn uses_conn(&self, target: ConnectionId) -> bool {
+        self.tabs.sources().iter().any(|source| {
+            matches!(source, TabSource::Remote { conn: Some(conn), .. } if *conn == target)
+        })
+    }
+
+    /// 활성 원격 탭에 연결을 붙이고 연결 중으로 표시한다 — 사이트를 막 열었을 때.
+    /// 원격 탭이 아니면 아무 일도 하지 않고 `false`
+    pub fn attach_conn(&mut self, id: ConnectionId) -> bool {
+        let TabSource::Remote { conn, phase, .. } = &mut self.tabs.active_mut().source else {
+            return false;
+        };
+        *conn = Some(id);
+        *phase = TabPhase::Connecting;
+        true
+    }
+
+    /// 그 연결을 쓰는 **모든 탭**의 단계를 바꾼다 — 워커의 단계 변화를 화면에 투영한다.
+    ///
+    /// 활성 탭만 바꾸지 않는 이유: 한 연결을 여러 탭이 나눠 쓸 수 있고(같은 서버의 다른 폴더),
+    /// 배경 탭이 옛 단계로 남으면 그 탭으로 돌아갔을 때 화면이 실제와 어긋난다
+    pub fn set_phase_for(&mut self, target: ConnectionId, next: &TabPhase) -> bool {
+        let mut changed = false;
+        for source in self.tabs.sources_mut() {
+            if let TabSource::Remote {
+                conn: Some(conn),
+                phase,
+                ..
+            } = source
+                && *conn == target
+            {
+                *phase = next.clone();
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// 표시 중인 폴더에 새 폴더를 만든다 (FR-25).
@@ -542,6 +613,15 @@ impl PanelState {
             .then_some(generation)
     }
 
+    /// 이 패널이 그 목록 답을 기다리고 있는가 — 세대와 **보고 있는 위치**가 모두 맞아야 한다.
+    ///
+    /// 세대만 보지 않는 이유: 세대 번호는 패널마다 따로 세어지므로, 한 연결을 두 패널이
+    /// 나눠 쓰면 우연히 겹쳐 남의 답을 제 목록으로 삼을 수 있다
+    pub fn awaits_remote_list(&self, generation: u64, path: &RemotePath) -> bool {
+        generation == self.remote_generation
+            && self.tabs.active().source.remote_path() == Some(path)
+    }
+
     /// 워커가 돌려준 원격 목록을 반영한다.
     ///
     /// 세대가 지금 것과 다르면 버린다(늦게 도착한 이전 폴더의 결과 — D7).
@@ -550,10 +630,11 @@ impl PanelState {
     pub fn apply_remote_listed(
         &mut self,
         generation: u64,
+        path: &RemotePath,
         entries: Vec<RemoteEntry>,
         icons: &mut IconCache,
     ) -> bool {
-        if generation != self.remote_generation {
+        if !self.awaits_remote_list(generation, path) {
             return false;
         }
         self.list
@@ -586,8 +667,11 @@ impl PanelState {
         }
     }
 
-    /// 탭 스트립에서 올라온 조작 처리
-    fn handle_tab(&mut self, action: TabAction, ctx: &egui::Context) {
+    /// 탭 스트립에서 올라온 조작 처리.
+    ///
+    /// 닫힌 탭이 쓰던 연결을 **이 패널에서 아무도 쓰지 않게 되면** 그 연결 식별자를 돌려준다 —
+    /// 실제로 접는 것은 연결을 쥔 앱의 몫이다 (FR-32)
+    fn handle_tab(&mut self, action: TabAction, ctx: &egui::Context) -> Option<ConnectionId> {
         match action {
             TabAction::Switch(index) => {
                 if self.tabs.switch(index) {
@@ -603,12 +687,26 @@ impl PanelState {
             TabAction::Close(index) => {
                 // 보고 있던 탭을 닫을 때만 화면이 바뀐다 — 배경 탭을 닫으면 그대로 유지된다
                 let was_active = index == self.tabs.active_index();
-                if let CloseOutcome::Removed(_) = self.tabs.close(index)
-                    && was_active
-                    && let Some(path) = self.tabs.active().source.local_path()
-                {
-                    let path = path.to_path_buf();
-                    self.start_load(path, PendingNav::None, ctx);
+                // 닫기 전에 잡아 둔다 — 닫은 뒤에는 그 탭이 무엇을 쓰던 탭인지 알 수 없다
+                let closing = self
+                    .tabs
+                    .sources()
+                    .get(index)
+                    .and_then(|source| match source {
+                        TabSource::Remote { conn, .. } => *conn,
+                        TabSource::Local(_) => None,
+                    });
+                if let CloseOutcome::Removed(_) = self.tabs.close(index) {
+                    if was_active && let Some(path) = self.tabs.active().source.local_path() {
+                        let path = path.to_path_buf();
+                        self.start_load(path, PendingNav::None, ctx);
+                    }
+                    // 이 패널의 마지막 원격 탭이었으면 연결을 접는다 (FR-32·README §3)
+                    if let Some(conn) = closing
+                        && !self.uses_conn(conn)
+                    {
+                        return Some(conn);
+                    }
                 }
                 // LastTab이면 아무것도 하지 않는다 — 패널의 마지막 탭은 남는다
             }
@@ -626,6 +724,7 @@ impl PanelState {
                 }
             }
         }
+        None
     }
 
     /// 주소창에서 올라온 탐색 요청 처리
@@ -711,9 +810,10 @@ impl PanelState {
         ctx: &egui::Context,
         icons: &mut IconCache,
         textures: &mut IconTextures,
+        sites: &SiteStore,
         menu_state: PanelMenuState,
     ) -> PanelOutcome {
-        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, menu_state);
+        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, sites, menu_state);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, tab.committed(), &tab.history);
 
@@ -746,7 +846,7 @@ impl PanelState {
         } else {
             area
         };
-        let action = ui
+        let (action, remote) = ui
             .scope_builder(
                 egui::UiBuilder::new().id_salt("content").max_rect(content),
                 |ui| {
@@ -760,25 +860,37 @@ impl PanelState {
         if let Some(path) = tree_choice {
             self.navigate(path, ctx);
         }
-        if let Some(tab_action) = strip.tab {
-            self.handle_tab(tab_action, ctx);
-        }
+        let closed_conn = strip
+            .tab
+            .and_then(|tab_action| self.handle_tab(tab_action, ctx));
         if let Some(nav) = nav {
             self.handle_nav(nav, ctx);
         }
         PanelOutcome {
             menu: self.handle_list_action(action, ctx),
             command: strip.command,
+            remote,
+            closed_conn,
         }
     }
 
-    /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 파일 목록
+    /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 본문.
+    ///
+    /// 원격 탭의 본문은 **연결 단계에 따라 통째로 달라진다**(README §4·§5) — 아직 연결하지
+    /// 않았으면 안내 문구, 연결 중이면 자리 표시 막대, 실패했으면 사유와 조치, 연결됐으면
+    /// 로컬과 같은 파일 목록이다
     fn show_content(
         &mut self,
         ui: &mut egui::Ui,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-    ) -> FileListAction {
+    ) -> (FileListAction, Option<RemoteAction>) {
+        // 단계를 먼저 떼어 둔다 — 아래에서 목록(`&mut self.list`)을 그리는 동안 탭을 빌릴 수 없다
+        let phase = match &self.tabs.active().source {
+            TabSource::Remote { phase, .. } => Some(phase.clone()),
+            TabSource::Local(_) => None,
+        };
+        let connected = !matches!(phase, Some(ref phase) if *phase != TabPhase::Ok);
         // 왼쪽에 트리 토글·진행 상황, 오른쪽 끝에 항목 수를 둔다 (사용자 요청 7).
         // `Sides`는 오른쪽 것을 먼저 자리잡게 하므로, 오류 문구가 길어져도 항목 수가 밀리지 않는다
         egui::Sides::new().show(
@@ -801,14 +913,56 @@ impl PanelState {
                 }
             },
             |ui| {
-                // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
-                if !self.load.is_loading() {
+                if !connected {
+                    // 연결되지 않은 원격 패널은 항목 수를 모른다 — 0으로 보이면
+                    // "빈 폴더"라는 없는 말을 하게 된다 (인벤토리 #95)
+                    ui.colored_label(theme::TEXT_DIM, remote_states::UNKNOWN_COUNT);
+                } else if !self.load.is_loading() {
+                    // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
                     let (dirs, files) = self.list.counts();
                     ui.colored_label(theme::TEXT_DIM, format!("폴더 {dirs} 파일 {files}"));
                 }
             },
         );
         ui.separator();
+        match phase {
+            Some(TabPhase::New) => {
+                remote_states::show_empty(ui);
+                (FileListAction::None, None)
+            }
+            Some(TabPhase::Connecting) => {
+                // 취소는 자리 표시 막대 **위** 오른쪽에 둔다 (원본 `:223-228`의 상태 줄)
+                let cancelled = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        remote_states::show_cancel(ui)
+                    })
+                    .inner;
+                remote_states::show_skeleton(ui);
+                (
+                    FileListAction::None,
+                    cancelled.then_some(RemoteAction::CancelConnect),
+                )
+            }
+            Some(TabPhase::Error { message }) => {
+                let action = remote_states::show_failed(ui, &message).map(|chosen| match chosen {
+                    FailedAction::Retry => RemoteAction::Retry,
+                    FailedAction::OpenSettings => RemoteAction::OpenSettings,
+                    FailedAction::ViewLog => RemoteAction::ViewLog,
+                });
+                (FileListAction::None, action)
+            }
+            // 연결된 원격 탭은 로컬과 **같은 목록 부품**으로 그린다 (T8)
+            Some(TabPhase::Ok) | None => (self.show_list(ui, icons, textures), None),
+        }
+    }
+
+    /// 파일 목록 본문 — 로컬 탭과 연결된 원격 탭이 함께 쓴다
+    fn show_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        icons: &mut IconCache,
+        textures: &mut IconTextures,
+    ) -> FileListAction {
         // 이번 프레임에 화면에 보인 파일들을 받는다. `request`는 아직 없으면 만들라고
         // 시키고, 이미 있으면 최근 사용으로 올린다 — 보이는 썸네일이 축출되지 않게 하는
         // 유일한 지점이다(그리기는 텍스처만 보고 픽셀 캐시를 건드리지 않는다)
@@ -848,17 +1002,11 @@ mod tests {
     use super::*;
     use crate::remote::types::{RemotePath, SiteId};
 
-    /// egui는 같은 ID가 한 프레임에 두 번 쓰이면 화면에 경고 텍스트를 그린다.
-    /// 그 텍스트를 그려진 도형에서 찾아 ID 충돌 여부를 판정한다
-    fn id_clash_warnings(output: &eframe::egui::FullOutput) -> Vec<String> {
+    /// 한 프레임에 그려진 글자를 전부 모은다 — 화면에 실제로 무엇이 보이는지 판정한다
+    fn drawn_texts(output: &eframe::egui::FullOutput) -> Vec<String> {
         fn collect(shape: &egui::Shape, found: &mut Vec<String>) {
             match shape {
-                egui::Shape::Text(text) => {
-                    let body = text.galley.text();
-                    if body.contains("use of") {
-                        found.push(body.to_owned());
-                    }
-                }
+                egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
                 egui::Shape::Vec(shapes) => {
                     for shape in shapes {
                         collect(shape, found);
@@ -874,14 +1022,21 @@ mod tests {
         found
     }
 
-    /// 패널을 한 프레임 그리고 ID 충돌 경고를 모은다
-    fn draw_panel(tree_visible: bool) -> Vec<String> {
+    /// egui는 같은 ID가 한 프레임에 두 번 쓰이면 화면에 경고 텍스트를 그린다.
+    /// 그 텍스트를 그려진 글자에서 찾아 ID 충돌 여부를 판정한다
+    fn id_clash_warnings(output: &eframe::egui::FullOutput) -> Vec<String> {
+        drawn_texts(output)
+            .into_iter()
+            .filter(|body| body.contains("use of"))
+            .collect()
+    }
+
+    /// 패널을 한 프레임 그린다 — 사이트 목록은 호출부가 준다
+    fn draw_once(panel: &mut PanelState, sites: &SiteStore) -> eframe::egui::FullOutput {
         let ctx = egui::Context::default();
-        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
-        panel.tree_visible = tree_visible;
         let mut icons = crate::fs::icons::IconCache::new();
         let mut textures = crate::ui::icon_tex::IconTextures::new();
-        let output = ctx.run_ui(Default::default(), |ui| {
+        ctx.run_ui(Default::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let ctx = ui.ctx().clone();
                 panel.show(
@@ -889,11 +1044,39 @@ mod tests {
                     &ctx,
                     &mut icons,
                     &mut textures,
+                    sites,
                     PanelMenuState::for_panes(1, ViewMode::Details),
                 );
             });
-        });
-        id_clash_warnings(&output)
+        })
+    }
+
+    /// 패널을 한 프레임 그리고 ID 충돌 경고를 모은다
+    fn draw_panel(tree_visible: bool) -> Vec<String> {
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        panel.tree_visible = tree_visible;
+        id_clash_warnings(&draw_once(&mut panel, &SiteStore::new()))
+    }
+
+    /// 사이트 하나를 등록하고 그 사이트의 원격 탭을 활성으로 둔 패널.
+    /// 단계별 화면(README §4·§5)이 실제 렌더 경로를 지나게 하는 준비다
+    fn remote_panel_in(phase: TabPhase) -> (PanelState, SiteStore) {
+        let mut sites = SiteStore::new();
+        let site = sites.add("배포 서버");
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            site,
+            RemotePath::new("/var/www"),
+        ));
+        panel.attach_conn(ConnectionId(1));
+        panel.set_phase_for(ConnectionId(1), &phase);
+        (panel, sites)
+    }
+
+    /// 그 단계의 원격 패널을 한 프레임 그리고 화면 글자를 모은다
+    fn remote_screen_texts(phase: TabPhase) -> Vec<String> {
+        let (mut panel, sites) = remote_panel_in(phase);
+        drawn_texts(&draw_once(&mut panel, &sites))
     }
 
     /// 열거 결과가 도착한 상황을 만들어 `poll_load`를 실제로 지나게 한다.
@@ -1237,6 +1420,218 @@ mod tests {
             panel.load.pending.is_none(),
             "감시 통지로 로컬 열거 워커가 떴다"
         );
+    }
+
+    #[test]
+    fn 원격_탭에는_사이트_이름과_단계_배지가_함께_보인다() {
+        // 인벤토리 #11~13 — 이름은 사이트 설정에서, 배지 문구는 단계에서 온다 (Acceptance ①).
+        // 탭이 이름 사본을 들면 `이름 바꾸기(R)` 뒤에 탭만 옛 이름으로 남는다
+        let 빈_탭 = remote_screen_texts(TabPhase::New);
+        assert!(
+            빈_탭.iter().any(|t| t == "배포 서버"),
+            "사이트 이름이 탭에 없다: {빈_탭:?}"
+        );
+        assert!(
+            빈_탭.iter().any(|t| t == "연결 없음"),
+            "미연결 배지가 없다: {빈_탭:?}"
+        );
+        assert!(
+            remote_screen_texts(TabPhase::Connecting)
+                .iter()
+                .any(|t| t == "연결 중…"),
+            "연결 중 배지가 없다"
+        );
+        // 연결되면 배지가 프로토콜 이름으로 바뀐다 (새 사이트의 기본값은 FTP다)
+        assert!(
+            remote_screen_texts(TabPhase::Ok).iter().any(|t| t == "ftp"),
+            "연결됨 배지가 프로토콜을 보이지 않는다"
+        );
+    }
+
+    #[test]
+    fn 단계마다_본문이_통째로_달라진다() {
+        // README §4·§5 — 연결 전·중·실패에 목록 대신 그 단계의 화면이 보인다 (Acceptance ①③④)
+        let 빈_탭 = remote_screen_texts(TabPhase::New);
+        assert!(
+            빈_탭.iter().any(|t| t.contains("sftp://호스트")),
+            "미연결 안내가 없다: {빈_탭:?}"
+        );
+        assert!(
+            빈_탭.iter().any(|t| t.contains("끌어다 놓아도 됩니다")),
+            "드래그 안내가 없다: {빈_탭:?}"
+        );
+
+        let 연결_중 = remote_screen_texts(TabPhase::Connecting);
+        assert!(
+            연결_중.iter().any(|t| t == "취소"),
+            "연결 중 취소 버튼이 없다: {연결_중:?}"
+        );
+
+        let 실패 = remote_screen_texts(TabPhase::Error {
+            message: "530 Login incorrect".to_owned(),
+        });
+        for 문구 in [
+            "연결하지 못했습니다",
+            "재시도",
+            "설정 열기",
+            "서버 로그 보기",
+        ] {
+            assert!(
+                실패.iter().any(|t| t.contains(문구)),
+                "실패 화면에 '{문구}'가 없다: {실패:?}"
+            );
+        }
+        assert!(
+            실패.iter().any(|t| t.contains("530 Login incorrect")),
+            "서버가 준 사유가 보이지 않는다: {실패:?}"
+        );
+    }
+
+    #[test]
+    fn 연결되지_않은_원격_패널은_항목_수를_모른다고_보인다() {
+        // 인벤토리 #95 — `폴더 0 파일 0`으로 보이면 "빈 폴더"라는 없는 말을 하게 된다
+        for phase in [
+            TabPhase::New,
+            TabPhase::Connecting,
+            TabPhase::Error {
+                message: "530".to_owned(),
+            },
+        ] {
+            let texts = remote_screen_texts(phase.clone());
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t == crate::ui::remote_states::UNKNOWN_COUNT),
+                "{phase:?}에서 `—`가 보이지 않는다: {texts:?}"
+            );
+            assert!(
+                !texts.iter().any(|t| is_item_count(t)),
+                "{phase:?}인데 항목 수를 세어 보였다: {texts:?}"
+            );
+        }
+        // 연결되면 보통의 항목 수로 돌아온다
+        let 연결됨 = remote_screen_texts(TabPhase::Ok);
+        assert!(
+            연결됨.iter().any(|t| is_item_count(t)),
+            "연결됐는데 항목 수가 없다: {연결됨:?}"
+        );
+    }
+
+    /// 상태 줄의 항목 수 표시인가 — 트리 토글(`폴더 트리`)과 구분한다
+    fn is_item_count(text: &str) -> bool {
+        text.starts_with("폴더 ") && text.contains("파일 ")
+    }
+
+    #[test]
+    fn 원격_탭_화면에서도_위젯_id가_겹치지_않는다() {
+        // Acceptance ⑧ — 단계별 화면이 목록 자리에 들어와도 id 공간이 섞이면 안 된다
+        for phase in [
+            TabPhase::New,
+            TabPhase::Connecting,
+            TabPhase::Error {
+                message: "530".to_owned(),
+            },
+            TabPhase::Ok,
+        ] {
+            let (mut panel, sites) = remote_panel_in(phase.clone());
+            let clashes = id_clash_warnings(&draw_once(&mut panel, &sites));
+            assert!(
+                clashes.is_empty(),
+                "{phase:?}에서 위젯 ID 충돌: {clashes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 패널의_마지막_원격_탭을_닫으면_연결을_접는다() {
+        // FR-32 — 같은 연결을 쓰는 탭이 남아 있으면 접지 않는다 (Acceptance ⑥)
+        let ctx = egui::Context::default();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new("/a"),
+        ));
+        panel.attach_conn(ConnectionId(5));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new("/b"),
+        ));
+        panel.attach_conn(ConnectionId(5));
+
+        assert_eq!(
+            panel.handle_tab(TabAction::Close(2), &ctx),
+            None,
+            "같은 연결을 쓰는 탭이 남았는데 연결을 접으려 했다"
+        );
+        assert_eq!(
+            panel.handle_tab(TabAction::Close(1), &ctx),
+            Some(ConnectionId(5)),
+            "마지막 원격 탭을 닫았는데 연결이 남았다"
+        );
+        // 로컬 탭만 남았으니 더 접을 것이 없다
+        assert!(!panel.is_remote());
+    }
+
+    #[test]
+    fn 연결_단계는_그_연결을_쓰는_모든_탭에_퍼진다() {
+        // 배경 탭이 옛 단계로 남으면 그 탭으로 돌아갔을 때 화면이 실제와 어긋난다
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new("/a"),
+        ));
+        panel.attach_conn(ConnectionId(5));
+        panel.tabs.add(crate::panel::tabs::TabState::remote(
+            SiteId(1),
+            RemotePath::new("/b"),
+        ));
+        panel.attach_conn(ConnectionId(7)); // 다른 연결을 쓰는 탭
+
+        assert!(panel.set_phase_for(ConnectionId(5), &TabPhase::Ok));
+        let phases: Vec<TabPhase> = panel
+            .tabs
+            .sources()
+            .iter()
+            .filter_map(|source| match source {
+                TabSource::Remote { phase, .. } => Some(phase.clone()),
+                TabSource::Local(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            phases,
+            vec![TabPhase::Ok, TabPhase::Connecting],
+            "다른 연결의 탭까지 바뀌었거나, 대상 탭이 바뀌지 않았다"
+        );
+        // 없는 연결에는 아무 일도 일어나지 않는다
+        assert!(!panel.set_phase_for(ConnectionId(99), &TabPhase::Ok));
+    }
+
+    #[test]
+    fn 남의_답이나_지난_위치의_목록은_받지_않는다() {
+        // 세대만 보면 한 연결을 두 패널이 나눠 쓸 때 남의 답을 제 목록으로 삼는다
+        let mut icons = IconCache::new();
+        let mut panel = panel_with_remote_tab("/var/www");
+        panel.attach_conn(ConnectionId(1));
+        let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
+        // 연결이 죽어 있어도 세대는 올라간다 — 여기서는 세대·위치 판정만 본다
+        panel.request_remote_list(&manager);
+        let generation = panel.remote_generation;
+
+        assert!(!panel.awaits_remote_list(generation + 1, &RemotePath::new("/var/www")));
+        assert!(!panel.awaits_remote_list(generation, &RemotePath::new("/etc")));
+        assert!(panel.awaits_remote_list(generation, &RemotePath::new("/var/www")));
+        assert!(!panel.apply_remote_listed(
+            generation,
+            &RemotePath::new("/etc"),
+            Vec::new(),
+            &mut icons
+        ));
+        assert!(panel.apply_remote_listed(
+            generation,
+            &RemotePath::new("/var/www"),
+            Vec::new(),
+            &mut icons
+        ));
     }
 
     #[test]

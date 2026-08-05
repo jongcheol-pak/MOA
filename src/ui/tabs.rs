@@ -5,8 +5,11 @@
 //! 탭 하나는 **한 덩어리 위젯**이다 — 제목과 닫기 버튼을 각각 `Button`으로 두면
 //! 저마다 프레임·여백을 그려 두 개의 사각형으로 보인다(Windows 11 탐색기는 한 탭 안에
 //! 아이콘·제목·닫기가 들어 있다). 그래서 영역만 잡고 내용은 직접 그린다.
-use crate::panel::tabs::{TabSource, TabsModel};
+use crate::panel::tabs::{TabPhase, TabSource, TabsModel};
+use crate::remote::sites::SiteStore;
+use crate::remote::types::Protocol;
 use crate::ui::menu::{self, Command, PanelMenuState};
+use crate::ui::remote_states;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -24,9 +27,10 @@ const TAB_ICON_GAP: f32 = 4.0;
 const TAB_CLOSE_WIDTH: f32 = 20.0;
 /// 탭 오른쪽 여백
 const TAB_PAD_RIGHT: f32 = 4.0;
-/// 탭 최소 폭 — 제목이 0폭이 되어도 아이콘·닫기 구역은 남는다
-const TAB_MIN_WIDTH: f32 =
-    TAB_PAD_LEFT + TAB_ICON_WIDTH + TAB_ICON_GAP + TAB_CLOSE_WIDTH + TAB_PAD_RIGHT;
+/// 원격 배지와 이웃(아이콘·이름) 사이 간격 — 원본 `FileExplorer-FTP.dc.html:99`·`:101`의 `margin-left:6px`
+const BADGE_MARGIN: f32 = 6.0;
+/// 연결되지 않은 원격 탭의 아이콘 불투명도 (README §4 — 연결됨은 1)
+const DIM_ICON_ALPHA: f32 = 0.45;
 /// 폴더 아이콘 글꼴 크기
 const TAB_ICON_PX: f32 = 14.0;
 /// 닫기 아이콘 글꼴 크기
@@ -59,10 +63,12 @@ pub enum TabAction {
     New,
 }
 
-/// 탭 하나를 세 구역으로 나눈 결과 — 그리기와 히트 판정이 같은 좌표를 쓰게 한다
+/// 탭 하나를 구역별로 나눈 결과 — 그리기와 히트 판정이 같은 좌표를 쓰게 한다
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct TabParts {
     icon: egui::Rect,
+    /// 원격 탭의 연결 배지 자리 — 로컬 탭이면 `None`. 아이콘과 이름 **사이**다 (원본 `:99`)
+    badge: Option<egui::Rect>,
     label: egui::Rect,
     close: egui::Rect,
 }
@@ -83,19 +89,25 @@ struct TabHit {
 pub fn show_tab_strip(
     ui: &mut egui::Ui,
     model: &TabsModel,
+    sites: &SiteStore,
     menu_state: PanelMenuState,
 ) -> TabStripOutcome {
     let mut outcome = TabStripOutcome::default();
     egui::Sides::new().shrink_left().height(STRIP_HEIGHT).show(
         ui,
-        |ui| show_tabs(ui, model, &mut outcome.tab),
+        |ui| show_tabs(ui, model, sites, &mut outcome.tab),
         |ui| show_menu_button(ui, menu_state, &mut outcome.command),
     );
     outcome
 }
 
 /// 탭 목록과 새 탭 버튼 — 폭이 모자라면 가로로 스크롤된다
-fn show_tabs(ui: &mut egui::Ui, model: &TabsModel, action: &mut Option<TabAction>) {
+fn show_tabs(
+    ui: &mut egui::Ui,
+    model: &TabsModel,
+    sites: &SiteStore,
+    action: &mut Option<TabAction>,
+) {
     egui::ScrollArea::horizontal()
         .auto_shrink([false, true])
         .show(ui, |ui| {
@@ -106,9 +118,20 @@ fn show_tabs(ui: &mut egui::Ui, model: &TabsModel, action: &mut Option<TabAction
                 let active_index = model.active_index();
                 for (index, source) in sources.iter().enumerate() {
                     let active = index == active_index;
-                    // 사이트 이름은 아직 여기까지 오지 않는다 — 원격 탭의 이름·배지는 T10이 붙인다
-                    let title = source.title(None);
-                    let hit = show_tab(ui, index, &title, source, active);
+                    // 원격 탭의 이름·프로토콜은 사이트 설정에서 그때그때 읽는다 —
+                    // 탭이 사본을 들면 `이름 바꾸기(R)` 뒤에 탭만 옛 이름으로 남는다 (T7 결정)
+                    let site = source.site().and_then(|id| sites.get(id));
+                    let title = source.title(site.map(|record| record.name.as_str()));
+                    // 사이트가 지워진 원격 탭에는 배지를 그리지 않는다 — 프로토콜을 모르는 채
+                    // 아무 값이나 보이면 화면이 서버에 대해 없는 말을 하게 된다
+                    // (제목의 `알 수 없는 사이트`가 이미 그 상태를 알린다)
+                    let badge = match source {
+                        TabSource::Remote { phase, .. } => {
+                            site.map(|record| (phase, record.protocol))
+                        }
+                        TabSource::Local(_) => None,
+                    };
+                    let hit = show_tab(ui, index, &title, source, badge, active);
                     if hit.close {
                         *action = Some(TabAction::Close(index));
                     } else if hit.switch {
@@ -145,6 +168,7 @@ fn show_tab(
     index: usize,
     title: &str,
     source: &TabSource,
+    badge: Option<(&TabPhase, Protocol)>,
     active: bool,
 ) -> TabHit {
     let text = elide(title);
@@ -154,29 +178,32 @@ fn show_tab(
         .layout_no_wrap(text.clone(), font.clone(), theme::TEXT)
         .size()
         .x;
-    // 제목이 짧아도 아이콘·닫기 구역은 지켜야 하므로 최소 폭을 보장한다 (tab_parts의 전제)
-    let width = (TAB_PAD_LEFT
-        + TAB_ICON_WIDTH
-        + TAB_ICON_GAP
-        + text_width
-        + TAB_CLOSE_WIDTH
-        + TAB_PAD_RIGHT)
-        .max(TAB_MIN_WIDTH);
+    // 배지는 제 폭을 먼저 떼어 간다 — 탭이 좁아지면 이름이 먼저 줄어든다 (plan Edge Case)
+    let badge_width = badge.map_or(0.0, |(phase, protocol)| {
+        remote_states::badge_width(ui, phase, protocol)
+    });
+    // 제목이 0폭이어도 아이콘·배지·닫기 구역은 남는다 (tab_parts의 전제)
+    let width = min_width(badge_width) + text_width;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, STRIP_HEIGHT), egui::Sense::click());
-    let parts = tab_parts(rect);
+    let parts = tab_parts(rect, badge_width);
 
     // 활성 탭만 배경을 채운다 — 비활성은 스트립 배경 그대로 둔다
     if active {
         ui.painter().rect_filled(rect, 0.0, theme::CONTROL_BG);
     }
+    // 연결된 원격 탭만 아이콘이 또렷하다 — 로컬 탭은 늘 또렷하다 (README §4)
+    let icon_color = match badge {
+        None | Some((TabPhase::Ok, _)) => theme::FOLDER_ICON,
+        Some(_) => theme::FOLDER_ICON.gamma_multiply(DIM_ICON_ALPHA),
+    };
     let painter = ui.painter();
     painter.text(
         parts.icon.center(),
         egui::Align2::CENTER_CENTER,
         egui_phosphor::regular::FOLDER,
         egui::FontId::proportional(TAB_ICON_PX),
-        theme::FOLDER_ICON,
+        icon_color,
     );
     painter.text(
         parts.label.left_center(),
@@ -185,6 +212,9 @@ fn show_tab(
         font,
         theme::TEXT,
     );
+    if let (Some(rect), Some((phase, protocol))) = (parts.badge, badge) {
+        remote_states::show_badge(ui, rect, phase, protocol);
+    }
 
     // 닫기 구역은 탭 위에 얹힌 별도 위젯이다 — 나중에 등록해야 탭보다 클릭이 우선한다
     let close = ui.interact(
@@ -229,11 +259,23 @@ fn show_tab(
     }
 }
 
-/// 탭 영역을 아이콘·제목·닫기 세 구역으로 나눈다.
+/// 제목이 0폭일 때의 탭 폭 — 아이콘·(배지)·닫기 구역만 남은 상태다.
 ///
-/// **폭이 `TAB_MIN_WIDTH` 이상임을 전제한다**(호출부가 보장) — 여기서 다시 늘리면
+/// `badge_width`가 0이면 로컬 탭이라 배지 자리를 잡지 않는다
+fn min_width(badge_width: f32) -> f32 {
+    let after_icon = if badge_width > 0.0 {
+        BADGE_MARGIN * 2.0 + badge_width
+    } else {
+        TAB_ICON_GAP
+    };
+    TAB_PAD_LEFT + TAB_ICON_WIDTH + after_icon + TAB_CLOSE_WIDTH + TAB_PAD_RIGHT
+}
+
+/// 탭 영역을 아이콘·(배지)·제목·닫기 구역으로 나눈다.
+///
+/// **폭이 `min_width(badge_width)` 이상임을 전제한다**(호출부가 보장) — 여기서 다시 늘리면
 /// 반환 구역이 입력 영역을 벗어나 "닫기 구역은 탭 안에 있다"는 계약이 깨진다
-fn tab_parts(rect: egui::Rect) -> TabParts {
+fn tab_parts(rect: egui::Rect, badge_width: f32) -> TabParts {
     let icon = egui::Rect::from_min_size(
         egui::pos2(rect.left() + TAB_PAD_LEFT, rect.top()),
         egui::vec2(TAB_ICON_WIDTH, rect.height()),
@@ -242,12 +284,26 @@ fn tab_parts(rect: egui::Rect) -> TabParts {
         egui::pos2(rect.right() - TAB_PAD_RIGHT - TAB_CLOSE_WIDTH, rect.top()),
         egui::vec2(TAB_CLOSE_WIDTH, rect.height()),
     );
-    let label_left = icon.right() + TAB_ICON_GAP;
+    // 배지는 아이콘과 제목 사이에 앉는다 (원본 `:99` — 제목 오른쪽이 아니다)
+    let (badge, label_left) = if badge_width > 0.0 {
+        let badge = egui::Rect::from_min_size(
+            egui::pos2(icon.right() + BADGE_MARGIN, rect.top()),
+            egui::vec2(badge_width, rect.height()),
+        );
+        (Some(badge), badge.right() + BADGE_MARGIN)
+    } else {
+        (None, icon.right() + TAB_ICON_GAP)
+    };
     let label = egui::Rect::from_min_max(
         egui::pos2(label_left, rect.top()),
         egui::pos2(close.left().max(label_left), rect.bottom()),
     );
-    TabParts { icon, label, close }
+    TabParts {
+        icon,
+        badge,
+        label,
+        close,
+    }
 }
 
 /// 포인터가 닫기 구역 안인가 — 닫기가 탭 전환보다 우선한다는 규칙의 정본
@@ -337,48 +393,86 @@ mod tests {
         assert_eq!(elide(&exact), exact);
     }
 
+    /// 원격 탭의 배지 폭 — 실제 글꼴 폭 대신 고정값으로 배치 계약만 본다
+    const SAMPLE_BADGE: f32 = 46.0;
+
     #[test]
     fn 세_구역은_서로_겹치지_않는다() {
-        for width in [TAB_MIN_WIDTH, 120.0, 300.0] {
-            let rect = tab_rect(width);
-            let parts = tab_parts(rect);
-            assert!(
-                parts.icon.right() <= parts.label.left(),
-                "폭 {width}: 아이콘과 제목이 겹친다"
-            );
-            assert!(
-                parts.label.right() <= parts.close.left(),
-                "폭 {width}: 제목과 닫기가 겹친다"
-            );
+        for badge in [0.0, SAMPLE_BADGE] {
+            for width in [min_width(badge), min_width(badge) + 60.0, 300.0] {
+                let rect = tab_rect(width);
+                let parts = tab_parts(rect, badge);
+                assert!(
+                    parts.icon.right() <= parts.label.left(),
+                    "폭 {width}(배지 {badge}): 아이콘과 제목이 겹친다"
+                );
+                assert!(
+                    parts.label.right() <= parts.close.left(),
+                    "폭 {width}(배지 {badge}): 제목과 닫기가 겹친다"
+                );
+                if let Some(badge_rect) = parts.badge {
+                    assert!(
+                        parts.icon.right() <= badge_rect.left(),
+                        "폭 {width}: 아이콘과 배지가 겹친다"
+                    );
+                    assert!(
+                        badge_rect.right() <= parts.label.left(),
+                        "폭 {width}: 배지와 제목이 겹친다"
+                    );
+                }
+            }
         }
+    }
+
+    #[test]
+    fn 배지는_아이콘과_제목_사이에_앉는다() {
+        // 원본 `:99`의 배치다 — 제목 오른쪽에 두면 이름이 길 때 배지가 화면 밖으로 밀린다
+        let parts = tab_parts(tab_rect(300.0), SAMPLE_BADGE);
+        let badge = parts.badge.expect("원격 탭에는 배지 자리가 있다");
+        assert_eq!(badge.width(), SAMPLE_BADGE);
+        assert!(badge.left() < parts.label.left());
+        // 로컬 탭에는 배지 자리를 잡지 않는다
+        assert!(tab_parts(tab_rect(300.0), 0.0).badge.is_none());
     }
 
     #[test]
     fn 닫기_구역은_항상_탭_안에_있다() {
         // 탭이 좁아져 닫기가 밖으로 밀리면 탭을 닫을 수 없게 된다
-        for width in [TAB_MIN_WIDTH, 120.0, 300.0] {
-            let rect = tab_rect(width);
-            let parts = tab_parts(rect);
-            assert!(
-                rect.contains_rect(parts.close),
-                "폭 {width}: 닫기 구역이 탭을 벗어났다"
-            );
+        for badge in [0.0, SAMPLE_BADGE] {
+            for width in [min_width(badge), min_width(badge) + 60.0, 300.0] {
+                let rect = tab_rect(width);
+                let parts = tab_parts(rect, badge);
+                assert!(
+                    rect.contains_rect(parts.close),
+                    "폭 {width}(배지 {badge}): 닫기 구역이 탭을 벗어났다"
+                );
+            }
         }
     }
 
     #[test]
-    fn 최소_폭에서도_아이콘과_닫기_크기가_유지된다() {
-        // 좁아질 때 줄어드는 것은 제목뿐이다 — 아이콘·닫기가 함께 찌그러지면 누를 수 없다
-        let parts = tab_parts(tab_rect(TAB_MIN_WIDTH));
+    fn 최소_폭에서도_아이콘과_배지와_닫기_크기가_유지된다() {
+        // 좁아질 때 줄어드는 것은 제목뿐이다 — 아이콘·배지·닫기가 함께 찌그러지면 읽을 수 없다
+        let parts = tab_parts(tab_rect(min_width(0.0)), 0.0);
         assert_eq!(parts.icon.width(), TAB_ICON_WIDTH);
         assert_eq!(parts.close.width(), TAB_CLOSE_WIDTH);
         assert_eq!(parts.label.width(), 0.0);
+
+        let remote = tab_parts(tab_rect(min_width(SAMPLE_BADGE)), SAMPLE_BADGE);
+        assert_eq!(remote.icon.width(), TAB_ICON_WIDTH);
+        assert_eq!(remote.close.width(), TAB_CLOSE_WIDTH);
+        assert_eq!(
+            remote.badge.map(|b| b.width()),
+            Some(SAMPLE_BADGE),
+            "배지가 제 폭을 잃었다"
+        );
+        assert_eq!(remote.label.width(), 0.0);
     }
 
     #[test]
     fn 닫기_구역_안의_클릭만_닫기로_친다() {
         // 이 판정이 뒤집히면 ×를 눌러도 탭 전환만 되는 회귀가 들어온다
-        let parts = tab_parts(tab_rect(200.0));
+        let parts = tab_parts(tab_rect(200.0), 0.0);
         assert!(is_close_hit(&parts, parts.close.center()));
         assert!(!is_close_hit(&parts, parts.label.center()));
         assert!(!is_close_hit(&parts, parts.icon.center()));
