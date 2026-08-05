@@ -139,8 +139,15 @@ pub fn column_menu_items(ui: &mut egui::Ui, flags: ColumnFlags, out: &mut Option
     for kind in ALL_COLUMNS {
         let button = egui::Button::new(column_menu_label(ui, kind, flags.shows(kind)))
             .min_size(egui::vec2(0.0, COLUMN_MENU_ROW));
-        // 고정 열도 그리기는 한다 — 클릭만 무시한다(원본과 같은 동작)
-        if ui.add(button).clicked() && !kind.is_fixed() {
+        // 고정 열도 그리기는 한다 — 클릭만 무시한다(원본과 같은 동작).
+        // 커서도 손가락이 아니라 기본 화살표로 둔다(원본의 `cursor:default`) —
+        // 누를 수 있는 것처럼 보이면 눌러 보고 아무 일이 없어 고장으로 읽힌다
+        let response = ui.add(button);
+        if kind.is_fixed() {
+            response.on_hover_cursor(egui::CursorIcon::Default);
+            continue;
+        }
+        if response.clicked() {
             *out = Some(kind);
             ui.close();
         }
