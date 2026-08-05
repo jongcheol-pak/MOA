@@ -438,6 +438,15 @@ pub trait RemoteSession: Send {
     /// 소켓을 열고 프로토콜 협상까지 한다 (TLS 승격·SSH 핸드셰이크 포함)
     fn connect(&mut self, site: &SiteRecord) -> RemoteResult<()>;
 
+    /// 지금 이 연결이 **실제로** 암호화돼 있는가.
+    ///
+    /// 설정값(`Encryption`)이 아니라 **협상 결과**다 — `ExplicitIfAvailable`은 서버가 거부하면
+    /// 평문으로 되연결하므로, 설정만 보고 `· TLS`를 적으면 평문 연결을 암호화됐다고 알리게 된다
+    /// (F-7 리뷰 B1). 연결 전이면 거짓이다
+    fn is_secure(&self) -> bool {
+        false
+    }
+
     /// 인증한다. `password`는 **연결 직전에 봉인을 푼 평문**이며 어디에도 보관하지 않는다
     fn login(&mut self, site: &SiteRecord, password: &str) -> RemoteResult<()>;
 

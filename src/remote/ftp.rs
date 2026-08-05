@@ -34,6 +34,9 @@ pub struct FtpSession {
     /// `TransferMode::Default`에서 아직 수동형만 시도해 본 상태인가 —
     /// 데이터 연결이 실패하면 한 번 능동형으로 넘어간다
     active_fallback_pending: bool,
+    /// 이 연결이 실제로 TLS 위에 섰는가 — `ExplicitIfAvailable`이 거부당해 평문으로
+    /// 되연결하면 거짓이다 (F-7 리뷰 B1)
+    secure: bool,
 }
 
 impl FtpSession {
@@ -42,6 +45,7 @@ impl FtpSession {
             stream: None,
             mlsd_unsupported: false,
             active_fallback_pending: false,
+            secure: false,
         }
     }
 
@@ -104,21 +108,30 @@ impl RemoteSession for FtpSession {
         // TLS 인증서의 이름 대조에 쓰는 호스트 — IPv6 리터럴의 대괄호는 이름이 아니다
         let domain = site.host.trim_start_matches('[').trim_end_matches(']');
 
+        // 협상 결과를 여기서 정한다 — 아래 분기 중 **실제로 TLS가 선 길**만 참이다
+        self.secure = false;
         let stream = match effective_encryption(site) {
             Encryption::Plain => {
                 NativeTlsFtpStream::connect(&addr).map_err(|e| classify(e, "연결", None))?
             }
             Encryption::Implicit => {
-                NativeTlsFtpStream::connect_secure_implicit(&addr, tls_connector()?, domain)
-                    .map_err(|e| classify(e, "묵시적 TLS 연결", None))?
+                let stream =
+                    NativeTlsFtpStream::connect_secure_implicit(&addr, tls_connector()?, domain)
+                        .map_err(|e| classify(e, "묵시적 TLS 연결", None))?;
+                self.secure = true;
+                stream
             }
             explicit => {
                 let plain =
                     NativeTlsFtpStream::connect(&addr).map_err(|e| classify(e, "연결", None))?;
                 match plain.into_secure(tls_connector()?, domain) {
-                    Ok(secure) => secure,
+                    Ok(secure) => {
+                        self.secure = true;
+                        secure
+                    }
                     Err(_) if explicit == Encryption::ExplicitIfAvailable => {
-                        // 서버가 AUTH TLS를 거부했다. 승격이 스트림을 소비했으므로 평문으로 다시 연결한다
+                        // 서버가 AUTH TLS를 거부했다. 승격이 스트림을 소비했으므로 평문으로 다시
+                        // 연결한다 — 이때 이 연결은 **암호화되지 않았다**(`secure`는 거짓 그대로)
                         NativeTlsFtpStream::connect(&addr).map_err(|e| classify(e, "연결", None))?
                     }
                     Err(err) => return Err(classify(err, "TLS 승격", None)),
@@ -310,6 +323,11 @@ impl RemoteSession for FtpSession {
 
     fn noop(&mut self) -> RemoteResult<()> {
         self.stream()?.noop().map_err(|e| classify(e, "NOOP", None))
+    }
+
+    fn is_secure(&self) -> bool {
+        // 연결이 끊긴 뒤에는 무엇도 암호화돼 있지 않다
+        self.stream.is_some() && self.secure
     }
 
     fn quit(&mut self) -> RemoteResult<()> {

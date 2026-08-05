@@ -43,6 +43,8 @@ pub struct FakeServer {
     calls: Mutex<Vec<String>>,
     /// 켜져 있으면 `chmod`가 "지원하지 않는다"로 답한다 — SITE CHMOD를 모르는 FTP 서버(D22)
     chmod_unsupported: AtomicBool,
+    /// 켜져 있으면 TLS 승격을 거부한다 — 연결은 서지만 **평문이다** (F-7 리뷰 B1)
+    refuse_tls: AtomicBool,
 }
 
 impl FakeServer {
@@ -66,6 +68,11 @@ impl FakeServer {
     /// 응답 없는 서버로 만들거나 되돌린다
     pub fn set_hang(&self, hang: bool) {
         self.hang.store(hang, Ordering::SeqCst);
+    }
+
+    /// TLS 승격을 거부하는 서버로 만들거나 되돌린다 — 연결은 서되 암호화되지 않는다
+    pub fn set_refuse_tls(&self, refuse: bool) {
+        self.refuse_tls.store(refuse, Ordering::SeqCst);
     }
 
     /// `chmod`를 지원하지 않는 서버로 만들거나 되돌린다 (D22)
@@ -166,6 +173,11 @@ impl RemoteSession for FakeSession {
         }
         self.connected = true;
         Ok(())
+    }
+
+    fn is_secure(&self) -> bool {
+        // 연결이 서 있고 서버가 TLS를 거부하지 않았을 때만 암호화된 것으로 본다
+        self.connected && !self.server.refuse_tls.load(Ordering::SeqCst)
     }
 
     fn login(&mut self, _site: &SiteRecord, _password: &str) -> RemoteResult<()> {

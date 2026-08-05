@@ -769,10 +769,10 @@ impl ExplorerApp {
         let record = self.sites.get(connection.site);
         let protocol = record.map(|record| record.protocol.label());
         let name = record.map(|record| record.name.as_str());
-        // 암호화가 걸린 연결에만 `· TLS`를 붙인다 — SFTP는 전송 계층이 이미 암호화돼 있다
-        let secure = record.is_some_and(|record| {
-            record.protocol.is_ssh() || record.encryption != crate::remote::types::Encryption::Plain
-        });
+        // 암호화가 **실제로 선** 연결에만 `· TLS`를 붙인다 — 설정값으로 판정하면
+        // 서버가 AUTH TLS를 거부해 평문으로 되연결된 연결까지 암호화됐다고 적게 된다
+        // (F-7 리뷰 B1). 판정은 워커가 올린 협상 결과가 한다
+        let secure = connection.is_secure();
         status_bar::connection_label(Some(connection.phase()), protocol, name, secure)
     }
 

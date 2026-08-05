@@ -307,6 +307,11 @@ impl RemoteSession for SftpSession {
             .map_err(|e| classify(e, "연결 유지", None))
     }
 
+    fn is_secure(&self) -> bool {
+        // SSH는 전송 계층이 곧 암호화다 — 연결이 서 있으면 참이다
+        self.session.is_some()
+    }
+
     fn quit(&mut self) -> RemoteResult<()> {
         self.sftp = None;
         let Some(session) = self.session.take() else {

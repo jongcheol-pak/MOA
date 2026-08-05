@@ -188,6 +188,10 @@ pub enum ConnEvent {
         op: OpKind,
         result: Result<(), RemoteError>,
     },
+    /// 이 연결이 실제로 암호화됐는가 — 연결 직후 한 번 온다 (F-7 리뷰 B1).
+    ///
+    /// 설정값이 아니라 협상 결과다: `ExplicitIfAvailable`이 거부당해 평문으로 되연결하면 거짓이다
+    Secure(bool),
     /// `List`가 실패했다 — **어느 요청이 실패했는지** 알린다 (T24).
     ///
     /// 실패를 로그에만 남기면, 답을 기다리던 쪽(원격 트리)이 영영 `읽는 중…`에 머문다
@@ -230,6 +234,8 @@ pub struct Connection {
     /// 워커가 끝나면 켜진다 — `Drop`이 이것으로 회수를 확인한다
     finished: Arc<AtomicBool>,
     phase: ConnPhase,
+    /// 워커가 올린 **협상 결과** — 이 연결이 실제로 암호화됐는가 (F-7 리뷰 B1)
+    secure: bool,
     /// 이 연결의 서버 로그 (FR-40). 워커가 올린 줄을 `poll`이 여기 쌓고 화면은 읽기만 한다
     log: LogBuffer,
 }
@@ -280,6 +286,7 @@ impl Connection {
             shutdown,
             finished,
             phase: ConnPhase::Idle,
+            secure: false,
             log: LogBuffer::new(),
         }
     }
@@ -307,6 +314,7 @@ impl Connection {
         while let Ok(event) = self.rx.try_recv() {
             match &event {
                 ConnEvent::Phase(phase) => self.phase = phase.clone(),
+                ConnEvent::Secure(secure) => self.secure = *secure,
                 ConnEvent::Log { kind, text } => self.log.push(*kind, text.clone()),
                 _ => {}
             }
@@ -317,6 +325,14 @@ impl Connection {
 
     pub fn phase(&self) -> &ConnPhase {
         &self.phase
+    }
+
+    /// 이 연결이 **실제로** 암호화돼 있는가 (F-7 리뷰 B1).
+    ///
+    /// 설정값이 아니라 워커가 올린 협상 결과다 — `ExplicitIfAvailable`이 거부당해 평문으로
+    /// 되연결한 연결은 거짓이라, 상태 표시줄이 `· TLS`를 붙이지 않는다
+    pub fn is_secure(&self) -> bool {
+        self.secure
     }
 
     /// 이 연결의 서버 로그 — 화면은 읽기만 한다 (FR-40)
@@ -501,7 +517,11 @@ fn connect_with_retry(worker: &mut Worker) -> bool {
             .and_then(|()| worker.session.login(&worker.site, &worker.password));
 
         let Err(err) = outcome else {
-            return worker.emit(ConnEvent::Phase(ConnPhase::Ready));
+            // 협상 결과를 먼저 올린다 — 화면이 `Ready`를 보고 상태 줄을 그릴 때
+            // 암호화 여부가 이미 도착해 있어야 한 프레임도 거짓으로 적히지 않는다
+            let secure = worker.session.is_secure();
+            return worker.emit(ConnEvent::Secure(secure))
+                && worker.emit(ConnEvent::Phase(ConnPhase::Ready));
         };
 
         // 인증·호스트 키 실패는 다시 걸어도 같은 답이다
@@ -1331,5 +1351,38 @@ mod tests {
         let (generation, detail) = failed.expect("실패 알림이 오지 않았다");
         assert_eq!(generation, 77, "어느 요청이 실패했는지 알 수 없다");
         assert!(!detail.is_empty(), "사유가 비어 있다");
+    }
+
+    #[test]
+    fn 티엘에스가_거부되면_암호화된_연결로_보지_않는다() {
+        // F-7 리뷰 B1 — 설정이 `ExplicitIfAvailable`이어도 서버가 거부하면 평문으로 간다.
+        // 그때 화면이 `· TLS`를 적으면 **거짓 보안 표시**가 된다
+        let 거부하는_서버 = FakeServer::new();
+        거부하는_서버.set_refuse_tls(true);
+        let mut 평문 = spawn(&거부하는_서버, fast_retry());
+        평문.send(ConnCommand::Connect);
+        wait_until(Duration::from_secs(3), || {
+            평문.poll();
+            matches!(평문.phase(), ConnPhase::Ready)
+        });
+        assert!(!평문.is_secure(), "평문 연결을 암호화됐다고 보았다");
+
+        // 받아 주는 서버에서는 그대로 참이다
+        let 받아주는_서버 = FakeServer::new();
+        let mut 암호화 = spawn(&받아주는_서버, fast_retry());
+        암호화.send(ConnCommand::Connect);
+        wait_until(Duration::from_secs(3), || {
+            암호화.poll();
+            matches!(암호화.phase(), ConnPhase::Ready)
+        });
+        assert!(암호화.is_secure(), "암호화된 연결인데 아니라고 보았다");
+    }
+
+    #[test]
+    fn 연결_전에는_암호화로_보지_않는다() {
+        // 연결이 서기 전·실패한 연결에는 `· TLS`가 붙지 않아야 한다
+        let server = FakeServer::new();
+        let connection = spawn(&server, fast_retry());
+        assert!(!connection.is_secure());
     }
 }
