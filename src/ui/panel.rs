@@ -68,6 +68,14 @@ impl DirLoad {
         }
     }
 
+    /// 기다리던 결과를 버린다 — 활성 탭이 원격으로 바뀌어 그 결과가 갈 곳이 없어졌을 때.
+    ///
+    /// 세대를 함께 올려 **이미 채널에 실린 답도** 폐기한다
+    fn cancel(&mut self) {
+        self.generation += 1;
+        self.pending = None;
+    }
+
     /// 워커 스레드에서 열거를 시작한다. 이전 요청의 결과는 세대 불일치로 폐기된다
     fn start(&mut self, path: PathBuf, ctx: &egui::Context) {
         self.generation += 1;
@@ -472,6 +480,14 @@ impl PanelState {
     /// `poll_load`에서 갈라낸 이유는 **테스트가 이 경로를 실제로 지나게** 하기 위해서다 —
     /// 판정 헬퍼만 직접 부르는 테스트는 호출부가 죽어도 통과한다(F-7 B1이 그렇게 새어나갔다)
     fn apply_enumerated(&mut self, outcome: EnumOutcome, icons: &mut IconCache) {
+        // **활성 탭이 원격이면 이 결과는 남의 것이다.** 열거를 걸어 둔 사이에 탭이 원격으로
+        // 바뀔 수 있고(사이트 연결·탭 전환), 그대로 커밋하면 원격 탭이 로컬 탭으로 둔갑한다
+        // (개발 빌드에서는 `TabState::set_committed`의 단언이 앱을 끝낸다).
+        // 세대가 맞아도 **가는 곳이 사라진** 답이라 여기서 버린다
+        if self.is_remote() {
+            self.abandon_local_load();
+            return;
+        }
         match outcome {
             EnumOutcome::Ok(entries) => {
                 // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다.
@@ -646,6 +662,18 @@ impl PanelState {
     /// 그 자리에 탭이 보여야 사용자가 "열리고 있다"는 것을 알기 때문이다
     pub fn open_remote_tab(&mut self, site: SiteId, path: RemotePath) {
         self.tabs.add(TabState::remote(site, path));
+        // 이 패널이 로컬 폴더를 읽는 중이었으면 그 결과는 갈 곳이 없다 — 활성 탭이 방금
+        // 원격이 됐기 때문이다. 접지 않으면 `읽는 중…`이 남고, 도착한 결과가 원격 탭에
+        // 커밋되려다 죽는다(개발 빌드) 또는 원격 탭을 로컬 탭으로 둔갑시킨다(배포 빌드)
+        self.abandon_local_load();
+    }
+
+    /// 진행 중인 로컬 열거를 버리고 그에 딸린 상태(대기 경로·이동 방향·상태 문구)를 지운다
+    fn abandon_local_load(&mut self) {
+        self.load.cancel();
+        self.pending_dir = PathBuf::new();
+        self.pending_nav = PendingNav::None;
+        self.status.clear();
     }
 
     /// 활성 원격 탭에 연결을 붙이고 연결 중으로 표시한다 — 사이트를 막 열었을 때.
@@ -2267,5 +2295,35 @@ mod tests {
             .expect("로컬 탭");
         panel.handle_tab(TabAction::Switch(local), &ctx);
         assert!(!panel.take_remote_dirty(), "로컬 탭에 원격 조회를 청했다");
+    }
+
+    #[test]
+    fn 원격_탭을_여는_사이_도착한_로컬_열거는_버린다() {
+        // 실사용 결함(2026-08-05): 사이트를 더블클릭하면 앱이 죽었다. 분할로 만들어진 패널이
+        // 시작 폴더를 읽는 중에 활성 탭이 원격이 되고, 뒤늦게 온 로컬 결과를 그 탭에 커밋하려
+        // 했기 때문이다(개발 빌드는 단언으로 종료, 배포 빌드는 원격 탭이 로컬 탭으로 둔갑)
+        let ctx = egui::Context::default();
+        let mut icons = IconCache::new();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+        panel.start_load(
+            std::path::PathBuf::from(r"C:\Windows"),
+            PendingNav::Push,
+            &ctx,
+        );
+        assert!(panel.load.is_loading(), "열거가 시작되지 않았다");
+
+        // 그 사이 사이트를 연다 — 활성 탭이 원격이 된다
+        panel.open_remote_tab(SiteId(1), RemotePath::new("/var/www"));
+        assert!(panel.is_remote());
+        assert!(!panel.load.is_loading(), "원격 탭인데 `읽는 중…`이 남았다");
+
+        // 이미 채널에 실려 있던 결과가 뒤늦게 도착해도 원격 탭은 그대로여야 한다
+        panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), &mut icons);
+        assert!(panel.is_remote(), "원격 탭이 로컬 탭으로 둔갑했다");
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www")
+        );
+        assert!(panel.status.is_empty(), "원격 탭에 로컬 상태 문구가 남았다");
     }
 }
