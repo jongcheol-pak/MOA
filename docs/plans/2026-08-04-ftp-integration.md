@@ -665,10 +665,12 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T15. 사이트 관리자 — 일반 탭 [Type D]
 
-- **Files**: `src/ui/site_manager.rs`(신규), `src/ui/widgets.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/site_manager.rs`(신규), `src/ui/widgets.rs`, `src/ui/app.rs`, `src/ui/mod.rs`(모듈 등록), **`src/ui/remote_states.rs`**(구현 중 편입 — 아래 정정 ③)
 - **Design**:
   - **배치**: `ui::site_manager` — `egui::Modal` 기반(기존 삭제 확인 대화와 같은 방식)
   - **신규 심볼**: `SiteManager` — 열림 상태·선택 사이트·편집 중인 `SiteRecord` 초안·활성 탭 / `SiteManagerOutcome{None,Close,Register(SiteRecord),RegisterAndConnect(SiteRecord)}` / `widgets::labeled_field`·`dropdown_field`·`port_field` — 라벨 96px + 필드 28px 조합(디자인 반복 요소)
+    - **구현 중 확정 (원안 대비 3건)**: ① **`Outcome`이 `SiteRecord`가 아니라 `SiteId`를 싣는다** — 평문 비밀번호를 봉인해 담을 수 있는 곳은 `SiteStore::set_password`뿐이라(FR-28·T6), 초안을 값으로 넘기면 봉인 경로가 화면 쪽에 한 벌 더 생긴다. 그래서 `show(ctx, &mut SiteStore, &[SiteId])`가 목록 변경까지 직접 하고 결과로 사이트 **번호**를 준다. ② **위젯 이름이 `form_label`·`form_inline_label`·`text_field`·`dropdown_field`** — `labeled_field`(라벨+필드 묶음)는 필드 종류마다 인자가 달라 클로저를 받는 모양이 되어, 라벨과 필드를 따로 부르는 쪽이 짧고 읽기 쉽다. `port_field`는 폭만 다른 `text_field`라 따로 두지 않았다. ③ **`design_button`을 `remote_states`에서 `widgets`로 올렸다** — 실패 화면 2곳·사이트 관리자 5곳(좌측 3 + 바닥 2)이 같은 디자인 값(`#252525`/`#3A3A3A`/`#2E2E2E`)을 쓴다. 두 벌로 두면 T12의 팔레트와 같은 "정본이 갈리는" 문제가 버튼에서 되풀이된다. 초록 기본 버튼은 `primary_button`으로 나란히 두었다(색 세 벌만 다른 공통 골격)
+    - **비밀번호 마스킹**: egui의 `TextEdit::password`는 `•`(U+2022)로 가리는데 디자인·인벤토리 #75는 `●`(U+25CF)다 — `layouter`로 글자 수만큼 `●`를 만들어 넘긴다(값 자체는 그대로 편집된다)
   - **의존 방향**: `ui::site_manager` → `remote::{sites,types}` + `ui::theme`
   - **비추상화 선언**: 폼을 데이터 주도(스키마→위젯)로 만들지 않는다 — 7개 필드의 타입·활성 조건이 제각각이라 명시 나열이 짧고 읽기 쉽다
 - **Acceptance**: ① 인벤토리 #60~75·#88~90의 **문구가 원문 그대로**다(리터럴 단언). ② 대화 1080×680·좌측 400px·라벨 96px·필드 28px·바닥 58px·버튼 30px `padding 0 24px`. ③ 프로토콜을 바꾸면 포트 기본값이 따라 바뀐다(FTP/FTPS 21, SFTP 22) — 사용자가 직접 고친 뒤에는 안 바꾼다. ④ 로그온 유형이 `익명`이면 사용자·비밀번호가 비활성. ⑤ `이름 바꾸기(R)`·`삭제(D)`·`복제(I)`가 `SiteStore`에 반영된다. ⑥ 비밀번호 입력이 `●`로 마스킹된다.

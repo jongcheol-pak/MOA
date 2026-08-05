@@ -17,6 +17,7 @@ use crate::remote::sftp::HostKeyPrompt;
 use crate::remote::sites::SiteStore;
 use crate::remote::types::{Protocol, SiteId};
 use crate::ui::theme;
+use crate::ui::widgets;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
 /// 배지 높이 (README §4)
@@ -225,69 +226,17 @@ pub fn show_skeleton(ui: &mut egui::Ui) {
     }
 }
 
-/// 디자인의 보조 버튼 — 채움 `#252525` · 테두리 `#3A3A3A` · hover `#2E2E2E` · 모서리 반경 0.
+/// 연결 중 취소 버튼 — 눌렸으면 `true` (인벤토리 #21).
 ///
-/// egui 기본 버튼 색(`#2A2A2A`·기본 테두리·hover `#383838`)과 다르므로 스타일을 **국소로**
-/// 덮는다. 전역 팔레트를 바꾸면 기존 화면의 버튼까지 함께 바뀐다.
-/// 글자색은 자리마다 달라(취소 `#C8C8C8` · 실패 화면 `#D8D8D8`) 인자로 받는다
-/// 보조 버튼의 테두리 두께.
-///
-/// **폭 계산이 이 값을 알아야 한다** — egui는 버튼 안쪽 여백을 `button_padding − 테두리 두께`로
-/// 잡으므로(`Style::button_style`), 이것을 빼지 않으면 `design_button_width`가 실제보다 넓게 센다
-const BUTTON_STROKE: f32 = 1.0;
-
-/// 폭은 **글자에 맞춘다** — 원본이 폭 대신 좌우 여백(`padding 0 Npx`)으로 정하기 때문이다
-fn design_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    text_color: egui::Color32,
-    pad_x: f32,
-    height: f32,
-) -> egui::Response {
-    ui.scope(|ui| {
-        ui.spacing_mut().button_padding = egui::vec2(pad_x, 0.0);
-        let widgets = &mut ui.style_mut().visuals.widgets;
-        for (state, fill) in [
-            (&mut widgets.inactive, theme::HEADER_BG),
-            (&mut widgets.hovered, theme::ROW_HOT),
-            (&mut widgets.active, theme::ROW_HOT),
-        ] {
-            state.weak_bg_fill = fill;
-            state.bg_fill = fill;
-            state.bg_stroke = egui::Stroke::new(BUTTON_STROKE, theme::BORDER_CONTROL);
-            state.corner_radius = egui::CornerRadius::ZERO;
-            // 눌렸을 때 커지지 않는다 — 디자인은 상태에 따라 크기가 변하지 않는다
-            state.expansion = 0.0;
-        }
-        ui.add(
-            egui::Button::new(egui::RichText::new(label).color(text_color))
-                .min_size(egui::vec2(0.0, height)),
-        )
-    })
-    .inner
-}
-
-/// `design_button`이 차지할 폭 — 가운데 정렬처럼 **그리기 전에** 폭을 알아야 하는 자리가 쓴다.
-///
-/// 여백에서 테두리 두께를 빼는 것은 egui가 그렇게 그리기 때문이다(`BUTTON_STROKE` 참조) —
-/// 빼지 않으면 버튼 행이 계산된 중앙에서 1px 밀린다
-fn design_button_width(ui: &egui::Ui, label: &str, pad_x: f32) -> f32 {
-    let font = egui::TextStyle::Button.resolve(ui.style());
-    ui.painter()
-        .layout_no_wrap(label.to_owned(), font, theme::TEXT)
-        .size()
-        .x
-        + (pad_x - BUTTON_STROKE) * 2.0
-}
-
-/// 연결 중 취소 버튼 — 눌렸으면 `true` (인벤토리 #21)
+/// 버튼 자체는 `widgets::design_button`이 그린다 — 사이트 관리자의 좌측·바닥 버튼도 같은
+/// 디자인 값을 써서, 여기 두면 색·여백의 정본이 둘로 갈린다
 pub fn show_cancel(ui: &mut egui::Ui) -> bool {
-    design_button(
+    widgets::design_button(
         ui,
         CANCEL_LABEL,
         theme::HEADER_TEXT,
         CANCEL_PAD_X,
-        CANCEL_BUTTON_HEIGHT,
+        egui::vec2(0.0, CANCEL_BUTTON_HEIGHT),
     )
     .clicked()
 }
@@ -376,27 +325,27 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
             // 버튼 폭이 글자에 맞춰지므로 미리 재어 둔다
             let buttons: f32 = [FAIL_RETRY, FAIL_SETTINGS]
                 .iter()
-                .map(|label| design_button_width(ui, label, FAIL_BUTTON_PAD_X))
+                .map(|label| widgets::design_button_width(ui, label, FAIL_BUTTON_PAD_X))
                 .sum::<f32>()
                 + ui.spacing().item_spacing.x;
             ui.add_space(((ui.available_width() - buttons) / 2.0).max(0.0));
-            if design_button(
+            if widgets::design_button(
                 ui,
                 FAIL_RETRY,
                 theme::TEXT_BUTTON,
                 FAIL_BUTTON_PAD_X,
-                FAIL_BUTTON_HEIGHT,
+                egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
             )
             .clicked()
             {
                 action = Some(FailedAction::Retry);
             }
-            if design_button(
+            if widgets::design_button(
                 ui,
                 FAIL_SETTINGS,
                 theme::TEXT_BUTTON,
                 FAIL_BUTTON_PAD_X,
-                FAIL_BUTTON_HEIGHT,
+                egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
             )
             .clicked()
             {

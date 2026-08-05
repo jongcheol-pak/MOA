@@ -16,6 +16,7 @@ pub mod session;
 pub mod shell_host;
 pub mod sidebar;
 pub mod site_dropdown;
+pub mod site_manager;
 pub mod splitter;
 pub mod tabs;
 pub mod theme;

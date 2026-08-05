@@ -1,8 +1,10 @@
 //! 공용 위젯 — 여러 화면 요소가 같은 규칙으로 그리는 조각들.
 //!
-//! 지금은 아이콘 버튼 하나뿐이다. 타이틀바·탭 스트립·주소창이 모두
-//! "평소에는 배경 없이 아이콘만, 마우스가 올라오면 배경을 칠한다"는 같은 규칙을 쓰는데,
-//! 이 규칙을 세 곳이 각자 구현하면 hover 색·크기 처리가 조금씩 갈린다.
+//! 아이콘 버튼은 타이틀바·탭 스트립·주소창이, 디자인 버튼은 원격 단계 화면과 사이트 관리자가,
+//! 폼 조각(라벨 96px + 필드 28px)은 사이트 관리자의 세 탭이 같은 규칙으로 쓴다.
+//! 이 규칙을 화면마다 각자 구현하면 hover 색·여백·테두리가 조금씩 갈린다.
+use std::sync::Arc;
+
 use crate::ui::theme;
 use eframe::egui;
 
@@ -51,4 +53,420 @@ pub fn icon_button_styled(
         );
     }
     response
+}
+
+// ── 디자인 버튼 (원본 `FileExplorer-FTP.dc.html:249`·`:409`·`:496-498`) ──
+
+/// 버튼 테두리 두께.
+///
+/// **폭 계산이 이 값을 알아야 한다** — egui는 버튼 안쪽 여백을 `button_padding − 테두리 두께`로
+/// 잡으므로(`Style::button_style`), 이것을 빼지 않으면 `design_button_width`가 실제보다 넓게 센다
+const BUTTON_STROKE: f32 = 1.0;
+
+/// 디자인 값으로 그리는 보조 버튼 — 채움 `#252525` · 테두리 `#3A3A3A` · hover `#2E2E2E`.
+///
+/// egui 기본 버튼 색(`#2A2A2A`·기본 테두리·hover `#383838`)과 다르므로 스타일을 **국소로**
+/// 덮는다. 전역 팔레트를 바꾸면 기존 화면의 버튼까지 함께 바뀐다.
+/// 글자색은 자리마다 달라(연결 중 취소 `#C8C8C8` · 실패 화면·대화 `#D8D8D8`) 인자로 받는다.
+///
+/// 폭은 원본이 좌우 여백(`padding 0 Npx`)으로 정하므로 글자에 맞춘다 —
+/// 3열 격자처럼 폭이 정해진 자리는 `min_size.x`로 넓힌다
+pub fn design_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    text_color: egui::Color32,
+    pad_x: f32,
+    min_size: egui::Vec2,
+) -> egui::Response {
+    styled_button(
+        ui,
+        label,
+        text_color,
+        (theme::HEADER_BG, theme::ROW_HOT, theme::BORDER_CONTROL),
+        pad_x,
+        min_size,
+    )
+}
+
+/// 기본 버튼(`연결(C)`) — 초록 채움 `#2F6B4F` · 테두리 `#3E8A66` · hover `#387E5D` (원본 `:496`)
+pub fn primary_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    pad_x: f32,
+    min_size: egui::Vec2,
+) -> egui::Response {
+    styled_button(
+        ui,
+        label,
+        theme::PRIMARY_TEXT,
+        (
+            theme::PRIMARY_FILL,
+            theme::PRIMARY_HOT,
+            theme::PRIMARY_BORDER,
+        ),
+        pad_x,
+        min_size,
+    )
+}
+
+/// 두 버튼의 공통 골격 — 색 세 벌(평소 채움 · hover 채움 · 테두리)만 다르다
+fn styled_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    text_color: egui::Color32,
+    (fill, hot, border): (egui::Color32, egui::Color32, egui::Color32),
+    pad_x: f32,
+    min_size: egui::Vec2,
+) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = egui::vec2(pad_x, 0.0);
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        for (state, fill) in [
+            (&mut widgets.inactive, fill),
+            (&mut widgets.hovered, hot),
+            (&mut widgets.active, hot),
+        ] {
+            state.weak_bg_fill = fill;
+            state.bg_fill = fill;
+            state.bg_stroke = egui::Stroke::new(BUTTON_STROKE, border);
+            state.corner_radius = egui::CornerRadius::ZERO;
+            // 눌렸을 때 커지지 않는다 — 디자인은 상태에 따라 크기가 변하지 않는다
+            state.expansion = 0.0;
+        }
+        ui.add(egui::Button::new(egui::RichText::new(label).color(text_color)).min_size(min_size))
+    })
+    .inner
+}
+
+/// `design_button`이 차지할 폭 — 가운데 정렬처럼 **그리기 전에** 폭을 알아야 하는 자리가 쓴다.
+///
+/// 여백에서 테두리 두께를 빼는 것은 egui가 그렇게 그리기 때문이다(`BUTTON_STROKE` 참조) —
+/// 빼지 않으면 버튼 행이 계산된 중앙에서 1px 밀린다
+pub fn design_button_width(ui: &egui::Ui, label: &str, pad_x: f32) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(label.to_owned(), font, theme::TEXT)
+        .size()
+        .x
+        + (pad_x - BUTTON_STROKE) * 2.0
+}
+
+// ── 폼 조각 (원본 `FileExplorer-FTP.dc.html:421-434`) ──
+
+/// 라벨 열 폭 — 사이트 관리자 일반 탭의 모든 행이 이 폭에 맞춰 필드를 시작한다
+pub const FORM_LABEL_WIDTH: f32 = 96.0;
+/// 입력·드롭다운 필드 높이
+pub const FORM_FIELD_HEIGHT: f32 = 28.0;
+/// 라벨과 필드 사이 간격
+pub const FORM_GAP: f32 = 10.0;
+/// 필드 안 좌우 여백
+const FORM_FIELD_PAD_X: f32 = 8.0;
+/// 라벨·필드 글자 크기
+pub const FORM_FONT_PX: f32 = 13.0;
+/// 드롭다운 오른쪽 캐럿
+const FORM_CARET: &str = "▾";
+const FORM_CARET_PX: f32 = 11.0;
+/// 캐럿과 값 사이 간격
+const FORM_CARET_GAP: f32 = 8.0;
+/// 비활성 필드 배경 — 원본이 채움을 한 단계 죽여 조작할 수 없음을 보인다 (`:863`·`:874`)
+const FORM_DISABLED_BG: egui::Color32 = egui::Color32::from_rgb(0x1A, 0x1A, 0x1A);
+/// 비밀번호 마스킹 문자 — **egui 기본값(`•`)이 아니라 디자인의 `●`다** (인벤토리 #75).
+/// 그래서 `TextEdit::password`가 아니라 아래 `layouter`로 직접 가린다
+const MASK_CHAR: char = '●';
+
+/// 라벨 한 칸 — 96px 고정 폭, 세로 가운데 정렬. 비활성이면 흐려진다
+pub fn form_label(ui: &mut egui::Ui, text: &str, enabled: bool) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(FORM_LABEL_WIDTH, FORM_FIELD_HEIGHT),
+        egui::Sense::hover(),
+    );
+    inline_label(ui, rect, text, enabled);
+}
+
+/// 폭을 글자에 맞추는 라벨 — `포트(P):`처럼 행 가운데 끼어드는 것이 쓴다
+pub fn form_inline_label(ui: &mut egui::Ui, text: &str, enabled: bool) {
+    let width = ui
+        .painter()
+        .layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::proportional(FORM_FONT_PX),
+            theme::HEADER_TEXT,
+        )
+        .size()
+        .x;
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(width, FORM_FIELD_HEIGHT), egui::Sense::hover());
+    inline_label(ui, rect, text, enabled);
+}
+
+fn inline_label(ui: &egui::Ui, rect: egui::Rect, text: &str, enabled: bool) {
+    ui.painter().text(
+        egui::pos2(rect.left(), rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(FORM_FONT_PX),
+        if enabled {
+            theme::HEADER_TEXT
+        } else {
+            theme::TEXT_DIM
+        },
+    );
+}
+
+/// 입력 필드 — `#151515` 웰 위의 한 줄 편집기.
+///
+/// **비활성일 때는 편집기를 두지 않고 값만 흐리게 그린다** — `add_enabled`로 흐리게만 하면
+/// 클릭·캐럿이 살아 있어 "눌리는데 안 되는 것"처럼 보인다.
+///
+/// `id_salt`는 같은 화면의 필드끼리 위젯 id가 겹치지 않게 한다.
+/// `masked`면 글자를 `●`로 가린다(값 자체는 그대로 편집된다)
+pub fn text_field(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    value: &mut String,
+    width: f32,
+    enabled: bool,
+    masked: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, FORM_FIELD_HEIGHT), egui::Sense::hover());
+    paint_well(ui, rect, enabled);
+    let inner = inner_rect(rect);
+    if !enabled {
+        ui.painter().text(
+            egui::pos2(inner.left(), inner.center().y),
+            egui::Align2::LEFT_CENTER,
+            display_text(value, masked),
+            egui::FontId::proportional(FORM_FONT_PX),
+            theme::TEXT_DIM,
+        );
+        return response;
+    }
+    let mut mask = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| -> Arc<egui::Galley> {
+        ui.painter().layout(
+            display_text(text.as_str(), true),
+            egui::FontId::proportional(FORM_FONT_PX),
+            theme::TEXT,
+            wrap,
+        )
+    };
+    let mut edit = egui::TextEdit::singleline(value)
+        .id_salt(id_salt)
+        .frame(egui::Frame::NONE)
+        .font(egui::FontId::proportional(FORM_FONT_PX))
+        .text_color(theme::TEXT)
+        .desired_width(inner.width())
+        .clip_text(true);
+    if masked {
+        edit = edit.layouter(&mut mask);
+    }
+    // 웰은 위에서 이미 그리고 자리도 잡았다 — 편집기는 그 안쪽에만 얹는다
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.add(edit)
+}
+
+/// 드롭다운 필드 — 고른 항목의 번호를 돌려준다(고르지 않았으면 `None`).
+///
+/// 열거형이 아니라 번호를 주고받는 이유: 필드마다 값 타입이 달라 제네릭으로 묶으면
+/// 호출부가 오히려 길어진다. 호출부가 자기 목록 순서로 되돌린다
+pub fn dropdown_field(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    current: &str,
+    width: f32,
+    enabled: bool,
+    options: &[&str],
+) -> Option<usize> {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(width, FORM_FIELD_HEIGHT), egui::Sense::hover());
+    // 팝업이 자기 버튼을 기억하는 열쇠가 이 id다 — 자리(rect)에서 자동으로 뽑으면 같은 폼의
+    // 필드끼리 겹칠 수 있어 호출부가 준 이름으로 잡는다
+    let response = ui.interact(rect, ui.id().with(id_salt), sense);
+    let response = response.on_hover_cursor(if enabled {
+        egui::CursorIcon::PointingHand
+    } else {
+        egui::CursorIcon::Default
+    });
+    paint_well(ui, rect, enabled);
+    let inner = inner_rect(rect);
+    let text_color = if enabled {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+    let caret_color = if enabled {
+        theme::TEXT_MUTED
+    } else {
+        theme::TEXT_DIM
+    };
+    ui.painter().text(
+        egui::pos2(inner.right(), inner.center().y),
+        egui::Align2::RIGHT_CENTER,
+        FORM_CARET,
+        egui::FontId::proportional(FORM_CARET_PX),
+        caret_color,
+    );
+    // 값은 캐럿 자리를 뺀 나머지에만 그린다 — 긴 값이 캐럿을 덮지 않는다
+    let caret_width = ui
+        .painter()
+        .layout_no_wrap(
+            FORM_CARET.to_owned(),
+            egui::FontId::proportional(FORM_CARET_PX),
+            caret_color,
+        )
+        .size()
+        .x;
+    let value = ui.painter().layout(
+        current.to_owned(),
+        egui::FontId::proportional(FORM_FONT_PX),
+        text_color,
+        (inner.width() - caret_width - FORM_CARET_GAP).max(0.0),
+    );
+    ui.painter().galley(
+        egui::pos2(inner.left(), inner.center().y - value.size().y / 2.0),
+        value,
+        text_color,
+    );
+
+    if !enabled {
+        return None;
+    }
+    let mut chosen = None;
+    egui::Popup::menu(&response)
+        .frame(
+            egui::Frame::menu(ui.style())
+                .fill(theme::SURFACE_BG)
+                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                .corner_radius(0),
+        )
+        .show(|ui| {
+            ui.set_width(width);
+            for (index, option) in options.iter().enumerate() {
+                if menu_row(ui, option) {
+                    chosen = Some(index);
+                    ui.close();
+                }
+            }
+        });
+    chosen
+}
+
+/// 드롭다운 팝업의 한 줄 — 눌렸으면 `true`
+fn menu_row(ui: &mut egui::Ui, label: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), FORM_FIELD_HEIGHT),
+        egui::Sense::click(),
+    );
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, theme::MENU_HOT);
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + FORM_FIELD_PAD_X, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(FORM_FONT_PX),
+        theme::TEXT,
+    );
+    response.clicked()
+}
+
+/// 필드 웰 — 채움 + 1px 테두리. 테두리는 **안쪽**으로 그려 높이가 28px를 넘지 않게 한다
+fn paint_well(ui: &egui::Ui, rect: egui::Rect, enabled: bool) {
+    ui.painter().rect(
+        rect,
+        0.0,
+        if enabled {
+            theme::WELL_BG
+        } else {
+            FORM_DISABLED_BG
+        },
+        egui::Stroke::new(1.0, theme::BORDER_CONTROL),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// 웰 안쪽 — 좌우 8px 여백을 뺀 자리
+fn inner_rect(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(rect.left() + FORM_FIELD_PAD_X, rect.top()),
+        egui::pos2(rect.right() - FORM_FIELD_PAD_X, rect.bottom()),
+    )
+}
+
+/// 화면에 보일 글자 — 가릴 것이면 글자 수만큼 `●`로 바꾼다
+fn display_text(value: &str, masked: bool) -> String {
+    if masked {
+        std::iter::repeat_n(MASK_CHAR, value.chars().count()).collect()
+    } else {
+        value.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 마스킹은_글자_수만큼_원문자를_만든다() {
+        // 인벤토리 #75 — egui 기본 마스킹 문자(`•`)가 아니라 `●`다
+        assert_eq!(display_text("abc", true), "●●●");
+        assert_eq!(
+            display_text("비밀", true),
+            "●●",
+            "글자 수로 센다(바이트가 아니다)"
+        );
+        assert_eq!(display_text("", true), "");
+        assert_eq!(display_text("abc", false), "abc");
+    }
+
+    #[test]
+    fn 폼_치수는_원본과_같다() {
+        // 원본 `:425-426` — 라벨 96px · 필드 28px · 간격 10px
+        assert_eq!(FORM_LABEL_WIDTH, 96.0);
+        assert_eq!(FORM_FIELD_HEIGHT, 28.0);
+        assert_eq!(FORM_GAP, 10.0);
+        assert_eq!(FORM_FIELD_PAD_X, 8.0);
+        assert_eq!(FORM_FONT_PX, 13.0);
+    }
+
+    /// 가로 배치에서 필드가 차지한 크기를 잰다
+    fn field_size(width: f32, enabled: bool) -> egui::Vec2 {
+        let ctx = egui::Context::default();
+        let mut size = egui::Vec2::ZERO;
+        let mut value = "값".to_owned();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let before = ui.cursor().min.x;
+                    let response = text_field(ui, "테스트", &mut value, width, enabled, false);
+                    size = egui::vec2(ui.cursor().min.x - before, response.rect.height());
+                });
+            });
+        });
+        size
+    }
+
+    #[test]
+    fn 입력_필드는_지정한_폭과_28px_높이를_차지한다() {
+        // Acceptance ② — 필드 높이가 디자인 값이어야 라벨 행이 원본과 같은 자리에 온다
+        let size = field_size(240.0, true);
+        assert_eq!(size.x, 240.0);
+        assert!(
+            size.y <= FORM_FIELD_HEIGHT,
+            "편집기가 웰(28px) 밖으로 자랐다: {}",
+            size.y
+        );
+        // 비활성 필드도 같은 자리를 차지한다 — 활성 여부로 행 높이가 흔들리지 않는다
+        assert_eq!(field_size(240.0, false).x, 240.0);
+    }
 }

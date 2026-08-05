@@ -25,6 +25,7 @@ use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
+use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
 use crate::ui::splitter;
 use crate::ui::theme;
 use crate::ui::titlebar::{self, WindowRequest};
@@ -318,6 +319,8 @@ pub struct ExplorerApp {
     sites: SiteStore,
     /// SFTP 지문 확인 대화와 연결 워커를 잇는 통로 (D15)
     hostkey: HostKeyGate,
+    /// 사이트 관리자 대화 (FR-27) — 연결 메뉴의 `새 사이트 추가…`와 실패 화면의 `설정 열기`가 연다
+    site_manager: SiteManager,
 }
 
 impl ExplorerApp {
@@ -359,6 +362,7 @@ impl ExplorerApp {
             }),
             sites: SiteStore::new(),
             hostkey: HostKeyGate::new(),
+            site_manager: SiteManager::new(),
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -491,12 +495,11 @@ impl ExplorerApp {
             // 목록에서 감출 뿐 사이트는 남는다 (README §1) — 사이트 관리자에 그대로 보인다
             SidebarAction::HideSite(site) => self.sites.hide(site),
             // 사이트 목록은 메모리에 있어 지금은 다시 읽을 것이 없다.
-            // 파일로 오가는 저장이 붙는 T15에서 이 자리가 다시 읽기가 된다
+            // 파일로 오가는 저장이 붙는 T25(세션 v3)에서 이 자리가 다시 읽기가 된다
             SidebarAction::RefreshSites => {}
             // 연결 메뉴는 사이드바가 직접 띄운다 — 이 조작은 알림일 뿐이다
             SidebarAction::OpenConnectMenu => {}
-            // 사이트 관리자 화면은 T15가 만든다 — 그때 여기서 연다
-            SidebarAction::OpenSiteManager => {}
+            SidebarAction::OpenSiteManager => self.site_manager.open(),
         }
     }
 
@@ -634,6 +637,30 @@ impl ExplorerApp {
             }
             Some(false) => self.pending_remove = None,
             None => {}
+        }
+    }
+
+    /// 사이트 관리자 대화 (FR-27) — 등록 결과를 받아 연결까지 잇는다.
+    ///
+    /// `area`는 `연결(C)`이 패널을 좌우로 나눌 때 쓴다(T14와 같은 착지점). 아직 배치를 모르는
+    /// 첫 프레임에는 `None`이라, 그때는 연결 대신 등록만 하고 사용자가 다시 누르면 된다 —
+    /// 임의의 영역을 지어내 엉뚱한 자리에 패널을 만들지 않는다
+    fn show_site_manager(&mut self, ctx: &egui::Context, area: Option<LayoutRect>) {
+        if !self.site_manager.is_open() {
+            return;
+        }
+        let connected = self.connected_sites();
+        let outcome = self.site_manager.show(ctx, &mut self.sites, &connected);
+        match outcome {
+            // 토스트는 T16이 붙인다 — 그때 이 자리에서 `<host> 등록됨 …`을 띄운다 (인벤토리 #91)
+            SiteManagerOutcome::None
+            | SiteManagerOutcome::Close
+            | SiteManagerOutcome::Register(_) => {}
+            SiteManagerOutcome::RegisterAndConnect(site) => {
+                if let Some(area) = area {
+                    self.open_site_tab(site, None, area);
+                }
+            }
         }
     }
 
@@ -827,9 +854,9 @@ impl ExplorerApp {
             RemoteAction::CancelConnect => {
                 self.manager.send(conn, ConnCommand::Disconnect);
             }
-            // 여는 화면이 아직 없다 — 사이트 관리자는 T14, 서버 로그 패널은 T20이 만든다.
-            // 그때 이 자리에서 연다(조치를 값으로 받는 경로는 여기까지 이미 이어져 있다)
-            RemoteAction::OpenSettings | RemoteAction::ViewLog => {}
+            RemoteAction::OpenSettings => self.site_manager.open(),
+            // 서버 로그 패널은 T20이 만든다 — 그때 이 자리에서 연다
+            RemoteAction::ViewLog => {}
         }
     }
 
@@ -1011,6 +1038,9 @@ impl eframe::App for ExplorerApp {
         let mut remote_action = None;
         let mut remote_url = None;
         let mut closed_conns = Vec::new();
+        // 사이트 관리자의 `연결(C)`이 쓸 분할 영역 — 모달은 CentralPanel 밖에서 그리므로
+        // 안에서 정해지는 이 값을 밖으로 들고 나온다
+        let mut layout_area = None;
         // 타이틀바를 먼저 그린다 — 남는 영역이 아래 CentralPanel의 몫이 된다 (FR-22)
         let titlebar_command = self.show_titlebar(ui, &ctx);
         // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
@@ -1054,6 +1084,7 @@ impl eframe::App for ExplorerApp {
             }
 
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
+            layout_area = Some(area);
             for action in sidebar_actions {
                 self.handle_sidebar(action, area);
             }
@@ -1061,7 +1092,10 @@ impl eframe::App for ExplorerApp {
             // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
             // 모달이 떠 있는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
             // (워크스페이스 삭제 확인 · 서버 지문 확인)
-            let shortcut_command = if self.pending_remove.is_some() || self.hostkey.is_open() {
+            let shortcut_command = if self.pending_remove.is_some()
+                || self.hostkey.is_open()
+                || self.site_manager.is_open()
+            {
                 None
             } else {
                 menu::poll_shortcuts(&ctx)
@@ -1117,6 +1151,8 @@ impl eframe::App for ExplorerApp {
         self.show_remove_confirm(&ctx);
         // 서버 지문 확인도 같다. 사용자가 고를 때까지 그 연결의 워커는 기다리고 있다 (D15)
         self.hostkey.show(&ctx);
+        // 사이트 관리자도 자체 레이어를 쓴다 (FR-27)
+        self.show_site_manager(&ctx, layout_area);
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
         // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다
