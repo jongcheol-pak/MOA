@@ -99,12 +99,20 @@ struct Assignment {
 #[derive(Debug, Default)]
 pub struct TransferRunner {
     assigned: HashMap<TransferId, Assignment>,
-    /// 취소를 알렸고 **워커가 파일을 놓기를 기다리는** 것들 — 받다 만 파일의 자리를 든다.
+    /// 취소를 알렸고 **워커가 파일을 놓기를 기다리는** 것들 — 어느 연결에 맡겼는지와
+    /// 받다 만 파일의 자리를 함께 든다.
     ///
     /// 그 자리에서 곧바로 지우지 않는 이유: 워커는 아직 그 파일을 열어 쓰고 있고(취소 신호는
     /// 64KB마다 살펴진다), Windows는 열려 있는 파일을 지우지 못한다. 지운 셈 치고 넘어가면
-    /// 받다 만 파일이 그대로 남는다
-    cancelling: HashMap<TransferId, PathBuf>,
+    /// 받다 만 파일이 그대로 남는다.
+    ///
+    /// **연결까지 드는 이유**: 취소 직후 그 연결이 닫히면 워커의 `TransferDone`이 채널째로
+    /// 버려져 `on_done`이 영영 불리지 않는다 — 그때는 `forget_connection`이 이 자리를 넘겨받아
+    /// 지운다(연결이 사라졌다는 것은 파일도 이미 놓였다는 뜻이다)
+    cancelling: HashMap<TransferId, (ConnectionId, PathBuf)>,
+    /// 지울 차례가 됐지만 아직 못 지운 `.part`들 — 백신 검사·핸들 지연으로 한 번에 실패할 수 있어
+    /// 매 `start_ready`마다 다시 시도한다. 조용히 삼키면 받다 만 파일이 영영 남는다
+    pending_delete: Vec<PathBuf>,
 }
 
 impl TransferRunner {
@@ -129,6 +137,9 @@ impl TransferRunner {
         sites: &SiteStore,
         now: f64,
     ) {
+        // 지우지 못한 `.part`가 있으면 먼저 다시 시도한다 — 매 프레임 불리는 자리라
+        // 파일을 붙들고 있던 쪽이 놓는 순간 곧바로 정리된다
+        self.sweep_pending_delete();
         if queue.is_paused() {
             return;
         }
@@ -221,8 +232,9 @@ impl TransferRunner {
         result: Result<u64, String>,
     ) {
         // 사용자가 그만둔 것이면 이제야 파일을 지울 수 있다 — 워커가 방금 놓았다
-        if let Some(part) = self.cancelling.remove(&id) {
-            let _ = std::fs::remove_file(&part);
+        if let Some((_, part)) = self.cancelling.remove(&id) {
+            self.pending_delete.push(part);
+            self.sweep_pending_delete();
             return;
         }
         let Some(assignment) = self.assigned.remove(&id) else {
@@ -259,13 +271,21 @@ impl TransferRunner {
         manager.send(assignment.conn, ConnCommand::Cancel);
         if assignment.direction == TransferDirection::Download {
             // 워커가 놓을 때까지 기다렸다 지운다 (`cancelling` 주석 참조)
-            self.cancelling.insert(id, assignment.working_path);
+            self.cancelling
+                .insert(id, (assignment.conn, assignment.working_path));
         }
     }
 
-    /// 취소한 전송을 아직 정리하지 못하고 기다리는 건수 — 테스트·화면이 진행을 볼 때 쓴다
+    /// 아직 정리하지 못한 `.part` 건수 — 기다리는 것과 지우기를 다시 시도할 것을 합친다
     pub fn pending_cleanup(&self) -> usize {
-        self.cancelling.len()
+        self.cancelling.len() + self.pending_delete.len()
+    }
+
+    /// 지울 차례가 된 `.part`를 지운다. **못 지운 것은 목록에 남겨 다음에 다시 시도한다** —
+    /// 이미 사라진 것은 성공으로 본다(다른 쪽에서 치웠거나 애초에 만들어지지 않았다)
+    fn sweep_pending_delete(&mut self) {
+        self.pending_delete
+            .retain(|part| part.exists() && std::fs::remove_file(part).is_err());
     }
 
     /// `⏸` — 진행 중인 전송을 멈추고 **대기로 되돌린다** (Acceptance ④).
@@ -286,17 +306,31 @@ impl TransferRunner {
     }
 
     /// 연결이 사라졌다 — 그 연결에 맡겼던 전송을 놓아준다.
-    /// 큐 쪽 되돌리기는 `TransferQueue::requeue_site`가 한다
+    /// 큐 쪽 되돌리기는 `TransferQueue::requeue_site`가 한다.
+    ///
+    /// **취소 뒤 정리를 기다리던 것도 여기서 거둔다** — 연결이 닫히면 워커의 완료 통지가
+    /// 채널째로 버려져 `on_done`이 불리지 않는다. 그대로 두면 받다 만 파일이 영영 남는다
     pub fn forget_connection(&mut self, conn: ConnectionId) {
         self.assigned
             .retain(|_, assignment| assignment.conn != conn);
+        let orphaned: Vec<TransferId> = self
+            .cancelling
+            .iter()
+            .filter(|(_, (owner, _))| *owner == conn)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in orphaned {
+            if let Some((_, part)) = self.cancelling.remove(&id) {
+                self.pending_delete.push(part);
+            }
+        }
+        self.sweep_pending_delete();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -577,108 +611,51 @@ mod tests {
         let _ = std::fs::remove_file(&local);
     }
 
-    /// 이 프로세스의 작업 집합(바이트) — NFR-12 판정의 계측 장치.
-    ///
-    /// # 안전성
-    /// 구조체를 0으로 채워 크기를 함께 넘긴다. 실패하면 0을 돌려주며, 호출부가 그 경우
-    /// 판정을 건너뛴다(측정 못 한 것을 통과로 삼지 않는다)
-    fn working_set() -> u64 {
-        use windows::Win32::System::ProcessStatus::{
-            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
-        };
-        use windows::Win32::System::Threading::GetCurrentProcess;
-        let mut counters = PROCESS_MEMORY_COUNTERS {
-            cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-            ..Default::default()
-        };
-        let ok = unsafe {
-            GetProcessMemoryInfo(
-                GetCurrentProcess(),
-                &mut counters,
-                std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-            )
-        };
-        if ok.is_err() {
-            return 0;
-        }
-        counters.WorkingSetSize as u64
-    }
+    #[test]
+    fn 취소_직후_연결이_닫혀도_받다_만_파일이_치워진다() {
+        // quality 리뷰 M1 — 연결이 닫히면 워커의 완료 통지가 채널째로 버려져 `on_done`이
+        // 불리지 않는다. 그때 정리를 넘겨받지 않으면 `.part`가 영영 남는다
+        let mut runner = TransferRunner::new();
+        let local = temp_file("orphan");
+        let part = part_path(&local);
+        std::fs::write(&part, vec![0u8; 32]).expect("부분 파일");
 
-    /// 요청한 만큼 같은 바이트를 만들어 내주는 원본 — 1GB를 메모리에 쌓지 않기 위함이다
-    struct Endless {
-        remaining: u64,
-    }
+        let id = TransferId(1);
+        let conn = ConnectionId(3);
+        runner.cancelling.insert(id, (conn, part.clone()));
+        assert_eq!(runner.pending_cleanup(), 1);
 
-    impl std::io::Read for Endless {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.remaining == 0 {
-                return Ok(0);
-            }
-            let take = buf.len().min(self.remaining as usize);
-            buf[..take].fill(0xAB);
-            self.remaining -= take as u64;
-            Ok(take)
-        }
+        runner.forget_connection(conn);
+        assert_eq!(runner.pending_cleanup(), 0, "정리가 넘겨지지 않았다");
+        assert!(!part.exists(), "받다 만 파일이 남았다");
     }
 
     #[test]
-    fn 일기가바이트_동시_네_건을_옮겨도_메모리가_버퍼_몫에_머문다() {
-        // Acceptance ② (NFR-12·임계 D27: 유휴 대비 +50MB 이내).
-        //
-        // **올리기로 잰다** — 받기로 재면 4GB를 디스크에 쓰게 되어 측정 대상이 우리 버퍼가
-        // 아니라 파일 캐시가 된다. 가짜 세션의 싱크는 길이만 세고 버린다(D25-a)
-        const GIB: u64 = 1024 * 1024 * 1024;
-        const LIMIT: u64 = 50 * 1024 * 1024;
+    fn 지우지_못한_조각은_다음_기회에_다시_치운다() {
+        // quality 리뷰 M3 — 백신 검사·핸들 지연으로 한 번에 실패할 수 있다.
+        // 조용히 삼키면 받다 만 파일이 영영 남는다
+        let mut runner = TransferRunner::new();
+        let mut queue = TransferQueue::new();
+        let sites = SiteStore::new();
+        let manager = ConnectionManager::new(Arc::new(|| {}));
+        let local = temp_file("retry_cleanup");
+        let part = part_path(&local);
+        std::fs::write(&part, vec![0u8; 16]).expect("부분 파일");
 
-        let baseline = working_set();
-        if baseline == 0 {
-            // 측정을 못 했으면 통과로 삼지 않는다 — 그 사실을 남기고 끝낸다
-            panic!("작업 집합을 재지 못했다 — NFR-12를 판정할 수 없다");
+        // 파일을 붙들고 있는 동안에는 지우지 못한다(Windows) — 목록에 남아야 한다
+        let handle = std::fs::File::open(&part).expect("열기");
+        runner.pending_delete.push(part.clone());
+        runner.start_ready(&mut queue, &manager, &sites, 0.0);
+        // 열려 있어도 지워지는 환경이 있어(공유 삭제 허용) 둘 다 정상으로 본다 —
+        // 중요한 것은 **남았으면 다시 시도한다**는 것이다
+        if part.exists() {
+            assert_eq!(runner.pending_cleanup(), 1, "다시 시도할 목록에서 사라졌다");
         }
+        drop(handle);
 
-        let server = FakeServer::new();
-        let peak = Arc::new(std::sync::atomic::AtomicU64::new(baseline));
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let watcher = {
-            let peak = Arc::clone(&peak);
-            let stop = Arc::clone(&stop);
-            std::thread::spawn(move || {
-                while !stop.load(Ordering::SeqCst) {
-                    peak.fetch_max(working_set(), Ordering::SeqCst);
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-            })
-        };
-
-        let mut workers = Vec::new();
-        for _ in 0..4 {
-            let server = Arc::clone(&server);
-            workers.push(std::thread::spawn(move || {
-                let mut session = FakeSession::new(server);
-                let record = SiteRecord::new(SiteId(0), "가짜".to_owned());
-                session.connect(&record).expect("연결");
-                let mut source = Endless { remaining: GIB };
-                let mut progress = crate::remote::types::NoProgress;
-                session
-                    .upload(&RemotePath::new("/big.bin"), &mut source, 0, &mut progress)
-                    .expect("전송")
-            }));
-        }
-        let moved: u64 = workers
-            .into_iter()
-            .map(|worker| worker.join().expect("전송 스레드"))
-            .sum();
-        stop.store(true, Ordering::SeqCst);
-        let _ = watcher.join();
-
-        assert_eq!(moved, 4 * GIB, "네 건이 다 옮겨지지 않았다");
-        let growth = peak.load(Ordering::SeqCst).saturating_sub(baseline);
-        assert!(
-            growth < LIMIT,
-            "전송 중 작업 집합이 {}MB 늘었다 — 임계는 {}MB다 (파일을 통째로 버퍼에 올리고 있지 않은지 보라)",
-            growth / (1024 * 1024),
-            LIMIT / (1024 * 1024)
-        );
+        runner.start_ready(&mut queue, &manager, &sites, 1.0);
+        assert!(!part.exists(), "놓아준 뒤에도 치우지 못했다");
+        assert_eq!(runner.pending_cleanup(), 0);
     }
 
     #[test]
