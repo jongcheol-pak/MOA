@@ -147,6 +147,18 @@ fn bar_color(state: &TransferState) -> egui::Color32 {
     }
 }
 
+/// 연결별 탭의 점 색 — **실패한 연결만 빨강**이고 그 밖(연결 중·연결됨·연결 없음)은 초록이다.
+///
+/// 원본 `:728`이 `phase === "error"`만 빨강으로 가른다. 연결 객체의 유무로 가르면 실패한
+/// 사이트가 초록으로, 정상 종료한 사이트가 빨강으로 뒤집힌다
+fn site_dot_color(failed: &[SiteId], site: SiteId) -> egui::Color32 {
+    if failed.contains(&site) {
+        theme::ERROR
+    } else {
+        theme::OK_DOT
+    }
+}
+
 /// 방향 글리프와 색 (`:699`)
 fn direction_mark(direction: TransferDirection) -> (&'static str, egui::Color32) {
     match direction {
@@ -318,11 +330,7 @@ fn show_site_tabs(
             ui.painter().circle_filled(
                 egui::pos2(text_left + SITE_DOT / 2.0, tab.center().y),
                 SITE_DOT / 2.0,
-                if view.connected.contains(&id) {
-                    theme::OK_DOT
-                } else {
-                    theme::ERROR
-                },
+                site_dot_color(view.failed, id),
             );
             text_left += SITE_DOT + SITE_TAB_INNER_GAP;
         }
@@ -646,6 +654,15 @@ mod tests {
     }
 
     #[test]
+    fn 연결별_탭의_점은_실패한_사이트만_빨강이다() {
+        // spec 리뷰 M1 — 연결 객체의 유무로 가르면 **실패한 사이트가 초록**으로 뒤집힌다.
+        // 원본은 `phase === "error"`일 때만 빨강이고 그 밖은 전부 초록이다 (`:728`)
+        assert_eq!(site_dot_color(&[SiteId(1)], SiteId(1)), theme::ERROR);
+        assert_eq!(site_dot_color(&[SiteId(1)], SiteId(2)), theme::OK_DOT);
+        assert_eq!(site_dot_color(&[], SiteId(1)), theme::OK_DOT);
+    }
+
+    #[test]
     fn 큐가_비면_그릴_행이_없다() {
         // plan Edge Case — 머리글만 남는다
         let queue = TransferQueue::new();
@@ -663,7 +680,7 @@ mod tests {
         };
         let view = DockView {
             queue: &queue,
-            connected: &[first],
+            failed: &[first],
         };
         let _ = ctx.run_ui(Default::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {

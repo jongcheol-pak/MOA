@@ -534,6 +534,20 @@ impl ExplorerApp {
             .collect()
     }
 
+    /// 연결이 **실패한 상태로 남아 있는** 사이트들 — 큐의 연결별 탭이 그 점을 빨강으로 그린다.
+    ///
+    /// `connected_sites`(연결 객체의 유무)와 다른 값이다: 실패한 연결도 탭을 닫기 전까지
+    /// 매니저에 남아 있어, 유무로 가르면 실패한 사이트가 "연결됨"으로 보인다
+    fn failed_sites(&self) -> Vec<SiteId> {
+        self.manager
+            .ids()
+            .iter()
+            .filter_map(|id| self.manager.get(*id))
+            .filter(|connection| matches!(connection.phase(), ConnPhase::Failed { .. }))
+            .map(|connection| connection.site)
+            .collect()
+    }
+
     /// 창 위치·크기를 따라간다. 최대화 중에는 갱신하지 않는다 —
     /// 그때의 사각형은 화면 전체라, 저장해 버리면 다음 실행에서 되돌릴 일반 크기가 사라진다.
     /// 복원 위치가 화면 밖이면(모니터 구성 변경) 첫 프레임에 화면 안으로 옮긴다
@@ -670,7 +684,7 @@ impl ExplorerApp {
         if height <= 0.0 {
             return;
         }
-        let connected = self.connected_sites();
+        let failed = self.failed_sites();
         let full = ui.available_rect_before_wrap();
         let rect =
             egui::Rect::from_min_max(egui::pos2(full.left(), full.bottom() - height), full.max);
@@ -695,7 +709,7 @@ impl ExplorerApp {
         let (dock_action, queue_action) = {
             let view = DockView {
                 queue: &self.queue,
-                connected: &connected,
+                failed: &failed,
             };
             let dock_action = dock::show_strip(&mut dock_ui, strip, &mut self.dock, &view);
             let queue_action = match self.dock.panel {
