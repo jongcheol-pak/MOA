@@ -347,8 +347,8 @@ pub struct ExplorerApp {
     /// 훑기 요청 번호 — 목록 조회의 세대 번호와 섞이지 않게 따로 센다
     next_tree: u64,
     /// 로컬 폴더를 펼친 결과가 오는 통로 (FR-38) — 펼치기는 워커 스레드가 한다
-    expand_tx: std::sync::mpsc::Sender<Expanded>,
-    expand_rx: std::sync::mpsc::Receiver<Expanded>,
+    expand_tx: std::sync::mpsc::Sender<ExpandResult>,
+    expand_rx: std::sync::mpsc::Receiver<ExpandResult>,
     /// 워커가 일을 마쳤을 때 화면을 깨우는 통로 — 연결 관리자에 준 것과 같다
     repaint: Arc<dyn Fn() + Send + Sync>,
 }
@@ -892,7 +892,7 @@ impl ExplorerApp {
                     self.queue.enqueue(
                         site,
                         TransferDirection::Download,
-                        local_dir.join(path.file_name().unwrap_or_default()),
+                        local_dir.join(item.name()),
                         path.clone(),
                         *size,
                     );
@@ -1607,9 +1607,12 @@ impl eframe::App for ExplorerApp {
 
 /// 로컬 폴더를 펼친 결과 — 올릴 파일들과 **읽지 못해 건너뛴 폴더 수**.
 ///
+/// 이름을 `transfer::Expanded`와 달리 두는 이유: 그쪽은 뿌리 기준 상대 경로를 들고
+/// 이쪽은 사이트와 서버 경로까지 든다 — 같은 이름이면 오가며 읽을 때 헷갈린다
+///
 /// 건너뛴 것을 함께 나르는 이유: 권한 없는 폴더 하나 때문에 나머지를 버리지는 않지만,
 /// 조용히 빼면 사용자는 그 파일들이 왜 큐에 없는지 알 길이 없다 (plan Edge Case)
-type Expanded = (SiteId, Vec<(PathBuf, RemotePath, u64)>, usize);
+type ExpandResult = (SiteId, Vec<(PathBuf, RemotePath, u64)>, usize);
 
 /// 시작 폴더 — 인자로 폴더를 받으면 그곳에서, 없으면 홈 폴더에서 시작한다
 /// (탐색기의 "여기서 열기"처럼 쓰이며, 대량 폴더 성능 측정에도 이 경로를 쓴다)

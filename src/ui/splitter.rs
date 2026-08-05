@@ -89,7 +89,8 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         outcome.remote = Some((id, remote));
     }
     // 드롭도 한 프레임에 하나뿐이다 — 마우스 버튼은 하나이고 놓는 자리도 하나다.
-    // 어느 패널에 놓였는지 함께 담는다(같은 패널 안의 드래그를 앱이 걸러 낸다)
+    // 어느 패널에 놓였는지 함께 담는 것은 **다른 필드와 같은 모양을 지키기 위한 것**이며,
+    // 방향 판정에는 쓰이지 않는다(항목의 종류와 놓은 자리의 종류만으로 정해진다)
     if outcome.drop.is_none()
         && let Some(drop) = drop
     {

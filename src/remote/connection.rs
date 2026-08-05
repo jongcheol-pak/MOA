@@ -555,9 +555,6 @@ fn finish_op(worker: &Worker, op: OpKind, result: RemoteResult<()>) -> bool {
     worker.emit(ConnEvent::OpDone { op, result })
 }
 
-/// 전송 한 건 — 로컬 파일을 열고 세션에 스트림을 넘긴다 (NFR-12).
-///
-/// 진행률은 `PROGRESS_INTERVAL`마다 묶어 보내고, 취소 신호는 64KB 경계마다 본다.
 /// 폴더 아래의 파일을 모두 찾는다 — 깊이 상한 `TREE_MAX_DEPTH`.
 ///
 /// **끊지 않으면 순환 심볼릭 링크에서 영원히 돈다** (plan Edge Case). 실패한 가지는
@@ -604,6 +601,9 @@ fn list_tree(worker: &mut Worker, root: &RemotePath) -> Vec<(RemotePath, u64)> {
     found
 }
 
+/// 전송 한 건 — 로컬 파일을 열고 세션에 스트림을 넘긴다 (NFR-12).
+///
+/// 진행률은 `PROGRESS_INTERVAL`마다 묶어 보내고, 취소 신호는 64KB 경계마다 본다
 fn run_transfer(worker: &mut Worker, request: TransferRequest) -> bool {
     worker.cancel.store(false, Ordering::SeqCst);
     let id = request.id;

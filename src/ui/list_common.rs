@@ -40,12 +40,6 @@ pub enum DragItem {
 }
 
 impl DragItem {
-    pub fn is_dir(&self) -> bool {
-        match self {
-            DragItem::Local { is_dir, .. } | DragItem::Remote { is_dir, .. } => *is_dir,
-        }
-    }
-
     /// 옮겨 놓을 때 쓸 이름 — 경로의 마지막 조각
     pub fn name(&self) -> String {
         match self {
@@ -218,7 +212,6 @@ mod tests {
     fn 끌_항목의_이름은_경로의_마지막_조각이다() {
         assert_eq!(local_item().name(), "app.js");
         assert_eq!(remote_item().name(), "app.js");
-        assert!(!local_item().is_dir());
     }
 
     /// 갤리에 실제로 구워진 색 — `Painter::galley`에 넘기는 색은 이 값이 `PLACEHOLDER`일 때만 쓰인다
