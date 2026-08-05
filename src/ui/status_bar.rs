@@ -184,7 +184,15 @@ pub fn show_status_bar(
     };
     let toggle = format!("{queue_caret} {QUEUE_LABEL}");
     let width = text_width(ui, &toggle, &font);
-    if toggle_text(ui, rect, left, width, &toggle, &font, theme::HEADER_TEXT) {
+    if toggle_text(
+        ui,
+        rect,
+        left,
+        width,
+        (&toggle, "queue"),
+        &font,
+        theme::HEADER_TEXT,
+    ) {
         action = Some(StatusAction::ToggleQueue);
     }
     left += width + GAP;
@@ -230,7 +238,15 @@ pub fn show_status_bar(
     let log_toggle = format!("{log_caret} {LOG_LABEL}");
     let width = text_width(ui, &log_toggle, &font);
     right -= width;
-    if toggle_text(ui, rect, right, width, &log_toggle, &font, theme::TEXT_DIM) {
+    if toggle_text(
+        ui,
+        rect,
+        right,
+        width,
+        (&log_toggle, "log"),
+        &font,
+        theme::TEXT_DIM,
+    ) {
         action = Some(StatusAction::ToggleLog);
     }
     right -= GAP;
@@ -305,13 +321,16 @@ pub fn show_status_bar(
     action
 }
 
-/// 누를 수 있는 글자 — 눌렸으면 `true`
+/// 누를 수 있는 글자 — 눌렸으면 `true`.
+///
+/// `key`는 **문구와 따로** 받는다 — 문구에는 캐럿(`▲`/`▼`)이 들어 있어 도크를 여닫는 순간
+/// 바뀌는데, 그것을 id로 쓰면 누르는 사이에 id가 달라져 클릭이 씹힌다 (T19 리뷰가 같은 것을 짚었다)
 fn toggle_text(
     ui: &mut egui::Ui,
     row: egui::Rect,
     left: f32,
     width: f32,
-    text: &str,
+    (text, key): (&str, &'static str),
     font: &egui::FontId,
     color: egui::Color32,
 ) -> bool {
@@ -320,7 +339,7 @@ fn toggle_text(
     let response = ui
         .interact(
             rect,
-            ui.id().with(("status_toggle", text)),
+            ui.id().with(("status_toggle", key)),
             egui::Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
