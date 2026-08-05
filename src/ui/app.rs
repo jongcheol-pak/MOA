@@ -353,6 +353,10 @@ pub struct ExplorerApp {
     remote_ops: RemoteOps,
     /// 상태 줄에 잠깐 띄울 실패 사유와 그 만료 시각 (FR-39)
     notice: Option<(String, f64)>,
+    /// 지금 펼치고 있는 로컬 폴더 수 (T22 Edge Case) — 상태 줄이 이것을 알린다.
+    /// 펼치기는 별도 스레드에서 돌아 화면이 멈추지는 않지만, 아무 표시가 없으면
+    /// 사용자는 아무 일도 안 일어난 줄 안다 (F-7 리뷰 M1)
+    expanding: usize,
     /// 원격 트리가 읽어 둔 하위 폴더들 (T24)
     tree_cache: TreeCache,
     /// 트리가 청한 조회의 답을 기다리는 자리 — 세대 → (연결, 경로, 캐시 세대)
@@ -420,6 +424,7 @@ impl ExplorerApp {
             next_tree: 0,
             remote_ops: RemoteOps::default(),
             notice: None,
+            expanding: 0,
             tree_cache: TreeCache::new(),
             pending_tree_lists: HashMap::new(),
             next_tree_list: 0,
@@ -749,6 +754,7 @@ impl ExplorerApp {
                 let view = StatusView {
                     queue: &self.queue,
                     connection,
+                    expanding: self.expanding,
                     notice: self.notice.as_ref().map(|(text, _)| text.as_str()),
                 };
                 status_bar::show_status_bar(ui, rect, &self.dock, &view)
@@ -890,6 +896,7 @@ impl ExplorerApp {
                     return;
                 }
                 let tx = self.expand_tx.clone();
+                self.expanding += 1;
                 let (site, dir) = (*site, dir.clone());
                 let wake = self.repaint.clone();
                 std::thread::spawn(move || {
@@ -1518,13 +1525,20 @@ impl ExplorerApp {
         detail: String,
         now: f64,
     ) {
-        let reverted = self
+        // `any`로 쓰지 않는다 — 짧게 끊기면 같은 연결을 보는 다른 패널이 어긋난 채 남는다
+        let mut reverted = false;
+        for panel in self
             .views
             .values_mut()
             .flat_map(|view| view.panels.values_mut())
-            .filter(|panel| panel.active_conn() == Some(conn))
-            .filter(|panel| panel.awaits_generation(generation))
-            .fold(false, |any, panel| panel.revert_remote_path() || any);
+        {
+            if panel.active_conn() == Some(conn)
+                && panel.awaits_generation(generation)
+                && panel.revert_remote_path()
+            {
+                reverted = true;
+            }
+        }
         let text = if reverted {
             format!("폴더를 열지 못했습니다 — {detail}")
         } else {
@@ -1756,6 +1770,8 @@ impl eframe::App for ExplorerApp {
         self.poll_remote(now);
         // 펼쳐진 로컬 폴더를 큐로 옮긴다 (FR-38)
         while let Ok((site, files, skipped)) = self.expand_rx.try_recv() {
+            // 이 펼치기가 끝났다 — 상태 줄의 `펼치는 중`이 그만큼 줄어든다
+            self.expanding = self.expanding.saturating_sub(1);
             for (local, remote, size) in files {
                 self.queue
                     .enqueue(site, TransferDirection::Upload, local, remote, size);

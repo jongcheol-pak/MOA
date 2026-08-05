@@ -125,11 +125,21 @@ pub fn format_current(queue: &TransferQueue) -> String {
 ///
 /// 실패는 잠깐 떴다 사라지고 전송 진행은 큐 화면에도 있다 — 둘이 겹칠 때 급한 쪽은 실패다
 pub fn status_message(view: &StatusView<'_>) -> (String, egui::Color32) {
-    match view.notice {
-        Some(notice) => (notice.to_owned(), theme::ERROR),
-        None => (format_current(view.queue), theme::HEADER_TEXT),
+    if let Some(notice) = view.notice {
+        return (notice.to_owned(), theme::ERROR);
     }
+    // 펼치는 동안에는 그 사실을 먼저 알린다 — 아직 큐에 든 것이 없어 진행 문구는 비어 있다
+    if view.expanding > 0 {
+        return (
+            format!("{EXPANDING_LABEL} {}건", view.expanding),
+            theme::TEXT_MUTED,
+        );
+    }
+    (format_current(view.queue), theme::HEADER_TEXT)
 }
+
+/// 폴더를 펼치는 중임을 알리는 문구 (T22 Edge Case)
+const EXPANDING_LABEL: &str = "펼치는 중";
 
 /// 연결 상태 문구와 색 (인벤토리 #58) — `● sftp web-prod 연결됨 · TLS` 꼴.
 ///
@@ -165,6 +175,11 @@ pub struct StatusView<'a> {
     pub queue: &'a TransferQueue,
     /// 연결 상태 문구와 색 (`connection_label`이 만든 것)
     pub connection: (String, egui::Color32),
+    /// 지금 펼치고 있는 폴더 수 (T22 Edge Case) — 0이면 표시하지 않는다.
+    ///
+    /// 큰 폴더를 끌어다 놓으면 큐가 채워질 때까지 화면에 아무 변화가 없어, 사용자가
+    /// 아무 일도 안 일어난 줄 알고 다시 끈다 (F-7 리뷰 M1)
+    pub expanding: usize,
     /// 방금 실패한 파일 작업의 사유 (FR-39·D22) — 있으면 "지금 옮기는 파일" 자리를 대신 쓴다.
     ///
     /// 실패는 잠깐이고 전송은 계속되므로 자리를 새로 만들지 않는다 — 이 줄에서 가장 급한
@@ -545,6 +560,7 @@ mod tests {
             let view = StatusView {
                 queue: &queue,
                 connection: connection_label(None, None, None, false),
+                expanding: 0,
                 notice: None,
             };
             let _ = ctx.run_ui(Default::default(), |ui| {
@@ -588,6 +604,7 @@ mod tests {
             let view = StatusView {
                 queue: &queue,
                 connection: connection_label(None, None, None, false),
+                expanding: 0,
                 notice: None,
             };
             let _ = ctx.run_ui(Default::default(), |ui| {
@@ -607,6 +624,7 @@ mod tests {
         let plain = StatusView {
             queue: &queue,
             connection: connection_label(None, None, None, false),
+            expanding: 0,
             notice: None,
         };
         let (text, color) = status_message(&plain);
@@ -621,10 +639,44 @@ mod tests {
         let failed = StatusView {
             queue: &queue,
             connection: connection_label(None, None, None, false),
+            expanding: 0,
             notice: Some(notice),
         };
         let (text, color) = status_message(&failed);
         assert_eq!(text, notice, "전송이 도는 중에도 실패 사유가 먼저다");
         assert_eq!(color, theme::ERROR, "실패인지 색으로도 구분돼야 한다");
+    }
+
+    #[test]
+    fn 펼치는_중에는_그_사실을_먼저_알린다() {
+        // F-7 리뷰 M1 (T22 Edge Case) — 큐가 채워지기 전까지 화면에 아무 표시가 없으면
+        // 사용자는 아무 일도 안 일어난 줄 알고 다시 끈다
+        let queue = TransferQueue::new();
+        let view = StatusView {
+            queue: &queue,
+            connection: connection_label(None, None, None, false),
+            expanding: 3,
+            notice: None,
+        };
+        let (text, color) = status_message(&view);
+        assert_eq!(text, "펼치는 중 3건");
+        assert_eq!(color, theme::TEXT_MUTED);
+
+        // 다 펼치면 사라진다
+        let done = StatusView {
+            expanding: 0,
+            ..view
+        };
+        assert_eq!(status_message(&done).0, "");
+
+        // 실패 사유가 있으면 그것이 먼저다 — 급한 쪽이 앞선다
+        let queue2 = TransferQueue::new();
+        let failed = StatusView {
+            queue: &queue2,
+            connection: connection_label(None, None, None, false),
+            expanding: 3,
+            notice: Some("삭제 실패 — 550"),
+        };
+        assert_eq!(status_message(&failed).0, "삭제 실패 — 550");
     }
 }
