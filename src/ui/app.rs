@@ -843,9 +843,11 @@ impl ExplorerApp {
             egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), dock::STRIP_HEIGHT));
         let body = egui::Rect::from_min_max(egui::pos2(rect.left(), strip.bottom()), rect.max);
         {
+            let connections = self.log_connections();
             let view = DockView {
                 queue: &self.queue,
                 failed,
+                connections: &connections,
             };
             let dock_action = dock::show_strip(&mut dock_ui, strip, &mut self.dock, &view);
             let queue_action = match self.dock.panel {
@@ -1190,12 +1192,37 @@ impl ExplorerApp {
     /// 그 탭이 로컬이면 마지막으로 연 연결을 보인다: 로그를 여는 까닭은 대개 방금 무슨 일이
     /// 있었는지 보려는 것이라, 아무것도 안 보이는 것보다 최근 연결을 보이는 편이 쓸모 있다
     fn log_connection(&self) -> Option<ConnectionId> {
+        // 로그 탭에서 고른 연결이 있으면 그것이 먼저다 — 사용자가 직접 고른 것이기 때문이다.
+        // 그 연결이 이미 접혔으면 아래의 자동 선택으로 돌아간다
+        if let Some(chosen) = self.dock.log_conn
+            && self.manager.get(chosen).is_some()
+        {
+            return Some(chosen);
+        }
         let active = self
             .views
             .get(&self.workspaces.active().id)
             .and_then(|view| view.panels.get(&view.active))
             .and_then(|panel| panel.active_conn());
         active.or_else(|| self.manager.ids().last().copied())
+    }
+
+    /// 로그 화면의 연결 탭에 보일 것들 — 열려 있는 연결과 그 사이트 이름·실패 여부
+    fn log_connections(&self) -> Vec<(ConnectionId, String, bool)> {
+        self.manager
+            .ids()
+            .iter()
+            .filter_map(|id| {
+                let connection = self.manager.get(*id)?;
+                let name = self
+                    .sites
+                    .get(connection.site)
+                    .map(|record| record.name.clone())
+                    .unwrap_or_else(|| connection.site.0.to_string());
+                let failed = matches!(connection.phase(), ConnPhase::Failed { .. });
+                Some((*id, name, failed))
+            })
+            .collect()
     }
 
     /// 도크 탭 스트립의 조작 (인벤토리 #33·#34)

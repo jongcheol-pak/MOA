@@ -690,6 +690,7 @@ mod tests {
             ..DockState::default()
         };
         let view = DockView {
+            connections: &[],
             queue: &queue,
             failed: &[first],
         };

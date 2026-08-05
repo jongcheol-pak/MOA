@@ -6,6 +6,7 @@
 //!
 //! **본문은 여기서 그리지 않는다** — 큐 표는 `ui::queue_panel`, 로그는 `ui::log_panel`(T20)이
 //! 그린다. 이 모듈은 자리(높이·탭·닫기)만 정한다.
+use crate::remote::connection::ConnectionId;
 use crate::remote::queue::{QueueFilter, TransferQueue};
 use crate::remote::types::SiteId;
 use crate::ui::theme;
@@ -58,6 +59,10 @@ pub struct DockState {
     pub filter: QueueFilter,
     /// 연결별 탭에서 고른 사이트 — `None`이면 `전체` (인벤토리 #35)
     pub site: Option<SiteId>,
+    /// 로그 화면에서 고른 연결 — `None`이면 **지금 보고 있는 연결**을 따라간다.
+    ///
+    /// 연결이 여럿이면 어느 서버의 로그인지 알 수 없다는 지적(T20 quality m1)을 이 탭이 닫는다
+    pub log_conn: Option<ConnectionId>,
 }
 
 /// 세션 파일에 적히는 키 — 열거형 이름이 바뀌어도 저장 형식은 그대로여야 한다
@@ -73,6 +78,7 @@ impl Default for DockState {
             panel: None,
             filter: QueueFilter::All,
             site: None,
+            log_conn: None,
         }
     }
 }
@@ -110,6 +116,7 @@ impl DockState {
                 _ => QueueFilter::All,
             },
             site: None,
+            log_conn: None,
         }
     }
 
@@ -156,7 +163,13 @@ pub struct DockView<'a> {
     /// 빨강이고 그 밖(연결 중·연결됨·연결 없음)은 초록이다(`:728`). 연결 객체의 유무로
     /// 가르면 **실패한 사이트가 초록**으로, 정상 종료한 사이트가 빨강으로 뒤집힌다
     pub failed: &'a [SiteId],
+    /// 지금 열려 있는 연결들 — 로그 화면의 탭이 된다. `(연결, 사이트 이름, 실패 여부)`
+    pub connections: &'a [(ConnectionId, String, bool)],
 }
+
+/// 연결 탭의 상태 점 지름과 이름까지의 간격 — 사이드바 사이트 행과 같은 값이다
+const CONN_DOT: f32 = 6.0;
+const CONN_DOT_GAP: f32 = 8.0;
 
 /// 탭 스트립을 그린다. 본문은 호출부가 남은 자리에 그린다.
 ///
@@ -239,6 +252,64 @@ pub fn show_strip(
                     state.filter = filter;
                 }
                 None => state.panel = Some(DockPanel::Log),
+            }
+        }
+    }
+
+    // 로그 화면일 때만 **연결별 탭**을 잇는다 (사용자 요청 2026-08-05).
+    // 큐 화면의 성공·실패 탭과 같은 모양이라 눈이 옮겨 다니지 않는다
+    if showing_log {
+        let active_conn = state
+            .log_conn
+            .filter(|id| view.connections.iter().any(|(conn, _, _)| conn == id));
+        for (conn, name, failed) in view.connections {
+            let text = ui.painter().layout_no_wrap(
+                name.clone(),
+                egui::FontId::proportional(TAB_FONT_PX),
+                theme::TEXT_MUTED,
+            );
+            let width = text.size().x + TAB_PAD_X * 2.0 + CONN_DOT + CONN_DOT_GAP;
+            let tab = egui::Rect::from_min_size(
+                egui::pos2(left, rect.top()),
+                egui::vec2(width, STRIP_HEIGHT),
+            );
+            left += width;
+            // 고른 것이 없으면 **첫 연결**이 활성으로 보인다 — 화면이 그 연결의 로그를 보이므로
+            let active = match active_conn {
+                Some(active) => active == *conn,
+                None => view.connections.first().map(|(id, _, _)| id) == Some(conn),
+            };
+            let response = ui.interact(
+                tab,
+                ui.id().with(("dock_log_conn", conn.0)),
+                egui::Sense::click(),
+            );
+            if active {
+                ui.painter().rect_filled(tab, 0.0, theme::SURFACE_BG);
+            }
+            let dot = if *failed { theme::ERROR } else { theme::OK_DOT };
+            ui.painter().circle_filled(
+                egui::pos2(tab.left() + TAB_PAD_X + CONN_DOT / 2.0, tab.center().y),
+                CONN_DOT / 2.0,
+                dot,
+            );
+            // 고른 탭과 손이 올라간 탭은 같은 밝기다 — 활성 여부는 배경이 말한다
+            let color = if active || response.hovered() {
+                theme::TEXT
+            } else {
+                theme::TEXT_MUTED
+            };
+            ui.painter().galley(
+                egui::pos2(
+                    tab.left() + TAB_PAD_X + CONN_DOT + CONN_DOT_GAP,
+                    tab.center().y - text.size().y / 2.0,
+                ),
+                text,
+                color,
+            );
+            if response.clicked() {
+                state.panel = Some(DockPanel::Log);
+                state.log_conn = Some(*conn);
             }
         }
     }
@@ -369,5 +440,61 @@ mod tests {
         assert_eq!(state.panel, Some(DockPanel::Log), "다른 화면이면 갈아탄다");
         state.toggle(DockPanel::Log);
         assert!(!state.is_open());
+    }
+
+    #[test]
+    fn 로그_화면에만_연결_탭이_뜨고_고른_연결이_기억된다() {
+        // 사용자 요청(2026-08-05): 로그가 어느 연결의 것인지 탭으로 고를 수 있어야 한다
+        let queue = TransferQueue::new();
+        let connections = vec![
+            (ConnectionId(1), "배포 서버".to_owned(), false),
+            (ConnectionId(2), "백업 서버".to_owned(), true),
+        ];
+        let view = DockView {
+            queue: &queue,
+            failed: &[],
+            connections: &connections,
+        };
+        let ctx = egui::Context::default();
+
+        // 큐 화면에서는 연결 탭을 그리지 않는다 — 큐는 사이트 탭이 따로 있다
+        let mut queue_state = DockState {
+            panel: Some(DockPanel::Queue),
+            ..DockState::default()
+        };
+        let 큐_글자 = draw_strip(&ctx, &mut queue_state, &view);
+        assert!(!큐_글자.contains(&"배포 서버".to_owned()), "{큐_글자:?}");
+
+        // 로그 화면에서는 연결마다 탭이 선다
+        let mut log_state = DockState {
+            panel: Some(DockPanel::Log),
+            ..DockState::default()
+        };
+        let 로그_글자 = draw_strip(&ctx, &mut log_state, &view);
+        assert!(로그_글자.contains(&"배포 서버".to_owned()), "{로그_글자:?}");
+        assert!(로그_글자.contains(&"백업 서버".to_owned()), "{로그_글자:?}");
+
+        // 고른 연결은 상태에 남는다 — 화면은 그 연결의 로그를 보인다
+        log_state.log_conn = Some(ConnectionId(2));
+        let _ = draw_strip(&ctx, &mut log_state, &view);
+        assert_eq!(log_state.log_conn, Some(ConnectionId(2)));
+    }
+
+    /// 스트립을 한 프레임 그리고 글자를 모은다
+    fn draw_strip(ctx: &egui::Context, state: &mut DockState, view: &DockView<'_>) -> Vec<String> {
+        let mut texts = Vec::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect =
+                    egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(900.0, STRIP_HEIGHT));
+                show_strip(ui, rect, state, view);
+            });
+        });
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                texts.push(text.galley.text().to_owned());
+            }
+        }
+        texts
     }
 }

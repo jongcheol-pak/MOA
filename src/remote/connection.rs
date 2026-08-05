@@ -425,13 +425,22 @@ fn worker(mut worker: Worker) {
                 }
             }
             ConnCommand::List { generation, path } => {
+                worker.log(
+                    LogKind::Status,
+                    format!("\"{}\" 디렉터리 목록 조회…", path.as_str()),
+                );
                 let result = worker.session.list(&path);
                 let alive = match result {
-                    Ok(entries) => worker.emit(ConnEvent::Listed {
-                        generation,
-                        path,
-                        entries,
-                    }),
+                    Ok(entries) => {
+                        worker.log(
+                            LogKind::Status,
+                            format!("\"{}\" 디렉터리 목록 조회 성공", path.as_str()),
+                        ) && worker.emit(ConnEvent::Listed {
+                            generation,
+                            path,
+                            entries,
+                        })
+                    }
                     Err(err) => {
                         let detail = err.to_string();
                         worker.log(LogKind::Error, detail.clone())
@@ -518,16 +527,35 @@ fn connect_with_retry(worker: &mut Worker) -> bool {
         if !worker.emit(ConnEvent::Phase(ConnPhase::Connecting)) {
             return false;
         }
-        let outcome = worker
-            .session
-            .connect(&worker.site)
-            .and_then(|()| worker.session.login(&worker.site, &worker.password));
+        // 진행을 단계마다 남긴다 — 로그 화면이 "지금 어디까지 갔는지"를 보여야
+        // 실패했을 때 어느 단계에서 막혔는지 알 수 있다 (사용자 요청 2026-08-05)
+        if !worker.log(
+            LogKind::Status,
+            format!("{}에 연결…", worker.site.address()),
+        ) {
+            return false;
+        }
+        let outcome = worker.session.connect(&worker.site).and_then(|()| {
+            worker.log(LogKind::Status, CONNECTED_MESSAGE.to_owned());
+            // 암호화 여부는 연결이 선 직후에 정해진다 — 평문으로 떨어졌으면 그 사실을 알린다
+            worker.log(
+                LogKind::Status,
+                if worker.session.is_secure() {
+                    SECURE_MESSAGE.to_owned()
+                } else {
+                    INSECURE_MESSAGE.to_owned()
+                },
+            );
+            worker.log(LogKind::Status, LOGIN_MESSAGE.to_owned());
+            worker.session.login(&worker.site, &worker.password)
+        });
 
         let Err(err) = outcome else {
             // 협상 결과를 먼저 올린다 — 화면이 `Ready`를 보고 상태 줄을 그릴 때
             // 암호화 여부가 이미 도착해 있어야 한 프레임도 거짓으로 적히지 않는다
             let secure = worker.session.is_secure();
-            return worker.emit(ConnEvent::Secure(secure))
+            return worker.log(LogKind::Status, LOGGED_IN_MESSAGE.to_owned())
+                && worker.emit(ConnEvent::Secure(secure))
                 && worker.emit(ConnEvent::Phase(ConnPhase::Ready));
         };
 
@@ -568,6 +596,15 @@ fn log_event(kind: LogKind, text: String) -> ConnEvent {
         text: mask_secrets(&text),
     }
 }
+
+/// 연결 진행을 알리는 문구 — 로그 화면이 그대로 보인다 (사용자 요청 2026-08-05).
+///
+/// 흔한 FTP 도구와 같은 결로 적는다: 무엇을 하는 중인지 한 줄, 결과 한 줄
+const CONNECTED_MESSAGE: &str = "연결 수립, 환영 메시지를 기다림…";
+const SECURE_MESSAGE: &str = "TLS로 암호화된 연결입니다.";
+const INSECURE_MESSAGE: &str = "보안되지 않은 서버입니다. TLS를 통한 연결을 지원하지 않습니다.";
+const LOGIN_MESSAGE: &str = "로그인…";
+const LOGGED_IN_MESSAGE: &str = "로그인 완료";
 
 /// 종료 신호를 살피며 잔다. 신호가 오면 그 자리에서 `false`를 돌려준다.
 ///
@@ -862,6 +899,24 @@ mod tests {
         done()
     }
 
+    /// **찾는 이벤트가 올 때까지** 모은다 — 개수로 기다리면 로그 한 줄이 늘 때마다 깨진다
+    /// (진행 상태 줄을 더했을 때 실제로 셋이 깨졌다)
+    fn wait_for(
+        connection: &mut Connection,
+        limit: Duration,
+        mut found: impl FnMut(&[ConnEvent]) -> bool,
+    ) -> Vec<ConnEvent> {
+        let deadline = Instant::now() + limit;
+        let mut events = Vec::new();
+        loop {
+            events.extend(connection.poll());
+            if found(&events) || Instant::now() >= deadline {
+                return events;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
     /// 이벤트가 올 때까지 짧게 기다린다 — 워커가 다른 스레드라 즉시 오지 않는다
     fn wait_events(connection: &mut Connection, want: usize, limit: Duration) -> Vec<ConnEvent> {
         let deadline = Instant::now() + limit;
@@ -1075,7 +1130,9 @@ mod tests {
         server.fail_connects(2);
         let mut connection = spawn(&server, fast_retry());
         connection.send(ConnCommand::Connect);
-        let events = wait_events(&mut connection, 5, Duration::from_secs(3));
+        let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
+            events.contains(&ConnEvent::Phase(ConnPhase::Ready))
+        });
 
         assert!(
             events.contains(&ConnEvent::Phase(ConnPhase::Ready)),
@@ -1095,7 +1152,11 @@ mod tests {
         server.fail_connects(99);
         let mut connection = spawn(&server, fast_retry());
         connection.send(ConnCommand::Connect);
-        let events = wait_events(&mut connection, 12, Duration::from_secs(3));
+        let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, ConnEvent::Phase(ConnPhase::Failed { .. })))
+        });
 
         assert!(
             events
@@ -1138,7 +1199,16 @@ mod tests {
             generation: 2,
             path: RemotePath::root(),
         });
-        let events = wait_events(&mut connection, 5, Duration::from_secs(3));
+        let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
+            events
+                .iter()
+                .filter(|event| matches!(event, ConnEvent::Listed { .. }))
+                .count()
+                >= 2
+                && events
+                    .iter()
+                    .any(|event| matches!(event, ConnEvent::TransferDone { .. }))
+        });
 
         let listed = events
             .iter()
@@ -1407,5 +1477,72 @@ mod tests {
             matches!(connection.phase(), ConnPhase::Closed)
         });
         assert!(!connection.is_secure(), "끊긴 연결을 암호화로 보았다");
+    }
+
+    #[test]
+    fn 연결_진행이_상태_줄로_남는다() {
+        // 사용자 요청(2026-08-05): 로그 화면에 "어디까지 갔는지"가 보여야 한다 —
+        // 연결 시도 · 연결 수립 · 암호화 여부 · 로그인 · 목록 조회와 그 결과
+        let server = FakeServer::new();
+        server.set_entries("/", Vec::new());
+        let mut connection = spawn(&server, fast_retry());
+        connection.send(ConnCommand::Connect);
+        connection.send(ConnCommand::List {
+            generation: 1,
+            path: RemotePath::root(),
+        });
+        let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, ConnEvent::Listed { .. }))
+        });
+
+        let lines: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                ConnEvent::Log {
+                    kind: LogKind::Status,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            lines.iter().any(|line| line.ends_with("에 연결…")),
+            "연결 시도가 남지 않았다: {lines:?}"
+        );
+        assert!(lines.contains(&CONNECTED_MESSAGE), "{lines:?}");
+        assert!(lines.contains(&SECURE_MESSAGE), "{lines:?}");
+        assert!(lines.contains(&LOGIN_MESSAGE), "{lines:?}");
+        assert!(lines.contains(&LOGGED_IN_MESSAGE), "{lines:?}");
+        assert!(
+            lines.iter().any(|line| line.contains("목록 조회…")),
+            "조회 시작이 남지 않았다: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("목록 조회 성공")),
+            "조회 성공이 남지 않았다: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn 암호화되지_않은_연결은_그_사실을_알린다() {
+        // 이미지의 `보안되지 않은 서버입니다…` 줄 — 평문으로 떨어진 것을 사용자가 알아야 한다
+        let server = FakeServer::new();
+        server.set_refuse_tls(true);
+        let mut connection = spawn(&server, fast_retry());
+        connection.send(ConnCommand::Connect);
+        let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
+            events.contains(&ConnEvent::Phase(ConnPhase::Ready))
+        });
+        let lines: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                ConnEvent::Log { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(lines.contains(&INSECURE_MESSAGE), "{lines:?}");
+        assert!(!lines.contains(&SECURE_MESSAGE), "{lines:?}");
     }
 }

@@ -666,6 +666,7 @@ mod tests {
     #[test]
     fn 도크_상태가_왕복한다() {
         let saved = crate::ui::dock::DockState {
+            log_conn: None,
             panel: Some(crate::ui::dock::DockPanel::Log),
             filter: crate::remote::queue::QueueFilter::Error,
             site: Some(SiteId(3)),
