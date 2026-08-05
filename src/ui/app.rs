@@ -1568,7 +1568,16 @@ impl eframe::App for ExplorerApp {
             }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {
+                // 그 연결에 청해 둔 훑기는 답이 오지 않는다 — 함께 지우지 않으면
+                // 기다리는 자리가 영영 남는다
+                let site = self.manager.get(conn).map(|connection| connection.site);
                 self.manager.close(conn);
+                if let Some(site) = site
+                    && self.site_connection(site).is_none()
+                {
+                    self.pending_trees
+                        .retain(|_, (waiting, _, _)| *waiting != site);
+                }
             }
         });
 
