@@ -19,6 +19,7 @@ use std::path::PathBuf;
 // 호출부(`ui::panel`)가 종전 경로를 그대로 쓰도록 여기서 다시 내보낸다
 use crate::ui::list_common::DragItem;
 pub use crate::ui::list_common::FileListAction;
+use crate::ui::remote_menu::RemoteTarget;
 
 /// 목록이 담은 항목 — 로컬 폴더의 것이거나 원격 폴더의 것이다 (plan T8).
 ///
@@ -386,9 +387,6 @@ impl FileListView {
 }
 
 impl FileListView {
-    /// 선택된 원격 항목들 — 원격 메뉴가 대상으로 삼는다 (FR-39).
-    ///
-    /// 로컬 목록이면 빈 벡터다(로컬은 셸 메뉴가 맡는다 — D21)
     /// 로컬 목록에서 고른 항목들 — 경로와 폴더 여부. 원격 목록이면 빈 벡터다.
     ///
     /// 원격 메뉴의 `올리기`가 반대편 패널에서 이것을 읽는다 (FR-39)
@@ -403,10 +401,10 @@ impl FileListView {
             .collect()
     }
 
-    pub fn selected_remote(
-        &self,
-        dir: &crate::remote::types::RemotePath,
-    ) -> Vec<(crate::remote::types::RemotePath, bool, u64)> {
+    /// 선택된 원격 항목들 — 원격 메뉴가 대상으로 삼는다 (FR-39).
+    ///
+    /// 로컬 목록이면 빈 벡터다(로컬은 셸 메뉴가 맡는다 — D21)
+    pub fn selected_remote(&self, dir: &crate::remote::types::RemotePath) -> Vec<RemoteTarget> {
         let ListModel::Remote(rows) = &self.model else {
             return Vec::new();
         };
@@ -415,7 +413,12 @@ impl FileListView {
             .filter_map(|index| rows.get(*index))
             // 상위 이동은 대상이 아니다 — 지우거나 이름을 바꿀 것이 아니다
             .filter(|row| row.name() != "..")
-            .map(|row| (dir.join(&row.name()), row.is_dir(), row.size()))
+            .map(|row| RemoteTarget {
+                path: dir.join(&row.name()),
+                is_dir: row.is_dir(),
+                size: row.size(),
+                mode: row.mode,
+            })
             .collect()
     }
 }

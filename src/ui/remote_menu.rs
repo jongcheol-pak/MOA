@@ -34,6 +34,8 @@ pub struct RemoteTarget {
     pub path: RemotePath,
     pub is_dir: bool,
     pub size: u64,
+    /// 서버가 알려 준 권한 비트 — 권한 대화의 시작값이다. 주지 않는 서버면 `None`
+    pub mode: Option<u32>,
 }
 
 /// 사용자가 원격 메뉴에서 고른 것. 실행은 앱이 한다
@@ -46,7 +48,7 @@ pub enum RemoteMenuAction {
     /// 올릴 것을 파일 대화로 고르게 하지 않는다 — 두 칸 탐색기에서 반대편 패널이 이미
     /// "고른 것"을 들고 있고, 끌어다 놓기(FR-38)도 같은 짝을 쓴다
     Upload,
-    /// 이름 바꾸기 대화를 연다
+    /// 이름 바꾸기 대화를 연다 — **하나만 고른 때**만 뜬다(새 이름은 하나뿐이다)
     Rename,
     /// 새 폴더 대화를 연다
     NewFolder,
@@ -60,17 +62,17 @@ pub enum RemoteMenuAction {
 
 /// 원격 목록 우클릭 메뉴를 띄운다 (FR-39).
 ///
-/// `has_selection`이 거짓이면 **항목이 있어야 뜻이 있는 것**은 비활성이다 —
-/// 빈 자리를 눌렀을 때 `새 폴더`·`새로 고침`만 남는다.
+/// `selected`는 지금 고른 원격 항목 수다 — 0이면 **항목이 있어야 뜻이 있는 것**이 비활성이고,
+/// 둘 이상이면 `이름 바꾸기`가 비활성이다(새 이름은 하나뿐이라 여럿에 줄 수 없다).
 /// `connected`가 거짓이면 서버에 닿는 것이 전부 비활성이다 (plan Edge Case)
 pub fn show_remote_menu(
     ui: &mut egui::Ui,
-    has_selection: bool,
+    selected: usize,
     connected: bool,
 ) -> Option<RemoteMenuAction> {
     ui.set_width(MENU_WIDTH);
     let mut chosen = None;
-    for row in menu_rows(has_selection, connected) {
+    for row in menu_rows(selected, connected) {
         // 구분선 앞뒤로 "고른 것에 하는 일"과 "이 폴더에 하는 일"이 나뉜다
         if row.separator_before {
             ui.separator();
@@ -97,25 +99,65 @@ pub struct MenuRow {
 /// 사용자는 눌렀다가 아무 일도 안 일어나는 것을 보게 된다.
 /// `올리기`·`새 폴더`·`새로 고침`은 원격 선택이 없어도 뜻이 있다(각각 반대편 패널의 선택,
 /// 지금 폴더가 대상이다)
-pub fn menu_rows(has_selection: bool, connected: bool) -> Vec<MenuRow> {
+pub fn menu_rows(selected: usize, connected: bool) -> Vec<MenuRow> {
+    /// 그 줄이 요구하는 선택 개수
+    #[derive(Clone, Copy)]
+    enum Needs {
+        /// 몇 개든 좋다 — 고른 것이 없어도 뜻이 있다
+        Any,
+        /// 하나 이상
+        Some,
+        /// **정확히 하나** — 이름 바꾸기는 새 이름이 하나뿐이라 여럿을 한 번에 다룰 수 없다
+        One,
+    }
     [
-        (MENU_DOWNLOAD, RemoteMenuAction::Download, true, false),
-        (MENU_UPLOAD, RemoteMenuAction::Upload, false, false),
-        (MENU_RENAME, RemoteMenuAction::Rename, true, false),
-        (MENU_CHMOD, RemoteMenuAction::Chmod, true, false),
-        (MENU_DELETE, RemoteMenuAction::Delete, true, false),
-        (MENU_NEW_FOLDER, RemoteMenuAction::NewFolder, false, true),
-        (MENU_REFRESH, RemoteMenuAction::Refresh, false, false),
+        (
+            MENU_DOWNLOAD,
+            RemoteMenuAction::Download,
+            Needs::Some,
+            false,
+        ),
+        (MENU_UPLOAD, RemoteMenuAction::Upload, Needs::Any, false),
+        (MENU_RENAME, RemoteMenuAction::Rename, Needs::One, false),
+        (MENU_CHMOD, RemoteMenuAction::Chmod, Needs::Some, false),
+        (MENU_DELETE, RemoteMenuAction::Delete, Needs::Some, false),
+        (
+            MENU_NEW_FOLDER,
+            RemoteMenuAction::NewFolder,
+            Needs::Any,
+            true,
+        ),
+        (MENU_REFRESH, RemoteMenuAction::Refresh, Needs::Any, false),
     ]
     .into_iter()
-    .map(|(label, action, needs_item, separator_before)| MenuRow {
+    .map(|(label, action, needs, separator_before)| MenuRow {
         label,
         action,
-        enabled: connected && (!needs_item || has_selection),
+        enabled: connected
+            && match needs {
+                Needs::Any => true,
+                Needs::Some => selected > 0,
+                Needs::One => selected == 1,
+            },
         separator_before,
     })
     .collect()
 }
+
+/// 메뉴가 차지할 자리 — 화면 밖으로 나가지 않게 위치를 잡는 데 쓴다.
+///
+/// 테두리·구분선까지 정확히 재지 않는다 — 조금 넉넉하게 잡으면 안쪽으로 더 당겨질 뿐이라
+/// 잘리는 것보다 낫다
+pub fn menu_size() -> egui::Vec2 {
+    let rows = menu_rows(0, false).len() as f32;
+    egui::vec2(
+        MENU_WIDTH + FRAME_PAD * 2.0,
+        rows * ROW_HEIGHT + FRAME_PAD * 4.0,
+    )
+}
+
+/// 메뉴 테두리와 안쪽 여백을 어림한 값
+const FRAME_PAD: f32 = 8.0;
 
 /// 메뉴 한 줄 — 비활성이면 눌리지 않고 글자가 흐려진다
 fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
@@ -207,16 +249,29 @@ impl Permissions {
     }
 }
 
+/// 대화가 이번 프레임에 낸 결론 (FR-39).
+///
+/// **"아직 고르지 않았다"와 "취소했다"를 구분한다** — 둘을 `None` 하나로 뭉개면 호출부가
+/// 취소를 알아채지 못해 대화가 닫히지 않는다(spec 리뷰 M1이 이 결함을 짚었다)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DialogOutcome<T> {
+    /// 아직 고르지 않았다 — 다음 프레임에도 그대로 떠 있어야 한다
+    Pending,
+    /// 확인했다
+    Confirmed(T),
+    /// 취소·Esc·바깥 클릭 — 대화를 닫는다
+    Cancelled,
+}
+
 /// 이름 입력 대화 — 이름 바꾸기와 새 폴더가 같은 모양이라 함께 쓴다.
 ///
-/// 확인을 누르면 `Some(이름)`, 취소·닫기면 `Some(빈 문자열)`이 아니라 대화를 닫는 신호로
-/// `None`을 돌려주고 `open`을 끈다
+/// 확인을 누르면 `Confirmed(이름)`, 취소·Esc·바깥 클릭이면 `Cancelled`다
 pub fn show_name_dialog(
     ctx: &egui::Context,
     title: &str,
     name: &mut String,
     error: &mut Option<String>,
-) -> Option<String> {
+) -> DialogOutcome<String> {
     let mut confirmed = None;
     let mut closed = false;
     let response = egui::Modal::new(egui::Id::new(("원격 이름 대화", title))).show(ctx, |ui| {
@@ -246,8 +301,12 @@ pub fn show_name_dialog(
     }
     if closed {
         *error = None;
+        return DialogOutcome::Cancelled;
     }
-    confirmed
+    match confirmed {
+        Some(name) => DialogOutcome::Confirmed(name),
+        None => DialogOutcome::Pending,
+    }
 }
 
 /// 권한 변경 대화 — 8진 세 자리와 체크박스 아홉 개가 서로 따라간다 (Acceptance ③)
@@ -255,11 +314,12 @@ pub fn show_chmod_dialog(
     ctx: &egui::Context,
     permissions: &mut Permissions,
     octal: &mut String,
-) -> Option<u32> {
+) -> DialogOutcome<u32> {
     const GROUPS: [&str; 3] = ["소유자", "그룹", "기타"];
     const BITS: [&str; 3] = ["읽기", "쓰기", "실행"];
     let mut confirmed = None;
-    egui::Modal::new(egui::Id::new("원격 권한 변경")).show(ctx, |ui| {
+    let mut closed = false;
+    let response = egui::Modal::new(egui::Id::new("원격 권한 변경")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(
             egui::RichText::new("권한 변경")
@@ -299,11 +359,20 @@ pub fn show_chmod_dialog(
                 confirmed = Some(permissions.to_mode());
             }
             if ui.button("취소").clicked() {
-                confirmed = None;
+                closed = true;
             }
         });
     });
-    confirmed
+    if response.should_close() {
+        closed = true;
+    }
+    if closed {
+        return DialogOutcome::Cancelled;
+    }
+    match confirmed {
+        Some(mode) => DialogOutcome::Confirmed(mode),
+        None => DialogOutcome::Pending,
+    }
 }
 
 /// 삭제 확인 대화 (Acceptance ①·Halt Forecast).
@@ -311,14 +380,14 @@ pub fn show_chmod_dialog(
 /// **자동으로 지우는 경로는 없다** — 폴더가 섞여 있으면 `안에 든 것까지 지웁니다`를
 /// 따로 켜야 재귀 삭제가 나간다. 되돌릴 수 없는 일이라 두 번 묻는 셈이다.
 ///
-/// 돌려주는 값: `Some(recursive)`면 지운다, `None`이면 아직 고르지 않았거나 취소다
+/// 돌려주는 값: `Confirmed(recursive)`면 지운다. 다른 대화들과 같은 결론 타입을 쓴다
 pub fn show_delete_confirm(
     ctx: &egui::Context,
     targets: &[RemotePath],
     recursive: &mut bool,
-    cancelled: &mut bool,
-) -> Option<bool> {
+) -> DialogOutcome<bool> {
     let mut confirmed = None;
+    let mut closed = false;
     let response = egui::Modal::new(egui::Id::new("원격 삭제 확인")).show(ctx, |ui| {
         ui.set_width(420.0);
         ui.label(
@@ -344,14 +413,20 @@ pub fn show_delete_confirm(
                 confirmed = Some(*recursive);
             }
             if ui.button("취소").clicked() {
-                *cancelled = true;
+                closed = true;
             }
         });
     });
     if response.should_close() {
-        *cancelled = true;
+        closed = true;
     }
-    confirmed
+    if closed {
+        return DialogOutcome::Cancelled;
+    }
+    match confirmed {
+        Some(recursive) => DialogOutcome::Confirmed(recursive),
+        None => DialogOutcome::Pending,
+    }
 }
 
 #[cfg(test)]
@@ -406,13 +481,13 @@ mod tests {
 
     #[test]
     fn 메뉴가_한_프레임을_그린다() {
-        // 선택 유무·연결 유무 네 조합이 모두 패닉 없이 도는지 본다
+        // 선택 개수·연결 유무 조합이 모두 패닉 없이 도는지 본다
         let ctx = egui::Context::default();
-        for has_selection in [false, true] {
+        for selected in [0, 1, 3] {
             for connected in [false, true] {
                 let _ = ctx.run_ui(Default::default(), |ui| {
                     egui::CentralPanel::default().show(ui, |ui| {
-                        show_remote_menu(ui, has_selection, connected);
+                        show_remote_menu(ui, selected, connected);
                     });
                 });
             }
@@ -422,19 +497,37 @@ mod tests {
     #[test]
     fn 끊긴_연결에서는_서버에_닿는_줄이_모두_비활성이다() {
         // plan Edge Case — 연결이 끊긴 상태 → 항목 비활성
-        for has_selection in [false, true] {
+        for selected in [0, 1, 3] {
             assert!(
-                menu_rows(has_selection, false)
-                    .iter()
-                    .all(|row| !row.enabled),
+                menu_rows(selected, false).iter().all(|row| !row.enabled),
                 "끊긴 연결에서 눌리는 줄이 남았다"
             );
         }
     }
 
     #[test]
+    fn 여럿을_고르면_이름_바꾸기가_비활성이다() {
+        // quality 리뷰 M1 — 여럿을 고른 채 이름을 바꾸면 첫 항목만 바뀌고 나머지는
+        // 아무 말 없이 버려졌다. 새 이름은 하나뿐이므로 애초에 누를 수 없게 한다
+        let enabled = |rows: &[MenuRow], action: RemoteMenuAction| {
+            rows.iter()
+                .find(|row| row.action == action)
+                .expect("메뉴 줄")
+                .enabled
+        };
+        let one = menu_rows(1, true);
+        assert!(enabled(&one, RemoteMenuAction::Rename));
+        let many = menu_rows(3, true);
+        assert!(!enabled(&many, RemoteMenuAction::Rename));
+        // 여럿에도 뜻이 있는 것은 그대로 열려 있다
+        assert!(enabled(&many, RemoteMenuAction::Delete));
+        assert!(enabled(&many, RemoteMenuAction::Chmod));
+        assert!(enabled(&many, RemoteMenuAction::Download));
+    }
+
+    #[test]
     fn 고른_것이_없어도_할_수_있는_일은_남는다() {
-        let rows = menu_rows(false, true);
+        let rows = menu_rows(0, true);
         let enabled: Vec<_> = rows
             .iter()
             .filter(|row| row.enabled)
@@ -449,8 +542,8 @@ mod tests {
                 RemoteMenuAction::Refresh,
             ]
         );
-        // 고른 것이 있으면 나머지도 열린다
-        assert!(menu_rows(true, true).iter().all(|row| row.enabled));
+        // 하나를 고르면 나머지도 열린다
+        assert!(menu_rows(1, true).iter().all(|row| row.enabled));
         // 문구는 구현이 정한 신규 문구 그대로다 (디자인 미제공)
         let labels: Vec<_> = rows.iter().map(|row| row.label).collect();
         assert_eq!(

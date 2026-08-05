@@ -30,7 +30,7 @@ use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::queue_panel::{self, QueueAction};
-use crate::ui::remote_menu::{self, Permissions, RemoteMenuAction, RemoteTarget};
+use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
@@ -989,8 +989,11 @@ impl ExplorerApp {
                 self.remote_ops.dialog = Some(RemoteDialog::NewFolder);
             }
             RemoteMenuAction::Chmod => {
-                // 서버가 준 권한을 여기서는 모른다 — 흔한 기본값에서 시작한다
-                self.remote_ops.permissions = Permissions::from_mode(0o644);
+                // 서버가 알려 준 권한에서 시작한다 — 엉뚱한 기본값에서 출발하면 사용자가
+                // 만지지 않은 비트까지 함께 바뀐다(spec 리뷰 N4). 안 알려 주는 서버에서만
+                // 흔한 기본값을 쓴다
+                let mode = targets.first().and_then(|item| item.mode);
+                self.remote_ops.permissions = Permissions::from_mode(mode.unwrap_or(0o644));
                 self.remote_ops.octal = self.remote_ops.permissions.to_octal_text();
                 self.remote_ops.dialog = Some(RemoteDialog::Chmod);
             }
@@ -1026,7 +1029,10 @@ impl ExplorerApp {
             })
     }
 
-    /// 원격 대화들을 그리고 확인된 명령을 연결에 보낸다 (FR-39)
+    /// 원격 대화들을 그리고 확인된 명령을 연결에 보낸다 (FR-39).
+    ///
+    /// **확인이든 취소든 대화는 그 자리에서 닫힌다** — 취소를 "아직 안 골랐다"와 같이 다루면
+    /// 다음 프레임에 같은 대화가 다시 떠 빠져나올 수 없다 (spec 리뷰 M1)
     fn show_remote_dialogs(&mut self, ctx: &egui::Context) {
         let Some(dialog) = self.remote_ops.dialog else {
             return;
@@ -1043,60 +1049,56 @@ impl ExplorerApp {
                 } else {
                     "새 폴더"
                 };
-                let confirmed = remote_menu::show_name_dialog(
+                let outcome = remote_menu::show_name_dialog(
                     ctx,
                     title,
                     &mut self.remote_ops.name,
                     &mut self.remote_ops.error,
                 );
-                if let Some(name) = confirmed {
-                    let command = if rename {
-                        self.remote_ops.targets.first().and_then(|path| {
-                            Some(ConnCommand::Rename {
-                                from: path.clone(),
-                                to: path.parent()?.join(&name),
-                            })
+                let Some(name) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
+                    return;
+                };
+                let command = if rename {
+                    self.remote_ops.targets.first().and_then(|path| {
+                        Some(ConnCommand::Rename {
+                            from: path.clone(),
+                            to: path.parent()?.join(&name),
                         })
-                    } else {
-                        self.remote_dir(conn)
-                            .map(|dir| ConnCommand::Mkdir(dir.join(&name)))
-                    };
-                    if let Some(command) = command {
-                        self.manager.send(conn, command);
-                    }
-                    self.remote_ops.dialog = None;
+                    })
+                } else {
+                    self.remote_dir(conn)
+                        .map(|dir| ConnCommand::Mkdir(dir.join(&name)))
+                };
+                if let Some(command) = command {
+                    self.manager.send(conn, command);
                 }
             }
             RemoteDialog::Chmod => {
-                if let Some(mode) = remote_menu::show_chmod_dialog(
+                let outcome = remote_menu::show_chmod_dialog(
                     ctx,
                     &mut self.remote_ops.permissions,
                     &mut self.remote_ops.octal,
-                ) {
-                    for path in std::mem::take(&mut self.remote_ops.targets) {
-                        self.manager.send(conn, ConnCommand::Chmod { path, mode });
-                    }
-                    self.remote_ops.dialog = None;
+                );
+                let Some(mode) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
+                    return;
+                };
+                for path in std::mem::take(&mut self.remote_ops.targets) {
+                    self.manager.send(conn, ConnCommand::Chmod { path, mode });
                 }
             }
             RemoteDialog::Delete => {
-                let mut cancelled = false;
-                let confirmed = remote_menu::show_delete_confirm(
+                let outcome = remote_menu::show_delete_confirm(
                     ctx,
                     &self.remote_ops.targets,
                     &mut self.remote_ops.recursive,
-                    &mut cancelled,
                 );
-                if let Some(recursive) = confirmed {
-                    for path in std::mem::take(&mut self.remote_ops.targets) {
-                        // 폴더인지는 서버가 안다 — 재귀를 켜지 않았으면 파일 삭제를 보내고,
-                        // 폴더라 거부되면 그 사유가 로그와 상태 줄에 남는다 (D22와 같은 방식)
-                        self.manager.send(conn, delete_command(path, recursive));
-                    }
-                    self.remote_ops.dialog = None;
-                }
-                if cancelled {
-                    self.remote_ops.dialog = None;
+                let Some(recursive) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
+                    return;
+                };
+                for path in std::mem::take(&mut self.remote_ops.targets) {
+                    // 폴더인지는 서버가 안다 — 재귀를 켜지 않았으면 파일 삭제를 보내고,
+                    // 폴더라 거부되면 그 사유가 로그와 상태 줄에 남는다 (D22와 같은 방식)
+                    self.manager.send(conn, delete_command(path, recursive));
                 }
             }
         }
@@ -1908,6 +1910,24 @@ fn op_outcome(op: OpKind, result: Result<(), RemoteError>) -> OpOutcome {
     }
 }
 
+/// 대화의 결론을 상태에 반영한다 (FR-39).
+///
+/// 확인이면 그 값을 내주고 대화를 닫는다. **취소도 똑같이 닫는다** — 이 한 줄이 빠져서
+/// 취소 단추가 아무 일도 하지 않았다(spec 리뷰 M1). 아직 고르지 않았으면 그대로 둔다
+fn settle_dialog<T>(outcome: DialogOutcome<T>, dialog: &mut Option<RemoteDialog>) -> Option<T> {
+    match outcome {
+        DialogOutcome::Pending => None,
+        DialogOutcome::Confirmed(value) => {
+            *dialog = None;
+            Some(value)
+        }
+        DialogOutcome::Cancelled => {
+            *dialog = None;
+            None
+        }
+    }
+}
+
 /// 확인을 마친 삭제가 보낼 명령 (FR-39).
 ///
 /// **이 함수를 부르는 곳은 확인 대화가 `Some`을 돌려준 자리 하나뿐이다** — 메뉴에서 곧바로
@@ -2258,5 +2278,30 @@ mod tests {
             ConnCommand::Remove(path.clone())
         );
         assert_eq!(delete_command(path.clone(), true), ConnCommand::Rmdir(path));
+    }
+
+    #[test]
+    fn 취소한_대화는_그_자리에서_닫힌다() {
+        // spec 리뷰 M1의 회귀 방지선 — 취소를 "아직 안 골랐다"와 같이 다루면 다음 프레임에
+        // 같은 대화가 다시 떠 빠져나올 수 없다
+        let mut dialog = Some(RemoteDialog::Rename);
+        assert_eq!(
+            settle_dialog(DialogOutcome::<String>::Pending, &mut dialog),
+            None
+        );
+        assert_eq!(dialog, Some(RemoteDialog::Rename), "고르기 전에 닫혔다");
+
+        assert_eq!(
+            settle_dialog(DialogOutcome::<String>::Cancelled, &mut dialog),
+            None
+        );
+        assert_eq!(dialog, None, "취소했는데 대화가 남았다");
+
+        let mut dialog = Some(RemoteDialog::Chmod);
+        assert_eq!(
+            settle_dialog(DialogOutcome::Confirmed(0o755), &mut dialog),
+            Some(0o755)
+        );
+        assert_eq!(dialog, None, "확인 뒤에도 대화가 남았다");
     }
 }

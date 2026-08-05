@@ -118,7 +118,6 @@ impl ConnectionManager {
         self.connections.get(&id)
     }
 
-    /// 명령을 보낸다. 없는 연결이거나 워커가 죽었으면 `false`
     /// 그 연결의 로그에 한 줄 남긴다 (FR-39) — 연결이 이미 접혔으면 아무 일도 하지 않는다
     pub fn note(&mut self, id: ConnectionId, kind: LogKind, text: String) {
         if let Some(connection) = self.connections.get_mut(&id) {
@@ -126,6 +125,7 @@ impl ConnectionManager {
         }
     }
 
+    /// 명령을 보낸다. 없는 연결이거나 워커가 죽었으면 `false`
     pub fn send(&self, id: ConnectionId, command: ConnCommand) -> bool {
         self.connections
             .get(&id)

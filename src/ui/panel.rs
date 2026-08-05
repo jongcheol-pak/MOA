@@ -169,6 +169,16 @@ enum PendingNav {
 /// 원격 목록 메뉴에서 고른 것과 그때의 대상들 (FR-39)
 pub type RemoteMenuPick = (RemoteMenuAction, Vec<RemoteTarget>);
 
+/// 팝업이 화면 밖으로 나가지 않게 시작점을 안으로 당긴다 (quality 리뷰 m1).
+///
+/// 화면보다 큰 팝업이면 왼쪽·위쪽 모서리를 우선한다 — 아래가 잘려도 첫 줄은 보인다
+fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
+    egui::pos2(
+        at.x.min(screen.right() - size.x).max(screen.left()),
+        at.y.min(screen.bottom() - size.y).max(screen.top()),
+    )
+}
+
 /// `show_content`가 한 프레임에서 거둔 것들 — 목록 조작·단계 화면의 조치·놓기·원격 메뉴
 type ContentOutcome = (
     FileListAction,
@@ -1083,13 +1093,12 @@ impl PanelState {
             self.remote_menu_at = None;
             return None;
         };
-        let targets: Vec<RemoteTarget> = self
-            .list
-            .selected_remote(&dir)
-            .into_iter()
-            .map(|(path, is_dir, size)| RemoteTarget { path, is_dir, size })
-            .collect();
+        let targets = self.list.selected_remote(&dir);
         let mut chosen = None;
+        // 창 가장자리에서 눌러도 메뉴가 밖으로 넘어가지 않게 안으로 당긴다 — 셸 메뉴는
+        // OS가 해 주는 일이라(D21) 우리가 그리는 이쪽에서는 직접 해야 한다 (quality 리뷰 m1)
+        let viewport = ui.ctx().input(|input| input.viewport_rect());
+        let at = clamp_menu_pos(viewport, at, remote_menu::menu_size());
         let response = egui::Area::new(ui.id().with("원격 메뉴"))
             .order(egui::Order::Foreground)
             .fixed_pos(at)
@@ -1099,7 +1108,7 @@ impl PanelState {
                     .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
                     .corner_radius(0)
                     .show(ui, |ui| {
-                        chosen = remote_menu::show_remote_menu(ui, !targets.is_empty(), connected);
+                        chosen = remote_menu::show_remote_menu(ui, targets.len(), connected);
                     });
             })
             .response;
@@ -1873,5 +1882,28 @@ mod tests {
         );
         assert!(request.is_none(), "원격 탭에서 셸 메뉴를 청했다");
         assert_eq!(panel.remote_menu_at, Some(pos), "원격 메뉴가 뜨지 않았다");
+    }
+
+    #[test]
+    fn 가장자리에서_연_메뉴는_화면_안으로_당겨진다() {
+        // quality 리뷰 m1 — 셸 메뉴는 OS가 보정해 주지만(D21) 우리가 그리는 메뉴는 아니다
+        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
+        let size = egui::vec2(200.0, 240.0);
+        // 안쪽에서 열면 그 자리 그대로다
+        assert_eq!(
+            clamp_menu_pos(screen, egui::pos2(100.0, 100.0), size),
+            egui::pos2(100.0, 100.0)
+        );
+        // 오른쪽·아래 가장자리에서 열면 안으로 당긴다
+        assert_eq!(
+            clamp_menu_pos(screen, egui::pos2(1150.0, 780.0), size),
+            egui::pos2(1000.0, 560.0)
+        );
+        // 화면보다 큰 메뉴는 왼쪽 위를 맞춘다 — 아래가 잘려도 첫 줄은 보인다
+        let huge = egui::vec2(2000.0, 2000.0);
+        assert_eq!(
+            clamp_menu_pos(screen, egui::pos2(600.0, 400.0), huge),
+            egui::pos2(0.0, 0.0)
+        );
     }
 }
