@@ -1466,12 +1466,15 @@ impl ExplorerApp {
                     self.runner
                         .on_done(&mut self.queue, id, result.map_err(|err| err.to_string()))
                 }
-                // 조회 실패 — 트리가 청한 것이면 그 노드에만 사유를 남긴다 (T24 Edge Case)
+                // 조회 실패 — 트리가 청한 것이면 그 노드에만 사유를 남기고(T24 Edge Case),
+                // 패널이 청한 것이면 **옮기기를 무르고** 사유를 상태 줄에 남긴다 (F-7 리뷰 B2).
+                // 무르지 않으면 주소창은 새 폴더를, 목록은 이전 폴더를 가리킨 채 갈라진다
                 ConnEvent::ListFailed { generation, detail } => {
-                    if let Some((conn, path, cache_generation)) =
-                        self.pending_tree_lists.remove(&generation)
-                    {
-                        self.tree_cache.fail(conn, cache_generation, &path, detail);
+                    match self.pending_tree_lists.remove(&generation) {
+                        Some((conn, path, cache_generation)) => {
+                            self.tree_cache.fail(conn, cache_generation, &path, detail);
+                        }
+                        None => self.revert_remote_move(conn, generation, detail, now),
                     }
                 }
                 // 파일 작업의 답 — 성공하면 목록을 다시 읽고, 실패하면 사유를 남긴다 (FR-39)
@@ -1502,6 +1505,33 @@ impl ExplorerApp {
             }
             OpOutcome::Ignore => {}
         }
+    }
+
+    /// 조회가 실패한 패널의 옮기기를 무르고 사유를 알린다 (F-7 리뷰 B2).
+    ///
+    /// **보이는 목록과 경로가 어긋나지 않게** 하는 것이 목적이다 — 어긋난 채로 두면 그 위에서
+    /// 연 원격 메뉴가 사용자가 보는 것과 다른 경로에 삭제·권한 변경을 건다
+    fn revert_remote_move(
+        &mut self,
+        conn: ConnectionId,
+        generation: u64,
+        detail: String,
+        now: f64,
+    ) {
+        let reverted = self
+            .views
+            .values_mut()
+            .flat_map(|view| view.panels.values_mut())
+            .filter(|panel| panel.active_conn() == Some(conn))
+            .filter(|panel| panel.awaits_generation(generation))
+            .fold(false, |any, panel| panel.revert_remote_path() || any);
+        let text = if reverted {
+            format!("폴더를 열지 못했습니다 — {detail}")
+        } else {
+            format!("목록을 읽지 못했습니다 — {detail}")
+        };
+        self.manager.note(conn, LogKind::Error, text.clone());
+        self.notice = Some((text, now + NOTICE_SECS));
     }
 
     /// 원격 위치가 바뀐 패널들이 새 위치의 목록을 청한다 (T24 Acceptance ⑤).
