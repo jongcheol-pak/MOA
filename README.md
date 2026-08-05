@@ -70,9 +70,8 @@ src/
 │   ├── session.rs     # 앱 상태 ↔ 세션 파일 변환 (순수) — 원격 탭·큐·사이트 포함
 │   ├── site_manager.rs # 사이트 관리자 대화 (일반·고급 탭)
 │   ├── site_dropdown.rs # 탭 스트립의 사이트 드롭다운·연결 메뉴
-│   ├── remote_states.rs # 원격 탭의 단계별 화면 (안내·연결 중·실패)
+│   ├── remote_states.rs # 원격 탭의 단계별 화면 (안내·연결 중·실패) + SFTP 지문 확인 대화
 │   ├── remote_menu.rs  # 원격 목록 우클릭 메뉴와 이름·권한·삭제 대화
-│   ├── hostkey.rs      # SFTP 서버 지문 확인 대화
 │   ├── dock.rs         # 하단 도크 — 전송 큐/서버 로그 탭 스트립
 │   ├── queue_panel.rs  # 전송 큐 화면 (진행률·속도·행 메뉴)
 │   ├── log_panel.rs    # 서버 로그 화면 (종류별 색·복사)
