@@ -679,4 +679,24 @@ mod tests {
         // 사이트 고르기는 담지 않는다 — 연결 없이 시작하므로 가리킬 곳이 없다
         assert_eq!(back.site, None);
     }
+
+    #[test]
+    fn 등록한_사이트는_저장하고_되살린다() {
+        // 사용자 보고(2026-08-05): 앱을 껐다 켜면 연결 목록이 비어 있었다.
+        // (직접 원인은 연결 시 앱이 죽어 `on_exit`가 돌지 못한 것이었지만, 저장·복원 경로
+        //  자체가 사이트를 잃지 않는지 여기서 못 박는다)
+        let (session, site) = session_with_site();
+        let text = serde_json::to_string(&session).expect("직렬화");
+        let back = crate::app::settings::parse_session(&text).expect("무결성 검사 통과");
+
+        let names: Vec<&str> = back.sites.sites().iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["배포 서버"], "저장본에서 사이트가 사라졌다");
+        assert!(back.sites.get(site).is_some(), "사이트 식별자가 어긋났다");
+        // 사이트를 담은 채 되살린 탭도 그 사이트를 그대로 가리킨다
+        let restored = restore(&back);
+        assert!(matches!(
+            restored[0].panels[0].tabs[1],
+            TabSpec::Remote { site: id, .. } if id == site
+        ));
+    }
 }

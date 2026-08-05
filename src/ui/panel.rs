@@ -740,6 +740,34 @@ impl PanelState {
         }
     }
 
+    /// 원격 목록에서 더블클릭한 항목으로 들어간다.
+    ///
+    /// `..`는 위로, 그 밖의 폴더는 안으로. **파일은 열지 않는다** — 원격 파일을 여는 것은
+    /// 받아서 로컬에서 여는 일이고(Out of Scope: 열어 편집 후 자동 업로드), 여기서 셸에
+    /// 넘기면 있지도 않은 로컬 경로를 실행하게 된다
+    fn open_remote_entry(&mut self, index: usize) {
+        let Some(dir) = self.tabs.active().source.remote_path().cloned() else {
+            return;
+        };
+        let Some(entry) = self.list.remote_at(index) else {
+            return;
+        };
+        if !entry.is_dir {
+            return;
+        }
+        let target = if entry.name == PARENT_ENTRY {
+            match dir.parent() {
+                Some(parent) => parent,
+                // 루트에서는 그대로 머문다 — 위가 없다
+                None => return,
+            }
+        } else {
+            dir.join(&entry.name)
+        };
+        // 옮기고 나면 앱이 그 자리의 목록을 청한다(`take_remote_dirty`)
+        self.set_remote_path(target);
+    }
+
     /// 활성 탭이 바뀌었으니 그 탭이 보는 곳을 다시 읽는다 (F-7 3라운드 B1).
     ///
     /// **목록은 탭이 아니라 패널 하나가 든다** — 그래서 탭만 바꾸고 목록을 그대로 두면
@@ -979,8 +1007,12 @@ impl PanelState {
         match action {
             FileListAction::None => None,
             FileListAction::Open(index) => {
-                // 원격 항목은 로컬 경로가 없다 — 여는 일은 원격 탐색·전송(T13·T22)이 맡는다.
-                // 여기서 빈 경로에 이름을 이어 붙이면 있지도 않은 로컬 파일을 셸에 넘기게 된다
+                // 원격 항목에는 로컬 경로가 없다 — 폴더면 그 원격 폴더로 들어가고,
+                // 파일은 아무 일도 하지 않는다(원격 파일 열기는 범위 밖 — 받아서 쓰면 된다)
+                if self.is_remote() {
+                    self.open_remote_entry(index);
+                    return None;
+                }
                 let entry = self.list.entry_at(index)?;
                 let dir = self.tabs.active().source.local_path()?;
                 let target = dir.join(entry.name_string());
@@ -1343,6 +1375,9 @@ impl PanelState {
     }
 }
 
+/// 원격 목록의 상위 이동 항목 이름 — 만드는 곳과 해석하는 곳이 같은 값을 쓴다
+const PARENT_ENTRY: &str = "..";
+
 /// 원격 목록의 첫 줄을 언제나 상위 이동(`..`)으로 맞춘다.
 ///
 /// 서버·프로토콜에 따라 `..`를 주기도 하고 안 주기도 한다 — 그대로 두면 같은 조작이
@@ -1350,7 +1385,7 @@ impl PanelState {
 fn with_parent_first(entries: Vec<RemoteEntry>) -> Vec<RemoteEntry> {
     let mut out = Vec::with_capacity(entries.len() + 1);
     out.push(RemoteEntry {
-        name: "..".to_owned(),
+        name: PARENT_ENTRY.to_owned(),
         is_dir: true,
         is_symlink: false,
         link_target: None,
@@ -1359,7 +1394,11 @@ fn with_parent_first(entries: Vec<RemoteEntry>) -> Vec<RemoteEntry> {
         mode: None,
         owner: None,
     });
-    out.extend(entries.into_iter().filter(|entry| entry.name != ".."));
+    out.extend(
+        entries
+            .into_iter()
+            .filter(|entry| entry.name != PARENT_ENTRY),
+    );
     out
 }
 
@@ -1368,6 +1407,20 @@ mod tests {
     use super::*;
     use crate::remote::sites::SiteStore;
     use crate::remote::types::{RemotePath, SiteId};
+
+    /// 원격 항목 하나 — 여러 테스트가 함께 쓴다
+    fn remote_entry(name: &str, is_dir: bool) -> RemoteEntry {
+        RemoteEntry {
+            name: name.to_owned(),
+            is_dir,
+            is_symlink: false,
+            link_target: None,
+            size: 0,
+            modified: None,
+            mode: None,
+            owner: None,
+        }
+    }
 
     /// 한 프레임에 그려진 글자를 전부 모은다 — 화면에 실제로 무엇이 보이는지 판정한다
     fn drawn_texts(output: &eframe::egui::FullOutput) -> Vec<String> {
@@ -2325,5 +2378,60 @@ mod tests {
             Some("/var/www")
         );
         assert!(panel.status.is_empty(), "원격 탭에 로컬 상태 문구가 남았다");
+    }
+
+    #[test]
+    fn 원격_폴더를_더블클릭하면_그_안으로_들어간다() {
+        // 사용자 보고(2026-08-05): 원격 목록에서 폴더를 더블클릭해도 아무 일도 없었다 —
+        // 여는 경로가 로컬 경로를 요구해 원격 탭에서는 통째로 빠져나갔기 때문이다
+        let ctx = egui::Context::default();
+        let mut icons = IconCache::new();
+        let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+        let generation =
+            panel.request_remote_list(&ConnectionManager::new(std::sync::Arc::new(|| {})));
+        let _ = generation;
+        panel.list.set_remote_entries(
+            with_parent_first(vec![
+                remote_entry("public_html", true),
+                remote_entry("a.txt", false),
+            ]),
+            &mut icons,
+        );
+        panel.take_remote_dirty();
+
+        // 폴더(인덱스 1 — 0은 `..`)로 들어간다
+        panel.handle_list_action(FileListAction::Open(1), &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www/public_html")
+        );
+        assert!(
+            panel.take_remote_dirty(),
+            "들어간 폴더의 목록을 청하지 않는다"
+        );
+
+        // `..`로 위로 올라간다
+        panel
+            .list
+            .set_remote_entries(with_parent_first(Vec::new()), &mut icons);
+        panel.handle_list_action(FileListAction::Open(0), &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www")
+        );
+
+        // 파일은 열지 않는다 — 원격 파일 열기는 범위 밖이다
+        panel.list.set_remote_entries(
+            with_parent_first(vec![remote_entry("a.txt", false)]),
+            &mut icons,
+        );
+        panel.take_remote_dirty();
+        panel.handle_list_action(FileListAction::Open(1), &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www"),
+            "파일을 눌렀는데 위치가 바뀌었다"
+        );
+        assert!(!panel.take_remote_dirty());
     }
 }

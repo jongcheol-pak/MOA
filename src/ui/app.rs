@@ -1257,9 +1257,12 @@ impl ExplorerApp {
         let connected = self.connected_sites();
         let outcome = self.site_manager.show(ctx, &mut self.sites, &connected);
         match outcome {
-            SiteManagerOutcome::None | SiteManagerOutcome::Close => {}
+            SiteManagerOutcome::None => {}
+            // 대화 안에서 이름 바꾸기·삭제·복제로 목록이 바뀌었을 수 있다 — 닫을 때 함께 적는다
+            SiteManagerOutcome::Close => self.persist_session(),
             // 등록만 했으면 그 사실을 짧게 알린다 (인벤토리 #89·#91)
             SiteManagerOutcome::Register(site) => {
+                self.persist_session();
                 let host = self
                     .sites
                     .get(site)
@@ -1269,6 +1272,7 @@ impl ExplorerApp {
                 self.toast.show(toast::registered_text(&host), now);
             }
             SiteManagerOutcome::RegisterAndConnect(site) => {
+                self.persist_session();
                 if let Some(area) = area {
                     self.open_site_tab(site, None, area);
                 }
@@ -1625,10 +1629,20 @@ impl ExplorerApp {
                 }
                 // 주소로 한 번 열어 본 서버가 사이드바에 눌러앉지 않게 한다
                 self.sites.hide(site);
+                self.persist_session();
                 site
             }
         };
         self.open_site_tab_at(site, Some(target), url.path, area);
+    }
+
+    /// 지금 상태를 곧바로 세션 파일에 적는다 (FR-44).
+    ///
+    /// **사이트 목록이 바뀌면 그 자리에서 적는다** — 종료 때만 적으면 그 사이에 앱이
+    /// 비정상 종료됐을 때(패닉·강제 종료·전원 차단) 등록한 사이트가 통째로 사라진다.
+    /// 파일이 작고 사이트 등록은 드문 일이라 그때마다 적어도 부담이 없다
+    fn persist_session(&self) {
+        save_session(&self.collect_session());
     }
 
     /// 사이트를 그 패널의 **새 원격 탭**으로 열고 연결을 건다 (FR-33·FR-34·FR-38).

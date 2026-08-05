@@ -16,9 +16,10 @@ use suppaftp::native_tls::TlsConnector;
 use suppaftp::types::{FileType as TransferType, Response};
 use suppaftp::{FtpError, Mode, NativeTlsConnector, NativeTlsFtpStream, Status};
 
+use crate::remote::charset;
 use crate::remote::types::{
-    Encryption, LogonType, Progress, Protocol, RemoteEntry, RemoteError, RemotePath, RemoteResult,
-    RemoteSession, SiteRecord, TransferMode,
+    Charset, Encryption, LogonType, Progress, Protocol, RemoteEntry, RemoteError, RemotePath,
+    RemoteResult, RemoteSession, SiteRecord, TransferMode,
 };
 use crate::remote::{Pumped, pump};
 
@@ -37,6 +38,13 @@ pub struct FtpSession {
     /// 이 연결이 실제로 TLS 위에 섰는가 — `ExplicitIfAvailable`이 거부당해 평문으로
     /// 되연결하면 거짓이다 (F-7 리뷰 B1)
     secure: bool,
+    /// 이 사이트의 파일명 문자셋 (FR-46) — 목록 원문을 이 인코딩으로 읽는다.
+    ///
+    /// **서버가 UTF-8을 받아들이면(`OPTS UTF8 ON` 성공) 무시된다** — 그때는 서버가 이미
+    /// UTF-8로 말하므로 다시 해석할 것이 없다
+    charset: Charset,
+    /// 서버가 `OPTS UTF8 ON`을 받아들였는가
+    utf8_mode: bool,
 }
 
 impl FtpSession {
@@ -46,6 +54,8 @@ impl FtpSession {
             mlsd_unsupported: false,
             active_fallback_pending: false,
             secure: false,
+            charset: Charset::default(),
+            utf8_mode: false,
         }
     }
 
@@ -75,19 +85,40 @@ impl FtpSession {
     /// 이 판정을 목록 조회에만 두는 이유: 연결 후 첫 데이터 명령은 언제나 목록이므로 전송이
     /// 시작될 때는 방식이 이미 정해져 있다.
     fn list_lines(&mut self, path: &str) -> RemoteResult<Vec<String>> {
-        let first = self.stream()?.list(Some(path));
-        match first {
+        match self.raw_list(path) {
             Ok(lines) => Ok(lines),
             Err(err) if self.active_fallback_pending && is_data_connection_failure(&err) => {
                 self.active_fallback_pending = false;
-                let stream = self.stream()?;
-                stream.set_mode(Mode::Active);
-                stream
-                    .list(Some(path))
+                self.stream()?.set_mode(Mode::Active);
+                self.raw_list(path)
                     .map_err(|e| classify(e, "LIST", Some(path)))
             }
             Err(err) => Err(classify(err, "LIST", Some(path))),
         }
+    }
+
+    /// `LIST`를 **원문 바이트로** 읽어 사이트 문자셋으로 옮긴다 (FR-46).
+    ///
+    /// `suppaftp`의 `list()`를 쓰지 않는 이유: 그 함수가 줄을 `String::from_utf8_lossy`로
+    /// 이미 디코딩해(`sync_ftp.rs`의 `get_lines_from_stream`) **CP949 서버의 한글 이름이
+    /// 치환 문자로 뭉개진 뒤에** 우리 손에 온다. 데이터 연결을 직접 받아 바이트를 지키면
+    /// 그 자리에서 올바로 옮길 수 있다
+    fn raw_list(&mut self, path: &str) -> Result<Vec<String>, FtpError> {
+        let charset = self.charset.clone();
+        let utf8_mode = self.utf8_mode;
+        // 연결이 없으면 데이터 명령을 낼 수 없다 — 위의 `list_lines`가 사유를 붙여 올린다
+        let stream = self.stream().map_err(|_| FtpError::BadResponse)?;
+        let (_, data) = stream.custom_data_command(
+            format!("LIST {path}"),
+            &[Status::AboutToSend, Status::AlreadyOpen],
+        )?;
+        let mut raw = Vec::new();
+        let mut data = data;
+        let read = data.read_to_end(&mut raw);
+        // 데이터 연결은 읽기 성공 여부와 무관하게 닫는다 — 닫지 않으면 다음 명령이 막힌다
+        stream.close_data_connection(data)?;
+        read.map_err(FtpError::ConnectionError)?;
+        Ok(decode_lines(&raw, &charset, utf8_mode))
     }
 }
 
@@ -152,6 +183,13 @@ impl RemoteSession for FtpSession {
 
         self.stream = Some(stream);
         self.mlsd_unsupported = false;
+        self.charset = site.charset.clone();
+        // 서버가 UTF-8을 받아들이면 그 뒤로는 이름이 UTF-8로 온다 — 사이트 문자셋보다 이것이
+        // 우선이다(RFC 2640). 받아들이지 않는 서버에서는 조용히 지나가고 문자셋이 일을 한다
+        self.utf8_mode = self
+            .stream()
+            .map(|stream| stream.opts("UTF8", Some("ON")).is_ok())
+            .unwrap_or(false);
         self.apply_transfer_mode(site.transfer_mode);
         Ok(())
     }
@@ -541,6 +579,21 @@ fn is_data_connection_failure(err: &FtpError) -> bool {
 
 /// 라이브러리 오류를 도메인 오류로 옮긴다. **서버 원문은 어느 갈래로 가든 그대로 남는다** —
 /// 실패 화면이 그 문구를 보여야 사용자가 원인을 짚는다 (README §5).
+/// 목록 원문을 줄 단위로 쪼개 사이트 문자셋으로 옮긴다 (FR-46).
+///
+/// 서버가 UTF-8 모드를 받아들였으면 문자셋 설정과 무관하게 UTF-8로 읽는다 —
+/// 그때 서버가 보내는 것이 UTF-8이기 때문이다
+fn decode_lines(raw: &[u8], charset: &Charset, utf8_mode: bool) -> Vec<String> {
+    let charset = if utf8_mode { &Charset::Utf8 } else { charset };
+    raw.split(|byte| *byte == b'\n')
+        .map(|line| {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            charset::decode_name(line, charset)
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect()
+}
+
 fn classify(err: FtpError, operation: &str, path: Option<&str>) -> RemoteError {
     match err {
         FtpError::ConnectionError(e) => RemoteError::Connect {
@@ -918,5 +971,45 @@ mod tests {
             .and_then(|(credentials, _)| credentials.split_once(':'))
             .map(|(_, password)| password.to_owned())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn 목록_원문을_사이트_문자셋으로_옮긴다() {
+        // 사용자 보고(2026-08-05): CP949 서버의 한글 폴더 이름이 `?? ???`로 깨졌다.
+        // `suppaftp::list()`가 줄을 UTF-8로 단정해 뭉갠 뒤 넘겨주기 때문이라, 원문 바이트를
+        // 직접 받아 이 함수가 옮긴다
+        let mut raw = b"drwxr-xr-x 2 ftp ftp 4096 Aug  5 21:00 ".to_vec();
+        // `한글 폴더`의 CP949 바이트
+        raw.extend_from_slice(&[0xC7, 0xD1, 0xB1, 0xDB, 0x20, 0xC6, 0xFA, 0xB4, 0xF5]);
+        raw.extend_from_slice(
+            b"
+",
+        );
+
+        let cp949 = Charset::Named("CP949".to_owned());
+        let lines = decode_lines(&raw, &cp949, false);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].ends_with("한글 폴더"),
+            "CP949 이름이 옮겨지지 않았다: {}",
+            lines[0]
+        );
+        // 서버가 UTF-8 모드를 받아들였으면 설정과 무관하게 UTF-8로 읽는다
+        let utf8_raw = "drwxr-xr-x 2 ftp ftp 4096 Aug  5 21:00 한글 폴더
+"
+        .as_bytes();
+        let lines = decode_lines(utf8_raw, &cp949, true);
+        assert!(lines[0].ends_with("한글 폴더"), "{}", lines[0]);
+        // 빈 줄은 담지 않는다
+        assert!(
+            decode_lines(
+                b"
+
+",
+                &Charset::Utf8,
+                false
+            )
+            .is_empty()
+        );
     }
 }

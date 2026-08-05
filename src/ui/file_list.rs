@@ -176,6 +176,14 @@ impl FileListView {
         &self.model
     }
 
+    /// 원격 항목 하나 — 로컬 목록이면 `None`이다. 더블클릭으로 폴더에 들어갈 때 쓴다
+    pub fn remote_at(&self, index: usize) -> Option<&RemoteEntry> {
+        match &self.model {
+            ListModel::Remote(rows) => rows.get(index),
+            ListModel::Local(_) => None,
+        }
+    }
+
     /// 로컬 항목 하나. **원격 목록이면 `None`**이다 — 셸 메뉴처럼 로컬 파일에만 있는 일의
     /// 진입점이라, 원격을 억지로 끼워 넣으면 없는 경로를 셸에 넘기게 된다 (D21)
     pub fn entry_at(&self, index: usize) -> Option<&FileEntry> {
