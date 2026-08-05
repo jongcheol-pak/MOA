@@ -5,8 +5,12 @@
 
 /// 패널 최소 폭/높이(px, 96DPI 기준). 이보다 작아지는 분할은 거부한다 (plan T2 Edge)
 pub const MIN_PANE_SIZE: i32 = 120;
-/// 스플리터 두께(px)
-pub const SPLITTER_THICKNESS: i32 = 4;
+/// 스플리터 두께(px).
+///
+/// **2px이다** — 패널은 맞붙어 보여야 하되(1px로 줄였더니 크기 조절이 불편했다 — 사용자 보고)
+/// 손으로 잡을 만큼은 있어야 한다. 이 자리는 배경색이 아니라 **경계선 색**으로 칠하므로
+/// 두꺼워져도 틈으로 벌어져 보이지 않는다. 잡기 영역은 화면 쪽(`ui::splitter`)이 더 넓힌다
+pub const SPLITTER_THICKNESS: i32 = 2;
 
 /// 리프(패널) 식별자 — 생성 순서 증가, 재사용 없음
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

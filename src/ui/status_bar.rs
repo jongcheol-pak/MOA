@@ -1,16 +1,18 @@
 //! 창 맨 아래 상태 표시줄 — **언제나 보인다** (FR-41·D18).
 //!
 //! 원본 `FileExplorer-FTP.dc.html:320-333`. 왼쪽부터 큐 토글 · 큐 요약 · 전체 진행 막대 ·
-//! 지금 옮기는 파일이 오고, 오른쪽 끝에 실패 알약 · 연결 상태 · 로그 토글이 붙는다.
+//! 지금 옮기는 파일이 오고, 오른쪽 끝에 실패 알약이 붙는다.
 //!
-//! **도크를 여는 유일한 문이다** — 큐·로그 화면(T19·T20)은 이 줄의 캐럿으로만 열린다
+//! 오른쪽 끝에 있던 **연결 상태와 로그 토글은 뺐다**(사용자 결정) — 연결 상태는 사이드바의
+//! 상태 점과 탭 배지가 이미 알리고, 서버 로그는 도크 안 `서버 로그` 탭으로 연다.
+//!
+//! **도크를 여는 문이다** — 큐·로그 화면(T19·T20)은 이 줄의 캐럿으로 도크를 연 뒤 그 안에서 고른다
 //! (README §8 "the status bar carets toggle them").
 //!
-//! 항목을 슬롯 목록으로 일반화하지 않는다(plan 비추상화 선언) — 일곱이 고정이고 조건이 제각각이라
+//! 항목을 슬롯 목록으로 일반화하지 않는다(plan 비추상화 선언) — 다섯이 고정이고 조건이 제각각이라
 //! 목록으로 만들면 조건이 자료구조 속으로 숨는다.
-use crate::remote::connection::ConnPhase;
 use crate::remote::queue::TransferQueue;
-use crate::ui::dock::{DockPanel, DockState};
+use crate::ui::dock::DockState;
 use crate::ui::queue_panel::{format_size, format_speed};
 use crate::ui::theme;
 use crate::ui::widgets;
@@ -22,8 +24,6 @@ pub const HEIGHT: f32 = 30.0;
 const PAD_X: f32 = 10.0;
 const GAP: f32 = 14.0;
 const FONT_PX: f32 = 13.0;
-/// 캐럿과 글자 사이 (`:321` `gap:6px`)
-const CARET_GAP: f32 = 6.0;
 /// 전체 진행 막대 (`:323`)
 const BAR_WIDTH: f32 = 240.0;
 const BAR_HEIGHT: f32 = 6.0;
@@ -36,21 +36,19 @@ const DOT: f32 = 7.0;
 
 // ── 문구 (인벤토리 #53~#59) ──
 const QUEUE_LABEL: &str = "전송 큐";
-const LOG_LABEL: &str = "로그";
-/// 접힘·열림 캐럿 (인벤토리 #53·#59) — **아이콘은 아이콘 글꼴(phosphor)에서만 가져온다**
+/// 접힘·열림 캐럿 (인벤토리 #53) — **아이콘은 아이콘 글꼴(phosphor)에서만 가져온다**
 /// (프로젝트 규약, AGENTS 참조). 원본 HTML의 문자를 그대로 쓰면 글꼴에 없을 때 두부가 된다
 const CARET_CLOSED: &str = egui_phosphor::regular::CARET_UP;
 const CARET_OPEN: &str = egui_phosphor::regular::CARET_DOWN;
-/// 연결이 하나도 없을 때 (plan Edge Case)
-const NO_CONNECTION: &str = "연결 없음";
 /// 실패 알약 (인벤토리 #57)
 const FAIL_LABEL: &str = "실패";
 
-/// 사용자가 상태 표시줄에서 고른 것
+/// 사용자가 상태 표시줄에서 고른 것 — 지금은 큐 토글 하나뿐이다.
+///
+/// 열거형으로 남겨 둔다: 이 줄이 도크를 여는 문이라 나중에 다른 화면이 붙을 자리다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusAction {
     ToggleQueue,
-    ToggleLog,
 }
 
 /// 큐 요약 문구 (인벤토리 #54) — `5건 대기 · 12.4 MB/s · 00:41 남음`.
@@ -144,40 +142,9 @@ pub fn status_message(view: &StatusView<'_>) -> (String, egui::Color32) {
 /// 폴더를 펼치는 중임을 알리는 문구 (T22 Edge Case)
 const EXPANDING_LABEL: &str = "펼치는 중…";
 
-/// 연결 상태 문구와 색 (인벤토리 #58) — `● sftp web-prod 연결됨 · TLS` 꼴.
-///
-/// 연결이 없으면 `연결 없음`이다(plan Edge Case). 여럿이면 **지금 보고 있는 것**을 호출부가 고른다
-pub fn connection_label(
-    phase: Option<&ConnPhase>,
-    protocol: Option<&str>,
-    site: Option<&str>,
-    secure: bool,
-) -> (String, egui::Color32) {
-    let Some(phase) = phase else {
-        return (NO_CONNECTION.to_owned(), theme::TEXT_DIM);
-    };
-    let name = match (protocol, site) {
-        (Some(protocol), Some(site)) => format!("{protocol} {site} "),
-        (None, Some(site)) => format!("{site} "),
-        _ => String::new(),
-    };
-    match phase {
-        ConnPhase::Idle => (format!("{name}연결 없음"), theme::TEXT_DIM),
-        ConnPhase::Connecting => (format!("{name}연결 중…"), theme::WARN),
-        ConnPhase::Ready => {
-            let tls = if secure { " · TLS" } else { "" };
-            (format!("{name}연결됨{tls}"), theme::OK_TEXT)
-        }
-        ConnPhase::Failed { .. } => (format!("{name}연결하지 못했습니다"), theme::ERROR),
-        ConnPhase::Closed => (format!("{name}연결 끊김"), theme::TEXT_DIM),
-    }
-}
-
 /// 상태 표시줄이 그릴 값 — 화면은 여기 담긴 것만 안다
 pub struct StatusView<'a> {
     pub queue: &'a TransferQueue,
-    /// 연결 상태 문구와 색 (`connection_label`이 만든 것)
-    pub connection: (String, egui::Color32),
     /// 지금 펼치고 있는 폴더 수 (T22 Edge Case) — 0이면 표시하지 않는다.
     ///
     /// 큰 폴더를 끌어다 놓으면 큐가 채워질 때까지 화면에 아무 변화가 없어, 사용자가
@@ -266,43 +233,6 @@ pub fn show_status_bar(
 
     // ── 오른쪽부터 (거꾸로 놓는다) ──
     let mut right = rect.right() - PAD_X;
-    let log_caret = if dock.panel == Some(DockPanel::Log) {
-        CARET_OPEN
-    } else {
-        CARET_CLOSED
-    };
-    let log_toggle = format!("{log_caret} {LOG_LABEL}");
-    let width = text_width(ui, &log_toggle, &font);
-    right -= width;
-    if toggle_text(
-        ui,
-        rect,
-        right,
-        width,
-        (&log_toggle, "log"),
-        &font,
-        theme::TEXT_DIM,
-    ) {
-        action = Some(StatusAction::ToggleLog);
-    }
-    right -= GAP;
-
-    let (label, color) = &view.connection;
-    let width = text_width(ui, label, &font) + DOT + CARET_GAP;
-    right -= width;
-    ui.painter().circle_filled(
-        egui::pos2(right + DOT / 2.0, rect.center().y),
-        DOT / 2.0,
-        *color,
-    );
-    ui.painter().text(
-        egui::pos2(right + DOT + CARET_GAP, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        font.clone(),
-        *color,
-    );
-    right -= GAP;
 
     // 실패 알약 — **실패가 있을 때만** (인벤토리 #57)
     let failures = view.queue.count(crate::remote::queue::QueueFilter::Error);
@@ -423,9 +353,8 @@ mod tests {
 
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
-        // 인벤토리 #53·#57·#59
+        // 인벤토리 #53·#57
         assert_eq!(QUEUE_LABEL, "전송 큐");
-        assert_eq!(LOG_LABEL, "로그");
         // 캐럿은 **아이콘 글꼴의 것**이어야 한다 — 원본 기호(U+25B2·U+25BC)를 그대로 쓰면
         // 이 앱 글꼴에 없어 두부가 된다 (프로젝트 규약)
         assert!(widgets::is_icon_font(CARET_OPEN) && widgets::is_icon_font(CARET_CLOSED));
@@ -518,47 +447,14 @@ mod tests {
     }
 
     #[test]
-    fn 연결_상태_문구가_단계별로_갈린다() {
-        // 인벤토리 #58 + plan Edge Case(연결 0개)
-        assert_eq!(
-            connection_label(None, None, None, false),
-            ("연결 없음".to_owned(), theme::TEXT_DIM)
-        );
-        let (text, color) = connection_label(
-            Some(&ConnPhase::Ready),
-            Some("sftp"),
-            Some("web-prod"),
-            true,
-        );
-        assert_eq!(text, "sftp web-prod 연결됨 · TLS");
-        assert_eq!(color, theme::OK_TEXT);
-
-        // 평문 연결이면 TLS 표기가 붙지 않는다
-        let (text, _) = connection_label(Some(&ConnPhase::Ready), Some("ftp"), Some("old"), false);
-        assert_eq!(text, "ftp old 연결됨");
-
-        let (_, color) = connection_label(Some(&ConnPhase::Connecting), None, None, false);
-        assert_eq!(color, theme::WARN);
-        let (_, color) = connection_label(
-            Some(&ConnPhase::Failed {
-                detail: String::new(),
-            }),
-            None,
-            None,
-            false,
-        );
-        assert_eq!(color, theme::ERROR);
-    }
-
-    #[test]
     fn 캐럿이_도크_상태를_따라간다() {
         // Acceptance ③ — 닫힘 `▲`, 열림 `▼`
         let ctx = egui::Context::default();
-        // 큐 캐럿은 도크가 열려 있으면 ▼다 — 로그를 보고 있어도(원본 `:1034`)
-        for (panel, queue_caret, log_caret) in [
-            (None, CARET_CLOSED, CARET_CLOSED),
-            (Some(DockPanel::Queue), CARET_OPEN, CARET_CLOSED),
-            (Some(DockPanel::Log), CARET_OPEN, CARET_OPEN),
+        // 캐럿은 "아래 도크가 열려 있다"는 뜻이다 — 어느 화면을 보고 있든 같다(원본 `:1034`)
+        for (panel, queue_caret) in [
+            (None, CARET_CLOSED),
+            (Some(crate::ui::dock::DockPanel::Queue), CARET_OPEN),
+            (Some(crate::ui::dock::DockPanel::Log), CARET_OPEN),
         ] {
             let dock = DockState {
                 panel,
@@ -568,7 +464,6 @@ mod tests {
             let queue = TransferQueue::new();
             let view = StatusView {
                 queue: &queue,
-                connection: connection_label(None, None, None, false),
                 expanding: 0,
                 notice: None,
             };
@@ -587,14 +482,6 @@ mod tests {
                 },
                 queue_caret
             );
-            assert_eq!(
-                if dock.panel == Some(DockPanel::Log) {
-                    CARET_OPEN
-                } else {
-                    CARET_CLOSED
-                },
-                log_caret
-            );
         }
     }
 
@@ -612,7 +499,6 @@ mod tests {
         for queue in [clean, failed] {
             let view = StatusView {
                 queue: &queue,
-                connection: connection_label(None, None, None, false),
                 expanding: 0,
                 notice: None,
             };
@@ -632,7 +518,6 @@ mod tests {
         let queue = queue_with(&[TransferState::Active { sent: 50, speed: 0 }]);
         let plain = StatusView {
             queue: &queue,
-            connection: connection_label(None, None, None, false),
             expanding: 0,
             notice: None,
         };
@@ -648,7 +533,6 @@ mod tests {
             "권한 바꾸기 실패 — 서버가 'SITE CHMOD'을(를) 지원하지 않습니다 — 500 Unknown command";
         let failed = StatusView {
             queue: &queue,
-            connection: connection_label(None, None, None, false),
             expanding: 0,
             notice: Some(notice),
         };
@@ -664,7 +548,6 @@ mod tests {
         let queue = TransferQueue::new();
         let view = StatusView {
             queue: &queue,
-            connection: connection_label(None, None, None, false),
             expanding: 3,
             notice: None,
         };
@@ -683,7 +566,6 @@ mod tests {
         let queue2 = TransferQueue::new();
         let failed = StatusView {
             queue: &queue2,
-            connection: connection_label(None, None, None, false),
             expanding: 3,
             notice: Some("삭제 실패 — 550"),
         };

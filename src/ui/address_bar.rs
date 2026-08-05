@@ -66,56 +66,72 @@ impl AddressBar {
                 self.buffer = shown.into_owned();
             }
         }
-        ui.horizontal(|ui| {
-            if nav_button(
-                ui,
-                egui_phosphor::regular::ARROW_LEFT,
-                history.can_back(),
-                "뒤로",
-            ) {
-                action = Some(NavAction::Back);
-            }
-            if nav_button(
-                ui,
-                egui_phosphor::regular::ARROW_RIGHT,
-                history.can_forward(),
-                "앞으로",
-            ) {
-                action = Some(NavAction::Forward);
-            }
-            if nav_button(
-                ui,
-                egui_phosphor::regular::ARROW_UP,
-                current.parent().is_some(),
-                "상위 폴더",
-            ) {
-                action = Some(NavAction::Up);
-            }
-
-            let edit = egui::TextEdit::singleline(&mut self.buffer)
-                .desired_width(ui.available_width())
-                .text_color(theme::TEXT);
-            let resp = ui.add(edit);
-            if resp.changed() {
-                self.editing = true;
-            }
-            if resp.lost_focus() {
-                // 포커스를 잃으면 편집을 접고 현재 경로로 되돌린다(엔터로 확정하지 않은 입력은 버린다)
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    // 원격 주소를 먼저 본다 — 로컬 정규화는 `sftp://`를 상대 경로로 오해한다
-                    if let Some(url) = parse_remote_url(&self.buffer) {
-                        action = Some(NavAction::GotoRemote(url));
-                    } else if let Some(path) = normalize_input(current, &self.buffer) {
-                        action = Some(NavAction::Goto(path));
-                    }
+        // 이 줄의 바탕은 **활성 탭과 같은 색**이다 — 고른 탭이 아래 내용과 이어져 보여야 한다
+        // (Windows 11 탐색기). 자리를 먼저 잡아 두고 줄 높이가 정해진 뒤에 채운다:
+        // 내용보다 나중에 그리면 버튼·입력칸을 덮고, 먼저 그리려면 높이를 알 수 없다
+        let background = ui.painter().add(egui::Shape::Noop);
+        let row = ui
+            .horizontal(|ui| {
+                if nav_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_LEFT,
+                    history.can_back(),
+                    "뒤로",
+                ) {
+                    action = Some(NavAction::Back);
                 }
-                self.editing = false;
-            }
-            if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.editing = false;
-                resp.surrender_focus();
-            }
-        });
+                if nav_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_RIGHT,
+                    history.can_forward(),
+                    "앞으로",
+                ) {
+                    action = Some(NavAction::Forward);
+                }
+                if nav_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_UP,
+                    current.parent().is_some(),
+                    "상위 폴더",
+                ) {
+                    action = Some(NavAction::Up);
+                }
+
+                let edit = egui::TextEdit::singleline(&mut self.buffer)
+                    .desired_width(ui.available_width())
+                    .text_color(theme::TEXT);
+                let resp = ui.add(edit);
+                if resp.changed() {
+                    self.editing = true;
+                }
+                if resp.lost_focus() {
+                    // 포커스를 잃으면 편집을 접고 현재 경로로 되돌린다(엔터로 확정하지 않은 입력은 버린다)
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        // 원격 주소를 먼저 본다 — 로컬 정규화는 `sftp://`를 상대 경로로 오해한다
+                        if let Some(url) = parse_remote_url(&self.buffer) {
+                            action = Some(NavAction::GotoRemote(url));
+                        } else if let Some(path) = normalize_input(current, &self.buffer) {
+                            action = Some(NavAction::Goto(path));
+                        }
+                    }
+                    self.editing = false;
+                }
+                if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.editing = false;
+                    resp.surrender_focus();
+                }
+            })
+            .response
+            .rect;
+        // 바탕은 **패널 폭 전체**를 채운다 — 내용 폭에만 칠하면 오른쪽 끝이 잘려 탭과 이어지지 않는다
+        let strip = egui::Rect::from_min_max(
+            egui::pos2(ui.max_rect().left(), row.top()),
+            egui::pos2(ui.max_rect().right(), row.bottom()),
+        );
+        ui.painter().set(
+            background,
+            egui::Shape::rect_filled(strip, 0.0, theme::CONTROL_BG),
+        );
         action
     }
 }

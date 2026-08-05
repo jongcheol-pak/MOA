@@ -47,9 +47,11 @@ pub fn show_site_dropdown(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(CARET_WIDTH, height), egui::Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), response.id);
-    // 열려 있는 동안에도 배경이 유지된다 — 어느 버튼에서 나온 팝업인지 보이게 한다
+    // 열려 있는 동안에도 배경이 유지된다 — 어느 버튼에서 나온 팝업인지 보이게 한다.
+    // 모양은 다른 아이콘 버튼과 같은 함수로 그린다(정사각형·둥근 모서리) — 이 버튼만
+    // 각진 채로 남아 있었다 (사용자 보고)
     if open || response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, theme::MENU_HOT);
+        crate::ui::widgets::hover_backdrop(ui.painter(), rect, theme::MENU_HOT);
     }
     ui.painter().text(
         rect.center(),

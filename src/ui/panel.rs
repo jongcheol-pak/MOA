@@ -658,7 +658,9 @@ impl PanelState {
     pub fn conns(&self) -> Vec<ConnectionId> {
         let mut conns = Vec::new();
         for source in self.tabs.sources() {
-            if let TabSource::Remote { conn: Some(conn), .. } = source
+            if let TabSource::Remote {
+                conn: Some(conn), ..
+            } = source
                 && !conns.contains(&conn)
             {
                 conns.push(conn);
@@ -2213,7 +2215,11 @@ mod tests {
         panel.attach_conn(ConnectionId(7));
         panel.open_remote_tab(SiteId(1), RemotePath::new("/b"));
         panel.attach_conn(ConnectionId(7));
-        assert_eq!(panel.conns(), vec![ConnectionId(7)], "같은 연결이 두 번 담겼다");
+        assert_eq!(
+            panel.conns(),
+            vec![ConnectionId(7)],
+            "같은 연결이 두 번 담겼다"
+        );
     }
 
     #[test]

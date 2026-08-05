@@ -26,6 +26,8 @@ const TAB_ICON_WIDTH: f32 = 16.0;
 const TAB_ICON_GAP: f32 = 4.0;
 /// 닫기 버튼 구역 폭
 const TAB_CLOSE_WIDTH: f32 = 20.0;
+/// 제목과 닫기 구역 사이 간격 (사용자 요청) — 붙으면 ✕가 글자에 얹힌 것처럼 보인다
+const TAB_LABEL_CLOSE_GAP: f32 = 8.0;
 /// 탭 오른쪽 여백
 const TAB_PAD_RIGHT: f32 = 4.0;
 /// 원격 배지와 이웃(아이콘·이름) 사이 간격 — 원본 `FileExplorer-FTP.dc.html:99`·`:101`의 `margin-left:6px`
@@ -38,8 +40,14 @@ const TAB_ICON_PX: f32 = 14.0;
 const TAB_CLOSE_PX: f32 = 12.0;
 /// 새 탭 버튼 폭
 const NEW_TAB_WIDTH: f32 = 24.0;
+/// 새 탭 `+` 글리프 크기 — 기본 아이콘 크기보다 한 단계 작다 (사용자 요청).
+/// 버튼 자리(폭)는 그대로 둔다: 좁히면 누르기 어려워지고 옆 드롭다운과 간격도 무너진다
+const NEW_TAB_ICON_PX: f32 = 12.0;
 /// 탭 사이 구분선이 차지하는 높이 비율 — 위아래를 띄워 선이 스트립을 가르지 않게 한다
 const SEPARATOR_RATIO: f32 = 0.6;
+
+/// 고른 탭의 위쪽 모서리 반경 (사용자 결정) — 아래 두 모서리는 각지게 둔다
+const TAB_CORNER_RADIUS: u8 = 6;
 
 /// 분할 버튼 아이콘(사각형) 한 변 — 글리프가 아니라 직접 그린다 (split-4way plan D8)
 const SPLIT_ICON_SIZE: f32 = 12.0;
@@ -178,17 +186,22 @@ fn show_tabs(
                         *action = Some(TabAction::Switch(index));
                     }
                     // 구분선은 **양옆이 모두 비활성일 때만** 그린다 —
-                    // 활성 탭은 배경 자체가 경계 역할을 해서 선까지 그으면 지저분해진다
+                    // 활성 탭은 배경 자체가 경계 역할을 해서 선까지 그으면 지저분해진다.
+                    // 마지막 탭 뒤에도 같은 규칙으로 하나 둔다 — 탭 줄과 `+`를 가르는 선이다
+                    // (사용자 요청). 활성 탭 옆이면 여기서도 긋지 않는다
                     let next = index + 1;
-                    if next < sources.len() && !active && next != active_index {
+                    let before_plus = next == sources.len();
+                    if !active && (before_plus || next != active_index) {
                         draw_separator(ui.painter(), hit.rect);
                     }
                 }
-                if widgets::icon_button(
+                if widgets::icon_button_styled(
                     ui,
                     egui_phosphor::regular::PLUS,
                     egui::vec2(NEW_TAB_WIDTH, STRIP_HEIGHT),
                     theme::CONTROL_HOT,
+                    theme::TEXT,
+                    NEW_TAB_ICON_PX,
                 )
                 .on_hover_text("새 탭")
                 .clicked()
@@ -232,9 +245,17 @@ fn show_tab(
         ui.allocate_exact_size(egui::vec2(width, STRIP_HEIGHT), egui::Sense::click());
     let parts = tab_parts(rect, badge_width);
 
-    // 활성 탭만 배경을 채운다 — 비활성은 스트립 배경 그대로 둔다
+    // 활성 탭만 배경을 채운다 — 비활성은 스트립 배경 그대로 둔다.
+    // **위쪽 두 모서리만** 둥글다: 아래는 같은 색 주소창 줄과 이어져야 해서 각져 있어야 한다
+    // (둥글리면 그 자리에 배경색 틈이 생겨 탭이 줄에서 떠 보인다 — Windows 11 탐색기와 같은 모양)
     if active {
-        ui.painter().rect_filled(rect, 0.0, theme::CONTROL_BG);
+        let corner = egui::CornerRadius {
+            nw: TAB_CORNER_RADIUS,
+            ne: TAB_CORNER_RADIUS,
+            sw: 0,
+            se: 0,
+        };
+        ui.painter().rect_filled(rect, corner, theme::CONTROL_BG);
     }
     // 연결된 원격 탭만 아이콘이 또렷하다 — 로컬 탭은 늘 또렷하다 (README §4)
     let icon_color = match badge {
@@ -267,8 +288,7 @@ fn show_tab(
         egui::Sense::click(),
     );
     if close.hovered() {
-        ui.painter()
-            .rect_filled(parts.close, 0.0, theme::CONTROL_HOT);
+        widgets::hover_backdrop(ui.painter(), parts.close, theme::CONTROL_HOT);
     }
     ui.painter().text(
         parts.close.center(),
@@ -312,7 +332,12 @@ fn min_width(badge_width: f32) -> f32 {
     } else {
         TAB_ICON_GAP
     };
-    TAB_PAD_LEFT + TAB_ICON_WIDTH + after_icon + TAB_CLOSE_WIDTH + TAB_PAD_RIGHT
+    TAB_PAD_LEFT
+        + TAB_ICON_WIDTH
+        + after_icon
+        + TAB_LABEL_CLOSE_GAP
+        + TAB_CLOSE_WIDTH
+        + TAB_PAD_RIGHT
 }
 
 /// 탭 영역을 아이콘·(배지)·제목·닫기 구역으로 나눈다.
@@ -338,9 +363,11 @@ fn tab_parts(rect: egui::Rect, badge_width: f32) -> TabParts {
     } else {
         (None, icon.right() + TAB_ICON_GAP)
     };
+    // 제목은 닫기 구역에 닿기 전에 끝난다 — 붙어 있으면 ✕가 글자에 얹힌 것처럼 보인다 (사용자 요청)
+    let label_right = (close.left() - TAB_LABEL_CLOSE_GAP).max(label_left);
     let label = egui::Rect::from_min_max(
         egui::pos2(label_left, rect.top()),
-        egui::pos2(close.left().max(label_left), rect.bottom()),
+        egui::pos2(label_right, rect.bottom()),
     );
     TabParts {
         icon,

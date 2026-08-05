@@ -1325,7 +1325,10 @@ mod tests {
         let splitter = sidebar_splitter_rect(client(1000), 232);
         assert_eq!(splitter.x, 232);
         assert_eq!(splitter.w, SPLITTER_THICKNESS);
-        assert!(contains(splitter, 233, 10));
+        // 두께에 기대지 않고 "사이드바 바로 오른쪽 한 줄"이라는 뜻만 본다 —
+        // 두께 상수가 바뀌어도 이 성질은 그대로여야 한다
+        assert!(contains(splitter, 232, 10));
+        assert!(!contains(splitter, 232 + SPLITTER_THICKNESS, 10));
         assert!(!contains(splitter, 231, 10));
     }
 }

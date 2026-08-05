@@ -18,8 +18,8 @@ use eframe::egui;
 use std::collections::HashMap;
 
 /// 스플리터 히트 영역을 좌우(상하)로 넓히는 여유.
-/// 4px 틈만으로는 잡기 어려워 실제 조작 영역만 넓힌다(그리기는 원래 두께 그대로)
-const SPLITTER_GRAB_PAD: f32 = 2.0;
+/// 경계선은 얇아야 하고 잡기는 쉬워야 한다 — **조작 영역만** 넓힌다(그리기는 그 두께 그대로)
+const SPLITTER_GRAB_PAD: f32 = 3.0;
 
 /// 패널 테두리 두께 — 일반 경계와 활성 강조가 같은 두께를 쓴다
 const PANE_BORDER_WIDTH: f32 = 1.0;
@@ -183,28 +183,22 @@ pub fn show_layout(
         merge_panel_outcome(&mut outcome, *id, requested);
     }
 
-    // 패널 경계 — 여러 패널이 있을 때만 의미가 있다(하나뿐이면 창 가장자리와 겹친다).
+    // 패널 경계 — **활성 패널에만** 두른다. 패널끼리의 경계는 아래 스플리터가 1px 선으로
+    // 긋고 있어(`theme::PANE_BORDER`), 여기서 모든 패널을 다시 두르면 그 선 양옆에 테두리가
+    // 겹쳐 세 겹이 된다. 이 테두리가 남기는 뜻은 하나다 — **어디에 입력이 가는가**.
     //
-    // 패널 내용을 **모두 그린 뒤** 여기서 두른다 — egui는 나중에 그린 도형이 위에 오므로
-    // 먼저 그으면 목록·트리에 덮여 보이지 않는다.
-    // 스플리터 틈(4px)이 배경색이라 패널끼리 경계가 눈에 띄지 않던 것을 이 테두리가 대신한다
-    if computed.panes.len() > 1 {
-        for (id, rect) in &computed.panes {
-            let pane = to_egui_rect(*rect);
-            // 그리기 루프의 0크기 가드는 이 패스에 이어지지 않는다 — 여기서 다시 거른다
-            if pane.width() <= 0.0 || pane.height() <= 0.0 {
-                continue;
-            }
-            // 활성 패널만 한 단계 밝게 — 어디에 입력이 가는지 눈으로 알 수 있어야 한다
-            let color = if id == active {
-                theme::PANE_BORDER_ACTIVE
-            } else {
-                theme::PANE_BORDER
-            };
+    // 패널 내용을 **모두 그린 뒤** 두른다 — egui는 나중에 그린 도형이 위에 오므로
+    // 먼저 그으면 목록·트리에 덮여 보이지 않는다
+    if computed.panes.len() > 1
+        && let Some((_, rect)) = computed.panes.iter().find(|(id, _)| id == active)
+    {
+        let pane = to_egui_rect(*rect);
+        // 그리기 루프의 0크기 가드는 이 패스에 이어지지 않는다 — 여기서 다시 거른다
+        if pane.width() > 0.0 && pane.height() > 0.0 {
             ui.painter().rect_stroke(
                 pane,
                 0.0,
-                egui::Stroke::new(PANE_BORDER_WIDTH, color),
+                egui::Stroke::new(PANE_BORDER_WIDTH, theme::PANE_BORDER_ACTIVE),
                 egui::StrokeKind::Inside,
             );
         }
@@ -215,8 +209,9 @@ pub fn show_layout(
     // 즉 **별도의 포인터 누름**으로만 일어나므로 같은 드래그 제스처 안에서 함께 발생할 수 없다
     for (index, splitter) in computed.splitters.iter().enumerate() {
         let rect = to_egui_rect(splitter.rect);
-        // 그리기는 원래 두께로, 잡기는 조금 넓게
-        ui.painter().rect_filled(rect, 0.0, theme::WINDOW_BG);
+        // **이 1px이 곧 패널 사이의 경계선**이다 — 배경색으로 칠하면 그 자리가 틈으로 벌어져
+        // 보인다(사용자 보고). 잡기는 아래에서 좌우로 넓힌다
+        ui.painter().rect_filled(rect, 0.0, theme::PANE_BORDER);
         let grab = match splitter.dir {
             SplitDir::Horizontal => rect.expand2(egui::vec2(SPLITTER_GRAB_PAD, 0.0)),
             SplitDir::Vertical => rect.expand2(egui::vec2(0.0, SPLITTER_GRAB_PAD)),

@@ -25,6 +25,20 @@ pub fn is_icon_font(glyph: &str) -> bool {
     chars.next().is_none() && ('\u{E000}'..='\u{F8FF}').contains(&first)
 }
 
+/// 아이콘 버튼 hover 배경의 모서리 반경
+const HOVER_CORNER_RADIUS: u8 = 4;
+
+/// 아이콘 버튼에 마우스가 올라갔을 때 까는 배경 — **정사각형에 둥근 모서리**다 (사용자 결정).
+///
+/// 버튼이 차지한 자리는 스트립 높이에 맞춰 세로로 길쭉한 경우가 많은데(탭 닫기·타이틀바 버튼),
+/// 그대로 칠하면 버튼마다 배경 모양이 달라 보인다. 자리의 **짧은 변**을 한 변으로 삼아
+/// 가운데에 정사각형을 그리면 어느 자리에서든 같은 표식이 된다
+pub fn hover_backdrop(painter: &egui::Painter, rect: egui::Rect, fill: egui::Color32) {
+    let side = rect.width().min(rect.height());
+    let square = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(side));
+    painter.rect_filled(square, HOVER_CORNER_RADIUS, fill);
+}
+
 pub fn icon_button(
     ui: &mut egui::Ui,
     icon: &str,
@@ -52,7 +66,7 @@ pub fn icon_button_styled(
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, hover_fill);
+        hover_backdrop(ui.painter(), rect, hover_fill);
     }
     // 아이콘 문자열이 비면 영역과 hover 배경만 내준다 — 아이콘을 글리프가 아니라
     // 직접 그리는 버튼(탭 스트립의 분할 버튼)이 이 경로를 쓴다

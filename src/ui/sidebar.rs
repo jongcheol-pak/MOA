@@ -50,8 +50,12 @@ const CONNECT_HEADER_TOP: f32 = 14.0;
 const CONNECT_LABEL: &str = "연결";
 /// 새로 고침 글리프 크기 — `+`(15px)보다 한 단계 작다 (인벤토리 #2)
 const REFRESH_FONT_PX: f32 = 14.0;
-/// 연결 메뉴를 여는 `+` 글리프 크기 (인벤토리 #3, 원본 `:61`)
-const CONNECT_PLUS_FONT_PX: f32 = 15.0;
+/// 사이드바의 `+` 글리프 크기 — **탭 스트립의 새 탭 버튼과 같은 값**이다 (사용자 결정).
+///
+/// 원본은 연결 `+`만 15px였지만(인벤토리 #3, `:61`), 같은 뜻의 버튼이 자리마다 다른 크기·
+/// 다른 글리프로 그려지면 하나의 앱으로 보이지 않는다. 글리프도 `egui_phosphor`의 `PLUS`로
+/// 맞춘다 — ASCII `+`는 본문 글꼴에서 와 획 두께·여백이 아이콘과 다르다
+const PLUS_ICON_PX: f32 = 12.0;
 /// 헤더 우측 두 버튼 사이 간격
 const HEADER_BUTTON_GAP: f32 = 2.0;
 /// 사이트 행 높이·행간 (인벤토리 #4)
@@ -210,16 +214,13 @@ impl WorkspaceSidebar {
         let resp = ui
             .interact(plus, ui.id().with("add"), egui::Sense::click())
             .on_hover_text("새 워크스페이스");
-        ui.painter().text(
-            plus.center(),
-            egui::Align2::CENTER_CENTER,
-            "+",
-            egui::FontId::proportional(HEADER_FONT_PX),
-            if resp.hovered() {
-                theme::TEXT
-            } else {
-                theme::TEXT_MUTED
-            },
+        // 사이트 헤더의 두 버튼과 같은 함수를 쓴다 — hover 표현이 갈리지 않게
+        header_glyph(
+            ui,
+            plus,
+            egui_phosphor::regular::PLUS,
+            PLUS_ICON_PX,
+            resp.hovered(),
         );
         if resp.clicked() {
             actions.push(SidebarAction::Add);
@@ -469,7 +470,13 @@ impl WorkspaceSidebar {
         let plus = ui
             .interact(plus_rect, ui.id().with("sites_add"), egui::Sense::click())
             .on_hover_text("연결");
-        header_glyph(ui, plus_rect, "+", CONNECT_PLUS_FONT_PX, plus.hovered());
+        header_glyph(
+            ui,
+            plus_rect,
+            egui_phosphor::regular::PLUS,
+            PLUS_ICON_PX,
+            plus.hovered(),
+        );
         if plus.clicked() {
             actions.push(SidebarAction::OpenConnectMenu);
         }
@@ -579,6 +586,11 @@ impl WorkspaceSidebar {
 /// 카드 하나를 그린다 (배경·강조 바·아이콘·이름·부제)
 /// 헤더 우측 아이콘 글리프 — 평소 흐리고 마우스를 올리면 밝아진다 (인벤토리 #2·#3)
 fn header_glyph(ui: &egui::Ui, rect: egui::Rect, glyph: &str, size: f32, hovered: bool) {
+    // 마우스가 올라가면 **배경을 깐다** — 탭의 닫기·새 탭 버튼과 같은 표현이다(같은 함수를 쓴다).
+    // 글자색만 바꾸면 같은 아이콘 버튼인데 자리마다 반응이 달라 보인다 (사용자 결정)
+    if hovered {
+        crate::ui::widgets::hover_backdrop(ui.painter(), rect, theme::CONTROL_HOT);
+    }
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -839,9 +851,9 @@ mod tests {
         assert_eq!(SITE_EDGE_WIDTH, 2.0);
         assert_eq!(SITE_PROTO_PX, 12.0);
         assert_eq!(CONNECT_HEADER_TOP, 14.0);
-        // 헤더 두 글리프는 크기가 다르다 (원본 `:60`·`:61`)
         assert_eq!(REFRESH_FONT_PX, 14.0);
-        assert_eq!(CONNECT_PLUS_FONT_PX, 15.0);
+        // `+`는 원본(15px)이 아니라 **탭 스트립의 새 탭 버튼과 같은 크기**를 쓴다 (사용자 결정)
+        assert_eq!(PLUS_ICON_PX, 12.0);
         assert_eq!(CONNECT_MENU_WIDTH, 246.0);
         assert_eq!(SITE_MENU_WIDTH, 180.0);
         assert_eq!(MENU_ROW_HEIGHT, 28.0);

@@ -736,9 +736,8 @@ impl ExplorerApp {
 
     /// 상태 표시줄 — **언제나 보인다** (FR-41·D18). 도크보다 먼저 붙어 창 맨 아래에 남는다.
     ///
-    /// 여기 캐럿이 도크를 여는 **유일한 문**이다(README §8) — 큐·로그 화면은 다른 진입점이 없다
+    /// 여기 캐럿이 도크를 여는 문이다(README §8) — 열고 나면 그 안의 탭에서 큐·로그를 고른다
     fn show_status_bar(&mut self, ui: &mut egui::Ui) {
-        let connection = self.connection_status();
         // 지난 사유는 지운다 — 남겨 두면 이미 끝난 실패가 계속 떠 있다(로그에는 그대로 남는다)
         let now = ui.input(|input| input.time);
         if self.notice.as_ref().is_some_and(|(_, until)| now >= *until) {
@@ -753,7 +752,6 @@ impl ExplorerApp {
                 let rect = ui.max_rect();
                 let view = StatusView {
                     queue: &self.queue,
-                    connection,
                     expanding: self.expanding,
                     notice: self.notice.as_ref().map(|(text, _)| text.as_str()),
                 };
@@ -762,24 +760,8 @@ impl ExplorerApp {
             .inner;
         match action {
             Some(StatusAction::ToggleQueue) => self.dock.toggle(DockPanel::Queue),
-            Some(StatusAction::ToggleLog) => self.dock.toggle(DockPanel::Log),
             None => {}
         }
-    }
-
-    /// 상태 표시줄에 보일 연결 상태 — 로그 화면과 **같은 연결**을 가리킨다 (인벤토리 #58)
-    fn connection_status(&self) -> (String, egui::Color32) {
-        let Some(connection) = self.log_connection().and_then(|id| self.manager.get(id)) else {
-            return status_bar::connection_label(None, None, None, false);
-        };
-        let record = self.sites.get(connection.site);
-        let protocol = record.map(|record| record.protocol.label());
-        let name = record.map(|record| record.name.as_str());
-        // 암호화가 **실제로 선** 연결에만 `· TLS`를 붙인다 — 설정값으로 판정하면
-        // 서버가 AUTH TLS를 거부해 평문으로 되연결된 연결까지 암호화됐다고 적게 된다
-        // (F-7 리뷰 B1). 판정은 워커가 올린 협상 결과가 한다
-        let secure = connection.is_secure();
-        status_bar::connection_label(Some(connection.phase()), protocol, name, secure)
     }
 
     /// 하단 도크 — 전송 큐·서버 로그가 번갈아 쓰는 자리 (FR-36·FR-40·D19).
@@ -1930,137 +1912,142 @@ impl eframe::App for ExplorerApp {
         let mut layout_area = None;
         // 타이틀바를 먼저 그린다 — 남는 영역이 아래 CentralPanel의 몫이 된다 (FR-22)
         let titlebar_command = self.show_titlebar(ui, &ctx);
-        // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 panel_fill이 칠해진다
-        egui::CentralPanel::default().show(ui, |ui| {
-            if !self.korean_font {
-                ui.colored_label(
-                    theme::TEXT_DIM,
-                    "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다",
-                );
-            }
-            if !self.shell_available() {
-                ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
-            }
-            // 하단 상태 표시줄·도크를 사이드바보다 **먼저** 뗀다 — egui 패널은 먼저 그린 쪽이
-            // 넓은 자리를 가져가므로, 순서를 뒤집으면 둘 다 사이드바를 뺀 폭에만 그려진다.
-            // 창 폭 전체를 가로지르는 것이 디자인이다 (FR-36·FR-40)
-            self.show_status_bar(ui);
-            self.show_dock(ui);
-
-            let mut sidebar_actions = Vec::new();
-            if !self.sidebar_collapsed {
-                // 연결 상태를 먼저 모은다 — 아래 클로저가 `self`를 통째로 빌린다
-                let connected = self.connected_sites();
-                // 사이드바가 자기 배경·여백을 직접 그리므로 egui 기본 프레임은 끈다
-                let panel = egui::Panel::left(egui::Id::new("workspace_sidebar"))
-                    .resizable(true)
-                    .default_size(self.sidebar_width)
-                    .size_range(egui::Rangef::new(
-                        SIDEBAR_MIN_WIDTH as f32,
-                        SIDEBAR_MAX_WIDTH as f32,
-                    ))
-                    .frame(egui::Frame::NONE)
-                    .show(ui, |ui| {
-                        self.sidebar.show(
-                            ui,
-                            &self.workspaces,
-                            &self.sites,
-                            &connected,
-                            &mut self.icons,
-                            &mut self.textures,
-                        )
-                    });
-                self.sidebar_width = panel.response.rect.width();
-                // 조작은 모아 두었다가 아래에서 처리한다 — 연결은 분할 영역을 알아야 하는데
-                // 그 영역은 **사이드바를 뺀 나머지**라 여기서는 아직 정해지지 않았다
-                sidebar_actions = panel.inner;
-            }
-
-            let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
-            layout_area = Some(area);
-            for action in sidebar_actions {
-                self.handle_sidebar(action, area);
-            }
-            // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
-            // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
-            // 모달이 떠 있는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
-            // (워크스페이스 삭제 확인 · 서버 지문 확인)
-            let shortcut_command = if self.pending_remove.is_some()
-                || self.hostkey.is_open()
-                || self.site_manager.is_open()
-            {
-                None
-            } else {
-                menu::poll_shortcuts(&ctx)
-            };
-            // 단축키·타이틀바 명령은 대상을 지정하지 않는다 — 활성 패널에 적용된다
-            for command in shortcut_command.into_iter().chain(titlebar_command) {
-                self.apply_command(command, None, area, &ctx);
-            }
-            // 확보와 사용을 나눈다 — 아래 호출이 `views`와 `icons`·`textures`를 동시에 빌린다
-            let id = self.workspaces.active().id;
-            // 탭 배지·드롭다운이 상태 점을 그리는 데 쓴다 — 빌림이 겹치지 않게 미리 모은다
-            let connected = self.connected_sites();
-            self.ensure_active_view();
-            if let Some(view) = self.views.get_mut(&id) {
-                let outcome = splitter::show_layout(
-                    ui,
-                    &ctx,
-                    &mut view.layout,
-                    &mut view.panels,
-                    &mut view.active,
-                    &mut self.icons,
-                    &mut self.textures,
-                    RemoteView {
-                        sites: &self.sites,
-                        connected: &connected,
-                        tree: &self.tree_cache,
-                    },
-                );
-                menu = outcome.menu;
-                panel_command = outcome.command;
-                remote_action = outcome.remote;
-                remote_url = outcome.remote_url;
-                closed_conns = outcome.closed_conns;
-                dropped = outcome.drop;
-                remote_menu = outcome.remote_menu;
-                tree_requests = outcome.tree_requests;
-            }
-            // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
-            // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
-            // 대상은 메뉴를 연 패널이지 활성 패널이 아니다 (D16)
-            if let Some((target, command)) = panel_command {
-                self.apply_command(command, Some(target), area, &ctx);
-            }
-            if let Some((target, action)) = remote_action {
-                self.apply_remote_action(target, action);
-            }
-            if let Some((target, url)) = remote_url {
-                self.open_remote_url(target, url, area);
-            }
-            // 끌어다 놓은 것을 큐에 넣는다 — 어느 패널에 놓였는지는 쓰지 않는다(항목의
-            // 종류와 놓은 자리의 종류만으로 방향이 정해진다)
-            if let Some((_, drop)) = dropped.take() {
-                self.apply_drop(drop);
-            }
-            // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
-            if let Some((target, (action, targets))) = remote_menu.take() {
-                self.apply_remote_menu(target, action, targets);
-            }
-            // 원격 위치가 바뀐 패널은 목록을 다시 읽는다 — 트리 선택(T24 Acceptance ⑤)과
-            // 상위 이동이 이 길을 함께 쓴다
-            self.list_moved_panels();
-            // 트리가 펼쳐진 폴더의 하위를 청한다 (T24)
-            for (_, request) in tree_requests.drain(..) {
-                if let TreeRequest::Remote { conn, path } = request {
-                    self.request_tree_children(conn, path);
+        // eframe이 주는 Ui는 여백·배경이 없다 — CentralPanel로 감싸야 바탕이 칠해진다.
+        // **기본 여백은 끈다**(`Frame::NONE` + 바탕색): egui의 중앙 패널은 사방에 여백을 두는데,
+        // 그만큼 패널 줄이 타이틀바 선에서 떨어져 뜬다(사용자 보고). 이 앱의 화면은 창
+        // 가장자리까지 꽉 차는 탐색기 배치다 — 여백이 필요한 곳은 각 패널이 스스로 둔다
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
+            .show(ui, |ui| {
+                if !self.korean_font {
+                    ui.colored_label(
+                        theme::TEXT_DIM,
+                        "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다",
+                    );
                 }
-            }
-            // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
-            for conn in closed_conns {
-                self.release_conn(conn);
-            }
-        });
+                if !self.shell_available() {
+                    ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
+                }
+                // 하단 상태 표시줄·도크를 사이드바보다 **먼저** 뗀다 — egui 패널은 먼저 그린 쪽이
+                // 넓은 자리를 가져가므로, 순서를 뒤집으면 둘 다 사이드바를 뺀 폭에만 그려진다.
+                // 창 폭 전체를 가로지르는 것이 디자인이다 (FR-36·FR-40)
+                self.show_status_bar(ui);
+                self.show_dock(ui);
+
+                let mut sidebar_actions = Vec::new();
+                if !self.sidebar_collapsed {
+                    // 연결 상태를 먼저 모은다 — 아래 클로저가 `self`를 통째로 빌린다
+                    let connected = self.connected_sites();
+                    // 사이드바가 자기 배경·여백을 직접 그리므로 egui 기본 프레임은 끈다
+                    let panel = egui::Panel::left(egui::Id::new("workspace_sidebar"))
+                        .resizable(true)
+                        .default_size(self.sidebar_width)
+                        .size_range(egui::Rangef::new(
+                            SIDEBAR_MIN_WIDTH as f32,
+                            SIDEBAR_MAX_WIDTH as f32,
+                        ))
+                        .frame(egui::Frame::NONE)
+                        .show(ui, |ui| {
+                            self.sidebar.show(
+                                ui,
+                                &self.workspaces,
+                                &self.sites,
+                                &connected,
+                                &mut self.icons,
+                                &mut self.textures,
+                            )
+                        });
+                    self.sidebar_width = panel.response.rect.width();
+                    // 조작은 모아 두었다가 아래에서 처리한다 — 연결은 분할 영역을 알아야 하는데
+                    // 그 영역은 **사이드바를 뺀 나머지**라 여기서는 아직 정해지지 않았다
+                    sidebar_actions = panel.inner;
+                }
+
+                let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
+                layout_area = Some(area);
+                for action in sidebar_actions {
+                    self.handle_sidebar(action, area);
+                }
+                // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
+                // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
+                // 모달이 떠 있는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
+                // (워크스페이스 삭제 확인 · 서버 지문 확인)
+                let shortcut_command = if self.pending_remove.is_some()
+                    || self.hostkey.is_open()
+                    || self.site_manager.is_open()
+                {
+                    None
+                } else {
+                    menu::poll_shortcuts(&ctx)
+                };
+                // 단축키·타이틀바 명령은 대상을 지정하지 않는다 — 활성 패널에 적용된다
+                for command in shortcut_command.into_iter().chain(titlebar_command) {
+                    self.apply_command(command, None, area, &ctx);
+                }
+                // 확보와 사용을 나눈다 — 아래 호출이 `views`와 `icons`·`textures`를 동시에 빌린다
+                let id = self.workspaces.active().id;
+                // 탭 배지·드롭다운이 상태 점을 그리는 데 쓴다 — 빌림이 겹치지 않게 미리 모은다
+                let connected = self.connected_sites();
+                self.ensure_active_view();
+                if let Some(view) = self.views.get_mut(&id) {
+                    let outcome = splitter::show_layout(
+                        ui,
+                        &ctx,
+                        &mut view.layout,
+                        &mut view.panels,
+                        &mut view.active,
+                        &mut self.icons,
+                        &mut self.textures,
+                        RemoteView {
+                            sites: &self.sites,
+                            connected: &connected,
+                            tree: &self.tree_cache,
+                        },
+                    );
+                    menu = outcome.menu;
+                    panel_command = outcome.command;
+                    remote_action = outcome.remote;
+                    remote_url = outcome.remote_url;
+                    closed_conns = outcome.closed_conns;
+                    dropped = outcome.drop;
+                    remote_menu = outcome.remote_menu;
+                    tree_requests = outcome.tree_requests;
+                }
+                // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
+                // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
+                // 대상은 메뉴를 연 패널이지 활성 패널이 아니다 (D16)
+                if let Some((target, command)) = panel_command {
+                    self.apply_command(command, Some(target), area, &ctx);
+                }
+                if let Some((target, action)) = remote_action {
+                    self.apply_remote_action(target, action);
+                }
+                if let Some((target, url)) = remote_url {
+                    self.open_remote_url(target, url, area);
+                }
+                // 끌어다 놓은 것을 큐에 넣는다 — 어느 패널에 놓였는지는 쓰지 않는다(항목의
+                // 종류와 놓은 자리의 종류만으로 방향이 정해진다)
+                if let Some((_, drop)) = dropped.take() {
+                    self.apply_drop(drop);
+                }
+                // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
+                if let Some((target, (action, targets))) = remote_menu.take() {
+                    self.apply_remote_menu(target, action, targets);
+                }
+                // 원격 위치가 바뀐 패널은 목록을 다시 읽는다 — 트리 선택(T24 Acceptance ⑤)과
+                // 상위 이동이 이 길을 함께 쓴다
+                self.list_moved_panels();
+                // 트리가 펼쳐진 폴더의 하위를 청한다 (T24)
+                for (_, request) in tree_requests.drain(..) {
+                    if let TreeRequest::Remote { conn, path } = request {
+                        self.request_tree_children(conn, path);
+                    }
+                }
+                // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
+                for conn in closed_conns {
+                    self.release_conn(conn);
+                }
+            });
 
         // 삭제 확인은 egui 모달이라 `CentralPanel` 밖에서 그려도 된다(자체 레이어를 쓴다)
         self.show_remove_confirm(&ctx);
