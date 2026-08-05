@@ -1307,16 +1307,20 @@ mod tests {
         let third = view
             .split_panel(second, SplitDir::Vertical, SplitPlace::After, area)
             .expect("분할 2");
-        let untouched: Vec<(PanelId, LayoutRect)> = [first, third]
+        let fourth = view
+            .split_panel(first, SplitDir::Vertical, SplitPlace::After, area)
+            .expect("분할 3");
+        assert_eq!(view.layout.panel_count(), 4, "4분할 상태를 만들지 못했다");
+        let untouched: Vec<(PanelId, LayoutRect)> = [first, third, fourth]
             .into_iter()
             .map(|id| (id, pane_rect(&view, id, area)))
             .collect();
 
-        // 이제 두 번째 패널을 대상으로 연결한다
+        // 이 4분할 상태에서 두 번째 패널을 대상으로 연결한다
         view.split_panel(second, SplitDir::Horizontal, SplitPlace::After, area)
-            .expect("분할 3");
+            .expect("연결 분할");
 
-        assert_eq!(view.layout.panel_count(), 4);
+        assert_eq!(view.layout.panel_count(), 5);
         for (id, before) in untouched {
             assert_eq!(
                 pane_rect(&view, id, area),
