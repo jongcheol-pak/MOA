@@ -6,7 +6,7 @@
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size_kb};
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::list_common::{FileListAction, elided_galley};
+use crate::ui::list_common::{FileListAction, elided_galley, elided_galley_colored};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::BTreeSet;
@@ -547,11 +547,14 @@ fn show_header(ui: &mut egui::Ui, input: HeaderInput<'_>, outcome: &mut DetailsO
             }
             _ => "",
         };
-        let galley = elided_galley(
+        // 색을 갤리에 구워 넣는다 — 그리면서 넘기는 색은 갤리가 이미 색을 가졌으면 무시되어,
+        // 머리글이 `HEADER_TEXT`가 아니라 기본 글자색으로 그려지고 있었다 (T20 리뷰가 지목)
+        let galley = elided_galley_colored(
             ui.painter(),
             format!("{}{arrow}", kind.label()),
             font.clone(),
             width - CELL_PAD * 2.0,
+            theme::HEADER_TEXT,
         );
         ui.painter().galley(
             egui::pos2(x + CELL_PAD, cell.center().y - galley.size().y / 2.0),
