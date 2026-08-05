@@ -50,6 +50,8 @@ const CONNECT_HEADER_TOP: f32 = 14.0;
 const CONNECT_LABEL: &str = "연결";
 /// 새로 고침 글리프 크기 — `+`(15px)보다 한 단계 작다 (인벤토리 #2)
 const REFRESH_FONT_PX: f32 = 14.0;
+/// 연결 메뉴를 여는 `+` 글리프 크기 (인벤토리 #3, 원본 `:61`)
+const CONNECT_PLUS_FONT_PX: f32 = 15.0;
 /// 헤더 우측 두 버튼 사이 간격
 const HEADER_BUTTON_GAP: f32 = 2.0;
 /// 사이트 행 높이·행간 (인벤토리 #4)
@@ -461,7 +463,7 @@ impl WorkspaceSidebar {
         let plus = ui
             .interact(plus_rect, ui.id().with("sites_add"), egui::Sense::click())
             .on_hover_text("연결");
-        header_glyph(ui, plus_rect, "+", HEADER_FONT_PX, plus.hovered());
+        header_glyph(ui, plus_rect, "+", CONNECT_PLUS_FONT_PX, plus.hovered());
         if plus.clicked() {
             actions.push(SidebarAction::OpenConnectMenu);
         }
@@ -809,6 +811,9 @@ mod tests {
         assert_eq!(SITE_EDGE_WIDTH, 2.0);
         assert_eq!(SITE_PROTO_PX, 12.0);
         assert_eq!(CONNECT_HEADER_TOP, 14.0);
+        // 헤더 두 글리프는 크기가 다르다 (원본 `:60`·`:61`)
+        assert_eq!(REFRESH_FONT_PX, 14.0);
+        assert_eq!(CONNECT_PLUS_FONT_PX, 15.0);
         assert_eq!(CONNECT_MENU_WIDTH, 246.0);
         assert_eq!(SITE_MENU_WIDTH, 180.0);
         assert_eq!(MENU_ROW_HEIGHT, 28.0);
