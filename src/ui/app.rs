@@ -33,6 +33,7 @@ use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
 use crate::ui::splitter;
+use crate::ui::status_bar::{self, StatusAction, StatusView};
 use crate::ui::theme;
 use crate::ui::titlebar::{self, WindowRequest};
 use crate::ui::toast::{self, Toast};
@@ -677,6 +678,47 @@ impl ExplorerApp {
         }
     }
 
+    /// 상태 표시줄 — **언제나 보인다** (FR-41·D18). 도크보다 먼저 붙어 창 맨 아래에 남는다.
+    ///
+    /// 여기 캐럿이 도크를 여는 **유일한 문**이다(README §8) — 큐·로그 화면은 다른 진입점이 없다
+    fn show_status_bar(&mut self, ui: &mut egui::Ui) {
+        let connection = self.connection_status();
+        let action = egui::Panel::bottom(egui::Id::new("status_bar"))
+            .resizable(false)
+            .default_size(status_bar::HEIGHT)
+            .size_range(egui::Rangef::new(status_bar::HEIGHT, status_bar::HEIGHT))
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let rect = ui.max_rect();
+                let view = StatusView {
+                    queue: &self.queue,
+                    connection,
+                };
+                status_bar::show_status_bar(ui, rect, &self.dock, &view)
+            })
+            .inner;
+        match action {
+            Some(StatusAction::ToggleQueue) => self.dock.toggle(DockPanel::Queue),
+            Some(StatusAction::ToggleLog) => self.dock.toggle(DockPanel::Log),
+            None => {}
+        }
+    }
+
+    /// 상태 표시줄에 보일 연결 상태 — 로그 화면과 **같은 연결**을 가리킨다 (인벤토리 #58)
+    fn connection_status(&self) -> (String, egui::Color32) {
+        let Some(connection) = self.log_connection().and_then(|id| self.manager.get(id)) else {
+            return status_bar::connection_label(None, None, None, false);
+        };
+        let record = self.sites.get(connection.site);
+        let protocol = record.map(|record| record.protocol.label());
+        let name = record.map(|record| record.name.as_str());
+        // 암호화가 걸린 연결에만 `· TLS`를 붙인다 — SFTP는 전송 계층이 이미 암호화돼 있다
+        let secure = record.is_some_and(|record| {
+            record.protocol.is_ssh() || record.encryption != crate::remote::types::Encryption::Plain
+        });
+        status_bar::connection_label(Some(connection.phase()), protocol, name, secure)
+    }
+
     /// 하단 도크 — 전송 큐·서버 로그가 번갈아 쓰는 자리 (FR-36·FR-40·D19).
     ///
     /// **egui의 아래쪽 패널로 뗀다** — 사이드바(`Panel::left`)와 같은 방식이다. 직접 사각형을
@@ -1298,6 +1340,7 @@ impl eframe::App for ExplorerApp {
                 sidebar_actions = panel.inner;
             }
 
+            self.show_status_bar(ui);
             self.show_dock(ui);
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
             layout_area = Some(area);
