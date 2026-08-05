@@ -213,8 +213,12 @@ pub struct PanelOutcome {
     pub drop: Option<DropOutcome>,
     /// 원격 목록 우클릭 메뉴에서 고른 것과 그 대상들 (FR-39)
     pub remote_menu: Option<RemoteMenuPick>,
-    /// 원격 트리가 청한 하위 조회 (FR-9 원격판) — 연결에 보내는 것은 앱이다
-    pub tree_request: Option<TreeRequest>,
+    /// 원격 트리가 청한 하위 조회들 (FR-9 원격판) — 연결에 보내는 것은 앱이다.
+    ///
+    /// **여럿을 그대로 올린다** — 한 프레임에 형제 노드 여럿이 펼쳐져 있으면 요청도 여럿이다.
+    /// 하나로 압착하면 나머지는 그 프레임에서 버려져 노드마다 프레임이 하나씩 밀린다
+    /// (quality 리뷰 M1)
+    pub tree_requests: Vec<TreeRequest>,
 }
 
 /// 원격 단계 화면에서 사용자가 고른 조치 — 실행은 앱이 한다(연결을 앱이 쥔다)
@@ -962,7 +966,7 @@ impl PanelState {
             .inner;
 
         // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
-        let mut tree_request = None;
+        let mut tree_requests = Vec::new();
         if let Some(outcome) = tree_outcome {
             match outcome.chosen {
                 // 트리에서 고른 폴더로 목록이 이동한다 (Acceptance ⑤)
@@ -975,7 +979,7 @@ impl PanelState {
                     // 로컬 열거는 트리가 직접 워커를 띄운다 — 연결이 필요 없다
                     TreeRequest::Local(path) => self.tree.start_local_load(path, ctx),
                     // 원격은 앱이 보낸다 — 연결을 아는 것은 앱이다
-                    remote => tree_request = Some(remote),
+                    remote => tree_requests.push(remote),
                 }
             }
         }
@@ -995,7 +999,7 @@ impl PanelState {
             closed_conn,
             drop,
             remote_menu,
-            tree_request,
+            tree_requests,
         }
     }
 

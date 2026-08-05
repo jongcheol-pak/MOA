@@ -81,7 +81,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         closed_conn,
         drop,
         remote_menu,
-        tree_request,
+        tree_requests,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
@@ -121,7 +121,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
     }
     outcome
         .tree_requests
-        .extend(tree_request.map(|request| (id, request)));
+        .extend(tree_requests.into_iter().map(|request| (id, request)));
     // 닫힌 연결은 **모아서** 올린다 — 한 프레임에 여러 패널이 각자의 마지막 원격 탭을 닫을 수
     // 있고, first-wins로 하나만 남기면 나머지 연결의 워커·소켓이 그대로 남는다
     outcome.closed_conns.extend(closed_conn);
@@ -296,7 +296,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
-                tree_request: None,
+                tree_requests: Vec::new(),
             },
         );
         merge_panel_outcome(
@@ -310,7 +310,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
-                tree_request: None,
+                tree_requests: Vec::new(),
             },
         );
 
@@ -346,7 +346,7 @@ mod tests {
                     closed_conn: None,
                     drop: None,
                     remote_menu: None,
-                    tree_request: None,
+                    tree_requests: Vec::new(),
                 },
             );
         }
@@ -374,7 +374,7 @@ mod tests {
                     closed_conn: Some(conn),
                     drop: None,
                     remote_menu: None,
-                    tree_request: None,
+                    tree_requests: Vec::new(),
                 },
             );
         }
@@ -385,5 +385,40 @@ mod tests {
         );
         // 조치는 한 프레임에 하나만 — 먼저 낸 패널 것을 쓴다
         assert_eq!(outcome.remote, Some((PanelId(1), RemoteAction::Retry)));
+    }
+
+    #[test]
+    fn 한_패널이_낸_트리_요청은_전부_올라간다() {
+        // quality 리뷰 M1 — first-wins로 하나만 남기면 나머지 노드가 그 프레임을 헛돈다
+        let mut outcome = LayoutOutcome::default();
+        let id = PanelId(1);
+        let requests = vec![
+            TreeRequest::Remote {
+                conn: ConnectionId(1),
+                path: crate::remote::types::RemotePath::new("/var"),
+            },
+            TreeRequest::Remote {
+                conn: ConnectionId(1),
+                path: crate::remote::types::RemotePath::new("/etc"),
+            },
+        ];
+        merge_panel_outcome(
+            &mut outcome,
+            id,
+            PanelOutcome {
+                menu: None,
+                command: None,
+                remote: None,
+                remote_url: None,
+                closed_conn: None,
+                drop: None,
+                remote_menu: None,
+                tree_requests: requests.clone(),
+            },
+        );
+        assert_eq!(
+            outcome.tree_requests,
+            requests.into_iter().map(|r| (id, r)).collect::<Vec<_>>()
+        );
     }
 }

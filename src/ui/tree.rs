@@ -153,8 +153,10 @@ impl FolderTreeView {
         let is_selected = self.selected.as_ref() == Some(&choice);
         let label = remote_display_name(path);
 
-        // 하위 폴더가 없다고 확인된 노드는 펼침 화살표를 그리지 않는다 (로컬과 같은 규칙)
-        if matches!(cache.node(conn, path), Some(TreeNode::Loaded(children)) if children.is_empty())
+        // 하위 폴더가 없다고 확인된 노드, 그리고 **상한까지 내려온 노드**는 펼침 화살표를
+        // 그리지 않는다 — 후자는 순환 링크를 끊는 자리다 (plan Edge Case)
+        if !can_expand(depth)
+            || matches!(cache.node(conn, path), Some(TreeNode::Loaded(children)) if children.is_empty())
         {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
@@ -189,18 +191,21 @@ impl FolderTreeView {
                     }
                 }
                 Some(TreeNode::Failed(detail)) => {
-                    // 그 노드만 사유를 보이고 트리는 그대로 둔다 (plan Edge Case)
-                    ui.colored_label(theme::ERROR_TEXT, format!("읽지 못했습니다 — {detail}"));
+                    // 그 노드만 사유를 보이고 트리는 그대로 둔다 (plan Edge Case).
+                    // 사유는 이미 완결된 문장이라 앞에 말을 덧붙이지 않는다(quality 리뷰 m1)
+                    ui.colored_label(theme::ERROR_TEXT, detail);
                 }
                 Some(TreeNode::Loading) => {
                     ui.colored_label(theme::TEXT_DIM, LOADING);
                 }
                 None => {
                     ui.colored_label(theme::TEXT_DIM, LOADING);
-                    outcome.requests.push(TreeRequest::Remote {
-                        conn,
-                        path: path.clone(),
-                    });
+                    if needs_children(cache, conn, path) {
+                        outcome.requests.push(TreeRequest::Remote {
+                            conn,
+                            path: path.clone(),
+                        });
+                    }
                 }
             }
         });
@@ -299,6 +304,26 @@ impl FolderTreeView {
 
 /// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격이 같은 문구를 쓴다
 const LOADING: &str = "읽는 중…";
+
+/// 원격 트리가 내려갈 수 있는 최대 깊이.
+///
+/// **끊지 않으면 순환 심볼릭 링크에서 끝없이 깊어진다**(plan Edge Case) — 서버 쪽 링크는
+/// 목록만으로는 순환인지 알 수 없어(가리키는 곳을 따라가 봐야 안다) 깊이로 끊는다.
+/// 훑기(`ConnCommand::ListTree`)가 쓰는 상한과 같은 자리의 판단이다
+const MAX_TREE_DEPTH: usize = 40;
+
+/// 이 깊이에서 더 내려가도 되는가 (plan Edge Case — 심볼릭 링크 순환)
+fn can_expand(depth: usize) -> bool {
+    depth < MAX_TREE_DEPTH
+}
+
+/// 이 폴더의 하위를 서버에 청해야 하는가 — 캐시가 아무것도 모를 때만이다.
+///
+/// 그리기에서 떼어 둔 이유는 **판정만 따로 시험하기 위해서**다 (egui의 접힘 상태는
+/// 위젯 id에 묶여 있어 시험이 원하는 노드를 펼쳐 둘 수 없다)
+fn needs_children(cache: &TreeCache, conn: ConnectionId, path: &RemotePath) -> bool {
+    cache.node(conn, path).is_none()
+}
 
 /// 원격 노드에 보일 이름 — 뿌리(`/`)는 이름이 없어 경로 자체를 쓴다
 fn remote_display_name(path: &RemotePath) -> String {
@@ -453,5 +478,35 @@ mod tests {
     fn 원격_노드_이름은_마지막_조각이고_뿌리는_경로다() {
         assert_eq!(remote_display_name(&RemotePath::new("/var/www")), "www");
         assert_eq!(remote_display_name(&RemotePath::new("/")), "/");
+    }
+
+    #[test]
+    fn 형제_노드가_함께_펼쳐지면_각자_조회를_청한다() {
+        // quality 리뷰 M1 — 한 프레임에 여럿이 펼쳐지면 요청도 여럿이다. 하나로 압착하면
+        // 나머지가 그 프레임에서 버려져 노드마다 프레임이 하나씩 밀린다.
+        // (egui의 접힘 상태는 위젯 id에 묶여 있어 시험이 임의 노드를 펼칠 수 없다 —
+        //  그래서 그리기에서 떼어 둔 판정을 직접 확인한다)
+        let mut cache = TreeCache::new();
+        let conn = ConnectionId(1);
+        let siblings = [RemotePath::new("/var"), RemotePath::new("/etc")];
+        for path in &siblings {
+            assert!(needs_children(&cache, conn, path), "{path:?}");
+        }
+        // 청하기 시작한 것은 다시 청하지 않는다
+        cache.begin(conn, &siblings[0]);
+        assert!(!needs_children(&cache, conn, &siblings[0]));
+        assert!(
+            needs_children(&cache, conn, &siblings[1]),
+            "형제가 함께 막혔다"
+        );
+    }
+
+    #[test]
+    fn 상한까지_내려가면_더_펼치지_않는다() {
+        // plan Edge Case — 순환 심볼릭 링크는 목록만으로 알 수 없어 깊이로 끊는다
+        assert!(can_expand(0));
+        assert!(can_expand(MAX_TREE_DEPTH - 1));
+        assert!(!can_expand(MAX_TREE_DEPTH));
+        assert!(!can_expand(MAX_TREE_DEPTH + 1));
     }
 }
