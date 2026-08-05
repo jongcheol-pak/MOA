@@ -13,6 +13,7 @@ use crate::fs::icons::IconCache;
 use crate::panel::tabs::TabPhase;
 use crate::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
 use crate::remote::ftp::FtpSession;
+use crate::remote::log::LogBuffer;
 use crate::remote::manager::ConnectionManager;
 use crate::remote::queue::TransferQueue;
 use crate::remote::sftp::SftpSession;
@@ -22,6 +23,7 @@ use crate::remote::types::{LogonType, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::queue_panel::{self, QueueAction};
@@ -334,6 +336,8 @@ pub struct ExplorerApp {
     runner: TransferRunner,
     /// 하단 도크의 화면 상태 (FR-36·FR-40)
     dock: DockState,
+    /// 클립보드로 내보낼 것 — 그리기 도중에는 `ctx`를 빌릴 수 없어 프레임 끝에 보낸다
+    pending_clipboard: Option<String>,
 }
 
 impl ExplorerApp {
@@ -380,6 +384,7 @@ impl ExplorerApp {
             queue: TransferQueue::new(),
             runner: TransferRunner::new(),
             dock: DockState::default(),
+            pending_clipboard: None,
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -687,6 +692,7 @@ impl ExplorerApp {
             return;
         }
         let failed = self.failed_sites();
+        let log_conn = self.log_connection();
         let panel = egui::Panel::bottom(egui::Id::new("transfer_dock"))
             .resizable(false)
             .default_size(height)
@@ -694,7 +700,7 @@ impl ExplorerApp {
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 let rect = ui.max_rect();
-                self.show_dock_body(ui, rect, &failed)
+                self.show_dock_body(ui, rect, &failed, log_conn)
             });
         let (dock_action, queue_action) = panel.inner;
         if let Some(action) = dock_action {
@@ -711,6 +717,7 @@ impl ExplorerApp {
         ui: &mut egui::Ui,
         rect: egui::Rect,
         failed: &[SiteId],
+        log_conn: Option<ConnectionId>,
     ) -> (Option<DockAction>, Option<QueueAction>) {
         let mut dock_ui = ui.new_child(
             egui::UiBuilder::new()
@@ -740,11 +747,37 @@ impl ExplorerApp {
                 Some(DockPanel::Queue) => {
                     queue_panel::show_queue(&mut dock_ui, body, &mut self.dock, &view, &self.sites)
                 }
-                // 로그 화면은 T20이 채운다
-                _ => None,
+                Some(DockPanel::Log) => {
+                    // 지금 보고 있는 연결의 로그를 그린다 — 연결이 없으면 빈 화면이다
+                    let body = egui::Rect::from_min_max(
+                        egui::pos2(body.left(), body.top() + log_panel::BODY_PAD_Y),
+                        body.max,
+                    );
+                    match log_conn.and_then(|conn| self.manager.get(conn)) {
+                        Some(connection) => {
+                            log_panel::show_log(&mut dock_ui, body, connection.log())
+                        }
+                        None => log_panel::show_log(&mut dock_ui, body, &LogBuffer::new()),
+                    }
+                    None
+                }
+                None => None,
             };
             (dock_action, queue_action)
         }
+    }
+
+    /// 로그 화면이 보여 줄 연결 — **지금 보고 있는 원격 탭의 것**이 먼저다.
+    ///
+    /// 그 탭이 로컬이면 마지막으로 연 연결을 보인다: 로그를 여는 까닭은 대개 방금 무슨 일이
+    /// 있었는지 보려는 것이라, 아무것도 안 보이는 것보다 최근 연결을 보이는 편이 쓸모 있다
+    fn log_connection(&self) -> Option<ConnectionId> {
+        let active = self
+            .views
+            .get(&self.workspaces.active().id)
+            .and_then(|view| view.panels.get(&view.active))
+            .and_then(|panel| panel.active_conn());
+        active.or_else(|| self.manager.ids().last().copied())
     }
 
     /// 도크 탭 스트립의 조작 (인벤토리 #33·#34)
@@ -758,9 +791,26 @@ impl ExplorerApp {
                 }
             }
             DockAction::ClearDone => self.queue.clear_done(),
-            // 로그 복사는 T20이 붙인다
-            DockAction::CopyLog => {}
+            DockAction::CopyLog => self.copy_log(),
         }
+    }
+
+    /// `⧉` — 지금 보고 있는 연결의 로그를 클립보드로 (Acceptance ③).
+    ///
+    /// **복사본에도 비밀번호는 없다** — 가리기는 로그가 버퍼에 들어가기 전에 이미 끝났다
+    /// (D14·T5). 여기서 다시 가리지 않는 것은 두 벌이 되면 한쪽만 고쳐질 수 있어서다
+    fn copy_log(&mut self) {
+        let Some(text) = self
+            .log_connection()
+            .and_then(|conn| self.manager.get(conn))
+            .map(|connection| connection.log().to_text())
+        else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.pending_clipboard = Some(text);
     }
 
     /// 큐 행에서 고른 조작 (T19 우클릭 메뉴)
@@ -1321,6 +1371,10 @@ impl eframe::App for ExplorerApp {
         self.show_site_manager(&ctx, layout_area);
         // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
         self.toast.show_ui(&ctx);
+        // 로그 복사는 그리기가 끝난 뒤에 보낸다 (`⧉` — FR-40)
+        if let Some(text) = self.pending_clipboard.take() {
+            ctx.copy_text(text);
+        }
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
         // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다

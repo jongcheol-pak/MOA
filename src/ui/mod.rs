@@ -10,6 +10,7 @@ pub mod icon_tex;
 pub mod list_common;
 pub mod list_details;
 pub mod list_grid;
+pub mod log_panel;
 pub mod menu;
 pub mod panel;
 pub mod queue_panel;

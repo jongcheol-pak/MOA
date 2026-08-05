@@ -841,7 +841,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Files**: `src/ui/log_panel.rs`(신규), `src/ui/dock.rs`, `src/ui/app.rs`
 - **Design**:
   - **배치**: `ui::log_panel` — T19의 도크 셸을 공유
-  - **신규 심볼**: `show_log` → `LogAction{Copy}` / 고정폭 글꼴 지정(`Consolas`·`D2Coding` 폴백)
+  - **신규 심볼**: ~~`show_log` → `LogAction{Copy}`~~ → **`show_log`는 값을 돌려주지 않는다**(구현 중 정정) — `⧉`는 도크 셸의 버튼이라 T19가 만든 `dock::DockAction::CopyLog`가 이미 나른다. 로그 본문에는 조작이 없어 `LogAction`을 두면 아무도 만들지 않는 타입이 남는다 / 고정폭 글꼴은 `FontId::monospace`로 지정(원본이 적은 `Consolas`·`D2Coding`은 egui의 `Monospace` 가족이 대신한다 — 이름으로 고르는 API가 없다)
   - **의존 방향**: `ui::log_panel` → `remote::log`(읽기)
   - **비추상화 선언**: 로그 가상화를 자체 구현하지 않는다 — `egui::ScrollArea::show_rows`로 충분(행 높이 고정 17px)
 - **Acceptance**: ① 행이 시각 62px·종류 44px·본문 순서로 그려지고 글꼴이 12px/17px 고정폭이다. ② 종류 4종의 색이 #49~52와 일치하고 `오류:` 행에 배경 `#2A1A1A`가 깔린다. ③ `⧉`가 현재 연결의 로그를 클립보드로 복사하고 **복사본에도 비밀번호가 없다**(T5②의 연장). ④ 새 줄이 오면 맨 아래에 붙고, 사용자가 위로 스크롤한 상태면 따라가지 않는다.
