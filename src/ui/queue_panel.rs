@@ -10,7 +10,7 @@ use crate::remote::queue::{QueueFilter, TransferItem, TransferState, UNKNOWN};
 use crate::remote::sites::SiteStore;
 use crate::remote::types::SiteId;
 use crate::ui::dock::{DockState, DockView};
-use crate::ui::list_common::elided_galley;
+use crate::ui::list_common::elided_galley_colored;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -421,11 +421,13 @@ fn show_row(
         ),
     ] {
         let at = cell(widths[width_index]);
-        let galley = elided_galley(
+        // 색을 갤리에 구워 넣는다 — 그리면서 넘기는 색은 갤리가 기본색이면 무시된다(T20 리뷰)
+        let galley = elided_galley_colored(
             ui.painter(),
             text,
             egui::FontId::proportional(FONT_PX),
             at.width(),
+            color,
         );
         ui.painter().galley(
             egui::pos2(at.left(), at.center().y - galley.size().y / 2.0),
@@ -461,11 +463,12 @@ fn show_row(
 
     let at = cell(widths[6]);
     let (text, color) = state_text(&item.state);
-    let galley = elided_galley(
+    let galley = elided_galley_colored(
         ui.painter(),
         text,
         egui::FontId::proportional(FONT_PX),
         at.width(),
+        color,
     );
     ui.painter().galley(
         egui::pos2(at.left(), at.center().y - galley.size().y / 2.0),

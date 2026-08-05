@@ -7,7 +7,7 @@
 //! **버퍼를 고치지 않는다** — 읽어서 그리고, `⧉`(복사)는 값으로 돌려준다.
 //! 비밀번호 가리기는 이미 버퍼에 들어가기 전에 끝나 있다(D14·T5) — 여기서 다시 하지 않는다.
 use crate::remote::log::{LogBuffer, LogKind};
-use crate::ui::list_common::elided_galley;
+use crate::ui::list_common::elided_galley_colored;
 use crate::ui::theme;
 use eframe::egui;
 
@@ -102,22 +102,21 @@ fn show_line(ui: &mut egui::Ui, line: &crate::remote::log::LogLine) {
         font.clone(),
         color,
     );
-    // 본문은 길어도 줄바꿈하지 않는다 — 행 높이가 고정이라 두 줄이 되면 아래 줄과 겹친다
+    // 본문은 길어도 줄바꿈하지 않는다 — 행 높이가 고정이라 두 줄이 되면 아래 줄과 겹친다.
+    // **색은 종류와 무관하게 `#B4B4B4` 하나다** — 원본이 본문 span에 고정색을 준다(`:313`).
+    // 종류별 색은 앞의 종류 열에만 붙는다
     let text_left = left + TIME_WIDTH + COLUMN_GAP + KIND_WIDTH + COLUMN_GAP;
-    let galley = elided_galley(
+    let galley = elided_galley_colored(
         ui.painter(),
         line.text.clone(),
         font,
         (rect.right() - PAD_X - text_left).max(0.0),
+        theme::TEXT_LOG,
     );
     ui.painter().galley(
         egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
         galley,
-        if line.kind == LogKind::Error {
-            color
-        } else {
-            theme::TEXT_LOG
-        },
+        theme::TEXT_LOG,
     );
 }
 
@@ -168,6 +167,32 @@ mod tests {
         assert_eq!(LogKind::Command.label(), "명령:");
         assert_eq!(LogKind::Response.label(), "응답:");
         assert_eq!(LogKind::Error.label(), "오류:");
+    }
+
+    #[test]
+    fn 본문_색은_종류와_무관하게_하나다() {
+        // spec 리뷰 M1 — 원본은 본문 span에 `#B4B4B4` 고정색을 준다(`:313`).
+        // 종류별 색은 **앞의 종류 열에만** 붙는다. 오류 줄 본문까지 빨갛게 칠하면 원본과 다르다
+        let ctx = egui::Context::default();
+        let mut colors = Vec::new();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            for kind in [LogKind::Status, LogKind::Error] {
+                let galley = crate::ui::list_common::elided_galley_colored(
+                    ui.painter(),
+                    format!("{kind:?} 줄"),
+                    egui::FontId::monospace(FONT_PX),
+                    200.0,
+                    theme::TEXT_LOG,
+                );
+                colors.push(galley.job.sections[0].format.color);
+            }
+        });
+        assert_eq!(colors, vec![theme::TEXT_LOG, theme::TEXT_LOG]);
+        // 종류 열은 여전히 종류별로 갈린다
+        assert_ne!(
+            kind_colors(LogKind::Error).0,
+            kind_colors(LogKind::Status).0
+        );
     }
 
     #[test]

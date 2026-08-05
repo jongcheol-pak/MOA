@@ -455,6 +455,25 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - 표의 열 정렬(머리글과 행이 같은 x에서 시작하는지)·얼룩·hover
 - 진행 막대가 셀 안에서 세로 가운데 오는지, 1만 건에서 스크롤이 매끄러운지
 
+### V-9 대조 결과 — T20 (서버 로그 패널)
+
+**정적 축 전부 ✅** — 원본 `FileExplorer-FTP.dc.html` ↔ `src/ui/log_panel.rs` 양쪽 지목.
+
+| 인벤토리·속성 | 원본 | 구현 | 판정 |
+|---|---|---|---|
+| #49~#52 종류 표기 `상태:`·`명령:`·`응답:`·`오류:` | `:734-743` | `remote::log::LogKind::label`(T5) + `kind_colors`(`log_panel.rs:40`) | ✅ |
+| 종류별 색(상태 `#C8C8C8`·명령 `#6FA8FF`·응답 `#9A9A9A`·오류 `#FF6B6B` + 배경 `#2A1A1A`) | `:734-743` | `kind_colors` + `COMMAND_COLOR`(`:51`) | ✅ |
+| 본문 `padding 6px 10px`·행 간격 2px·고정폭 12px/17px | `:308-310` | `PAD_X`·`PAD_Y`·`LINE_GAP`·`FONT_PX`·`LINE_HEIGHT`(`:16-25`) | ✅ |
+| 시각 62px 고정 `#6A6A6A` · 종류 44px 고정 · 본문 `#B4B4B4` 말줄임 | `:311-313` | `TIME_WIDTH`·`KIND_WIDTH`(`:24-25`) + `show_line`(`:80` — `theme::TEXT_DIM`/`TEXT_LOG`·`elided_galley`) | ✅ |
+| #34 로그 우측 버튼 `⧉`·`▼` | `:305-306` | T19의 `dock::show_strip`(화면별 분기) + `app.rs:802`(`copy_log`) | ✅ |
+
+**원본 대조로 확정한 것 1건**: **명령 줄 색이 팔레트의 강조 파랑이 아니다** — `:737`은 `#6FA8FF`인데 팔레트의 `ACCENT`는 `#4A9EFF`다. 비슷해 보여 재사용하기 쉬운 자리라 상수를 따로 두고 `assert_ne!(COMMAND_COLOR, theme::ACCENT)`로 못 박았다.
+
+**⏳ 미확인 — F-8 인계 (렌더 확인이 필요한 시각 축)**:
+- 고정폭 글꼴이 실제로 고정폭으로 잡히는지(시스템에 `Consolas`·`D2Coding`이 없을 때의 폴백 모습)
+- 시각·종류 열이 실제로 62px·44px 자리에서 정렬돼 보이는지, 오류 줄 배경 띠의 높이
+- 새 줄이 붙을 때 아래로 따라가는 모습과, 위로 올려 둔 상태에서 멈춰 있는 동작(`stick_to_bottom`)
+
 ## Decisions
 
 | # | 결정 | 선택 | 근거(Source) |
@@ -838,12 +857,13 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T20. 서버 로그 패널 UI [Type C]
 
-- **Files**: `src/ui/log_panel.rs`(신규), `src/ui/dock.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/log_panel.rs`(신규), ~~`src/ui/dock.rs`~~(**손대지 않았다** — 로그 셸·`⧉` 버튼을 T19가 이미 그렸다), `src/ui/app.rs`, `src/ui/mod.rs`(모듈 등록), **`src/ui/list_common.rs`·`src/ui/queue_panel.rs`**(리뷰 반영으로 편입 — 갤리 색 굽기, 아래 정정)
 - **Design**:
   - **배치**: `ui::log_panel` — T19의 도크 셸을 공유
   - **신규 심볼**: ~~`show_log` → `LogAction{Copy}`~~ → **`show_log`는 값을 돌려주지 않는다**(구현 중 정정) — `⧉`는 도크 셸의 버튼이라 T19가 만든 `dock::DockAction::CopyLog`가 이미 나른다. 로그 본문에는 조작이 없어 `LogAction`을 두면 아무도 만들지 않는 타입이 남는다 / 고정폭 글꼴은 `FontId::monospace`로 지정(원본이 적은 `Consolas`·`D2Coding`은 egui의 `Monospace` 가족이 대신한다 — 이름으로 고르는 API가 없다)
   - **의존 방향**: `ui::log_panel` → `remote::log`(읽기)
-  - **비추상화 선언**: 로그 가상화를 자체 구현하지 않는다 — `egui::ScrollArea::show_rows`로 충분(행 높이 고정 17px)
+  - **비추상화 선언**: 로그 가상화를 자체 구현하지 않는다 — `egui::ScrollArea::show_rows`로 충분(글자 줄 높이 17px + 줄 간격 2px = **행 간격 19px**로 넘긴다. 계획 문구의 "17px"은 글자 줄 높이를 가리킨다 — spec 리뷰 m1 정정)
+  - **구현 중 확정 (원안 대비 2건)**: ① 위 신규 심볼의 `LogAction` 제거 ② **본문 색을 갤리에 구워 넣는다** — `Painter::galley`에 넘기는 색은 갤리 안이 `PLACEHOLDER`일 때만 쓰이므로, 기본색으로 만든 갤리에 다른 색을 넘기면 **아무 일도 일어나지 않는다**(quality 리뷰 M1이 실측). `list_common::elided_galley_colored`를 더해 로그 본문(항상 `#B4B4B4`)과 **T19 큐 표의 셀 색**(같은 결함이 있었다)을 함께 고쳤다
 - **Acceptance**: ① 행이 시각 62px·종류 44px·본문 순서로 그려지고 글꼴이 12px/17px 고정폭이다. ② 종류 4종의 색이 #49~52와 일치하고 `오류:` 행에 배경 `#2A1A1A`가 깔린다. ③ `⧉`가 현재 연결의 로그를 클립보드로 복사하고 **복사본에도 비밀번호가 없다**(T5②의 연장). ④ 새 줄이 오면 맨 아래에 붙고, 사용자가 위로 스크롤한 상태면 따라가지 않는다.
 - **Edge Cases**: 로그가 빔 / 2000줄 상한 도달 후 스크롤 위치 / 한 줄이 매우 긺 → 말줄임(줄바꿈 없음) / 고정폭 글꼴이 없는 시스템 → 기본 글꼴 폴백 / 클립보드 실패.
 - **Halt Forecast**: 없음 — 결정 분기 0(위 Design·Decisions가 선택을 확정했다), 외부·비가역·파괴 요소 없음.

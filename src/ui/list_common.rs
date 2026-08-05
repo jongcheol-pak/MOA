@@ -36,6 +36,28 @@ pub fn elided_galley(
     elided_galley_rows(painter, text, font, max_width, 1)
 }
 
+/// 색을 지정하는 변형.
+///
+/// **갤리는 색을 구워 넣는다** — `Painter::galley`에 넘기는 색은 갤리 안이 `PLACEHOLDER`일
+/// 때만 쓰인다. 그래서 기본색으로 만든 갤리를 그리면서 다른 색을 넘겨도 **아무 일도 일어나지
+/// 않는다**(로그·큐 표에서 실제로 그랬다 — T20 리뷰). 색이 다른 자리는 이 함수로 만든다
+pub fn elided_galley_colored(
+    painter: &egui::Painter,
+    text: String,
+    font: egui::FontId,
+    max_width: f32,
+    color: egui::Color32,
+) -> Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text, font, color, max_width);
+    job.wrap = egui::text::TextWrapping {
+        max_width,
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    painter.layout_job(job)
+}
+
 /// 줄 수를 지정하는 변형 — 격자 보기의 이름은 두 줄까지 쓴다 (plan 시각 속성 표).
 ///
 /// `max_rows`를 넘으면 마지막 줄 끝에 `…`가 붙는다. 파일 이름은 공백 없는 긴 토큰이 흔해
@@ -60,6 +82,38 @@ pub fn elided_galley_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 갤리에 실제로 구워진 색 — `Painter::galley`에 넘기는 색은 이 값이 `PLACEHOLDER`일 때만 쓰인다
+    fn baked_color(galley: &egui::Galley) -> egui::Color32 {
+        galley.job.sections[0].format.color
+    }
+
+    #[test]
+    fn 색을_지정한_갤리는_그_색을_구워_넣는다() {
+        // T20 리뷰 — 기본색으로 만든 갤리를 그리면서 다른 색을 넘겨도 아무 일도 일어나지 않는다.
+        // 로그 본문·큐 표의 색이 실제로는 전부 기본색으로 나오던 결함이 여기서 비롯됐다
+        let ctx = egui::Context::default();
+        let mut plain = None;
+        let mut colored = None;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let painter = ui.painter();
+            plain = Some(elided_galley(
+                painter,
+                "본문".to_owned(),
+                egui::FontId::proportional(13.0),
+                100.0,
+            ));
+            colored = Some(elided_galley_colored(
+                painter,
+                "본문".to_owned(),
+                egui::FontId::proportional(13.0),
+                100.0,
+                theme::TEXT_LOG,
+            ));
+        });
+        assert_eq!(baked_color(&plain.expect("기본")), theme::TEXT);
+        assert_eq!(baked_color(&colored.expect("지정")), theme::TEXT_LOG);
+    }
 
     /// 앱과 같은 글꼴을 설치한 뒤 배치한다 — 이 crate는 egui 기본 글꼴 기능을 끄고
     /// 맑은 고딕을 직접 등록하므로, 글꼴 없이 배치하면 모든 글자 폭이 0이 되어
