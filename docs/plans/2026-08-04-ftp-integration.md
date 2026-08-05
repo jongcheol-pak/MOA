@@ -100,7 +100,12 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 **위키 참조**: vault 실재 확인(`D:\Personal Project\Obsidian Vault\LLM WIKI` — 20_projects·30_knowledge·40_guides 존재). **FileExplorer는 위키에 미등록**이고 vault 전체 grep에서 FTP/SFTP 관련 자료 0건 — 관련 위키 자료 없음, 코드 1차 출처로 진행. 대상 프로젝트 `decisions.md`도 없다(미등록이므로).
 
-**Deferred 대장 확인**: `docs/plans/deferred.md` `## 대기` 20건을 훑었다. 이번 작업과 닿는 항목 없음 — 구 Win32 UI 제거·한글 폰트 서브셋·탭 폭 고정 등은 원격 기능과 독립이라 그대로 대기에 둔다. 이전 plan(`2026-07-29-view-modes-and-panel-menu`)은 `## Phase Ledger`에 `Phase G 통과 (Must 100%)`가 있어 완료로 판정했고, 그 `## Deferred / Follow-up` 7건은 이미 대장에 이관돼 있다.
+**Deferred 대장 확인**: `docs/plans/deferred.md` `## 대기` 20건을 훑었다. 이번 작업과 닿는 항목 없음 — 구 Win32 UI 제거·한글 폰트 서브셋·탭 폭 고정 등은 원격 기능과 독립이라 그대로 대기에 둔다. 이전 plan(`2026-07-29-view-modes-and-panel-menu`)은 `## Phase Ledger
+
+- **Phase F 완료** (2026-08-05): F-1~F-6 자체 검증 통과 · F-6.5 문서·Deferred 대장 반영 · F-7 `plan-completion-reviewer` **4라운드**(1라운드 BLOCKER 2 → T27·T28 / 2라운드 BLOCKER 2 → T30 / 3라운드 BLOCKER 1·MAJOR 1 → T31 / **4라운드 BLOCKER 0**, 남은 MAJOR 1 → T32). 위키 vault에 이 프로젝트 허브는 **미등록**이라 F-6.5의 위키 반영 질문은 대상 아님(등록 제안만 최종 보고에 1회).
+- **Phase G**: G-1은 F-7의 PRD 전수 대조를 재사용한다(정상 Opus 경로로 완료 — 보완 대조 예외 없음). active **Must FR 8건 전건 충족**, **FR-46(Should) 절반 미충족** → G-2의 Should 갭은 사용자 선택 사항으로 최종 보고에 올린다.
+- **F-8**: `## 시각 요소 분해`가 있어 발동. 참조 정합 인벤토리 **전 행 ✅**(미달 0건), 시각 축 `⏳ 미확인` **11묶음** 잔존 → 완료 선언 보류, 사용자 화면 확인 대기.
+`에 `Phase G 통과 (Must 100%)`가 있어 완료로 판정했고, 그 `## Deferred / Follow-up` 7건은 이미 대장에 이관돼 있다.
 
 **AGENTS.md 신선도**: `src/{ui,app,panel,fs}`·`docs/prd.md`·`docs/plans/` 실재 확인. 빌드·테스트 명령(`cargo build`/`test`/`clippy`/`fmt`)은 표준 cargo라 별도 스크립트 없음. 어긋남 0건.
 
@@ -1265,7 +1270,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ## Next Steps
 
-- 권장 다음 액션: 전 task 완료 — **Phase F(전체 검증)·Phase G(PRD 재검증)·F-8(화면 확인)**
+- 권장 다음 액션: **사용자 화면 확인(F-8)** → 어긋난 곳이 있으면 그 항목만 Phase I 재진입. 그 뒤 push 승인(샘플 호스트 이력 처리 포함)과 FR-46 처리 방향 결정.
 - Suggested skills: pjc:implement-task
 - **T11이 이어받는 자리**: 원격 패널은 이제 연결 단계별로 화면이 갈리고(`ui::remote_states`), 연결된 탭은 로컬과 같은 목록 부품을 쓴다 — T11의 열 확장(권한·소유자)은 그 목록 경로에 얹으면 된다. 앱의 연결 라우팅(`ExplorerApp::poll_remote`)과 사이트 저장소(`ExplorerApp::sites`)는 이미 자리를 잡았고, **사이트에 연결하는 진입점만 아직 없다** — `ExplorerApp::connect_site`가 그 통로로 열려 있으며 T12(사이드바)·T13(주소창·드롭다운)이 호출부를 붙인다.
 
