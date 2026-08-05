@@ -1,5 +1,9 @@
 //! 세션 저장/복원 — %APPDATA%\FileExplorer\settings.json (FR-11·FR-20, plan D9·D18, NFR-7)
 //!
+//! 스키마 v3: v2 + {sites, queue[], dock} 이며 탭이 문자열에서 `TabSession{kind,path,site}`로
+//! 넓어졌다 (FR-44). v2 파일은 **승격**되어 그대로 살아난다(`promote_v2`) — 원격 쪽 필드는
+//! 비어 있는 기본값이 된다. v1과 손상·미래 버전은 종전대로 "세션 없음"으로 폴백한다.
+//!
 //! 스키마 v2: {version, window{x,y,w,h,maximized}, sidebar{width,collapsed}, active_workspace,
 //! workspaces[{name, layout<트리 재귀>, panels[{tabs,active_tab}], active_panel}]}.
 //! 각 워크스페이스의 panels 배열은 그 layout 리프의 walk 순서(좌→우, 상→하)와 1:1 대응한다.
@@ -11,7 +15,17 @@ use std::path::PathBuf;
 
 /// 현재 스키마 버전 — 필드가 바뀌면 올리고 하위 호환 처리를 추가한다 (D15).
 /// v1(워크스페이스 개념 이전) 파일은 폴백되어 기본 워크스페이스 1개로 시작한다
-pub const SESSION_VERSION: u32 = 2;
+pub const SESSION_VERSION: u32 = 3;
+
+/// 승격해 읽을 수 있는 가장 낮은 버전 (D17) — v1은 워크스페이스 개념 이전이라 폴백이다
+const PROMOTABLE_VERSION: u32 = 2;
+
+/// 세션에 담는 전송 큐 항목 수의 상한 (plan Halt Forecast ii-a).
+///
+/// 큐가 1만 건이어도 저장은 앞의 1000건까지만 한다 — 세션 파일은 시작할 때 통째로 읽히므로
+/// 무한정 커지면 창이 뜨는 시간이 그만큼 늘어난다. 넘친 것은 조용히 버린다(전송은 다시
+/// 끌어다 놓으면 된다)
+pub const QUEUE_SESSION_LIMIT: usize = 1000;
 
 /// 사이드바 기본·최소·최대 폭(px, 96DPI 기준 — plan `## 시각 요소 분해`).
 /// 저장값 검증이 이 범위를 쓰므로 세션 모듈이 소유하고, 사이드바 창(T4·T7)이 같은 상수를 참조한다
@@ -31,6 +45,53 @@ pub struct Session {
     /// 재시작 시 화면에 띄울 워크스페이스 (workspaces 인덱스)
     pub active_workspace: usize,
     pub workspaces: Vec<WorkspaceSession>,
+    /// 등록된 사이트 (FR-44). v2 파일에는 없어 승격 시 빈 목록이 된다
+    #[serde(default)]
+    pub sites: SiteSession,
+    /// 아직 끝나지 않은 전송들 — **다시 시작하지는 않는다**(FR-44)
+    #[serde(default)]
+    pub queue: Vec<QueueSession>,
+    /// 하단 도크의 열림 상태
+    #[serde(default)]
+    pub dock: DockSession,
+}
+
+/// 저장되는 사이트 목록.
+///
+/// `remote::sites::SiteStore`를 **그대로** 담는다 — 필드를 하나하나 옮겨 적는 사본을 두면
+/// 사이트에 항목이 늘 때마다(문자셋·동시 연결 수가 그랬다) 두 곳을 함께 고쳐야 하고,
+/// 한쪽만 고쳐지면 저장은 되는데 복원이 안 되는 조용한 손실이 생긴다.
+/// 비밀번호는 이 타입 안에서 이미 DPAPI로 봉인돼 있다(평문은 어디에도 없다 — FR-28)
+pub type SiteSession = crate::remote::sites::SiteStore;
+
+/// 저장되는 전송 큐 항목 하나 (FR-44).
+///
+/// **끝난 것은 담지 않는다** — 되살릴 이유가 없다. 담는 것은 대기·실패뿐이고, 복원 뒤에도
+/// 스스로 시작하지 않는다(연결부터 사용자가 연다)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueueSession {
+    /// 어느 사이트의 전송인가 — 그 사이트가 사라졌으면 복원 때 이 항목을 버린다
+    pub site: u32,
+    /// `upload`/`download`
+    pub direction: String,
+    pub local: String,
+    pub remote: String,
+    #[serde(default)]
+    pub size: u64,
+    /// 실패로 저장된 것이면 그 사유 — 비어 있으면 대기였다
+    #[serde(default)]
+    pub error: String,
+}
+
+/// 하단 도크의 상태 (FR-36·FR-40)
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DockSession {
+    /// `queue`/`log`, 빈 문자열이면 닫혀 있었다
+    #[serde(default)]
+    pub panel: String,
+    /// 큐 화면의 거르개 키
+    #[serde(default)]
+    pub filter: String,
 }
 
 /// 사이드바 표시 상태 (FR-19·FR-20) — 창 내부 상태 타입 `sidebar::SidebarState`와 구분해 `Session` 접미사
@@ -81,10 +142,93 @@ pub enum LayoutNode {
     },
 }
 
+/// 탭 하나가 가리키는 곳 (FR-44).
+///
+/// v2까지는 문자열 하나(로컬 경로)였다 — 그 형태도 그대로 읽는다(`Deserialize` 참조)
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TabSession {
+    /// `local`/`remote`
+    pub kind: String,
+    /// 로컬 경로 또는 원격 경로
+    pub path: String,
+    /// 원격 탭이 가리키는 사이트 — 로컬이면 `None`
+    pub site: Option<u32>,
+}
+
+/// 원격 탭이 담는 것 — 사이트와 그 안의 경로 (plan 신규 심볼 `RemoteTabSession`)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RemoteTabSession {
+    pub site: u32,
+    pub path: String,
+}
+
+impl TabSession {
+    pub const LOCAL: &'static str = "local";
+    pub const REMOTE: &'static str = "remote";
+
+    pub fn local(path: String) -> TabSession {
+        TabSession {
+            kind: TabSession::LOCAL.to_owned(),
+            path,
+            site: None,
+        }
+    }
+
+    pub fn remote(remote: RemoteTabSession) -> TabSession {
+        TabSession {
+            kind: TabSession::REMOTE.to_owned(),
+            path: remote.path,
+            site: Some(remote.site),
+        }
+    }
+
+    /// 원격 탭이면 그 사이트와 경로 — 로컬이면 `None`
+    pub fn as_remote(&self) -> Option<RemoteTabSession> {
+        if self.kind != TabSession::REMOTE {
+            return None;
+        }
+        Some(RemoteTabSession {
+            site: self.site?,
+            path: self.path.clone(),
+        })
+    }
+}
+
+impl From<&str> for TabSession {
+    /// 시험과 레거시 어댑트가 로컬 탭을 짧게 적기 위한 길
+    fn from(path: &str) -> TabSession {
+        TabSession::local(path.to_owned())
+    }
+}
+
+impl<'de> Deserialize<'de> for TabSession {
+    /// v2의 문자열 탭과 v3의 객체 탭을 **둘 다** 읽는다.
+    ///
+    /// 승격(`promote_v2`)이 형태까지 바꾸려면 세션 전체를 두 번 파싱해야 한다 —
+    /// 여기서 받아들이면 한 번으로 끝난다
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<TabSession, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(String),
+            Tab {
+                kind: String,
+                path: String,
+                #[serde(default)]
+                site: Option<u32>,
+            },
+        }
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::Legacy(path) => TabSession::local(path),
+            Repr::Tab { kind, path, site } => TabSession { kind, path, site },
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct PanelSession {
-    /// 탭별 폴더 경로 (탭 순서)
-    pub tabs: Vec<String>,
+    /// 탭이 가리키는 곳들 (탭 순서)
+    pub tabs: Vec<TabSession>,
     pub active_tab: usize,
     /// 자세히 보기 열 폭 4개 (이름·크기·종류·수정한 날짜). 패널마다 독립이다.
     ///
@@ -179,8 +323,12 @@ pub fn load_session() -> Option<Session> {
 /// 나머지 위반은 파일 오염으로 보고 전체 폴백한다
 pub fn parse_session(text: &str) -> Option<Session> {
     let mut session: Session = serde_json::from_str(text).ok()?;
-    if session.version != SESSION_VERSION {
-        return None; // 미래/과거 버전 — 기본 레이아웃 폴백 (D15)
+    match session.version {
+        SESSION_VERSION => {}
+        // v2는 승격해 살린다 — 워크스페이스·분할·탭·열 폭·보기 모드가 그대로 남는다 (D17)
+        PROMOTABLE_VERSION => session = promote_v2(session),
+        // v1과 미래 버전 — 기본 레이아웃 폴백 (D15)
+        _ => return None,
     }
     if session.workspaces.is_empty() || session.active_workspace >= session.workspaces.len() {
         return None;
@@ -214,6 +362,20 @@ pub fn parse_session(text: &str) -> Option<Session> {
     Some(session)
 }
 
+/// v2 세션을 v3로 올린다 (D17).
+///
+/// 원격 쪽은 v2에 **아무것도 없으므로** 전부 기본값이다(사이트 없음·큐 없음·도크 닫힘).
+/// 탭은 읽는 자리(`TabSession`의 `Deserialize`)에서 이미 로컬 탭으로 받아들여져 있다.
+///
+/// **마이그레이션 프레임워크를 만들지 않는다**(plan 비추상화 선언) — 한 단계뿐이고,
+/// 다음 단계가 생기면 그때 v3→v4 함수를 하나 더 둔다
+pub fn promote_v2(session: Session) -> Session {
+    Session {
+        version: SESSION_VERSION,
+        ..session
+    }
+}
+
 /// 비율 유한성 검사 (NaN/무한대 오염 방어 — 재구성 clamp의 1차 관문)
 fn layout_ratios_valid(node: &LayoutNode) -> bool {
     match node {
@@ -234,6 +396,9 @@ mod tests {
     fn sample() -> Session {
         Session {
             version: SESSION_VERSION,
+            sites: SiteSession::default(),
+            queue: Vec::new(),
+            dock: DockSession::default(),
             window: WindowState {
                 x: 100,
                 y: 50,
@@ -397,5 +562,104 @@ mod tests {
         let s = sample();
         let shape = s.workspaces[0].layout.to_shape();
         assert_eq!(LayoutNode::from_shape(&shape), s.workspaces[0].layout);
+    }
+
+    /// v2 파일 원문 — 원격 관련 필드가 하나도 없고 탭이 문자열 배열이다
+    fn v2_text() -> String {
+        r#"{
+            "version": 2,
+            "window": {"x": 10, "y": 20, "w": 1280, "h": 800, "maximized": false},
+            "sidebar": {"width": 300, "collapsed": true},
+            "active_workspace": 0,
+            "workspaces": [{
+                "name": "작업",
+                "layout": {"Split": {"horizontal": true, "ratio": 0.5,
+                    "first": "Leaf", "second": "Leaf"}},
+                "panels": [
+                    {"tabs": ["C:\\Users", "D:\\"], "active_tab": 1,
+                     "columns": [200.0, 60.0, 120.0, 90.0], "view_mode": "tiles"},
+                    {"tabs": ["C:\\Windows"], "active_tab": 0}
+                ],
+                "active_panel": 1
+            }]
+        }"#
+        .to_owned()
+    }
+
+    #[test]
+    fn v2_파일은_승격되어_그대로_살아난다() {
+        // Acceptance ① — 워크스페이스·분할·탭·열 폭·보기 모드가 전부 보존된다 (D17)
+        let session = parse_session(&v2_text()).expect("v2는 승격돼야 한다");
+        assert_eq!(session.version, SESSION_VERSION);
+        assert_eq!(session.sidebar.width, 300);
+        assert!(session.sidebar.collapsed);
+        let workspace = &session.workspaces[0];
+        assert_eq!(workspace.name, "작업");
+        assert_eq!(workspace.active_panel, 1);
+        assert_eq!(workspace.panels[0].active_tab, 1);
+        assert_eq!(workspace.panels[0].columns, vec![200.0, 60.0, 120.0, 90.0]);
+        assert_eq!(workspace.panels[0].view_mode, "tiles");
+        // 문자열 탭은 로컬 탭으로 받아들여진다
+        let tabs: Vec<&str> = workspace.panels[0]
+            .tabs
+            .iter()
+            .map(|tab| tab.path.as_str())
+            .collect();
+        assert_eq!(tabs, vec![r"C:\Users", r"D:\"]);
+        assert!(
+            workspace.panels[0]
+                .tabs
+                .iter()
+                .all(|tab| tab.site.is_none())
+        );
+        // 원격 쪽은 전부 기본값이다 (plan Edge Case)
+        assert!(session.sites.is_empty());
+        assert!(session.queue.is_empty());
+        assert_eq!(session.dock, DockSession::default());
+    }
+
+    #[test]
+    fn v1과_미래_버전은_종전대로_폴백이다() {
+        // Acceptance ⑥ — 승격 경로는 v2 하나뿐이다
+        let v1 = v2_text().replace(r#""version": 2"#, r#""version": 1"#);
+        assert!(parse_session(&v1).is_none());
+        let v4 = v2_text().replace(r#""version": 2"#, r#""version": 4"#);
+        assert!(parse_session(&v4).is_none());
+        assert!(parse_session("{망가진").is_none());
+    }
+
+    #[test]
+    fn 원격_탭과_큐가_왕복해도_같다() {
+        // Acceptance ② — v3 왕복이 동일하다
+        let mut session = sample();
+        session.workspaces[0].panels[0].tabs = vec![
+            TabSession::local(r"C:\Users".to_owned()),
+            TabSession::remote(RemoteTabSession {
+                site: 7,
+                path: "/var/www".to_owned(),
+            }),
+        ];
+        session.workspaces[0].panels[0].active_tab = 1;
+        session.queue = vec![QueueSession {
+            site: 7,
+            direction: "upload".to_owned(),
+            local: r"C:\work\app.js".to_owned(),
+            remote: "/var/www/app.js".to_owned(),
+            size: 1234,
+            error: String::new(),
+        }];
+        session.dock = DockSession {
+            panel: "log".to_owned(),
+            filter: "error".to_owned(),
+        };
+
+        let text = serde_json::to_string(&session).expect("직렬화");
+        let back = parse_session(&text).expect("왕복");
+        assert_eq!(back, session);
+        let remote_tab = back.workspaces[0].panels[0].tabs[1]
+            .as_remote()
+            .expect("원격 탭");
+        assert_eq!(remote_tab.site, 7);
+        assert_eq!(remote_tab.path, "/var/www");
     }
 }

@@ -6,9 +6,12 @@
 //! `settings.json`이 정본이며 저장 경로가 둘이 되면 서로 어긋난다.
 use crate::app::layout::TreeShape;
 use crate::app::settings::{
-    LayoutNode, PanelSession, SESSION_VERSION, Session, SidebarSession, WindowState,
-    WorkspaceSession,
+    DockSession, LayoutNode, PanelSession, QUEUE_SESSION_LIMIT, QueueSession, SESSION_VERSION,
+    Session, SidebarSession, SiteSession, TabSession, WindowState, WorkspaceSession,
 };
+use crate::remote::connection::TransferDirection;
+use crate::remote::queue::{TransferQueue, TransferState};
+use crate::remote::types::{RemotePath, SiteId};
 use std::path::PathBuf;
 
 /// 저장·복원 사이를 오가는 워크스페이스 한 벌.
@@ -23,15 +26,46 @@ pub struct WorkspaceState {
     pub active_panel: usize,
 }
 
+/// 탭 하나가 가리키는 곳 (FR-44).
+///
+/// 원격 탭은 **사이트와 경로만** 담는다 — 연결은 담지 않는다. 되살아난 원격 탭은
+/// `연결 없음`으로 서 있고, 연결은 사용자가 연다(FR-44 — 시작하자마자 서버로 나가지 않는다)
+#[derive(Debug, Clone, PartialEq)]
+pub enum TabSpec {
+    Local(PathBuf),
+    Remote { site: SiteId, path: RemotePath },
+}
+
+impl TabSpec {
+    /// 사이드바 부제·시작 폴더에 쓸 로컬 경로 — 원격 탭이면 없다
+    pub fn local_path(&self) -> Option<&PathBuf> {
+        match self {
+            TabSpec::Local(path) => Some(path),
+            TabSpec::Remote { .. } => None,
+        }
+    }
+}
+
 /// 패널 하나의 탭 구성과 목록 표시 상태
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PanelTabs {
-    pub tabs: Vec<PathBuf>,
+    pub tabs: Vec<TabSpec>,
     pub active_tab: usize,
     /// 자세히 보기 열 폭 — 비면 기본 폭으로 시작한다
     pub columns: Vec<f32>,
     /// 보기 모드 키 — 비면 기본값(자세히)으로 시작한다
     pub view_mode: String,
+}
+
+/// 저장할 때 함께 담는 원격 쪽 상태 (FR-44).
+///
+/// 이름이 `RemoteSession`이 아닌 이유: `remote::types::RemoteSession`은 프로토콜 세션
+/// 트레이트라 같은 이름이면 읽는 사람이 둘을 헷갈린다
+pub struct RemoteSnapshot<'a> {
+    pub sites: &'a SiteSession,
+    pub queue: &'a TransferQueue,
+    /// 열려 있던 도크 패널 키(`queue`/`log`)와 거르개 — 닫혀 있었으면 빈 문자열
+    pub dock: DockSession,
 }
 
 /// 현재 상태를 저장 스키마로 옮긴다
@@ -40,12 +74,16 @@ pub fn to_session(
     sidebar: SidebarSession,
     active_workspace: usize,
     workspaces: &[WorkspaceState],
+    remote: RemoteSnapshot<'_>,
 ) -> Session {
     Session {
         version: SESSION_VERSION,
         window,
         sidebar,
         active_workspace,
+        sites: remote.sites.clone(),
+        queue: to_queue_session(remote.queue),
+        dock: remote.dock,
         workspaces: workspaces
             .iter()
             .map(|workspace| WorkspaceSession {
@@ -55,11 +93,7 @@ pub fn to_session(
                     .panels
                     .iter()
                     .map(|panel| PanelSession {
-                        tabs: panel
-                            .tabs
-                            .iter()
-                            .map(|path| path.to_string_lossy().into_owned())
-                            .collect(),
+                        tabs: panel.tabs.iter().map(to_tab_session).collect(),
                         active_tab: panel.active_tab,
                         columns: panel.columns.clone(),
                         view_mode: panel.view_mode.clone(),
@@ -86,7 +120,11 @@ pub fn restore(session: &Session) -> Vec<WorkspaceState> {
                 .panels
                 .iter()
                 .map(|panel| PanelTabs {
-                    tabs: panel.tabs.iter().map(PathBuf::from).collect(),
+                    tabs: panel
+                        .tabs
+                        .iter()
+                        .map(|tab| from_tab_session(tab, &session.sites))
+                        .collect(),
                     active_tab: panel.active_tab,
                     columns: panel.columns.clone(),
                     view_mode: panel.view_mode.clone(),
@@ -96,6 +134,112 @@ pub fn restore(session: &Session) -> Vec<WorkspaceState> {
         })
         .collect()
 }
+
+/// 탭 하나를 저장 형태로
+fn to_tab_session(tab: &TabSpec) -> TabSession {
+    match tab {
+        TabSpec::Local(path) => TabSession::local(path.to_string_lossy().into_owned()),
+        TabSpec::Remote { site, path } => {
+            TabSession::remote(crate::app::settings::RemoteTabSession {
+                site: site.0,
+                path: path.as_str().to_owned(),
+            })
+        }
+    }
+}
+
+/// 저장 형태에서 탭 하나를 되살린다.
+///
+/// **가리키던 사이트가 사라졌으면 로컬 홈으로 되돌린다**(plan Edge Case) — 없는 사이트를
+/// 가리키는 원격 탭은 열 수도 지울 수도 없는 자리가 된다
+fn from_tab_session(tab: &TabSession, sites: &SiteSession) -> TabSpec {
+    let Some(remote) = tab.as_remote() else {
+        return TabSpec::Local(PathBuf::from(&tab.path));
+    };
+    let site = SiteId(remote.site);
+    if sites.get(site).is_none() {
+        return TabSpec::Local(home_dir());
+    }
+    TabSpec::Remote {
+        site,
+        path: RemotePath::new(&remote.path),
+    }
+}
+
+/// 사이트를 잃은 원격 탭이 돌아갈 자리 — 사용자 폴더, 없으면 `C:\`
+fn home_dir() -> PathBuf {
+    std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\"))
+}
+
+/// 큐에서 **아직 끝나지 않은 것**만 저장 형태로 옮긴다 (FR-44).
+///
+/// 끝난 것은 되살릴 이유가 없고, 옮기는 중이던 것은 대기로 되돌린다(연결이 끊긴 채
+/// 재시작했으므로 이어받기는 다음에 다시 시작할 때 정해진다).
+/// 상한(`QUEUE_SESSION_LIMIT`)을 넘으면 앞의 것만 담는다 — 세션 파일이 무한정 커지면
+/// 창이 뜨는 시간이 그만큼 늘어난다
+fn to_queue_session(queue: &TransferQueue) -> Vec<QueueSession> {
+    queue
+        .items()
+        .iter()
+        .filter(|item| !matches!(item.state, TransferState::Done))
+        .take(QUEUE_SESSION_LIMIT)
+        .map(|item| QueueSession {
+            site: item.site.0,
+            direction: match item.direction {
+                TransferDirection::Upload => DIRECTION_UPLOAD.to_owned(),
+                TransferDirection::Download => DIRECTION_DOWNLOAD.to_owned(),
+            },
+            local: item.local.to_string_lossy().into_owned(),
+            remote: item.remote.as_str().to_owned(),
+            size: item.size,
+            error: match &item.state {
+                TransferState::Error { message } => message.clone(),
+                _ => String::new(),
+            },
+        })
+        .collect()
+}
+
+/// 저장된 큐를 되살린다 — **스스로 시작하지 않는다**(FR-44).
+///
+/// 사이트가 사라진 항목은 버린다(plan Edge Case) — 어디로 보낼지 알 수 없다
+pub fn restore_queue(session: &Session) -> TransferQueue {
+    let mut queue = TransferQueue::new();
+    for saved in &session.queue {
+        let site = SiteId(saved.site);
+        if session.sites.get(site).is_none() {
+            continue;
+        }
+        let direction = if saved.direction == DIRECTION_UPLOAD {
+            TransferDirection::Upload
+        } else {
+            TransferDirection::Download
+        };
+        let id = queue.enqueue(
+            site,
+            direction,
+            PathBuf::from(&saved.local),
+            RemotePath::new(&saved.remote),
+            saved.size,
+        );
+        // 실패로 저장된 것은 실패인 채로 선다 — 다시 시도는 사용자가 고른다
+        if !saved.error.is_empty() {
+            queue.update(
+                id,
+                TransferState::Error {
+                    message: saved.error.clone(),
+                },
+            );
+        }
+    }
+    queue
+}
+
+/// 저장 파일에 적히는 방향 키
+const DIRECTION_UPLOAD: &str = "upload";
+const DIRECTION_DOWNLOAD: &str = "download";
 
 /// 저장된 창 위치를 화면 안으로 끌어온다.
 ///
@@ -119,6 +263,23 @@ pub fn clamp_window(window: WindowState, monitor_w: i32, monitor_h: i32) -> Wind
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 원격 쪽이 비어 있는 저장 — 로컬만 다루는 시험이 쓴다
+    fn empty_remote() -> RemoteSnapshot<'static> {
+        // 빈 사이트 목록·빈 큐는 시험이 사는 동안만 있으면 되므로 흘려 둔다
+        static EMPTY_SITES: std::sync::OnceLock<SiteSession> = std::sync::OnceLock::new();
+        static EMPTY_QUEUE: std::sync::OnceLock<TransferQueue> = std::sync::OnceLock::new();
+        RemoteSnapshot {
+            sites: EMPTY_SITES.get_or_init(SiteSession::default),
+            queue: EMPTY_QUEUE.get_or_init(TransferQueue::new),
+            dock: DockSession::default(),
+        }
+    }
+
+    /// 시험이 로컬 탭을 짧게 적기 위한 길
+    fn local(path: &str) -> TabSpec {
+        TabSpec::Local(PathBuf::from(path))
+    }
     use crate::app::layout::SplitDir;
     use crate::app::settings::parse_session;
 
@@ -134,13 +295,13 @@ mod tests {
                 },
                 panels: vec![
                     PanelTabs {
-                        tabs: vec![PathBuf::from(r"C:\Users"), PathBuf::from(r"D:\")],
+                        tabs: vec![local(r"C:\Users"), local(r"D:\")],
                         active_tab: 1,
                         columns: vec![200.0, 60.0, 120.0, 90.0],
                         view_mode: "tiles".into(),
                     },
                     PanelTabs {
-                        tabs: vec![PathBuf::from(r"C:\Windows")],
+                        tabs: vec![local(r"C:\Windows")],
                         active_tab: 0,
                         columns: Vec::new(),
                         view_mode: String::new(),
@@ -152,7 +313,7 @@ mod tests {
                 name: "자료 정리".into(),
                 shape: TreeShape::Leaf,
                 panels: vec![PanelTabs {
-                    tabs: vec![PathBuf::from(r"D:\작업")],
+                    tabs: vec![local(r"D:\작업")],
                     active_tab: 0,
                     columns: Vec::new(),
                     view_mode: "large_icons".into(),
@@ -175,14 +336,26 @@ mod tests {
     #[test]
     fn 워크스페이스는_왕복해도_같다() {
         let states = sample();
-        let session = to_session(window(), SidebarSession::default(), 1, &states);
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            1,
+            &states,
+            empty_remote(),
+        );
         assert_eq!(restore(&session), states);
     }
 
     #[test]
     fn 저장한_세션은_무결성_검사를_통과한다() {
         // 앱이 만든 세션이 자기 파서에 거부되면 재시작마다 조용히 초기화된다
-        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
         let json = serde_json::to_string(&session).unwrap();
         assert_eq!(parse_session(&json), Some(session));
     }
@@ -193,7 +366,13 @@ mod tests {
         // `parse_session`이 통째로 폴백해 **기존 사용자의 워크스페이스·분할·탭이 전부
         // 초기화된다** (plan D5). 그래서 버전을 2로 둔 채 `#[serde(default)]`로 더했고,
         // 이 테스트가 그 계약을 지킨다 — 앞으로 필드를 더할 때도 여기에 함께 추가한다
-        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
         let json = serde_json::to_string(&session).unwrap();
         let without_columns = json
             .replace(",\"columns\":[200.0,60.0,120.0,90.0]", "")
@@ -227,7 +406,13 @@ mod tests {
     fn 열_폭은_패널마다_따로_왕복한다() {
         // 한 패널에서 조절한 폭이 다른 패널에 번지면 "패널마다 독립"이 깨진다
         let states = sample();
-        let session = to_session(window(), SidebarSession::default(), 0, &states);
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &states,
+            empty_remote(),
+        );
         let restored = restore(&session);
         assert_eq!(
             restored[0].panels[0].columns,
@@ -239,7 +424,13 @@ mod tests {
     #[test]
     fn 보기_모드는_패널마다_따로_왕복한다() {
         // 한 패널에서 고른 모드가 다른 패널에 번지면 "패널마다 독립"(FR-23)이 깨진다
-        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
         let restored = restore(&session);
         assert_eq!(restored[0].panels[0].view_mode, "tiles");
         assert!(restored[0].panels[1].view_mode.is_empty());
@@ -251,7 +442,13 @@ mod tests {
         // 세션에 담기는 것은 문자열이라, 그것이 모드로 되돌아오는지까지 확인해야
         // "재시작하면 모드가 유지된다"가 성립한다
         use crate::ui::view_mode::ViewMode;
-        let session = to_session(window(), SidebarSession::default(), 0, &sample());
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
         let restored = restore(&session);
         assert_eq!(
             ViewMode::from_key(&restored[0].panels[0].view_mode),
@@ -298,5 +495,188 @@ mod tests {
     fn 모니터_크기를_모르면_저장값을_그대로_쓴다() {
         let w = window();
         assert_eq!(clamp_window(w.clone(), 0, 0), w);
+    }
+
+    /// 사이트 하나를 등록한 저장본 — 원격 탭·큐가 가리킬 곳이 있어야 한다
+    fn session_with_site() -> (Session, SiteId) {
+        let mut sites = SiteSession::default();
+        let site = sites.add("배포 서버");
+        let mut session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &[WorkspaceState {
+                name: "작업".into(),
+                shape: TreeShape::Leaf,
+                panels: vec![PanelTabs {
+                    tabs: vec![
+                        local(r"C:\Users"),
+                        TabSpec::Remote {
+                            site,
+                            path: RemotePath::new("/var/www"),
+                        },
+                    ],
+                    active_tab: 1,
+                    ..Default::default()
+                }],
+                active_panel: 0,
+            }],
+            RemoteSnapshot {
+                sites: &sites,
+                queue: &TransferQueue::new(),
+                dock: DockSession::default(),
+            },
+        );
+        session.sites = sites;
+        (session, site)
+    }
+
+    #[test]
+    fn 원격_탭은_사이트와_경로로_왕복한다() {
+        // Acceptance ②③ — 연결은 담기지 않는다(되살아난 탭은 `연결 없음`으로 선다)
+        let (session, site) = session_with_site();
+        let restored = restore(&session);
+        assert_eq!(
+            restored[0].panels[0].tabs[1],
+            TabSpec::Remote {
+                site,
+                path: RemotePath::new("/var/www")
+            }
+        );
+        // 저장 형태에도 연결 흔적이 없다
+        let saved = &session.workspaces[0].panels[0].tabs[1];
+        assert_eq!(saved.site, Some(site.0));
+        assert_eq!(saved.kind, crate::app::settings::TabSession::REMOTE);
+    }
+
+    #[test]
+    fn 사라진_사이트를_가리키는_원격_탭은_로컬로_되돌아간다() {
+        // plan Edge Case — 없는 사이트를 가리키는 탭은 열 수도 지울 수도 없는 자리가 된다
+        let (mut session, _) = session_with_site();
+        session.sites = SiteSession::default();
+        let restored = restore(&session);
+        assert!(
+            matches!(restored[0].panels[0].tabs[1], TabSpec::Local(_)),
+            "사이트가 사라졌는데 원격 탭으로 남았다"
+        );
+    }
+
+    #[test]
+    fn 큐는_끝나지_않은_것만_저장되고_스스로_시작하지_않는다() {
+        // Acceptance ④ — 대기·실패만 담고, 되살아난 항목은 대기 상태로 선다
+        let (mut session, site) = session_with_site();
+        let mut queue = TransferQueue::new();
+        let done = queue.enqueue(
+            site,
+            TransferDirection::Upload,
+            PathBuf::from(r"C:\끝난.txt"),
+            RemotePath::new("/끝난.txt"),
+            10,
+        );
+        queue.update(done, TransferState::Done);
+        let failed = queue.enqueue(
+            site,
+            TransferDirection::Download,
+            PathBuf::from(r"C:\실패.bin"),
+            RemotePath::new("/실패.bin"),
+            20,
+        );
+        queue.update(
+            failed,
+            TransferState::Error {
+                message: "550 권한 거부".to_owned(),
+            },
+        );
+        queue.enqueue(
+            site,
+            TransferDirection::Upload,
+            PathBuf::from(r"C:\대기.zip"),
+            RemotePath::new("/대기.zip"),
+            30,
+        );
+
+        session.queue = to_queue_session(&queue);
+        let saved: Vec<&str> = session.queue.iter().map(|q| q.remote.as_str()).collect();
+        assert_eq!(saved, vec!["/실패.bin", "/대기.zip"], "끝난 것이 담겼다");
+
+        let restored = restore_queue(&session);
+        assert_eq!(restored.items().len(), 2);
+        let states: Vec<bool> = restored
+            .items()
+            .iter()
+            .map(|item| item.state.is_active())
+            .collect();
+        assert_eq!(states, vec![false, false], "되살아나자마자 전송이 시작됐다");
+        assert!(matches!(
+            restored.items()[0].state,
+            TransferState::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn 사이트가_사라진_큐_항목은_버린다() {
+        // plan Edge Case — 어디로 보낼지 알 수 없는 항목이다
+        let (mut session, site) = session_with_site();
+        let mut queue = TransferQueue::new();
+        queue.enqueue(
+            site,
+            TransferDirection::Upload,
+            PathBuf::from(r"C:\a.txt"),
+            RemotePath::new("/a.txt"),
+            1,
+        );
+        session.queue = to_queue_session(&queue);
+        session.sites = SiteSession::default();
+        assert!(restore_queue(&session).items().is_empty());
+    }
+
+    #[test]
+    fn 큐는_상한까지만_저장한다() {
+        // plan Edge Case — 1만 건이어도 앞의 1000건까지만 담는다
+        let (_, site) = session_with_site();
+        let mut queue = TransferQueue::new();
+        for index in 0..QUEUE_SESSION_LIMIT + 500 {
+            queue.enqueue(
+                site,
+                TransferDirection::Upload,
+                PathBuf::from(format!(r"C:\{index}.bin")),
+                RemotePath::new(&format!("/{index}.bin")),
+                1,
+            );
+        }
+        assert_eq!(to_queue_session(&queue).len(), QUEUE_SESSION_LIMIT);
+    }
+
+    #[test]
+    fn 저장본에_평문_비밀번호가_없다() {
+        // Acceptance ⑤ — 비밀번호는 DPAPI로 봉인된 바이트로만 담긴다 (FR-28)
+        let (mut session, site) = session_with_site();
+        let sealed = session.sites.set_password(site, "비밀!1234");
+        let text = serde_json::to_string(&session).expect("직렬화");
+        assert!(!text.contains("비밀!1234"), "평문이 저장본에 남았다");
+        if sealed {
+            // 봉인이 되는 환경에서는 봉인된 바이트가 실려 있어야 한다
+            assert!(
+                text.contains("password_sealed"),
+                "봉인된 비밀번호 자리가 없다"
+            );
+        }
+    }
+
+    #[test]
+    fn 도크_상태가_왕복한다() {
+        let saved = crate::ui::dock::DockState {
+            panel: Some(crate::ui::dock::DockPanel::Log),
+            filter: crate::remote::queue::QueueFilter::Error,
+            site: Some(SiteId(3)),
+        }
+        .to_session();
+        assert_eq!(saved.panel, "log");
+        assert_eq!(saved.filter, "error");
+        let back = crate::ui::dock::DockState::from_session(&saved);
+        assert_eq!(back.panel, Some(crate::ui::dock::DockPanel::Log));
+        assert_eq!(back.filter, crate::remote::queue::QueueFilter::Error);
+        // 사이트 고르기는 담지 않는다 — 연결 없이 시작하므로 가리킬 곳이 없다
+        assert_eq!(back.site, None);
     }
 }

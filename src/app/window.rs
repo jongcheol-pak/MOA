@@ -555,7 +555,8 @@ fn pending_subtitle(ws: &WorkspaceSession) -> Option<PathBuf> {
     ws.panels
         .get(ws.active_panel)
         .and_then(|p| p.tabs.get(p.active_tab))
-        .map(PathBuf::from)
+        // 레거시 Win32 판은 로컬 탭만 다룬다 — 원격 탭은 egui 판의 것이다 (D26·전제 17)
+        .map(|tab| PathBuf::from(&tab.path))
 }
 
 /// 활성 워크스페이스의 부제를 활성 패널·활성 탭 경로로 갱신한다 (D6).
@@ -854,7 +855,8 @@ fn is_active_panel(hwnd: HWND, source: HWND) -> bool {
 fn restore_panels(host: &LayoutHost, workspace: &WorkspaceSession) {
     for (panel, ps) in host.panel_hwnds().iter().zip(&workspace.panels) {
         let data = PanelSessionData {
-            tabs: ps.tabs.iter().map(PathBuf::from).collect(),
+            // 원격 탭은 이 판이 다루지 않는다 — 경로만 취해 로컬 탭으로 되살린다 (D26)
+            tabs: ps.tabs.iter().map(|tab| PathBuf::from(&tab.path)).collect(),
             active: ps.active_tab,
         };
         send_ptr(
@@ -918,7 +920,9 @@ fn collect_workspace(host: &LayoutHost, name: &str) -> WorkspaceSession {
             tabs: data
                 .tabs
                 .iter()
-                .map(|p| p.to_string_lossy().into_owned())
+                .map(|path| {
+                    crate::app::settings::TabSession::local(path.to_string_lossy().into_owned())
+                })
                 .collect(),
             active_tab: data.active,
             // 열 폭은 egui 판 전용이다 — 이 Win32 판은 실행 파일에서 쓰이지 않으므로
@@ -973,6 +977,10 @@ fn save_current_session(hwnd: HWND) {
     }
     let rc = wp.rcNormalPosition;
     settings::save_session(&Session {
+        // 원격 쪽은 egui 판의 것이다 — 이 판은 기본값으로 둔다 (D26·전제 17)
+        sites: Default::default(),
+        queue: Vec::new(),
+        dock: Default::default(),
         version: settings::SESSION_VERSION,
         window: WindowState {
             x: rc.left,

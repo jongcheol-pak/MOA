@@ -22,6 +22,7 @@ use crate::ui::list_common::{DropOutcome, DropTarget, FileDrag};
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::remote_menu::{self, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{self, FailedAction, RemoteView};
+use crate::ui::session::TabSpec;
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
@@ -323,12 +324,19 @@ impl PanelState {
     /// 히스토리는 복원하지 않는다 — 세션에는 경로만 저장한다(현행과 같은 규칙).
     /// `columns`가 비면 기본 폭으로 시작한다
     pub fn from_tabs(
-        tabs: Vec<PathBuf>,
+        tabs: Vec<TabSpec>,
         active_tab: usize,
         columns: &[f32],
         view_mode: &str,
     ) -> Option<PanelState> {
-        let states: Vec<TabState> = tabs.into_iter().map(TabState::new).collect();
+        // 원격 탭은 **연결 없이** 되살아난다 — 연결은 사용자가 연다 (FR-44)
+        let states: Vec<TabState> = tabs
+            .into_iter()
+            .map(|tab| match tab {
+                TabSpec::Local(path) => TabState::new(path),
+                TabSpec::Remote { site, path } => TabState::remote(site, path),
+            })
+            .collect();
         let model = TabsModel::from_tabs(states, active_tab)?;
         let start = model.active().committed().to_path_buf();
         let mut panel = PanelState::new(start);
@@ -347,9 +355,19 @@ impl PanelState {
         self.tabs.active().committed()
     }
 
-    /// 세션 저장용 — 탭들의 폴더 경로(탭 순서)와 활성 탭
-    pub fn tab_paths(&self) -> Vec<PathBuf> {
-        self.tabs.paths()
+    /// 세션 저장용 — 탭들이 가리키는 곳(탭 순서). 원격 탭은 사이트와 원격 경로로 담긴다
+    pub fn tab_specs(&self) -> Vec<TabSpec> {
+        self.tabs
+            .sources()
+            .iter()
+            .map(|source| match source {
+                TabSource::Local(path) => TabSpec::Local(path.clone()),
+                TabSource::Remote { site, path, .. } => TabSpec::Remote {
+                    site: *site,
+                    path: path.clone(),
+                },
+            })
+            .collect()
     }
 
     pub fn active_tab(&self) -> usize {

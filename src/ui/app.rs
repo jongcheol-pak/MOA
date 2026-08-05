@@ -33,7 +33,7 @@ use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::queue_panel::{self, QueueAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
-use crate::ui::session::{self, PanelTabs, WorkspaceState};
+use crate::ui::session::{self, PanelTabs, RemoteSnapshot, TabSpec, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
@@ -268,14 +268,14 @@ impl WorkspaceView {
             .iter()
             .map(|id| match self.panels.get(id) {
                 Some(panel) => PanelTabs {
-                    tabs: panel.tab_paths(),
+                    tabs: panel.tab_specs(),
                     active_tab: panel.active_tab(),
                     columns: panel.columns(),
                     view_mode: panel.view_mode().as_key().to_owned(),
                 },
                 // 트리에는 있는데 상태가 없는 리프 — 분할 직후가 아니면 생기지 않는다
                 None => PanelTabs {
-                    tabs: vec![start_dir()],
+                    tabs: vec![TabSpec::Local(start_dir())],
                     active_tab: 0,
                     ..Default::default()
                 },
@@ -455,6 +455,11 @@ impl ExplorerApp {
                 self.workspaces.set_subtitle(index, &dir);
             }
         }
+        // 사이트·큐·도크를 되살린다 (FR-44) — **연결은 열지 않고 전송도 시작하지 않는다**.
+        // 원격 탭은 `연결 없음`으로 서 있고, 큐는 대기·실패인 채로 기다린다
+        self.sites = session.sites.clone();
+        self.queue = session::restore_queue(&session);
+        self.dock = DockState::from_session(&session.dock);
         self.sidebar_width = session.sidebar.width as f32;
         self.sidebar_collapsed = session.sidebar.collapsed;
         self.window = session.window.clone();
@@ -466,7 +471,8 @@ impl ExplorerApp {
         let id = self.workspaces.items().get(index)?.id;
         let state = self.restored.get(&id)?;
         let panel = state.panels.get(state.active_panel)?;
-        panel.tabs.get(panel.active_tab).cloned()
+        // 원격 탭이 활성이면 부제로 쓸 로컬 경로가 없다 — 그때는 부제를 비운다
+        panel.tabs.get(panel.active_tab)?.local_path().cloned()
     }
 
     /// 지금 상태를 세션으로 모은다 (종료 시 저장)
@@ -488,7 +494,7 @@ impl ExplorerApp {
                         name: item.name.clone(),
                         shape: TreeShape::Leaf,
                         panels: vec![PanelTabs {
-                            tabs: vec![start_dir()],
+                            tabs: vec![TabSpec::Local(start_dir())],
                             active_tab: 0,
                             ..Default::default()
                         }],
@@ -505,6 +511,11 @@ impl ExplorerApp {
             },
             self.workspaces.active_index(),
             &workspaces,
+            RemoteSnapshot {
+                sites: &self.sites,
+                queue: &self.queue,
+                dock: self.dock.to_session(),
+            },
         )
     }
 
@@ -2191,10 +2202,13 @@ mod tests {
         let state = view.to_state("워크스페이스 1".into());
         assert_eq!(
             state.panels[0].tabs,
-            vec![PathBuf::from(r"D:\")],
+            vec![TabSpec::Local(PathBuf::from(r"D:\"))],
             "walk 순서상 앞에 온 새 패널이 첫 번째로 저장된다"
         );
-        assert_eq!(state.panels[1].tabs, vec![PathBuf::from(r"C:\")]);
+        assert_eq!(
+            state.panels[1].tabs,
+            vec![TabSpec::Local(PathBuf::from(r"C:\"))]
+        );
 
         let restored = WorkspaceView::from_state(&state);
         let ids = restored.layout.panel_ids();

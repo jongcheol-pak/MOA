@@ -60,6 +60,13 @@ pub struct DockState {
     pub site: Option<SiteId>,
 }
 
+/// 세션 파일에 적히는 키 — 열거형 이름이 바뀌어도 저장 형식은 그대로여야 한다
+const PANEL_QUEUE: &str = "queue";
+const PANEL_LOG: &str = "log";
+const FILTER_ALL: &str = "all";
+const FILTER_DONE: &str = "done";
+const FILTER_ERROR: &str = "error";
+
 impl Default for DockState {
     fn default() -> DockState {
         DockState {
@@ -71,6 +78,41 @@ impl Default for DockState {
 }
 
 impl DockState {
+    /// 세션에 담을 형태로 (FR-44) — **사이트 고르기는 담지 않는다**.
+    /// 연결이 없는 채로 시작하므로 되살려도 가리킬 곳이 없다
+    pub fn to_session(&self) -> crate::app::settings::DockSession {
+        crate::app::settings::DockSession {
+            panel: match self.panel {
+                Some(DockPanel::Queue) => PANEL_QUEUE.to_owned(),
+                Some(DockPanel::Log) => PANEL_LOG.to_owned(),
+                None => String::new(),
+            },
+            filter: match self.filter {
+                QueueFilter::All => FILTER_ALL,
+                QueueFilter::Done => FILTER_DONE,
+                QueueFilter::Error => FILTER_ERROR,
+            }
+            .to_owned(),
+        }
+    }
+
+    /// 저장된 것에서 되살린다 — 모르는 키는 기본값(닫힘·전체)이다
+    pub fn from_session(saved: &crate::app::settings::DockSession) -> DockState {
+        DockState {
+            panel: match saved.panel.as_str() {
+                PANEL_QUEUE => Some(DockPanel::Queue),
+                PANEL_LOG => Some(DockPanel::Log),
+                _ => None,
+            },
+            filter: match saved.filter.as_str() {
+                FILTER_DONE => QueueFilter::Done,
+                FILTER_ERROR => QueueFilter::Error,
+                _ => QueueFilter::All,
+            },
+            site: None,
+        }
+    }
+
     pub fn is_open(&self) -> bool {
         self.panel.is_some()
     }
