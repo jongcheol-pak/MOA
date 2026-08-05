@@ -552,10 +552,15 @@ fn restore_workspaces(session: Option<&Session>) -> (WorkspaceList, Vec<EntrySta
 
 /// 미방문 워크스페이스의 부제 경로 — 저장된 활성 패널의 활성 탭 (D18)
 fn pending_subtitle(ws: &WorkspaceSession) -> Option<PathBuf> {
-    ws.panels
-        .get(ws.active_panel)
-        .and_then(|p| p.tabs.get(p.active_tab))
-        // 레거시 Win32 판은 로컬 탭만 다룬다 — 원격 탭은 egui 판의 것이다 (D26·전제 17)
+    let panel = ws.panels.get(ws.active_panel)?;
+    // 이 판은 **로컬 탭만** 다룬다 (D26·전제 17). 원격 탭의 경로(`/var/www`)를 그대로
+    // 쓰면 있지도 않은 로컬 폴더를 가리키게 되므로, 활성 탭이 원격이면 로컬 탭 중
+    // 첫 번째로 대신하고 그것도 없으면 부제를 비운다
+    panel
+        .tabs
+        .get(panel.active_tab)
+        .filter(|tab| tab.as_remote().is_none())
+        .or_else(|| panel.tabs.iter().find(|tab| tab.as_remote().is_none()))
         .map(|tab| PathBuf::from(&tab.path))
 }
 
@@ -851,12 +856,33 @@ fn is_active_panel(hwnd: HWND, source: HWND) -> bool {
         .is_some_and(|active| active == source)
 }
 
+/// 저장된 패널에서 **로컬 탭만** 고른다 (D26 — 이 판은 원격 탭을 다루지 않는다).
+/// 남는 것이 없으면 사용자 폴더 하나로 채운다 — 탭이 0개인 패널은 이 판이 다루지 못한다
+fn local_tabs(panel: &PanelSession) -> Vec<PathBuf> {
+    let tabs: Vec<PathBuf> = panel
+        .tabs
+        .iter()
+        .filter(|tab| tab.as_remote().is_none())
+        .map(|tab| PathBuf::from(&tab.path))
+        .collect();
+    if tabs.is_empty() {
+        return vec![
+            std::env::var_os("USERPROFILE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\")),
+        ];
+    }
+    tabs
+}
+
 /// 워크스페이스의 패널별 탭을 각 패널에 복원 (walk 순서 1:1 — layout_host 계약)
 fn restore_panels(host: &LayoutHost, workspace: &WorkspaceSession) {
     for (panel, ps) in host.panel_hwnds().iter().zip(&workspace.panels) {
         let data = PanelSessionData {
-            // 원격 탭은 이 판이 다루지 않는다 — 경로만 취해 로컬 탭으로 되살린다 (D26)
-            tabs: ps.tabs.iter().map(|tab| PathBuf::from(&tab.path)).collect(),
+            // 원격 탭은 **건너뛴다** (D26) — 이 판에는 원격 탭이라는 것이 없고,
+            // 원격 경로를 로컬 경로로 되살리면 없는 폴더를 열려다 실패한다.
+            // 전부 원격이라 남는 것이 없으면 아래에서 홈으로 채운다
+            tabs: local_tabs(ps),
             active: ps.active_tab,
         };
         send_ptr(

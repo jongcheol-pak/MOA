@@ -348,6 +348,16 @@ pub fn parse_session(text: &str) -> Option<Session> {
         {
             return None;
         }
+        // 알 수 없는 탭 종류는 파일 오염으로 본다 — 조용히 로컬로 취급하면 원격 경로가
+        // 로컬 경로인 척 되살아난다(quality 리뷰 m1). 종류가 늘어나면 버전을 올린다
+        if ws.panels.iter().any(|p| {
+            p.tabs.iter().any(|tab| {
+                !matches!(tab.kind.as_str(), TabSession::LOCAL | TabSession::REMOTE)
+                    || (tab.kind == TabSession::REMOTE && tab.site.is_none())
+            })
+        }) {
+            return None;
+        }
         if !layout_ratios_valid(&ws.layout) {
             return None;
         }
@@ -661,5 +671,31 @@ mod tests {
             .expect("원격 탭");
         assert_eq!(remote_tab.site, 7);
         assert_eq!(remote_tab.path, "/var/www");
+    }
+
+    #[test]
+    fn 알_수_없는_탭_종류는_폴백이다() {
+        // quality 리뷰 m1 — 조용히 로컬로 취급하면 원격 경로가 로컬 경로인 척 되살아난다
+        let mut session = sample();
+        session.workspaces[0].panels[0].tabs = vec![TabSession {
+            kind: "무엇".to_owned(),
+            path: "/var/www".to_owned(),
+            site: Some(1),
+        }];
+        session.workspaces[0].panels[0].active_tab = 0;
+        let text = serde_json::to_string(&session).expect("직렬화");
+        assert!(parse_session(&text).is_none(), "모르는 종류를 받아들였다");
+
+        // 사이트를 잃은 원격 탭도 파일 오염이다 — 어느 사이트인지 알 수 없다
+        session.workspaces[0].panels[0].tabs = vec![TabSession {
+            kind: TabSession::REMOTE.to_owned(),
+            path: "/var/www".to_owned(),
+            site: None,
+        }];
+        let text = serde_json::to_string(&session).expect("직렬화");
+        assert!(
+            parse_session(&text).is_none(),
+            "사이트 없는 원격 탭을 받아들였다"
+        );
     }
 }
