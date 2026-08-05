@@ -12,16 +12,16 @@ use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
 use crate::panel::tabs::TabPhase;
 use crate::remote::connection::{
-    ConnCommand, ConnEvent, ConnPhase, ConnectionId, TransferDirection,
+    ConnCommand, ConnEvent, ConnPhase, ConnectionId, OpKind, TransferDirection,
 };
 use crate::remote::ftp::FtpSession;
-use crate::remote::log::LogBuffer;
+use crate::remote::log::{LogBuffer, LogKind};
 use crate::remote::manager::ConnectionManager;
 use crate::remote::queue::TransferQueue;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
 use crate::remote::transfer::{self, TransferRunner};
-use crate::remote::types::{LogonType, RemotePath, RemoteSession, SiteId};
+use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::icon_tex::IconTextures;
@@ -30,6 +30,7 @@ use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::queue_panel::{self, QueueAction};
+use crate::ui::remote_menu::{self, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
@@ -346,6 +347,10 @@ pub struct ExplorerApp {
     pending_trees: HashMap<u64, (SiteId, RemotePath, PathBuf)>,
     /// 훑기 요청 번호 — 목록 조회의 세대 번호와 섞이지 않게 따로 센다
     next_tree: u64,
+    /// 원격 파일 작업 대화의 상태 (FR-39)
+    remote_ops: RemoteOps,
+    /// 상태 줄에 잠깐 띄울 실패 사유와 그 만료 시각 (FR-39)
+    notice: Option<(String, f64)>,
     /// 로컬 폴더를 펼친 결과가 오는 통로 (FR-38) — 펼치기는 워커 스레드가 한다
     expand_tx: std::sync::mpsc::Sender<ExpandResult>,
     expand_rx: std::sync::mpsc::Receiver<ExpandResult>,
@@ -405,6 +410,8 @@ impl ExplorerApp {
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
+            remote_ops: RemoteOps::default(),
+            notice: None,
             expand_tx,
             expand_rx,
             repaint,
@@ -705,6 +712,11 @@ impl ExplorerApp {
     /// 여기 캐럿이 도크를 여는 **유일한 문**이다(README §8) — 큐·로그 화면은 다른 진입점이 없다
     fn show_status_bar(&mut self, ui: &mut egui::Ui) {
         let connection = self.connection_status();
+        // 지난 사유는 지운다 — 남겨 두면 이미 끝난 실패가 계속 떠 있다(로그에는 그대로 남는다)
+        let now = ui.input(|input| input.time);
+        if self.notice.as_ref().is_some_and(|(_, until)| now >= *until) {
+            self.notice = None;
+        }
         let action = egui::Panel::bottom(egui::Id::new("status_bar"))
             .resizable(false)
             .default_size(status_bar::HEIGHT)
@@ -715,6 +727,7 @@ impl ExplorerApp {
                 let view = StatusView {
                     queue: &self.queue,
                     connection,
+                    notice: self.notice.as_ref().map(|(text, _)| text.as_str()),
                 };
                 status_bar::show_status_bar(ui, rect, &self.dock, &view)
             })
@@ -899,6 +912,203 @@ impl ExplorerApp {
                 }
             }
         }
+    }
+
+    /// 원격 메뉴에서 고른 것을 실행한다 (FR-39).
+    ///
+    /// 대화가 필요한 것(이름 바꾸기·새 폴더·권한·삭제)은 여기서 **열기만** 하고, 실제 명령은
+    /// 사용자가 확인한 뒤에 나간다 — 특히 삭제는 확인 없이 도는 경로를 만들지 않는다
+    /// (plan Halt Forecast)
+    fn apply_remote_menu(
+        &mut self,
+        panel: PanelId,
+        action: RemoteMenuAction,
+        targets: Vec<RemoteTarget>,
+    ) {
+        let Some(conn) = self.panel_conn(panel) else {
+            return;
+        };
+        let site = self.manager.get(conn).map(|connection| connection.site);
+        self.remote_ops.conn = Some(conn);
+        self.remote_ops.targets = targets.iter().map(|item| item.path.clone()).collect();
+        self.remote_ops.error = None;
+        match action {
+            // 받기·올리기는 **끌어다 놓기와 같은 길**로 보낸다 (FR-38) — 폴더를 훑는 것도,
+            // 큐에 넣는 것도 이미 그쪽에 있다. 메뉴만 따로 두면 두 길이 곧 어긋난다
+            RemoteMenuAction::Download => {
+                let (Some(site), Some(local)) = (site, self.other_panel_local(panel)) else {
+                    return;
+                };
+                let items = targets
+                    .into_iter()
+                    .map(|item| DragItem::Remote {
+                        path: item.path,
+                        is_dir: item.is_dir,
+                        size: item.size,
+                    })
+                    .collect();
+                self.apply_drop(DropOutcome {
+                    items,
+                    source_site: Some(site),
+                    target: DropTarget::Local(local.dir),
+                });
+            }
+            RemoteMenuAction::Upload => {
+                let (Some(site), Some(local), Some(dir)) =
+                    (site, self.other_panel_local(panel), self.remote_dir(conn))
+                else {
+                    return;
+                };
+                if local.selected.is_empty() {
+                    return;
+                }
+                let items = local
+                    .selected
+                    .into_iter()
+                    .map(|(path, is_dir)| DragItem::Local { path, is_dir })
+                    .collect();
+                self.apply_drop(DropOutcome {
+                    items,
+                    source_site: None,
+                    target: DropTarget::Remote { site, dir },
+                });
+            }
+            RemoteMenuAction::Refresh => self.request_remote_list(conn),
+            RemoteMenuAction::Rename => {
+                self.remote_ops.name = self
+                    .remote_ops
+                    .targets
+                    .first()
+                    .and_then(|path| path.file_name())
+                    .unwrap_or_default()
+                    .to_owned();
+                self.remote_ops.dialog = Some(RemoteDialog::Rename);
+            }
+            RemoteMenuAction::NewFolder => {
+                self.remote_ops.name = String::new();
+                self.remote_ops.dialog = Some(RemoteDialog::NewFolder);
+            }
+            RemoteMenuAction::Chmod => {
+                // 서버가 준 권한을 여기서는 모른다 — 흔한 기본값에서 시작한다
+                self.remote_ops.permissions = Permissions::from_mode(0o644);
+                self.remote_ops.octal = self.remote_ops.permissions.to_octal_text();
+                self.remote_ops.dialog = Some(RemoteDialog::Chmod);
+            }
+            RemoteMenuAction::Delete => {
+                self.remote_ops.recursive = false;
+                self.remote_ops.dialog = Some(RemoteDialog::Delete);
+            }
+        }
+    }
+
+    /// 그 패널이 쓰는 연결
+    fn panel_conn(&self, panel: PanelId) -> Option<ConnectionId> {
+        self.views
+            .get(&self.workspaces.active().id)
+            .and_then(|view| view.panels.get(&panel))
+            .and_then(|panel| panel.active_conn())
+    }
+
+    /// 원격 메뉴의 `받기`·`올리기`가 짝으로 삼는 **다른 패널의 로컬 쪽 상태**.
+    ///
+    /// 끌어다 놓기에는 "어디로"가 손끝에 있지만 메뉴에는 없다 — 두 칸 탐색기의 반대편이
+    /// 그 자리를 대신한다. 로컬 패널이 하나도 없으면 `None`이라 아무 일도 일어나지 않는다
+    fn other_panel_local(&self, from: PanelId) -> Option<LocalSide> {
+        let view = self.views.get(&self.workspaces.active().id)?;
+        view.panels
+            .iter()
+            .filter(|(id, _)| **id != from)
+            .find_map(|(_, panel)| {
+                panel.local_dir().map(|dir| LocalSide {
+                    dir,
+                    selected: panel.selected_local(),
+                })
+            })
+    }
+
+    /// 원격 대화들을 그리고 확인된 명령을 연결에 보낸다 (FR-39)
+    fn show_remote_dialogs(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.remote_ops.dialog else {
+            return;
+        };
+        let Some(conn) = self.remote_ops.conn else {
+            self.remote_ops.dialog = None;
+            return;
+        };
+        match dialog {
+            RemoteDialog::Rename | RemoteDialog::NewFolder => {
+                let rename = dialog == RemoteDialog::Rename;
+                let title = if rename {
+                    "이름 바꾸기"
+                } else {
+                    "새 폴더"
+                };
+                let confirmed = remote_menu::show_name_dialog(
+                    ctx,
+                    title,
+                    &mut self.remote_ops.name,
+                    &mut self.remote_ops.error,
+                );
+                if let Some(name) = confirmed {
+                    let command = if rename {
+                        self.remote_ops.targets.first().and_then(|path| {
+                            Some(ConnCommand::Rename {
+                                from: path.clone(),
+                                to: path.parent()?.join(&name),
+                            })
+                        })
+                    } else {
+                        self.remote_dir(conn)
+                            .map(|dir| ConnCommand::Mkdir(dir.join(&name)))
+                    };
+                    if let Some(command) = command {
+                        self.manager.send(conn, command);
+                    }
+                    self.remote_ops.dialog = None;
+                }
+            }
+            RemoteDialog::Chmod => {
+                if let Some(mode) = remote_menu::show_chmod_dialog(
+                    ctx,
+                    &mut self.remote_ops.permissions,
+                    &mut self.remote_ops.octal,
+                ) {
+                    for path in std::mem::take(&mut self.remote_ops.targets) {
+                        self.manager.send(conn, ConnCommand::Chmod { path, mode });
+                    }
+                    self.remote_ops.dialog = None;
+                }
+            }
+            RemoteDialog::Delete => {
+                let mut cancelled = false;
+                let confirmed = remote_menu::show_delete_confirm(
+                    ctx,
+                    &self.remote_ops.targets,
+                    &mut self.remote_ops.recursive,
+                    &mut cancelled,
+                );
+                if let Some(recursive) = confirmed {
+                    for path in std::mem::take(&mut self.remote_ops.targets) {
+                        // 폴더인지는 서버가 안다 — 재귀를 켜지 않았으면 파일 삭제를 보내고,
+                        // 폴더라 거부되면 그 사유가 로그와 상태 줄에 남는다 (D22와 같은 방식)
+                        self.manager.send(conn, delete_command(path, recursive));
+                    }
+                    self.remote_ops.dialog = None;
+                }
+                if cancelled {
+                    self.remote_ops.dialog = None;
+                }
+            }
+        }
+    }
+
+    /// 그 연결을 보고 있는 패널의 현재 원격 폴더
+    fn remote_dir(&self, conn: ConnectionId) -> Option<RemotePath> {
+        self.views
+            .values()
+            .flat_map(|view| view.panels.values())
+            .find(|panel| panel.active_conn() == Some(conn))
+            .and_then(|panel| panel.remote_dir())
     }
 
     /// 원격 폴더를 훑어 달라고 워커에 청한다 (FR-38).
@@ -1205,10 +1415,33 @@ impl ExplorerApp {
                     self.runner
                         .on_done(&mut self.queue, id, result.map_err(|err| err.to_string()))
                 }
-                // 서버 로그는 `Connection`이 자기 버퍼에 이미 쌓는다(화면은 T20이 만든다).
-                // 파일 작업 결과는 T23이 받는다
+                // 파일 작업의 답 — 성공하면 목록을 다시 읽고, 실패하면 사유를 남긴다 (FR-39)
+                ConnEvent::OpDone { op, result } => self.on_op_done(conn, op, result, now),
+                // 서버 로그는 `Connection`이 자기 버퍼에 이미 쌓는다(화면은 T20이 만든다)
                 _ => {}
             }
+        }
+    }
+
+    /// 파일 작업의 결과를 반영한다 (FR-39).
+    ///
+    /// 성공하면 **목록을 다시 읽는다** — 서버가 바뀐 것을 앱이 짐작해 그리면 실제와 어긋난다.
+    /// 실패는 상태 줄과 로그 양쪽에 남긴다: 상태 줄은 곧 사라지므로 되짚을 자리가 필요하다.
+    /// 서버가 `SITE CHMOD`를 모르는 것은 흔한 일이라 이때도 앱은 그대로 돈다 (D22)
+    fn on_op_done(
+        &mut self,
+        conn: ConnectionId,
+        op: OpKind,
+        result: Result<(), RemoteError>,
+        now: f64,
+    ) {
+        match op_outcome(op, result) {
+            OpOutcome::Relist => self.request_remote_list(conn),
+            OpOutcome::Notice(text) => {
+                self.manager.note(conn, LogKind::Error, text.clone());
+                self.notice = Some((text, now + NOTICE_SECS));
+            }
+            OpOutcome::Ignore => {}
         }
     }
 
@@ -1455,6 +1688,8 @@ impl eframe::App for ExplorerApp {
         let mut closed_conns = Vec::new();
         // 목록에 끌어다 놓은 것 (FR-38) — 큐에 넣는 것은 그리기가 끝난 뒤다
         let mut dropped = None;
+        // 원격 목록에서 고른 메뉴 항목 (FR-39)
+        let mut remote_menu = None;
         // 사이트 관리자의 `연결(C)`이 쓸 분할 영역 — 모달은 CentralPanel 밖에서 그리므로
         // 안에서 정해지는 이 값을 밖으로 들고 나온다
         let mut layout_area = None;
@@ -1548,6 +1783,7 @@ impl eframe::App for ExplorerApp {
                 remote_url = outcome.remote_url;
                 closed_conns = outcome.closed_conns;
                 dropped = outcome.drop;
+                remote_menu = outcome.remote_menu;
             }
             // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
             // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
@@ -1565,6 +1801,10 @@ impl eframe::App for ExplorerApp {
             // 종류와 놓은 자리의 종류만으로 방향이 정해진다)
             if let Some((_, drop)) = dropped.take() {
                 self.apply_drop(drop);
+            }
+            // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
+            if let Some((target, (action, targets))) = remote_menu.take() {
+                self.apply_remote_menu(target, action, targets);
             }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {
@@ -1587,6 +1827,8 @@ impl eframe::App for ExplorerApp {
         self.hostkey.show(&ctx);
         // 사이트 관리자도 자체 레이어를 쓴다 (FR-27)
         self.show_site_manager(&ctx, layout_area);
+        // 원격 파일 작업 대화 (FR-39)
+        self.show_remote_dialogs(&ctx);
         // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
         self.toast.show_ui(&ctx);
         // 로그 복사는 그리기가 끝난 뒤에 보낸다 (`⧉` — FR-40)
@@ -1603,6 +1845,94 @@ impl eframe::App for ExplorerApp {
             shell.popup(&menu.folder, &menu.items, x, y);
         }
     }
+}
+
+/// 원격 파일 작업이 띄운 대화의 상태 (FR-39).
+///
+/// **대상 경로를 대화가 뜰 때 붙잡아 둔다** — 대화가 떠 있는 동안 목록이 다시 읽히거나
+/// 선택이 바뀔 수 있는데, 그때 다시 읽으면 사용자가 고른 것과 **다른 항목**에 명령이 간다
+#[derive(Debug, Default)]
+struct RemoteOps {
+    /// 어느 연결에 보낼 것인가
+    conn: Option<ConnectionId>,
+    /// 지금 뜬 대화
+    dialog: Option<RemoteDialog>,
+    /// 대화가 다루는 대상들
+    targets: Vec<RemotePath>,
+    /// 이름 입력값과 그 오류
+    name: String,
+    error: Option<String>,
+    /// 권한 대화의 상태
+    permissions: Permissions,
+    octal: String,
+    /// 삭제 대화의 재귀 여부
+    recursive: bool,
+}
+
+/// 파일 작업 실패 사유가 상태 줄에 머무는 시간(초) — 알림(FR-43)보다 조금 길게 둔다
+const NOTICE_SECS: f64 = 6.0;
+
+/// 실패 사유 앞에 붙일 작업 이름 — 사용자가 시키지 않은 작업(`Cwd`·`Disconnect`)은 알리지 않는다
+fn op_label(op: OpKind) -> Option<&'static str> {
+    match op {
+        OpKind::Mkdir => Some("새 폴더"),
+        OpKind::Remove | OpKind::Rmdir => Some("삭제"),
+        OpKind::Rename => Some("이름 바꾸기"),
+        OpKind::Chmod => Some("권한 바꾸기"),
+        OpKind::Cwd | OpKind::Disconnect => None,
+    }
+}
+
+/// 파일 작업의 답을 어떻게 다룰지 (FR-39) — 화면·연결을 건드리지 않고 판정만 한다
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OpOutcome {
+    /// 서버 쪽이 바뀌었다 — 목록을 다시 읽는다
+    Relist,
+    /// 실패 사유를 상태 줄과 로그에 남긴다
+    Notice(String),
+    /// 사용자가 시킨 작업이 아니라 알리지 않는다
+    Ignore,
+}
+
+/// 작업 결과의 처리 방법을 정한다.
+///
+/// 실패해도 **사유만 남기고 앱은 그대로 돈다** — `SITE CHMOD`를 모르는 FTP 서버가 흔한데
+/// 그때마다 앱이 멈추거나 연결이 끊기면 쓸 수 없다 (D22)
+fn op_outcome(op: OpKind, result: Result<(), RemoteError>) -> OpOutcome {
+    let Some(label) = op_label(op) else {
+        return OpOutcome::Ignore;
+    };
+    match result {
+        Ok(()) => OpOutcome::Relist,
+        Err(err) => OpOutcome::Notice(format!("{label} 실패 — {err}")),
+    }
+}
+
+/// 확인을 마친 삭제가 보낼 명령 (FR-39).
+///
+/// **이 함수를 부르는 곳은 확인 대화가 `Some`을 돌려준 자리 하나뿐이다** — 메뉴에서 곧바로
+/// 삭제로 가는 길은 없다(plan Halt Forecast)
+fn delete_command(path: RemotePath, recursive: bool) -> ConnCommand {
+    if recursive {
+        ConnCommand::Rmdir(path)
+    } else {
+        ConnCommand::Remove(path)
+    }
+}
+
+/// 원격 메뉴가 짝으로 삼는 로컬 패널의 상태 — 보고 있는 폴더와 그 안에서 고른 것들
+struct LocalSide {
+    dir: PathBuf,
+    selected: Vec<(PathBuf, bool)>,
+}
+
+/// 지금 뜬 원격 대화의 종류
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteDialog {
+    Rename,
+    NewFolder,
+    Chmod,
+    Delete,
 }
 
 /// 로컬 폴더를 펼친 결과 — 올릴 파일들과 **읽지 못해 건너뛴 폴더 수**.
@@ -1889,5 +2219,44 @@ mod tests {
         assert_eq!(view.layout.panel_count(), 1);
         assert_eq!(view.panels.len(), 1);
         assert_eq!(view.active_dir(), Some(PathBuf::from(r"C:\")));
+    }
+
+    #[test]
+    fn 작업이_성공하면_목록을_다시_읽고_실패하면_사유가_남는다() {
+        // Acceptance ② — 성공 응답 뒤에는 서버를 다시 읽는다. 앱이 짐작해 그리면 실제와 어긋난다
+        for op in [OpKind::Mkdir, OpKind::Rename, OpKind::Remove, OpKind::Rmdir] {
+            assert_eq!(op_outcome(op, Ok(())), OpOutcome::Relist, "{op:?}");
+        }
+        // Acceptance ④ — SITE CHMOD를 모르는 서버(D22)의 답은 사유로 남고, 그것으로 끝이다
+        let unsupported = RemoteError::Unsupported {
+            operation: "SITE CHMOD".to_owned(),
+            detail: "500 Unknown command".to_owned(),
+        };
+        let OpOutcome::Notice(text) = op_outcome(OpKind::Chmod, Err(unsupported)) else {
+            panic!("실패가 사유로 남지 않았다");
+        };
+        assert!(text.starts_with("권한 바꾸기 실패"), "{text}");
+        assert!(text.contains("SITE CHMOD"), "서버 원문이 빠졌다: {text}");
+        // 사용자가 시키지 않은 작업까지 알리면 상태 줄이 잡음으로 찬다
+        assert_eq!(
+            op_outcome(
+                OpKind::Cwd,
+                Err(RemoteError::Protocol {
+                    detail: "x".to_owned()
+                })
+            ),
+            OpOutcome::Ignore
+        );
+    }
+
+    #[test]
+    fn 삭제는_재귀_여부에_따라_다른_명령이_된다() {
+        // Acceptance ① — 확인 대화가 돌려준 값만 이 함수에 들어온다
+        let path = RemotePath::new("/var/www/old");
+        assert_eq!(
+            delete_command(path.clone(), false),
+            ConnCommand::Remove(path.clone())
+        );
+        assert_eq!(delete_command(path.clone(), true), ConnCommand::Rmdir(path));
     }
 }

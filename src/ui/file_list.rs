@@ -385,6 +385,41 @@ impl FileListView {
     }
 }
 
+impl FileListView {
+    /// 선택된 원격 항목들 — 원격 메뉴가 대상으로 삼는다 (FR-39).
+    ///
+    /// 로컬 목록이면 빈 벡터다(로컬은 셸 메뉴가 맡는다 — D21)
+    /// 로컬 목록에서 고른 항목들 — 경로와 폴더 여부. 원격 목록이면 빈 벡터다.
+    ///
+    /// 원격 메뉴의 `올리기`가 반대편 패널에서 이것을 읽는다 (FR-39)
+    pub fn selected_local(&self) -> Vec<(PathBuf, bool)> {
+        let ListModel::Local(rows) = &self.model else {
+            return Vec::new();
+        };
+        self.selection
+            .iter()
+            .filter_map(|index| rows.get(*index))
+            .map(|row| (self.dir.join(row.name()), row.is_dir()))
+            .collect()
+    }
+
+    pub fn selected_remote(
+        &self,
+        dir: &crate::remote::types::RemotePath,
+    ) -> Vec<(crate::remote::types::RemotePath, bool, u64)> {
+        let ListModel::Remote(rows) = &self.model else {
+            return Vec::new();
+        };
+        self.selection
+            .iter()
+            .filter_map(|index| rows.get(*index))
+            // 상위 이동은 대상이 아니다 — 지우거나 이름을 바꿀 것이 아니다
+            .filter(|row| row.name() != "..")
+            .map(|row| (dir.join(&row.name()), row.is_dir(), row.size()))
+            .collect()
+    }
+}
+
 /// 목록에서 이번 프레임에 일어난 것 — 조작 하나와 끌기 시작 여부
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct ListInteraction {

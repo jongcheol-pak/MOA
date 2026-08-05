@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::remote::connection::{
     ConnCommand, ConnEvent, Connection, ConnectionId, RetryPolicy, Wake,
 };
+use crate::remote::log::LogKind;
 use crate::remote::types::{RemoteSession, SiteRecord};
 
 /// 제한을 켜지 않았을 때 여는 연결 수 — 탐색 1 + 전송 2 (사용자 확정, FR-45)
@@ -118,6 +119,13 @@ impl ConnectionManager {
     }
 
     /// 명령을 보낸다. 없는 연결이거나 워커가 죽었으면 `false`
+    /// 그 연결의 로그에 한 줄 남긴다 (FR-39) — 연결이 이미 접혔으면 아무 일도 하지 않는다
+    pub fn note(&mut self, id: ConnectionId, kind: LogKind, text: String) {
+        if let Some(connection) = self.connections.get_mut(&id) {
+            connection.push_log(kind, text);
+        }
+    }
+
     pub fn send(&self, id: ConnectionId, command: ConnCommand) -> bool {
         self.connections
             .get(&id)

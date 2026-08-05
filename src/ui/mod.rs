@@ -14,6 +14,7 @@ pub mod log_panel;
 pub mod menu;
 pub mod panel;
 pub mod queue_panel;
+pub mod remote_menu;
 pub mod remote_states;
 pub mod session;
 pub mod shell_host;

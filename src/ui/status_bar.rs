@@ -121,6 +121,16 @@ pub fn format_current(queue: &TransferQueue) -> String {
     }
 }
 
+/// 이 줄 가운데에 보일 것 — 실패 사유가 있으면 **그것이 먼저**다 (FR-39·인벤토리 #56).
+///
+/// 실패는 잠깐 떴다 사라지고 전송 진행은 큐 화면에도 있다 — 둘이 겹칠 때 급한 쪽은 실패다
+pub fn status_message(view: &StatusView<'_>) -> (String, egui::Color32) {
+    match view.notice {
+        Some(notice) => (notice.to_owned(), theme::ERROR),
+        None => (format_current(view.queue), theme::HEADER_TEXT),
+    }
+}
+
 /// 연결 상태 문구와 색 (인벤토리 #58) — `● sftp web-prod 연결됨 · TLS` 꼴.
 ///
 /// 연결이 없으면 `연결 없음`이다(plan Edge Case). 여럿이면 **지금 보고 있는 것**을 호출부가 고른다
@@ -155,6 +165,11 @@ pub struct StatusView<'a> {
     pub queue: &'a TransferQueue,
     /// 연결 상태 문구와 색 (`connection_label`이 만든 것)
     pub connection: (String, egui::Color32),
+    /// 방금 실패한 파일 작업의 사유 (FR-39·D22) — 있으면 "지금 옮기는 파일" 자리를 대신 쓴다.
+    ///
+    /// 실패는 잠깐이고 전송은 계속되므로 자리를 새로 만들지 않는다 — 이 줄에서 가장 급한
+    /// 소식 하나만 보이면 된다
+    pub notice: Option<&'a str>,
 }
 
 /// 상태 표시줄을 그린다 (인벤토리 #53~#59)
@@ -305,20 +320,20 @@ pub fn show_status_bar(
 
     // 지금 옮기는 파일 — **남는 자리만 쓴다**. 창이 좁으면 이것부터 줄어들고
     // 실패 알약·연결 상태는 밀리지 않는다 (plan Edge Case)
-    let current = format_current(view.queue);
-    if !current.is_empty() {
+    let (message, color) = status_message(view);
+    if !message.is_empty() {
         let available = (right - left).max(0.0);
         let galley = crate::ui::list_common::elided_galley_colored(
             ui.painter(),
-            current,
+            message,
             font,
             available,
-            theme::HEADER_TEXT,
+            color,
         );
         ui.painter().galley(
             egui::pos2(left, rect.center().y - galley.size().y / 2.0),
             galley,
-            theme::HEADER_TEXT,
+            color,
         );
     }
     action
@@ -530,6 +545,7 @@ mod tests {
             let view = StatusView {
                 queue: &queue,
                 connection: connection_label(None, None, None, false),
+                notice: None,
             };
             let _ = ctx.run_ui(Default::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -572,6 +588,7 @@ mod tests {
             let view = StatusView {
                 queue: &queue,
                 connection: connection_label(None, None, None, false),
+                notice: None,
             };
             let _ = ctx.run_ui(Default::default(), |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -581,5 +598,33 @@ mod tests {
                 });
             });
         }
+    }
+
+    #[test]
+    fn 실패_사유가_있으면_진행_문구_대신_그것이_보인다() {
+        // Acceptance ④ — 파일 작업 실패 사유가 상태 줄에 남는다 (FR-39·D22)
+        let queue = queue_with(&[TransferState::Active { sent: 50, speed: 0 }]);
+        let plain = StatusView {
+            queue: &queue,
+            connection: connection_label(None, None, None, false),
+            notice: None,
+        };
+        let (text, color) = status_message(&plain);
+        assert_eq!(color, theme::HEADER_TEXT);
+        assert!(
+            text.contains('↑') || text.contains('↓'),
+            "진행 문구: {text}"
+        );
+
+        let notice =
+            "권한 바꾸기 실패 — 서버가 'SITE CHMOD'을(를) 지원하지 않습니다 — 500 Unknown command";
+        let failed = StatusView {
+            queue: &queue,
+            connection: connection_label(None, None, None, false),
+            notice: Some(notice),
+        };
+        let (text, color) = status_message(&failed);
+        assert_eq!(text, notice, "전송이 도는 중에도 실패 사유가 먼저다");
+        assert_eq!(color, theme::ERROR, "실패인지 색으로도 구분돼야 한다");
     }
 }

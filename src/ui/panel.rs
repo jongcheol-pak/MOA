@@ -20,6 +20,7 @@ use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_common::{DropOutcome, DropTarget, FileDrag};
 use crate::ui::menu::{Command, PanelMenuState};
+use crate::ui::remote_menu::{self, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{self, FailedAction, RemoteView};
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
@@ -165,6 +166,17 @@ enum PendingNav {
     Forward,
 }
 
+/// 원격 목록 메뉴에서 고른 것과 그때의 대상들 (FR-39)
+pub type RemoteMenuPick = (RemoteMenuAction, Vec<RemoteTarget>);
+
+/// `show_content`가 한 프레임에서 거둔 것들 — 목록 조작·단계 화면의 조치·놓기·원격 메뉴
+type ContentOutcome = (
+    FileListAction,
+    Option<RemoteAction>,
+    Option<DropOutcome>,
+    Option<RemoteMenuPick>,
+);
+
 /// 패널이 상위(레이아웃)에 올려보내는 요청.
 /// 전부 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
 pub struct PanelOutcome {
@@ -185,6 +197,8 @@ pub struct PanelOutcome {
     pub closed_conn: Option<ConnectionId>,
     /// 이 패널의 목록에 끌어다 놓은 것 (FR-38) — 큐에 넣는 것은 앱의 몫이다
     pub drop: Option<DropOutcome>,
+    /// 원격 목록 우클릭 메뉴에서 고른 것과 그 대상들 (FR-39)
+    pub remote_menu: Option<RemoteMenuPick>,
 }
 
 /// 원격 단계 화면에서 사용자가 고른 조치 — 실행은 앱이 한다(연결을 앱이 쥔다)
@@ -236,6 +250,8 @@ pub struct PanelState {
     create: CreateOp,
     /// 주소창에 적힌 원격 주소 — 이번 프레임의 결과로 앱에 올려 보낸다
     pending_remote_url: Option<RemoteUrl>,
+    /// 원격 목록 우클릭 메뉴가 뜰 자리 — `None`이면 닫혀 있다 (FR-39)
+    remote_menu_at: Option<egui::Pos2>,
     /// 원격 목록 요청의 세대 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
     /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다
     remote_generation: u64,
@@ -268,6 +284,7 @@ impl PanelState {
             watch: None,
             create: CreateOp::new(),
             pending_remote_url: None,
+            remote_menu_at: None,
             remote_generation: 0,
             thumbs: ThumbnailCache::new(),
             thumb_textures: ThumbnailTextures::new(),
@@ -535,6 +552,28 @@ impl PanelState {
             TabSource::Remote { conn, .. } => *conn,
             TabSource::Local(_) => None,
         }
+    }
+
+    /// 활성 탭이 보고 있는 로컬 폴더 — 원격 탭이면 `None`
+    pub fn local_dir(&self) -> Option<PathBuf> {
+        self.tabs
+            .active()
+            .source
+            .local_path()
+            .map(Path::to_path_buf)
+    }
+
+    /// 로컬 목록에서 고른 항목들 — 원격 탭이면 빈 벡터다 (FR-39 `올리기`)
+    pub fn selected_local(&self) -> Vec<(PathBuf, bool)> {
+        if self.is_remote() {
+            return Vec::new();
+        }
+        self.list.selected_local()
+    }
+
+    /// 활성 탭이 보고 있는 원격 폴더 — 로컬 탭이면 `None`
+    pub fn remote_dir(&self) -> Option<RemotePath> {
+        self.tabs.active().source.remote_path().cloned()
     }
 
     /// 이 패널의 탭 중 그 연결을 쓰는 것이 있는가 — 연결을 접어도 되는지 판정한다 (FR-32)
@@ -812,8 +851,12 @@ impl PanelState {
                 } else {
                     Vec::new()
                 };
-                // 셸 메뉴는 로컬 전용이다 (D21) — 원격 목록의 우클릭은 자체 메뉴(T23)가 받는다
-                let folder = self.tabs.active().source.local_path()?.to_path_buf();
+                // 셸 메뉴는 로컬 전용이다 (D21) — 원격 목록의 우클릭은 자체 메뉴가 받는다
+                let Some(folder) = self.tabs.active().source.local_path() else {
+                    self.remote_menu_at = Some(pos);
+                    return None;
+                };
+                let folder = folder.to_path_buf();
                 Some(MenuRequest { folder, items, pos })
             }
         }
@@ -867,7 +910,7 @@ impl PanelState {
         } else {
             area
         };
-        let (action, remote_action, drop) = ui
+        let (action, remote_action, drop, remote_menu) = ui
             .scope_builder(
                 egui::UiBuilder::new().id_salt("content").max_rect(content),
                 |ui| {
@@ -896,6 +939,7 @@ impl PanelState {
             remote_url: self.pending_remote_url.take(),
             closed_conn,
             drop,
+            remote_menu,
         }
     }
 
@@ -909,7 +953,7 @@ impl PanelState {
         ui: &mut egui::Ui,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-    ) -> (FileListAction, Option<RemoteAction>, Option<DropOutcome>) {
+    ) -> ContentOutcome {
         // 단계를 먼저 떼어 둔다 — 아래에서 목록(`&mut self.list`)을 그리는 동안 탭을 빌릴 수 없다
         let phase = match &self.tabs.active().source {
             TabSource::Remote { phase, .. } => Some(phase.clone()),
@@ -953,7 +997,7 @@ impl PanelState {
         match phase {
             Some(TabPhase::New) => {
                 remote_states::show_empty(ui);
-                (FileListAction::None, None, None)
+                (FileListAction::None, None, None, None)
             }
             Some(TabPhase::Connecting) => {
                 // 취소는 자리 표시 막대 **위** 오른쪽에 둔다 (원본 `:223-228`의 상태 줄)
@@ -967,6 +1011,7 @@ impl PanelState {
                     FileListAction::None,
                     cancelled.then_some(RemoteAction::CancelConnect),
                     None,
+                    None,
                 )
             }
             Some(TabPhase::Error { message }) => {
@@ -975,12 +1020,14 @@ impl PanelState {
                     FailedAction::OpenSettings => RemoteAction::OpenSettings,
                     FailedAction::ViewLog => RemoteAction::ViewLog,
                 });
-                (FileListAction::None, action, None)
+                (FileListAction::None, action, None, None)
             }
             // 연결된 원격 탭은 로컬과 **같은 목록 부품**으로 그린다 (T8)
             Some(TabPhase::Ok) | None => {
                 let (action, drop) = self.show_list(ui, icons, textures);
-                (action, None, drop)
+                // 메뉴는 목록을 그린 **뒤에** 띄운다 — 먼저 그리면 목록이 그 위를 덮는다
+                let menu = self.show_remote_menu(ui, phase == Some(TabPhase::Ok));
+                (action, None, drop, menu)
             }
         }
     }
@@ -1024,6 +1071,51 @@ impl PanelState {
         // 드롭 — 이 목록 위에서 손을 놓았는가
         let drop = self.take_drop(ui, list_rect);
         (interaction.action, drop)
+    }
+
+    /// 원격 목록의 우클릭 메뉴를 그린다 (FR-39).
+    ///
+    /// 고른 것과 **그때의 대상 경로들**을 함께 올린다 — 대화가 뜨는 동안 선택이 바뀔 수 있어,
+    /// 나중에 다시 읽으면 사용자가 고른 것과 다른 항목에 명령이 갈 수 있다
+    fn show_remote_menu(&mut self, ui: &mut egui::Ui, connected: bool) -> Option<RemoteMenuPick> {
+        let at = self.remote_menu_at?;
+        let Some(dir) = self.tabs.active().source.remote_path().cloned() else {
+            self.remote_menu_at = None;
+            return None;
+        };
+        let targets: Vec<RemoteTarget> = self
+            .list
+            .selected_remote(&dir)
+            .into_iter()
+            .map(|(path, is_dir, size)| RemoteTarget { path, is_dir, size })
+            .collect();
+        let mut chosen = None;
+        let response = egui::Area::new(ui.id().with("원격 메뉴"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::menu(ui.style())
+                    .fill(theme::SURFACE_BG)
+                    .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                    .corner_radius(0)
+                    .show(ui, |ui| {
+                        chosen = remote_menu::show_remote_menu(ui, !targets.is_empty(), connected);
+                    });
+            })
+            .response;
+        // 바깥을 누르거나 Esc면 닫는다 — 메뉴가 화면에 눌어붙지 않게 한다
+        let outside = ui.input(|input| {
+            input.pointer.any_click()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_none_or(|pos| !response.rect.contains(pos))
+        });
+        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if chosen.is_some() || outside || escape {
+            self.remote_menu_at = None;
+        }
+        chosen.map(|action| (action, targets))
     }
 
     /// 이 목록 위에 놓인 드롭을 거둔다 (FR-38).
@@ -1752,5 +1844,34 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn 원격_목록의_우클릭은_셸_메뉴를_띄우지_않는다() {
+        // Acceptance ⑤ — 셸 메뉴는 로컬 경로가 있어야 뜬다(D21). 원격 탭에서는 자체 메뉴다
+        let mut panel = PanelState::new(PathBuf::from(r"C:\"));
+        let pos = egui::pos2(120.0, 80.0);
+
+        let ctx = egui::Context::default();
+        let request = panel.handle_list_action(
+            FileListAction::Context {
+                index: Some(0),
+                pos,
+            },
+            &ctx,
+        );
+        assert!(request.is_some(), "로컬 탭에서는 셸 메뉴를 청해야 한다");
+        assert!(panel.remote_menu_at.is_none(), "로컬 탭에 원격 메뉴가 떴다");
+
+        panel.open_remote_tab(SiteId(1), RemotePath::new("/var/www"));
+        let request = panel.handle_list_action(
+            FileListAction::Context {
+                index: Some(0),
+                pos,
+            },
+            &ctx,
+        );
+        assert!(request.is_none(), "원격 탭에서 셸 메뉴를 청했다");
+        assert_eq!(panel.remote_menu_at, Some(pos), "원격 메뉴가 뜨지 않았다");
     }
 }

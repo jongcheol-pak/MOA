@@ -317,6 +317,14 @@ impl Connection {
         &self.log
     }
 
+    /// 앱이 알아낸 사실을 이 연결의 로그에 남긴다 — 파일 작업 실패 사유 등 (FR-39).
+    ///
+    /// 워커가 올린 줄과 같은 버퍼에 쌓인다. 실패를 화면 한 곳(상태 줄)에만 띄우면
+    /// 잠깐 뒤 사라져 무엇이 왜 안 됐는지 되짚을 수 없다
+    pub fn push_log(&mut self, kind: LogKind, text: String) {
+        self.log.push(kind, text);
+    }
+
     /// 워커가 끝났는가 — 회수 확인용
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::SeqCst)
@@ -1202,5 +1210,89 @@ mod tests {
         // 호출부는 이 `false`를 보고 조용히 넘어간다(오류 대화를 띄우지 않는다)
         assert!(!connection.send(ConnCommand::Cancel));
         assert!(connection.poll().is_empty());
+    }
+
+    #[test]
+    fn 파일_작업_명령이_세션에_닿고_답이_돌아온다() {
+        // T23 Acceptance ② — 이름 바꾸기·새 폴더가 세션까지 전달되고 성공 응답이 온다.
+        // 목록을 다시 읽는 것은 그 응답을 받은 화면 쪽 몫이다(`op_outcome`이 판정한다)
+        let server = FakeServer::new();
+        server.set_entries("/pub", vec![fake_entry("낡은.txt", false)]);
+        let mut connection = spawn(&server, fast_retry());
+        connection.send(ConnCommand::Connect);
+        connection.send(ConnCommand::Rename {
+            from: RemotePath::new("/pub/낡은.txt"),
+            to: RemotePath::new("/pub/새.txt"),
+        });
+        connection.send(ConnCommand::Mkdir(RemotePath::new("/pub/새폴더")));
+
+        let mut done = Vec::new();
+        wait_until(Duration::from_secs(3), || {
+            done.extend(
+                connection
+                    .poll()
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        ConnEvent::OpDone { op, result } => Some((op, result)),
+                        _ => None,
+                    }),
+            );
+            done.len() >= 2
+        });
+        assert_eq!(
+            done,
+            vec![(OpKind::Rename, Ok(())), (OpKind::Mkdir, Ok(()))],
+            "명령 순서대로 성공 응답이 와야 한다"
+        );
+        let calls = server.calls();
+        assert!(
+            calls.contains(&"rename".to_owned()) && calls.contains(&"mkdir".to_owned()),
+            "세션이 받은 명령: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn 권한_바꾸기를_모르는_서버여도_연결은_이어진다() {
+        // T23 Acceptance ④ — SITE CHMOD를 모르는 FTP 서버는 흔하다(D22). 사유만 돌아오고
+        // 워커는 그대로 살아 다음 명령을 처리한다
+        let server = FakeServer::new();
+        server.set_entries("/pub", Vec::new());
+        server.set_chmod_unsupported(true);
+        let mut connection = spawn(&server, fast_retry());
+        connection.send(ConnCommand::Connect);
+        connection.send(ConnCommand::Chmod {
+            path: RemotePath::new("/pub/설정.ini"),
+            mode: 0o644,
+        });
+        connection.send(ConnCommand::Mkdir(RemotePath::new("/pub/다음")));
+
+        let mut done = Vec::new();
+        wait_until(Duration::from_secs(3), || {
+            done.extend(
+                connection
+                    .poll()
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        ConnEvent::OpDone { op, result } => Some((op, result)),
+                        _ => None,
+                    }),
+            );
+            done.len() >= 2
+        });
+        let (op, result) = done
+            .first()
+            .cloned()
+            .expect("권한 바꾸기의 답이 오지 않았다");
+        assert_eq!(op, OpKind::Chmod);
+        let err = result.expect_err("지원하지 않는데 성공으로 왔다");
+        assert!(
+            matches!(&err, RemoteError::Unsupported { operation, .. } if operation == "SITE CHMOD"),
+            "{err}"
+        );
+        assert_eq!(
+            done.get(1).map(|(op, result)| (*op, result.is_ok())),
+            Some((OpKind::Mkdir, true)),
+            "실패 뒤에도 워커가 다음 명령을 처리해야 한다"
+        );
     }
 }

@@ -10,7 +10,7 @@ use crate::remote::url::RemoteUrl;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::DropOutcome;
 use crate::ui::menu::{Command, PanelMenuState};
-use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction};
+use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction, RemoteMenuPick};
 use crate::ui::remote_states::RemoteView;
 use crate::ui::theme;
 use eframe::egui;
@@ -57,6 +57,8 @@ pub struct LayoutOutcome {
     pub closed_conns: Vec<ConnectionId>,
     /// 목록에 끌어다 놓은 것과 그 패널 (FR-38)
     pub drop: Option<(PanelId, DropOutcome)>,
+    /// 원격 메뉴에서 고른 것과 그 패널 (FR-39)
+    pub remote_menu: Option<(PanelId, RemoteMenuPick)>,
 }
 
 /// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
@@ -72,6 +74,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         remote_url,
         closed_conn,
         drop,
+        remote_menu,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
@@ -95,6 +98,13 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         && let Some(drop) = drop
     {
         outcome.drop = Some((id, drop));
+    }
+    // 원격 메뉴도 한 프레임에 하나뿐이다 — 어느 패널이 요청했는지 함께 담는다
+    // (명령이 그 패널의 연결로 나가야 한다)
+    if outcome.remote_menu.is_none()
+        && let Some(menu) = remote_menu
+    {
+        outcome.remote_menu = Some((id, menu));
     }
     // 주소는 한 프레임에 하나만 확정된다 — 입력칸이 패널마다 하나뿐이다
     if outcome.remote_url.is_none()
@@ -275,6 +285,7 @@ mod tests {
                 remote_url: None,
                 closed_conn: None,
                 drop: None,
+                remote_menu: None,
             },
         );
         merge_panel_outcome(
@@ -287,6 +298,7 @@ mod tests {
                 remote_url: None,
                 closed_conn: None,
                 drop: None,
+                remote_menu: None,
             },
         );
 
@@ -321,6 +333,7 @@ mod tests {
                     remote_url: None,
                     closed_conn: None,
                     drop: None,
+                    remote_menu: None,
                 },
             );
         }
@@ -347,6 +360,7 @@ mod tests {
                     remote_url: None,
                     closed_conn: Some(conn),
                     drop: None,
+                    remote_menu: None,
                 },
             );
         }

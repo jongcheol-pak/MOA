@@ -41,6 +41,8 @@ pub struct FakeServer {
     live_sessions: AtomicUsize,
     /// 처리한 명령 이름을 순서대로 — 직렬 처리 확인용
     calls: Mutex<Vec<String>>,
+    /// 켜져 있으면 `chmod`가 "지원하지 않는다"로 답한다 — SITE CHMOD를 모르는 FTP 서버(D22)
+    chmod_unsupported: AtomicBool,
 }
 
 impl FakeServer {
@@ -64,6 +66,11 @@ impl FakeServer {
     /// 응답 없는 서버로 만들거나 되돌린다
     pub fn set_hang(&self, hang: bool) {
         self.hang.store(hang, Ordering::SeqCst);
+    }
+
+    /// `chmod`를 지원하지 않는 서버로 만들거나 되돌린다 (D22)
+    pub fn set_chmod_unsupported(&self, unsupported: bool) {
+        self.chmod_unsupported.store(unsupported, Ordering::SeqCst);
     }
 
     /// 다음 `count`번의 연결을 실패시킨다
@@ -226,7 +233,14 @@ impl RemoteSession for FakeSession {
     fn chmod(&mut self, _path: &RemotePath, _mode: u32) -> RemoteResult<()> {
         self.server.record("chmod");
         self.server.tick();
-        self.ensure_connected()
+        self.ensure_connected()?;
+        if self.server.chmod_unsupported.load(Ordering::SeqCst) {
+            return Err(RemoteError::Unsupported {
+                operation: "SITE CHMOD".to_owned(),
+                detail: "500 Unknown command".to_owned(),
+            });
+        }
+        Ok(())
     }
 
     fn download(
