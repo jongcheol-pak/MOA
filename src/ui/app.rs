@@ -1525,17 +1525,15 @@ impl ExplorerApp {
         detail: String,
         now: f64,
     ) {
-        // `any`로 쓰지 않는다 — 짧게 끊기면 같은 연결을 보는 다른 패널이 어긋난 채 남는다
+        // `any`로 쓰지 않는다 — 짧게 끊기면 같은 연결을 보는 다른 패널이 어긋난 채 남는다.
+        // 되돌릴지는 패널이 스스로 판정한다(그 세대의 이동이었고 아직 그 자리에 있는가)
         let mut reverted = false;
         for panel in self
             .views
             .values_mut()
             .flat_map(|view| view.panels.values_mut())
         {
-            if panel.active_conn() == Some(conn)
-                && panel.awaits_generation(generation)
-                && panel.revert_remote_path()
-            {
+            if panel.active_conn() == Some(conn) && panel.revert_remote_path(generation) {
                 reverted = true;
             }
         }

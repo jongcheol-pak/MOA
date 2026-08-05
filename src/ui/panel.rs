@@ -273,11 +273,16 @@ pub struct PanelState {
     pending_remote_url: Option<RemoteUrl>,
     /// 원격 목록 우클릭 메뉴가 뜰 자리 — `None`이면 닫혀 있다 (FR-39)
     remote_menu_at: Option<egui::Pos2>,
-    /// 원격 위치를 옮기기 **직전에 보고 있던 곳** — 조회가 실패하면 여기로 되돌린다.
+    /// 아직 조회를 청하지 않은 "직전에 보고 있던 곳" — `set_remote_path`가 세우고
+    /// 곧이어 `request_remote_list`가 세대와 함께 `revert_at`으로 옮긴다
+    pending_revert: Option<RemotePath>,
+    /// 되돌릴 자리 — `(그 조회의 세대, 돌아갈 곳, 옮겨 간 곳)`.
     ///
-    /// 되돌리지 않으면 주소창·탭은 새 폴더를 가리키는데 목록은 이전 폴더 내용이라,
-    /// 그 위에서 연 메뉴가 **보이는 것과 다른 경로**에 삭제·권한 변경을 건다 (F-7 리뷰 B2)
-    remote_previous: Option<RemotePath>,
+    /// **요청 하나에 묶는다**(F-7 2라운드 B1·B2): 세대만 보고 되돌리면 ⓐ 이미 성공한 이동의
+    /// 자리가 남아 나중의 새로 고침 실패가 옛 폴더로 되돌리고 ⓑ 같은 연결의 다른 패널·탭까지
+    /// 함께 되돌아간다. 그래서 **성공하면 지우고**, 되돌릴 때는 지금 보고 있는 곳이
+    /// `옮겨 간 곳` 그대로일 때만 손댄다
+    revert_at: Option<(u64, RemotePath, RemotePath)>,
     /// 원격 위치가 바뀌어 목록을 다시 읽어야 한다 — 앱이 다음 프레임에 거둬 간다.
     ///
     /// **위치를 옮기는 것과 서버에 묻는 것은 다른 일이다** — 옮기는 쪽(트리 선택·상위 이동)은
@@ -317,7 +322,8 @@ impl PanelState {
             create: CreateOp::new(),
             pending_remote_url: None,
             remote_menu_at: None,
-            remote_previous: None,
+            pending_revert: None,
+            revert_at: None,
             remote_dirty: false,
             remote_generation: 0,
             thumbs: ThumbnailCache::new(),
@@ -699,26 +705,35 @@ impl PanelState {
     /// 않는 이유는 패널이 `ConnectionManager`를 쥐고 있지 않기 때문이다
     pub fn set_remote_path(&mut self, target: RemotePath) {
         if let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source {
-            // 실패했을 때 돌아갈 자리를 남긴다 (F-7 리뷰 B2)
-            self.remote_previous = Some(path.clone());
+            // 실패했을 때 돌아갈 자리를 남긴다 — 세대는 조회를 청할 때 붙는다 (F-7 리뷰 B2)
+            self.pending_revert = Some(path.clone());
             *path = target;
             self.remote_dirty = true;
         }
     }
 
-    /// 조회가 실패해 옮기기를 무른다 — 돌아갈 자리가 없으면 그대로 둔다.
+    /// 그 세대의 조회가 실패해 옮기기를 무른다 — 자리가 없거나 **다른 요청의 것**이면 그대로 둔다.
     ///
+    /// 지금 보고 있는 곳이 `옮겨 간 곳` 그대로일 때만 손댄다 — 그 사이 탭을 바꿨거나 다시
+    /// 옮겼으면 이 되돌리기는 이미 과거의 것이다(F-7 2라운드 B2).
     /// 되돌린 뒤에는 **다시 읽지 않는다**(`remote_dirty`를 세우지 않는다) — 그 폴더의 목록은
     /// 이미 화면에 있고, 다시 청하면 실패한 조회와 성공한 조회가 번갈아 도는 고리가 된다
-    pub fn revert_remote_path(&mut self) -> bool {
-        let Some(previous) = self.remote_previous.take() else {
+    pub fn revert_remote_path(&mut self, generation: u64) -> bool {
+        let Some((waiting, previous, moved_to)) = self.revert_at.clone() else {
             return false;
         };
-        if let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source {
-            *path = previous;
-            return true;
+        if waiting != generation {
+            return false;
         }
-        false
+        let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source else {
+            return false;
+        };
+        if *path != moved_to {
+            return false;
+        }
+        *path = previous;
+        self.revert_at = None;
+        true
     }
 
     /// 옮긴 뒤 아직 다시 읽지 않았는가 — 앱이 프레임마다 거둬 `request_remote_list`로 잇는다
@@ -742,6 +757,12 @@ impl PanelState {
         let (conn, path) = (*conn, path.clone());
         self.remote_generation += 1;
         let generation = self.remote_generation;
+        // 돌아갈 자리를 **이 요청에** 묶는다. 옮기기가 아닌 조회(새로 고침·작업 후 재조회)는
+        // 돌아갈 곳이 없으므로 그 자리도 비운다 — 남겨 두면 그 실패가 엉뚱한 되돌리기를 부른다
+        self.revert_at = self
+            .pending_revert
+            .take()
+            .map(|previous| (generation, previous, path.clone()));
         manager
             .send(conn, ConnCommand::List { generation, path })
             .then_some(generation)
@@ -777,6 +798,11 @@ impl PanelState {
     ) -> bool {
         if !self.awaits_remote_list(generation, path) {
             return false;
+        }
+        // 이 이동은 섰다 — 돌아갈 자리를 지운다. 남겨 두면 **나중의 무관한 조회 실패**가
+        // 그 낡은 값으로 경로만 되돌린다(F-7 2라운드 B1)
+        if matches!(&self.revert_at, Some((waiting, _, _)) if *waiting == generation) {
+            self.revert_at = None;
         }
         self.list
             .set_remote_entries(with_parent_first(entries), icons);
@@ -2097,6 +2123,66 @@ mod tests {
     }
 
     #[test]
+    fn 성공한_이동은_되돌릴_자리를_남기지_않는다() {
+        // F-7 2라운드 B1 — 자리가 남으면 **나중의 무관한 실패**(새로 고침·작업 후 재조회)가
+        // 옛 폴더로 경로만 되돌린다
+        let mut icons = IconCache::new();
+        let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
+        let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+        panel.set_remote_path(RemotePath::new("/var/www/html"));
+        panel.request_remote_list(&manager);
+        let moved = panel.remote_generation;
+        // 답이 도착해 이동이 섰다
+        assert!(panel.apply_remote_listed(
+            moved,
+            &RemotePath::new("/var/www/html"),
+            Vec::new(),
+            &mut icons
+        ));
+
+        // 그 뒤의 새로 고침이 실패해도 경로는 그대로여야 한다
+        panel.request_remote_list(&manager);
+        let refreshed = panel.remote_generation;
+        assert!(
+            !panel.revert_remote_path(refreshed),
+            "성공한 이동이 되돌려졌다"
+        );
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www/html")
+        );
+    }
+
+    #[test]
+    fn 다른_요청의_실패는_경로를_건드리지_않는다() {
+        // F-7 2라운드 B2 — 같은 연결을 두 패널이 나눠 쓰면 세대가 겹친다.
+        // 되돌리기는 **그 요청의 세대**이면서 **아직 그 자리에 있을 때**만 일어나야 한다
+        let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
+        let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+        panel.set_remote_path(RemotePath::new("/root"));
+        panel.request_remote_list(&manager);
+        let generation = panel.remote_generation;
+
+        // 남의 세대로는 되돌지 않는다
+        assert!(!panel.revert_remote_path(generation + 1));
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/root")
+        );
+
+        // 그 사이 다른 곳으로 또 옮겼으면 지난 되돌리기는 무효다
+        panel.set_remote_path(RemotePath::new("/etc"));
+        assert!(
+            !panel.revert_remote_path(generation),
+            "지난 요청이 지금 위치를 되돌렸다"
+        );
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/etc")
+        );
+    }
+
+    #[test]
     fn 조회가_실패하면_옮기기를_무른다() {
         // F-7 리뷰 B2 — 주소창은 새 폴더를, 목록은 이전 폴더를 가리킨 채 갈라지면
         // 그 위에서 연 메뉴가 보이는 것과 다른 경로에 삭제·권한 변경을 건다
@@ -2105,10 +2191,15 @@ mod tests {
             panel.tabs.active().source.remote_path().map(|p| p.as_str()),
             Some("/var/www")
         );
+        let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
         panel.set_remote_path(RemotePath::new("/root"));
-        assert!(panel.awaits_generation(panel.remote_generation));
+        panel.request_remote_list(&manager);
+        let generation = panel.remote_generation;
 
-        assert!(panel.revert_remote_path(), "되돌릴 자리가 없다고 했다");
+        assert!(
+            panel.revert_remote_path(generation),
+            "되돌릴 자리가 없다고 했다"
+        );
         assert_eq!(
             panel.tabs.active().source.remote_path().map(|p| p.as_str()),
             Some("/var/www"),
@@ -2118,6 +2209,6 @@ mod tests {
         panel.take_remote_dirty();
         assert!(!panel.take_remote_dirty());
         // 돌아갈 자리는 한 번만 쓴다
-        assert!(!panel.revert_remote_path());
+        assert!(!panel.revert_remote_path(generation));
     }
 }
