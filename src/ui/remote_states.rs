@@ -209,6 +209,12 @@ pub fn show_skeleton(ui: &mut egui::Ui) {
 /// egui 기본 버튼 색(`#2A2A2A`·기본 테두리·hover `#383838`)과 다르므로 스타일을 **국소로**
 /// 덮는다. 전역 팔레트를 바꾸면 기존 화면의 버튼까지 함께 바뀐다.
 /// 글자색은 자리마다 달라(취소 `#C8C8C8` · 실패 화면 `#D8D8D8`) 인자로 받는다
+/// 보조 버튼의 테두리 두께.
+///
+/// **폭 계산이 이 값을 알아야 한다** — egui는 버튼 안쪽 여백을 `button_padding − 테두리 두께`로
+/// 잡으므로(`Style::button_style`), 이것을 빼지 않으면 `design_button_width`가 실제보다 넓게 센다
+const BUTTON_STROKE: f32 = 1.0;
+
 /// 폭은 **글자에 맞춘다** — 원본이 폭 대신 좌우 여백(`padding 0 Npx`)으로 정하기 때문이다
 fn design_button(
     ui: &mut egui::Ui,
@@ -227,7 +233,7 @@ fn design_button(
         ] {
             state.weak_bg_fill = fill;
             state.bg_fill = fill;
-            state.bg_stroke = egui::Stroke::new(1.0, theme::BORDER_CONTROL);
+            state.bg_stroke = egui::Stroke::new(BUTTON_STROKE, theme::BORDER_CONTROL);
             state.corner_radius = egui::CornerRadius::ZERO;
             // 눌렸을 때 커지지 않는다 — 디자인은 상태에 따라 크기가 변하지 않는다
             state.expansion = 0.0;
@@ -240,14 +246,17 @@ fn design_button(
     .inner
 }
 
-/// `design_button`이 차지할 폭 — 가운데 정렬처럼 **그리기 전에** 폭을 알아야 하는 자리가 쓴다
+/// `design_button`이 차지할 폭 — 가운데 정렬처럼 **그리기 전에** 폭을 알아야 하는 자리가 쓴다.
+///
+/// 여백에서 테두리 두께를 빼는 것은 egui가 그렇게 그리기 때문이다(`BUTTON_STROKE` 참조) —
+/// 빼지 않으면 버튼 행이 계산된 중앙에서 1px 밀린다
 fn design_button_width(ui: &egui::Ui, label: &str, pad_x: f32) -> f32 {
     let font = egui::TextStyle::Button.resolve(ui.style());
     ui.painter()
         .layout_no_wrap(label.to_owned(), font, theme::TEXT)
         .size()
         .x
-        + pad_x * 2.0
+        + (pad_x - BUTTON_STROKE) * 2.0
 }
 
 /// 연결 중 취소 버튼 — 눌렸으면 `true` (인벤토리 #21)
