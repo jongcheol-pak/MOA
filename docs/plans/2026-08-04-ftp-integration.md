@@ -53,6 +53,8 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [ ] **[SUGGEST] 원격 목록 정렬의 이름 키 할당** (T7 quality 리뷰 m2) — `ListRow::name_sort_key`가 원격 항목마다 널 종단 UTF-16을 새로 만든다(비교마다 최대 2회). 로컬·원격이 **같은 정렬 규칙**(`StrCmpLogicalW`)을 쓰기 위한 대가다. T9/T10에서 배선할 때 **정렬이 UI 스레드에서 돌지 않게** 하고(NFR-13: 파싱·정렬은 워커), 1만 항목에서 T26이 실측해 필요하면 키를 미리 만들어 두는 쪽으로 바꾼다
 - [ ] **[SUGGEST] `remote::testing`이 릴리스 빌드에 포함된다** (T4 quality 리뷰 m2) — 가짜 서버·세션 400여 줄이 배포 exe에 그대로 들어간다. `tests/`가 라이브러리를 일반 빌드로 링크해서 `#[cfg(test)]`를 쓸 수 없기 때문이다. Cargo feature(`test-util`)로 가르는 것이 깔끔하지만 이 프로젝트에 feature 관례가 전혀 없어 이번엔 두었다 — T26에서 exe 크기를 잴 때 함께 판단한다
 - [ ] **[SUGGEST] `src/ui/panel.rs`가 1673줄** (T10 quality 리뷰 m2) — 1500줄 분리 검토선을 넘었다. 이번엔 쪼개지 않았다: `PanelState`라는 단일 책임이고 절반 이상이 테스트 모듈이라, 지금 나누면 관련 로직의 지역성만 잃는다(AGENTS "억지 분리는 지역성을 해침"). 원격 관련 task(T11 열 확장·T22 드래그·T23 원격 메뉴)가 더 얹히면 **단계별 화면 분기와 원격 배선을 떼는 쪽**으로 재검토한다
+- [ ] **[SUGGEST] 전송 큐의 "한 번만 훑는다"를 회귀로 못 박기** (T17 spec 리뷰 M2) — `filter`·`summary`가 단일 순회임을 소스로 확인하고 결과 일치 테스트로 고정했지만, 나중에 항목마다 재순회하는 코드가 들어와도 테스트는 통과한다. 순회 횟수를 세는 계측(`Cell<u32>`)을 붙이는 편이 강하다 — T19에서 화면이 매 프레임 부르기 시작할 때 함께 검토한다
+- [ ] **[SUGGEST] `—`(모름 표시) 상수가 두 곳에 있다** (T17 quality 리뷰 S1) — `remote::queue::UNKNOWN`과 `ui::remote_states::UNKNOWN_COUNT`가 같은 글자를 따로 든다. T19가 큐 표를 그릴 때 한쪽으로 모은다
 - [ ] **원격 목록에 문자셋을 실제로 적용하기 (FR-46의 남은 절반)** — T16이 `remote::charset`(UTF-8·CP949·Latin-1 왕복)과 `문자셋` 탭·저장까지 마쳤지만, **목록 경로에 잇지 못했다**: `suppaftp`가 목록 줄을 `String::from_utf8_lossy`로 이미 디코딩해 내주고(`sync_ftp.rs:747`·`:841`) `ssh2`는 `from_utf8().unwrap()`으로 옮겨(T3 관측) **원본 바이트가 우리 손에 오지 않는다**. 지금 상태에서 CP949 서버의 한글 파일명은 여전히 깨져 보인다(치환 문자). 잇는 길은 ⓐ `suppaftp`의 저수준 데이터 스트림을 직접 읽어 LIST 원문 바이트를 우리가 파싱 ⓑ `ssh2` 대신 바이트 경로를 주는 SFTP 크레이트 검토 — 둘 다 T16 범위를 넘어 별도 task가 필요하다. 위 「SFTP 목록의 비UTF-8 파일명」 항목과 같은 뿌리다
 - [ ] **[SUGGEST] `src/ui/site_manager.rs`가 1757줄** (T16 hook 경고) — 1500줄 분리 검토선을 넘었다. 이번엔 쪼개지 않았다: **`SiteManager`라는 단일 책임**이고(대화 하나의 상태·그리기·목록 조작), 나눌 만한 경계가 탭 셋뿐인데 셋이 같은 초안(`Draft`)을 함께 고쳐 파일을 가르면 그 초안이 파일 사이를 오간다 — 관련 로직의 지역성만 잃는다(AGENTS "억지 분리는 지역성을 해침" — T10의 `panel.rs` 판단과 같은 기준). 테스트 모듈은 `:1325`부터 끝까지 **433줄(약 25%)**이다(quality 리뷰 M1이 처음 적었던 "절반 이상·약 900줄"을 실측으로 정정). 사이트 관리자에 더 얹히는 task는 남아 있지 않으므로 이 크기에서 멈춘다
 - [ ] **[SUGGEST] 사이트 관리자 초안의 평문 비밀번호를 지우지 않는다** (T15 quality 리뷰 m1) — 대화가 열려 있는 동안 `Draft.password`가 힙에 남고, 초안을 갈아 끼우거나 닫을 때 `remote::secret`의 `zeroize` 관례를 잇지 않는다. DPAPI는 저장(at-rest) 보호가 목적이고 `SiteStore::password()`도 이미 `String`을 그대로 내주므로 이번엔 두었다 — 런타임 메모리까지 지우려면 그 반환 경로부터 함께 바꿔야 해서 T15 범위를 넘는다
@@ -525,7 +527,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - [x] T14 연결 시 좌우 분할 배치 [C]
 - [x] T15 사이트 관리자 — 일반 탭 [D]
 - [x] T16 사이트 관리자 — 전송 설정·문자셋 탭 + 토스트 [C]
-- [ ] T17 전송 큐 모델 [D]
+- [x] T17 전송 큐 모델 [D]
 - [ ] T18 전송 실행기 [D]
 - [ ] T19 전송 큐 패널 UI [C]
 - [ ] T20 서버 로그 패널 UI [C]
@@ -761,8 +763,8 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 - **Files**: `src/remote/queue.rs`(신규), `src/remote/mod.rs`
 - **Design**:
   - **배치**: `remote::queue` — 순수 모델(스레드·I/O 없음)이라 단위 테스트가 쉽다
-  - **신규 심볼**: `TransferId(u64)` / `Direction{Upload,Download}` / `TransferState{Wait,Active{sent,speed},Done,Error{message}}` / `TransferItem` / `TransferQueue` — `enqueue`·`next_for(site)`·`update`·`cancel`·`pause`·`clear_done`·`filter(QueueFilter)`·`summary()`·`overall_progress()`·`counts_by_site()`
-  - **의존 방향**: `remote::queue` → `remote::types`. 실행은 T18
+  - **신규 심볼**: ~~`TransferId(u64)` / `Direction{Upload,Download}`~~ → **T4가 이미 도입한 `remote::connection::{TransferId, TransferDirection}`를 재사용**(구현 중 정정 — 워커 명령이 그 타입을 싣고 `connection.rs:31`에도 "큐가 발급한다"고 적혀 있다. 같은 뜻의 타입을 또 만들면 경계마다 옮겨 담게 된다) / `TransferState{Wait,Active{sent,speed},Done,Error{message}}` / `TransferItem` / `TransferQueue` — `enqueue`·`next_for(site)`·`update`·`cancel`·`pause`·`clear_done`·`filter(QueueFilter)`·`summary()`·`overall_progress()`·`counts_by_site()`
+  - **의존 방향**: `remote::queue` → `remote::{types, connection}`(위 재사용에 따라 `connection`이 늘었다 — 값 타입만 빌리고 워커·I/O는 건드리지 않는다). 실행은 T18
   - **비추상화 선언**: 우선순위·재정렬을 넣지 않는다(Out of Scope). 폴더 재귀 전송은 **큐에 넣기 전에 펼친다** — 큐는 파일 단위만 안다
 - **Acceptance**: ① `next_for`가 **매니저가 보고한 전송 슬롯 수만큼만** 활성으로 내주고(D4 — 고정 2가 아니라 `max(1, 배정값)`), 한 사이트가 가득 차도 다른 사이트는 계속 나온다. **`M=1`(겸용) 사이트에도 1건을 내준다** — 0을 내주면 그 설정에서 전송이 영구히 시작되지 않는다(2차 리뷰 M1). 큐는 겸용 여부를 모른다. ② 필터 `all`/`done`/`err`가 **같은 항목 집합을 거른다**(건수 합이 전체와 맞는다 — README §6). ③ `summary()`가 대기 건수·합계 속도·남은 시간을 계산하고 속도 0이면 남은 시간을 `—`로 둔다. ④ 취소한 항목이 활성 자리를 즉시 비운다. ⑤ `counts_by_site()`가 연결별 탭의 `(N)` 값을 준다(인벤토리 #35·#36). ⑥ 1만 건에서 `filter`·`summary`가 O(n) 한 번만 돈다.
 - **Edge Cases**: 큐가 빔 / 같은 파일 두 번 등록 → 둘 다 넣되 나중 것이 덮어쓰기 확인 대상 / 크기를 모름(size 0) → 진행률 `—` / 전부 실패 / 일시정지 중 등록 → 대기에만 쌓인다 / 연결이 끊긴 사이트의 항목 → 대기로 되돌린다.
@@ -1015,9 +1017,15 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
   - **리뷰 지적(spec MINOR 1) 반영**: Edge Case의 "전송 모드를 바꿨는데 이미 연결됨 → 다음 연결부터 적용(**안내**)"에서 동작은 자연히 성립했지만 안내가 없었다 — 연결 중인 사이트의 모드를 바꾸면 전송 설정 탭에 그 사실을 적는다.
   - **미해결(F-8 인계)**: 렌더 확인이 필요한 시각 축 4건 — plan `### V-9 대조 결과 — T16`의 ⏳ 목록.
 
+- T17 완료: `remote::queue`(전송 큐 순수 모델) 신설 — 자리 배정·필터·요약·사이트별 건수. 신규 단위 테스트 17개(477→494).
+  - **결정(계획 문구 정정)**: `TransferId`·방향 타입을 새로 만들지 않고 T4의 `remote::connection` 것을 재사용했다 — 워커 명령이 이미 그 타입을 싣는다. 두 벌이면 큐↔워커 경계마다 옮겨 담게 된다.
+  - **결정**: `next_for`가 `slots.max(1)`을 쓴다 — 상한 1인 사이트는 탐색 채널이 전송을 겸하는데(매니저만 아는 사정) 0을 그대로 받으면 그 설정에서 전송이 영원히 시작되지 않는다(2차 리뷰 M1이 계획 단계에 짚은 것).
+  - **결정**: 취소는 항목을 **목록에서 지운다** — 실패로 남기면 실패 탭(사용자가 다시 걸 것을 고르는 자리)에 스스로 그만둔 것이 섞인다.
+  - **결정**: 연결이 끊긴 사이트의 진행 중 항목은 실패가 아니라 **대기로 되돌린다** — 서버가 거부한 것이 아니라 우리 쪽 연결이 사라진 것이다.
+
 ## Next Steps
 
-- 권장 다음 액션: **`T17부터 계속`** 으로 implement-task 재개 (T0~T16 완료)
+- 권장 다음 액션: **`T18부터 계속`** 으로 implement-task 재개 (T0~T17 완료)
 - Suggested skills: pjc:implement-task
 - **T11이 이어받는 자리**: 원격 패널은 이제 연결 단계별로 화면이 갈리고(`ui::remote_states`), 연결된 탭은 로컬과 같은 목록 부품을 쓴다 — T11의 열 확장(권한·소유자)은 그 목록 경로에 얹으면 된다. 앱의 연결 라우팅(`ExplorerApp::poll_remote`)과 사이트 저장소(`ExplorerApp::sites`)는 이미 자리를 잡았고, **사이트에 연결하는 진입점만 아직 없다** — `ExplorerApp::connect_site`가 그 통로로 열려 있으며 T12(사이드바)·T13(주소창·드롭다운)이 호출부를 붙인다.
 
@@ -1028,10 +1036,11 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ## Phase Ledger
 
-- T0~T16 완료. 남은 것: T17~T26 + Phase F + Phase G(PRD 연결 plan).
+- T0~T17 완료. 남은 것: T18~T26 + Phase F + Phase G(PRD 연결 plan).
 
 ## Retry Ledger
 
+- T17: 리뷰 지적 수정 사이클 0회(spec MINOR 2·quality SUGGEST 1 — 전부 문서 정정·개선 제안이라 코드 변경 없음). 빌드 실패 0회, 테스트 실패 0회.
 - T16: 리뷰 지적 수정 사이클 2회(① quality MAJOR 1 ② spec MINOR 1 — Edge Case "전송 모드를 바꿨는데 이미 연결됨 → 안내"가 동작만 있고 안내가 없었다. 이연하지 않고 구현했다. 문구·그리기가 12줄이라 3회차 재리뷰는 돌리지 않고 빌드·테스트·clippy로 닫았다). 첫 지적은 quality MAJOR 1( — plan Deferred의 파일 크기 근거가 실측과 불일치 — 재확인 OK). 빌드 실패 2회(`text_field` 시그니처 변경에 따른 호출부 · `Context::fonts`가 `fonts_mut`), 테스트 실패 0회.
   - **절차 기록**: spec 리뷰 1회차가 판정 없이 끊겨 `incomplete`로 보고 재호출로 해소했다(T15와 같다 — 이 plan에서 세 번째다).
 - T15: 리뷰 지적 수정 사이클 1회(spec MINOR 2 — 목록 기본 선택·실패 화면 진입점. 둘 다 인벤토리 #62 기본값 축에 걸려 이연하지 않고 고쳤다. quality는 MINOR 1건 판정 유보로 follow-up 등록). 빌드 실패 0회, 테스트 실패 0회, clippy 실패 1회(`field_reassign_with_default`).
