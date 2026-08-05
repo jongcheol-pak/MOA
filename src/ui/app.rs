@@ -1359,11 +1359,27 @@ impl ExplorerApp {
             Command::ClosePanel => {
                 let view = self.ensure_active_view();
                 let panel = target.unwrap_or(view.active);
+                // 패널이 사라지면 그 탭들이 쓰던 연결도 쓸 곳이 없어진다 — 닫기 전에 모아 둔다
+                let conns = view
+                    .panels
+                    .get(&panel)
+                    .map(PanelState::conns)
+                    .unwrap_or_default();
                 view.close_panel(panel, area);
+                // 마지막 패널은 닫히지 않는다 (FR-2) — 그때는 연결도 그대로 둔다
+                let closed = !view.panels.contains_key(&panel);
+                if closed {
+                    for conn in conns {
+                        // 다른 패널이 아직 그 연결을 쓰고 있으면 접지 않는다 (FR-32)
+                        if !self.conn_in_use(conn) {
+                            self.release_conn(conn);
+                        }
+                    }
+                }
             }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
-            Command::OpenSiteTab(site) => self.open_site_tab(site, target, area),
+            Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
             Command::CloseTab => self.close_tab(target, ctx),
             Command::NewTab
@@ -1427,6 +1443,32 @@ impl ExplorerApp {
         };
         if let Some(conn) = panel.close_tab(ctx) {
             self.manager.close(conn);
+        }
+    }
+
+    /// 이 연결을 아직 쓰는 탭이 있는가 — 지금 보이지 않는 워크스페이스까지 본다.
+    /// 한 연결을 여러 패널이 나눠 쓸 수 있어, 한 곳이 놓았다고 접으면 나머지가 끊긴다
+    fn conn_in_use(&self, conn: ConnectionId) -> bool {
+        self.views
+            .values()
+            .any(|view| view.panels.values().any(|panel| panel.uses_conn(conn)))
+    }
+
+    /// 연결 하나를 접고 그에 딸린 대기 자리를 함께 지운다 (FR-32).
+    ///
+    /// 워커와 소켓이 여기서 회수된다. 그 연결에 청해 둔 훑기는 답이 오지 않으므로
+    /// 기다리는 자리도 함께 지운다 (T24 Acceptance ④) — 남기면 영영 기다린다
+    fn release_conn(&mut self, conn: ConnectionId) {
+        let site = self.manager.get(conn).map(|connection| connection.site);
+        self.manager.close(conn);
+        self.tree_cache.forget(conn);
+        self.pending_tree_lists
+            .retain(|_, (waiting, _, _)| *waiting != conn);
+        if let Some(site) = site
+            && self.site_connection(site).is_none()
+        {
+            self.pending_trees
+                .retain(|_, (waiting, _, _)| *waiting != site);
         }
     }
 
@@ -1690,6 +1732,26 @@ impl ExplorerApp {
         self.open_site_tab_at(site, target, RemotePath::root(), area);
     }
 
+    /// 사이트를 **그 패널의 새 탭**으로 연다 — 나누지 않는다.
+    ///
+    /// 탭 스트립의 `연결 사이트를 새 탭으로` 드롭다운과 스트립에 끌어다 놓기가 이 길을 쓴다.
+    /// 이름 그대로 새 탭이며, `+`(새 탭)와 같은 자리에 열려야 한다 (사용자 보고) — 사이드바·
+    /// 사이트 관리자에서 여는 길만 좌우로 나눠 연다 (`open_site_tab` — FR-35)
+    fn open_site_tab_here(&mut self, site: SiteId, target: Option<PanelId>) {
+        if self.sites.get(site).is_none() {
+            return;
+        }
+        let view = self.ensure_active_view();
+        let opened = target.unwrap_or(view.active);
+        let Some(panel) = view.panels.get_mut(&opened) else {
+            return;
+        };
+        panel.open_remote_tab(site, RemotePath::root());
+        // 연결은 **활성 패널의 활성 탭**에 붙는다 — 다른 패널에서 연 경우까지 맞춰 둔다
+        view.active = opened;
+        self.connect_site(site);
+    }
+
     /// 위와 같되 시작 위치를 지정한다 — 주소에 경로가 함께 적힌 경우(`sftp://host/pub`).
     ///
     /// **연결은 활성 패널을 좌우로 나눠 오른쪽에 연다** (FR-35·README) — 로컬과 원격을 나란히
@@ -1709,13 +1771,18 @@ impl ExplorerApp {
         let view = self.ensure_active_view();
         let source = target.unwrap_or(view.active);
         // 기존 분할 구조는 그대로 두고 대상 패널만 나눈다 (Acceptance ②)
-        let opened = view
-            .split_panel(source, SplitDir::Horizontal, SplitPlace::After, area)
-            .unwrap_or(source);
+        let created = view.split_panel(source, SplitDir::Horizontal, SplitPlace::After, area);
+        let opened = created.unwrap_or(source);
         let Some(panel) = view.panels.get_mut(&opened) else {
             return;
         };
-        panel.open_remote_tab(site, path);
+        if created.is_some() {
+            // 새로 나온 패널에는 연결만 남긴다 — 시작 폴더 탭은 사용자가 연 적이 없다
+            panel.open_remote_tab_only(site, path);
+        } else {
+            // 나눌 자리가 없어 현재 패널로 물러선 길 — 쓰던 탭은 그대로 두고 하나 더 연다
+            panel.open_remote_tab(site, path);
+        }
         // 방금 만든 탭이 활성이라 연결이 그 탭에 붙는다
         self.connect_site(site);
     }
@@ -1874,6 +1941,12 @@ impl eframe::App for ExplorerApp {
             if !self.shell_available() {
                 ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
             }
+            // 하단 상태 표시줄·도크를 사이드바보다 **먼저** 뗀다 — egui 패널은 먼저 그린 쪽이
+            // 넓은 자리를 가져가므로, 순서를 뒤집으면 둘 다 사이드바를 뺀 폭에만 그려진다.
+            // 창 폭 전체를 가로지르는 것이 디자인이다 (FR-36·FR-40)
+            self.show_status_bar(ui);
+            self.show_dock(ui);
+
             let mut sidebar_actions = Vec::new();
             if !self.sidebar_collapsed {
                 // 연결 상태를 먼저 모은다 — 아래 클로저가 `self`를 통째로 빌린다
@@ -1903,8 +1976,6 @@ impl eframe::App for ExplorerApp {
                 sidebar_actions = panel.inner;
             }
 
-            self.show_status_bar(ui);
-            self.show_dock(ui);
             let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
             layout_area = Some(area);
             for action in sidebar_actions {
@@ -1987,21 +2058,7 @@ impl eframe::App for ExplorerApp {
             }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {
-                // 그 연결에 청해 둔 훑기는 답이 오지 않는다 — 함께 지우지 않으면
-                // 기다리는 자리가 영영 남는다
-                let site = self.manager.get(conn).map(|connection| connection.site);
-                self.manager.close(conn);
-                // 그 연결의 트리도 함께 버린다 (T24 Acceptance ④) — 답을 기다리던 자리도
-                // 함께 지운다(오지 않는 답을 영영 기다리게 두지 않는다)
-                self.tree_cache.forget(conn);
-                self.pending_tree_lists
-                    .retain(|_, (waiting, _, _)| *waiting != conn);
-                if let Some(site) = site
-                    && self.site_connection(site).is_none()
-                {
-                    self.pending_trees
-                        .retain(|_, (waiting, _, _)| *waiting != site);
-                }
+                self.release_conn(conn);
             }
         });
 

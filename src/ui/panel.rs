@@ -279,6 +279,9 @@ pub struct PanelState {
     create: CreateOp,
     /// 주소창에 적힌 원격 주소 — 이번 프레임의 결과로 앱에 올려 보낸다
     pending_remote_url: Option<RemoteUrl>,
+    /// 마지막 탭을 닫으려 했다 — 이 패널을 닫아 달라는 뜻으로 앱에 올려 보낸다.
+    /// 마지막 **패널**을 지키는 것은 앱의 몫이다 (FR-2)
+    close_requested: bool,
     /// 원격 목록 우클릭 메뉴가 뜰 자리 — `None`이면 닫혀 있다 (FR-39)
     remote_menu_at: Option<egui::Pos2>,
     /// 아직 조회를 청하지 않은 "직전에 보고 있던 곳" — `set_remote_path`가 세우고
@@ -329,6 +332,7 @@ impl PanelState {
             watch: None,
             create: CreateOp::new(),
             pending_remote_url: None,
+            close_requested: false,
             remote_menu_at: None,
             pending_revert: None,
             revert_at: None,
@@ -649,8 +653,22 @@ impl PanelState {
         self.tabs.active().source.remote_path().cloned()
     }
 
+    /// 이 패널의 탭들이 쓰고 있는 연결들 — 패널을 닫을 때 회수 대상을 고르는 데 쓴다 (FR-32).
+    /// 한 연결을 여러 탭이 나눠 쓸 수 있어 같은 값은 한 번만 담는다
+    pub fn conns(&self) -> Vec<ConnectionId> {
+        let mut conns = Vec::new();
+        for source in self.tabs.sources() {
+            if let TabSource::Remote { conn: Some(conn), .. } = source
+                && !conns.contains(&conn)
+            {
+                conns.push(conn);
+            }
+        }
+        conns
+    }
+
     /// 이 패널의 탭 중 그 연결을 쓰는 것이 있는가 — 연결을 접어도 되는지 판정한다 (FR-32)
-    fn uses_conn(&self, target: ConnectionId) -> bool {
+    pub fn uses_conn(&self, target: ConnectionId) -> bool {
         self.tabs.sources().iter().any(|source| {
             matches!(source, TabSource::Remote { conn: Some(conn), .. } if *conn == target)
         })
@@ -666,6 +684,19 @@ impl PanelState {
         // 원격이 됐기 때문이다. 접지 않으면 `읽는 중…`이 남고, 도착한 결과가 원격 탭에
         // 커밋되려다 죽는다(개발 빌드) 또는 원격 탭을 로컬 탭으로 둔갑시킨다(배포 빌드)
         self.abandon_local_load();
+    }
+
+    /// 위와 같되 **원격 탭 하나만** 남긴다 — 갓 나뉘어 나온 패널에 쓴다.
+    ///
+    /// 분할로 만든 패널은 시작 폴더를 가리키는 로컬 탭 하나를 들고 태어나는데, 사용자가 청한
+    /// 것은 연결 하나다. 그대로 두면 연결을 열 때마다 쓰지도 않을 탭을 손으로 닫아야 한다
+    /// (사용자 보고). 이미 쓰고 있던 패널에는 쓰지 않는다 — 그 탭들은 사용자가 연 것이다
+    pub fn open_remote_tab_only(&mut self, site: SiteId, path: RemotePath) {
+        self.open_remote_tab(site, path);
+        // 방금 만든 원격 탭이 활성이다. 그 앞에 있는 것이 태어날 때 딸려 온 탭이다
+        while self.tabs.active_index() > 0 {
+            self.tabs.close(self.tabs.active_index() - 1);
+        }
     }
 
     /// 진행 중인 로컬 열거를 버리고 그에 딸린 상태(대기 경로·이동 방향·상태 문구)를 지운다
@@ -941,8 +972,13 @@ impl PanelState {
                     {
                         return Some(conn);
                     }
+                } else {
+                    // 패널의 마지막 탭이면 탭 대신 **패널**이 닫힌다 (탐색기·브라우저 관례).
+                    // 그러지 않으면 ✕가 아무 반응도 하지 않는다 — 원격 탭은 늘 자기 패널에
+                    // 혼자 열리므로(`open_remote_tab_only`) 연결을 닫을 길이 없어진다.
+                    // 마지막 패널을 지키는 것은 앱이다 (FR-2)
+                    self.close_requested = true;
                 }
-                // LastTab이면 아무것도 하지 않는다 — 패널의 마지막 탭은 남는다
             }
             TabAction::New => {
                 // 새 탭은 지금 보고 있는 곳을 복제해 연다 (탐색기 관례).
@@ -1137,8 +1173,13 @@ impl PanelState {
         PanelOutcome {
             menu: self.handle_list_action(action, ctx),
             // 드롭다운·드롭존에서 고른 사이트는 명령으로 올려 보낸다 —
-            // 새 탭 생성·연결은 앱이 한다 (T13 착지 규약)
-            command: strip.open_site.map(Command::OpenSiteTab).or(strip.command),
+            // 새 탭 생성·연결은 앱이 한다 (T13 착지 규약).
+            // 마지막 탭을 닫은 프레임에는 패널 닫기가 우선이다 — 그 패널은 사라진다
+            command: if std::mem::take(&mut self.close_requested) {
+                Some(Command::ClosePanel)
+            } else {
+                strip.open_site.map(Command::OpenSiteTab).or(strip.command)
+            },
             remote: remote_action,
             remote_url: self.pending_remote_url.take(),
             closed_conn,
@@ -2124,6 +2165,55 @@ mod tests {
         );
         assert!(request.is_none(), "원격 탭에서 셸 메뉴를 청했다");
         assert_eq!(panel.remote_menu_at, Some(pos), "원격 메뉴가 뜨지 않았다");
+    }
+
+    #[test]
+    fn 갓_나뉜_패널은_원격_탭_하나만_갖는다() {
+        // 사용자 보고 — 연결을 열면 시작 폴더 탭이 함께 남아 탭이 둘이었다
+        let mut panel = PanelState::new(PathBuf::from(r"C:\"));
+        assert_eq!(panel.tabs.len(), 1, "새 패널은 탭 하나로 시작한다");
+
+        panel.open_remote_tab_only(SiteId(1), RemotePath::new("/var/www"));
+        assert_eq!(panel.tabs.len(), 1, "원격 탭만 남아야 한다");
+        assert!(
+            matches!(panel.tabs.active().source, TabSource::Remote { .. }),
+            "남은 탭이 원격이 아니다"
+        );
+
+        // 쓰던 패널에 여는 길(`open_remote_tab`)은 그대로 더한다 — 그 탭들은 사용자가 열었다
+        panel.open_remote_tab(SiteId(2), RemotePath::root());
+        assert_eq!(panel.tabs.len(), 2, "기존 탭을 지우면 안 된다");
+    }
+
+    #[test]
+    fn 마지막_탭을_닫으면_패널_닫기를_청한다() {
+        // 사용자 보고 — 원격 탭이 홀로 있는 패널에서 ✕가 아무 반응도 하지 않았다
+        let ctx = egui::Context::default();
+        let mut alone = PanelState::new(PathBuf::from(r"C:\"));
+        alone.open_remote_tab_only(SiteId(1), RemotePath::root());
+        alone.handle_tab(TabAction::Close(0), &ctx);
+        assert_eq!(alone.tabs.len(), 1, "마지막 탭 자체는 남는다");
+        assert!(alone.close_requested, "패널 닫기를 청하지 않았다");
+
+        // 탭이 둘이면 탭만 닫힌다 — 패널은 그대로 둔다
+        let mut pair = PanelState::new(PathBuf::from(r"C:\"));
+        pair.open_remote_tab(SiteId(1), RemotePath::root());
+        pair.handle_tab(TabAction::Close(1), &ctx);
+        assert_eq!(pair.tabs.len(), 1);
+        assert!(!pair.close_requested, "탭이 남았는데 패널을 닫으려 했다");
+    }
+
+    #[test]
+    fn 패널이_쓰는_연결은_중복_없이_모인다() {
+        // 패널을 닫을 때 회수 대상을 고르는 근거다 (FR-32)
+        let mut panel = PanelState::new(PathBuf::from(r"C:\"));
+        assert!(panel.conns().is_empty(), "로컬 탭만 있는데 연결이 잡혔다");
+
+        panel.open_remote_tab(SiteId(1), RemotePath::new("/a"));
+        panel.attach_conn(ConnectionId(7));
+        panel.open_remote_tab(SiteId(1), RemotePath::new("/b"));
+        panel.attach_conn(ConnectionId(7));
+        assert_eq!(panel.conns(), vec![ConnectionId(7)], "같은 연결이 두 번 담겼다");
     }
 
     #[test]

@@ -113,4 +113,14 @@ pub fn apply_dark(ctx: &egui::Context) {
     visuals.selection.bg_fill = CONTROL_ACTIVE;
 
     ctx.set_visuals(visuals);
+
+    // egui의 디버그 경고 하나를 끈다 — 디버그 빌드에만 있는 옵션이라 cfg로 가른다.
+    //
+    // `warn_if_rect_changes_id`는 "같은 자리를 지난 프레임과 다른 위젯이 차지하면 id가
+    // 불안정한 것"이라는 휴리스틱이고, 걸리면 그 위젯에 **2px 빨간 테두리**를 두른다.
+    // 이 앱은 하단 도크를 여닫을 때마다 패널이 통째로 위아래로 밀리므로 자리를 물려받는
+    // 위젯이 수십 개씩 생긴다 — 화면 대부분이 한 프레임 빨갛게 칠해졌다(사용자 보고).
+    // 우리 위젯 id는 패널 id·탭 인덱스로 고정돼 있어 이 경고가 겨냥하는 불안정이 아니다
+    #[cfg(debug_assertions)]
+    ctx.all_styles_mut(|style| style.debug.warn_if_rect_changes_id = false);
 }

@@ -132,7 +132,12 @@ fn dropped_site(ui: &egui::Ui) -> Option<SiteId> {
     egui::DragAndDrop::take_payload::<SiteId>(ui.ctx()).map(|site| *site)
 }
 
-/// 탭 목록과 새 탭 버튼 — 폭이 모자라면 가로로 스크롤된다
+/// 탭 목록과 새 탭 버튼 — 폭이 모자라면 가로로 스크롤된다.
+///
+/// 스크롤 막대는 그리지 않는다 — egui의 떠 있는 막대는 **내용 위에** 겹쳐 그려지는데,
+/// 스트립은 높이가 `STRIP_HEIGHT` 한 줄뿐이라 막대가 탭 제목을 가로질러 덮는다.
+/// 대신 세로 휠을 가로 스크롤로 넘겨(`always_scroll_the_only_direction`) 막대 없이도
+/// 휠만으로 탭을 넘길 수 있게 한다 (브라우저·탐색기 탭과 같은 조작)
 fn show_tabs(
     ui: &mut egui::Ui,
     model: &TabsModel,
@@ -140,8 +145,11 @@ fn show_tabs(
     action: &mut Option<TabAction>,
     open_site: &mut Option<SiteId>,
 ) {
+    // `ScrollArea`가 이 값을 부모 `Ui`에서 읽으므로 만들기 전에 세운다 (이 스트립 안에만 적용)
+    ui.style_mut().always_scroll_the_only_direction = true;
     egui::ScrollArea::horizontal()
         .auto_shrink([false, true])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .show(ui, |ui| {
             // 탭끼리 붙어야 한 줄로 이어져 보인다 — 사이를 벌리면 다시 낱개 버튼처럼 보인다
             ui.spacing_mut().item_spacing.x = 0.0;
