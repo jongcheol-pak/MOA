@@ -20,7 +20,7 @@ use crate::remote::types::{RemotePath, RemoteSession, SiteId};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
-use crate::ui::remote_states::HostKeyGate;
+use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, WorkspaceState};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
@@ -986,6 +986,8 @@ impl eframe::App for ExplorerApp {
             }
             // 확보와 사용을 나눈다 — 아래 호출이 `views`와 `icons`·`textures`를 동시에 빌린다
             let id = self.workspaces.active().id;
+            // 탭 배지·드롭다운이 상태 점을 그리는 데 쓴다 — 빌림이 겹치지 않게 미리 모은다
+            let connected = self.connected_sites();
             self.ensure_active_view();
             if let Some(view) = self.views.get_mut(&id) {
                 let outcome = splitter::show_layout(
@@ -996,7 +998,10 @@ impl eframe::App for ExplorerApp {
                     &mut view.active,
                     &mut self.icons,
                     &mut self.textures,
-                    &self.sites,
+                    RemoteView {
+                        sites: &self.sites,
+                        connected: &connected,
+                    },
                 );
                 menu = outcome.menu;
                 panel_command = outcome.command;

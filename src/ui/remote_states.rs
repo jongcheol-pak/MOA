@@ -14,7 +14,8 @@ use eframe::egui;
 use crate::panel::tabs::TabPhase;
 use crate::remote::hostkey::{HostKeyCheck, HostKeyDecision};
 use crate::remote::sftp::HostKeyPrompt;
-use crate::remote::types::Protocol;
+use crate::remote::sites::SiteStore;
+use crate::remote::types::{Protocol, SiteId};
 use crate::ui::theme;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
@@ -79,6 +80,26 @@ const CANCEL_LABEL: &str = "취소";
 const FAIL_REASON_FALLBACK: &str = "서버가 응답하지 않았습니다.";
 /// 실패 사유 뒤에 늘 붙는 안내 (인벤토리 #17)
 const FAIL_REASON_HINT: &str = "암호화 설정이 서버와 다를 수도 있습니다.";
+
+/// 원격 화면이 함께 보는 읽기 전용 상태 — 사이트 목록과 **지금 연결된 사이트들**.
+///
+/// 탭 스트립·드롭다운·패널이 같은 두 값을 필요로 해서 한 묶음으로 나른다. 따로 넘기면
+/// 화면을 거칠 때마다 인자가 둘씩 늘고, 한쪽만 전달하는 실수가 생긴다.
+///
+/// **연결 자체(`ConnectionManager`)는 넘기지 않는다** — 화면이 알아야 하는 것은
+/// "이 사이트에 연결이 있는가" 하나뿐이라, 연결 계층까지 알게 하면 의존만 넓어진다
+#[derive(Clone, Copy)]
+pub struct RemoteView<'a> {
+    pub sites: &'a SiteStore,
+    pub connected: &'a [SiteId],
+}
+
+impl RemoteView<'_> {
+    /// 그 사이트에 지금 연결이 열려 있는가 — 상태 점이 이것으로 갈린다
+    pub fn is_connected(&self, site: SiteId) -> bool {
+        self.connected.contains(&site)
+    }
+}
 
 /// 실패 화면에서 사용자가 고른 것
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

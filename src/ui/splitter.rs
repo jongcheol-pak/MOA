@@ -6,10 +6,10 @@
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::remote::connection::ConnectionId;
-use crate::remote::sites::SiteStore;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction};
+use crate::ui::remote_states::RemoteView;
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::HashMap;
@@ -98,7 +98,7 @@ pub fn show_layout(
     active: &mut PanelId,
     icons: &mut IconCache,
     textures: &mut IconTextures,
-    sites: &SiteStore,
+    remote: RemoteView<'_>,
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
@@ -135,7 +135,7 @@ pub fn show_layout(
         let requested = ui
             .scope_builder(builder, |ui| {
                 ui.set_clip_rect(pane);
-                panel.show(ui, ctx, icons, textures, sites, menu_state)
+                panel.show(ui, ctx, icons, textures, remote, menu_state)
             })
             .inner;
         merge_panel_outcome(&mut outcome, *id, requested);

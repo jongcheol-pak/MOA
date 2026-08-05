@@ -13,13 +13,12 @@ use crate::fs::watcher::DirWatcher;
 use crate::panel::tabs::{CloseOutcome, TabPhase, TabSource, TabState, TabsModel};
 use crate::remote::connection::{ConnCommand, ConnectionId};
 use crate::remote::manager::ConnectionManager;
-use crate::remote::sites::SiteStore;
 use crate::remote::types::{RemoteEntry, RemotePath, SiteId};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::menu::{Command, PanelMenuState};
-use crate::ui::remote_states::{self, FailedAction};
+use crate::ui::remote_states::{self, FailedAction, RemoteView};
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
@@ -818,10 +817,10 @@ impl PanelState {
         ctx: &egui::Context,
         icons: &mut IconCache,
         textures: &mut IconTextures,
-        sites: &SiteStore,
+        remote: RemoteView<'_>,
         menu_state: PanelMenuState,
     ) -> PanelOutcome {
-        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, sites, menu_state);
+        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, remote, menu_state);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, tab.committed(), &tab.history);
 
@@ -854,7 +853,7 @@ impl PanelState {
         } else {
             area
         };
-        let (action, remote) = ui
+        let (action, remote_action) = ui
             .scope_builder(
                 egui::UiBuilder::new().id_salt("content").max_rect(content),
                 |ui| {
@@ -876,8 +875,10 @@ impl PanelState {
         }
         PanelOutcome {
             menu: self.handle_list_action(action, ctx),
-            command: strip.command,
-            remote,
+            // 드롭다운·드롭존에서 고른 사이트는 명령으로 올려 보낸다 —
+            // 새 탭 생성·연결은 앱이 한다 (T13 착지 규약)
+            command: strip.open_site.map(Command::OpenSiteTab).or(strip.command),
+            remote: remote_action,
             closed_conn,
         }
     }
@@ -1008,6 +1009,7 @@ fn with_parent_first(entries: Vec<RemoteEntry>) -> Vec<RemoteEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::sites::SiteStore;
     use crate::remote::types::{RemotePath, SiteId};
 
     /// 한 프레임에 그려진 글자를 전부 모은다 — 화면에 실제로 무엇이 보이는지 판정한다
@@ -1041,6 +1043,10 @@ mod tests {
 
     /// 패널을 한 프레임 그린다 — 사이트 목록은 호출부가 준다
     fn draw_once(panel: &mut PanelState, sites: &SiteStore) -> eframe::egui::FullOutput {
+        let remote = RemoteView {
+            sites,
+            connected: &[],
+        };
         let ctx = egui::Context::default();
         let mut icons = crate::fs::icons::IconCache::new();
         let mut textures = crate::ui::icon_tex::IconTextures::new();
@@ -1052,7 +1058,7 @@ mod tests {
                     &ctx,
                     &mut icons,
                     &mut textures,
-                    sites,
+                    remote,
                     PanelMenuState::for_panes(1, ViewMode::Details),
                 );
             });

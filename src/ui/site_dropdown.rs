@@ -5,8 +5,8 @@
 //! 공용 팝업 부품으로 뭉뚱그리면 이 차이가 조용히 사라지므로 여기서 직접 그린다.
 //!
 //! 고른 사이트를 값으로 돌려주고 탭 생성·연결은 `ExplorerApp`이 한다 (기존 규약).
-use crate::remote::sites::SiteStore;
 use crate::remote::types::SiteId;
+use crate::ui::remote_states::RemoteView;
 use crate::ui::theme;
 use eframe::egui;
 
@@ -39,12 +39,11 @@ const ROW_HOT: egui::Color32 = egui::Color32::from_rgb(0x33, 0x33, 0x33);
 /// 빈 목록만 나오는 버튼은 자리만 차지한다. 로컬 패널에도 보인다(README §3).
 pub fn show_site_dropdown(
     ui: &mut egui::Ui,
-    sites: &SiteStore,
-    connected: &[SiteId],
+    remote: RemoteView<'_>,
     height: f32,
 ) -> Option<SiteId> {
     // 등록된 사이트가 하나도 없으면 버튼 자체를 그리지 않는다
-    sites.visible().next()?;
+    remote.sites.visible().next()?;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(CARET_WIDTH, height), egui::Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), response.id);
@@ -80,12 +79,12 @@ pub fn show_site_dropdown(
                     .size(CAPTION_FONT_PX)
                     .color(theme::TEXT_DIM),
             );
-            for record in sites.visible() {
+            for record in remote.sites.visible() {
                 if show_row(
                     ui,
                     &record.name,
                     record.protocol.label(),
-                    connected.contains(&record.id),
+                    remote.is_connected(record.id),
                 ) {
                     chosen = Some(record.id);
                     ui.close();
@@ -152,6 +151,7 @@ const ROW_GAP: f32 = 8.0;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::sites::SiteStore;
 
     #[test]
     fn 드롭다운_치수는_원본과_같다() {
@@ -186,7 +186,14 @@ mod tests {
                     // 항목 사이 기본 간격이 폭에 섞이지 않게 한다
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let before = ui.cursor().min.x;
-                    show_site_dropdown(ui, sites, &[], 28.0);
+                    show_site_dropdown(
+                        ui,
+                        RemoteView {
+                            sites,
+                            connected: &[],
+                        },
+                        28.0,
+                    );
                     width = ui.cursor().min.x - before;
                 });
             });

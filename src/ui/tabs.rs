@@ -6,10 +6,11 @@
 //! 저마다 프레임·여백을 그려 두 개의 사각형으로 보인다(Windows 11 탐색기는 한 탭 안에
 //! 아이콘·제목·닫기가 들어 있다). 그래서 영역만 잡고 내용은 직접 그린다.
 use crate::panel::tabs::{TabPhase, TabSource, TabsModel};
-use crate::remote::sites::SiteStore;
 use crate::remote::types::Protocol;
+use crate::remote::types::SiteId;
 use crate::ui::menu::{self, Command, PanelMenuState};
-use crate::ui::remote_states;
+use crate::ui::remote_states::{self, RemoteView};
+use crate::ui::site_dropdown;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -51,6 +52,8 @@ const SPLIT_ICON_STROKE: f32 = 1.0;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct TabStripOutcome {
     pub tab: Option<TabAction>,
+    /// 드롭다운에서 고르거나 사이드바에서 끌어다 놓은 사이트 — 새 원격 탭으로 연다 (FR-33·FR-38)
+    pub open_site: Option<SiteId>,
     /// 패널 메뉴에서 고른 명령 — 대상은 **이 스트립이 속한 패널**이다 (plan D16)
     pub command: Option<Command>,
 }
@@ -89,24 +92,53 @@ struct TabHit {
 pub fn show_tab_strip(
     ui: &mut egui::Ui,
     model: &TabsModel,
-    sites: &SiteStore,
+    remote: RemoteView<'_>,
     menu_state: PanelMenuState,
 ) -> TabStripOutcome {
     let mut outcome = TabStripOutcome::default();
+    // 두 클로저가 `outcome`을 동시에 빌리지 않도록 필드를 나눠 넘긴다
+    let TabStripOutcome {
+        tab,
+        open_site,
+        command,
+    } = &mut outcome;
     egui::Sides::new().shrink_left().height(STRIP_HEIGHT).show(
         ui,
-        |ui| show_tabs(ui, model, sites, &mut outcome.tab),
-        |ui| show_menu_button(ui, menu_state, &mut outcome.command),
+        |ui| show_tabs(ui, model, remote, tab, open_site),
+        |ui| show_menu_button(ui, menu_state, command),
     );
+    // 사이드바에서 끌어온 사이트를 이 스트립에 놓으면 새 탭으로 연다 (FR-38·인벤토리 #15).
+    // 스트립 전체가 드롭 대상이라 탭 사이 어디에 놓아도 받는다
+    if let Some(site) = dropped_site(ui) {
+        outcome.open_site = Some(site);
+    }
     outcome
+}
+
+/// 이번 프레임에 이 스트립 위로 놓인 사이트 — 없으면 `None`.
+///
+/// egui의 드래그·드롭 페이로드를 쓴다: 사이드바가 `SiteId`를 실어 보내고 여기서 받는다.
+/// 좌표를 직접 비교하지 않는 이유는, 스트립이 스크롤 안에 있어 화면 좌표가 흔들리기 때문이다
+fn dropped_site(ui: &egui::Ui) -> Option<SiteId> {
+    let rect = ui.min_rect();
+    let pointer = ui.ctx().pointer_interact_pos()?;
+    if !rect.contains(pointer) {
+        return None;
+    }
+    // 놓는 순간에만 받는다 — 끌고 지나가는 동안에는 아무 일도 일어나지 않는다
+    if !ui.input(|i| i.pointer.any_released()) {
+        return None;
+    }
+    egui::DragAndDrop::take_payload::<SiteId>(ui.ctx()).map(|site| *site)
 }
 
 /// 탭 목록과 새 탭 버튼 — 폭이 모자라면 가로로 스크롤된다
 fn show_tabs(
     ui: &mut egui::Ui,
     model: &TabsModel,
-    sites: &SiteStore,
+    remote: RemoteView<'_>,
     action: &mut Option<TabAction>,
+    open_site: &mut Option<SiteId>,
 ) {
     egui::ScrollArea::horizontal()
         .auto_shrink([false, true])
@@ -120,7 +152,7 @@ fn show_tabs(
                     let active = index == active_index;
                     // 원격 탭의 이름·프로토콜은 사이트 설정에서 그때그때 읽는다 —
                     // 탭이 사본을 들면 `이름 바꾸기(R)` 뒤에 탭만 옛 이름으로 남는다 (T7 결정)
-                    let site = source.site().and_then(|id| sites.get(id));
+                    let site = source.site().and_then(|id| remote.sites.get(id));
                     let title = source.title(site.map(|record| record.name.as_str()));
                     // 사이트가 지워진 원격 탭에는 배지를 그리지 않는다 — 프로토콜을 모르는 채
                     // 아무 값이나 보이면 화면이 서버에 대해 없는 말을 하게 된다
@@ -154,6 +186,10 @@ fn show_tabs(
                 .clicked()
                 {
                     *action = Some(TabAction::New);
+                }
+                // `+` 바로 오른쪽에 사이트 드롭다운을 붙인다 (인벤토리 #92·#93, 원본 `:106`)
+                if let Some(site) = site_dropdown::show_site_dropdown(ui, remote, STRIP_HEIGHT) {
+                    *open_site = Some(site);
                 }
             });
         });
