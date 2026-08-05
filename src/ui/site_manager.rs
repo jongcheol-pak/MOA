@@ -143,6 +143,10 @@ const CHARSET_LABEL: &str = "인코딩:";
 const LABEL_ENCODING: &str = "인코딩(E):";
 const CHARSET_FOOTNOTE: &str =
     "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다.";
+/// 이미 연결된 서버의 전송 모드를 바꿨을 때 (plan Edge Case) — 지금 연결에 바로 듣지 않는다는
+/// 것을 알리지 않으면, 사용자는 바꾼 설정이 곧바로 듣는 줄 알고 같은 실패를 다시 겪는다
+const TRANSFER_APPLY_HINT: &str =
+    "이미 연결된 서버입니다. 바꾼 전송 모드는 다음 연결부터 적용됩니다.";
 /// 알아듣지 못하는 인코딩 이름을 적었을 때 (plan Edge Case) — 조용히 UTF-8로 처리하면
 /// 파일명이 깨진 채로 굳는다. 상태 표시줄은 아직 없어(T21) 이 자리에서 알린다
 const CHARSET_UNKNOWN_HINT: &str = "이 이름은 알지 못해 UTF-8로 처리합니다.";
@@ -632,7 +636,14 @@ impl SiteManager {
         let (picked, rename_done) = self.show_list(ui, left, store, connected);
         let action = self.show_list_buttons(ui, left);
         self.show_tabs(ui, right);
-        self.show_tab_body(ui, right);
+        // 이미 연결된 사이트의 전송 모드를 바꿨으면 그 사실을 알린다 (plan Edge Case)
+        let transfer_hint = self.selected.is_some_and(|id| {
+            connected.contains(&id)
+                && store
+                    .get(id)
+                    .is_some_and(|record| record.transfer_mode != self.draft.transfer_mode)
+        });
+        self.show_tab_body(ui, right, transfer_hint);
         BodyOutcome {
             picked,
             action,
@@ -819,10 +830,10 @@ impl SiteManager {
     }
 
     /// 지금 고른 탭의 본문을 그린다 — 셋 중 하나만 그려진다
-    fn show_tab_body(&mut self, ui: &mut egui::Ui, column: egui::Rect) {
+    fn show_tab_body(&mut self, ui: &mut egui::Ui, column: egui::Rect, transfer_hint: bool) {
         match self.tab {
             ManagerTab::General => self.show_general(ui, column),
-            ManagerTab::Transfer => self.show_transfer(ui, self.form_rect(column)),
+            ManagerTab::Transfer => self.show_transfer(ui, self.form_rect(column), transfer_hint),
             ManagerTab::Charset => self.show_charset(ui, self.form_rect(column)),
         }
     }
@@ -842,7 +853,7 @@ impl SiteManager {
     ///
     /// 여기서 정한 `최대 동시 연결 수(M)`가 그대로 `SiteRecord`에 담겨 연결 관리자의
     /// 채널 배정이 된다 (FR-45·D4) — 화면만 있고 동작에 닿지 않으면 그 요구가 성립하지 않는다
-    fn show_transfer(&mut self, ui: &mut egui::Ui, form: egui::Rect) {
+    fn show_transfer(&mut self, ui: &mut egui::Ui, form: egui::Rect, transfer_hint: bool) {
         let left = form.left() + TAB_BODY_PAD;
         let mut top = form.top() + TAB_BODY_PAD;
 
@@ -900,6 +911,18 @@ impl SiteManager {
         widgets::form_inline_label(&mut row, LABEL_LIMIT_VALUE, limit_on);
         self.draft.limit =
             widgets::spinner_field(&mut row, self.draft.limit, CONNECTION_LIMIT_RANGE, limit_on);
+
+        if transfer_hint {
+            top += widgets::SPINNER_HEIGHT + TRANSFER_GAP;
+            text_row(
+                ui,
+                left,
+                top,
+                form.width(),
+                TRANSFER_APPLY_HINT,
+                theme::WARN,
+            );
+        }
     }
 
     /// `문자셋` 탭 (`:469-486`, 인벤토리 #82~87)
@@ -1665,6 +1688,30 @@ mod tests {
         // 상한 2 = 탐색 1 + 전송 1 (D4)
         let connections = ConnectionManager::new(std::sync::Arc::new(|| {}));
         assert_eq!(connections.transfer_slots(&record), 1);
+    }
+
+    #[test]
+    fn 연결된_서버의_전송_모드를_바꾸면_안내가_뜬다() {
+        // plan Edge Case — 지금 연결에 바로 듣지 않는다는 것을 알리지 않으면
+        // 사용자는 바꾼 설정이 곧바로 듣는 줄 알고 같은 실패를 다시 겪는다
+        assert_eq!(
+            TRANSFER_APPLY_HINT,
+            "이미 연결된 서버입니다. 바꾼 전송 모드는 다음 연결부터 적용됩니다."
+        );
+        let (mut manager, mut store, id) = manager_with_site();
+        manager.tab = ManagerTab::Transfer;
+        manager.draft.transfer_mode = TransferMode::Passive;
+
+        // 연결이 없으면 알릴 것이 없다 — 다음 연결이 곧 첫 연결이다
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+        });
+        // 연결이 있으면 안내가 그려진다(그리기 경로가 패닉 없이 도는지까지 함께 본다)
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[id]);
+        });
+        assert!(manager.is_open());
     }
 
     #[test]
