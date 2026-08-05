@@ -16,7 +16,7 @@ use crate::remote::ftp::FtpSession;
 use crate::remote::manager::ConnectionManager;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
-use crate::remote::types::{RemoteSession, SiteId};
+use crate::remote::types::{RemotePath, RemoteSession, SiteId};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{PanelState, RemoteAction};
@@ -672,7 +672,8 @@ impl ExplorerApp {
                 view.close_panel(panel, area);
             }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
-            // 이 둘은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
+            // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
+            Command::OpenSiteTab(site) => self.open_site_tab(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
             Command::CloseTab => self.close_tab(target, ctx),
             Command::NewTab
@@ -817,6 +818,25 @@ impl ExplorerApp {
             // 그때 이 자리에서 연다(조치를 값으로 받는 경로는 여기까지 이미 이어져 있다)
             RemoteAction::OpenSettings | RemoteAction::ViewLog => {}
         }
+    }
+
+    /// 사이트를 그 패널의 **새 원격 탭**으로 열고 연결을 건다 (FR-33·FR-34·FR-38).
+    ///
+    /// 진입점 셋(탭 스트립 드롭다운·주소창 URL·사이드바 드래그)이 모두 여기로 착지한다 —
+    /// 여는 방법마다 다른 경로를 두면 셋이 조금씩 다르게 동작하게 된다.
+    ///
+    /// 사이트가 그 사이 지워졌으면 아무 일도 하지 않는다 (plan Edge Case: 드래그 도중 삭제)
+    fn open_site_tab(&mut self, site: SiteId, target: Option<PanelId>) {
+        if self.sites.get(site).is_none() {
+            return;
+        }
+        // 서버가 정한 홈에서 시작한다 — 연결이 서면 워커가 실제 위치를 알려 준다
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        panel.open_remote_tab(site, RemotePath::root());
+        // 방금 만든 탭이 활성이라 연결이 그 탭에 붙는다
+        self.connect_site(site);
     }
 
     /// 사이트에 연결하고 활성 원격 탭을 그 연결에 붙인다 (FR-28).

@@ -7,6 +7,7 @@
 //! 이 모듈은 상태를 바꾸지 않는다 — 무엇을 하라는 **명령만 값으로 돌려주고**,
 //! 실행은 `ui::app`이 한다(패널·워크스페이스 소유자가 거기이기 때문).
 use crate::app::layout::{SplitDir, SplitPlace};
+use crate::remote::types::SiteId;
 use crate::ui::list_details::{ALL_COLUMNS, ColumnFlags, ColumnKind};
 use crate::ui::theme;
 use crate::ui::view_mode::ViewMode;
@@ -68,6 +69,12 @@ pub enum Command {
     /// 파일 목록 보기 모드를 바꾼다 (FR-23)
     SetViewMode(ViewMode),
     ToggleSidebar,
+    /// 이 사이트를 **새 원격 탭**으로 열고 연결한다 (FR-33·FR-34·FR-38).
+    ///
+    /// 진입점 셋(탭 스트립 드롭다운·주소창 URL·사이드바 드래그)이 모두 이 한 명령으로
+    /// 착지한다 — 여는 방법마다 다른 경로를 두면 셋이 조금씩 다르게 동작하게 된다.
+    /// `SiteId`가 `Copy`라 이 열거형의 `Copy`도 유지된다
+    OpenSiteTab(SiteId),
 }
 
 /// 패널 메뉴 항목의 활성/비활성을 가르는 현재 상태

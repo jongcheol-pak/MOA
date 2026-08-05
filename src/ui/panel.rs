@@ -14,7 +14,7 @@ use crate::panel::tabs::{CloseOutcome, TabPhase, TabSource, TabState, TabsModel}
 use crate::remote::connection::{ConnCommand, ConnectionId};
 use crate::remote::manager::ConnectionManager;
 use crate::remote::sites::SiteStore;
-use crate::remote::types::{RemoteEntry, RemotePath};
+use crate::remote::types::{RemoteEntry, RemotePath, SiteId};
 use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
@@ -531,6 +531,14 @@ impl PanelState {
         self.tabs.sources().iter().any(|source| {
             matches!(source, TabSource::Remote { conn: Some(conn), .. } if *conn == target)
         })
+    }
+
+    /// 사이트를 가리키는 **새 원격 탭**을 열고 활성으로 만든다 (FR-33·FR-34·FR-38).
+    ///
+    /// 연결 붙이기는 이어서 `attach_conn`이 한다 — 탭을 먼저 만드는 이유는 연결이 서기 전에도
+    /// 그 자리에 탭이 보여야 사용자가 "열리고 있다"는 것을 알기 때문이다
+    pub fn open_remote_tab(&mut self, site: SiteId, path: RemotePath) {
+        self.tabs.add(TabState::remote(site, path));
     }
 
     /// 활성 원격 탭에 연결을 붙이고 연결 중으로 표시한다 — 사이트를 막 열었을 때.
