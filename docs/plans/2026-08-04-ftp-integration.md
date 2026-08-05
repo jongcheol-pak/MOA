@@ -339,6 +339,20 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 **⏳ 미확인 — F-8 인계**: 두 섹션이 한 스크롤에서 이어지는 모습·연결 헤더의 `margin-top:14px` 체감·선택 시 왼쪽 2px 띠·사이트 행 hover 색·두 팝업 메뉴의 실제 폭(246px·180px)과 행 높이.
 
+### V-9 대조 결과 — T13 (사이트 드롭다운)
+
+**정적 축 전부 ✅** — 원본 `ExplorerPane.dc.html:158-165`(팝업)·`FileExplorer-FTP.dc.html:106`(`▾` 버튼) ↔ `src/ui/site_dropdown.rs`.
+
+| 인벤토리·속성 | 원본 | 구현 | 판정 |
+|---|---|---|---|
+| #92 캡션 `연결 사이트를 새 탭으로` | `:159` | `MENU_CAPTION` (11px·`TEXT_DIM`) | ✅ |
+| #93 행(이름 + 프로토콜 + 점) | `:161-164` | `show_row`(점 6px·13px·12px) | ✅ |
+| `▾` 버튼 18px·`#9A9A9A`→hover `#E8E8E8` on `#383838` | `FileExplorer-FTP.dc.html:106` | `CARET_WIDTH`·`theme::TEXT_MUTED`/`TEXT`/`MENU_HOT` | ✅ |
+| 팝업 폭 250px·배경 `#252525`·테두리 `#3A3A3A` | `:158` | `MENU_WIDTH`·`MENU_BG`·`theme::BORDER_CONTROL` | ✅ |
+| 행 hover **`#333333`**(다른 메뉴는 `#383838`) | `:161` | `ROW_HOT` + 회귀 단언 `assert_ne!(ROW_HOT, theme::MENU_HOT)` | ✅ |
+
+**⏳ 미확인 — F-8 인계**: 팝업의 실제 위치(원본은 패널 좌상단 기준 `left:8px; top:28px` 절대 좌표인데 구현은 egui가 `▾` 버튼 아래에 앵커로 붙인다 — `▾`가 `+` 오른쪽 고정이라 시각적으로 등가일 것으로 보이나 렌더로 확인해야 한다) · 드래그로 사이트를 스트립에 놓는 조작감 · 바깥 클릭·Esc로 닫히는 동작.
+
 ## Decisions
 
 | # | 결정 | 선택 | 근거(Source) |
@@ -623,7 +637,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T13. 사이트를 새 탭으로 여는 진입점 3종 [Type C]
 
-- **Files**: `src/ui/site_dropdown.rs`(신규), `src/remote/url.rs`(신규), `src/ui/tabs.rs`, `src/ui/address_bar.rs`, `src/ui/sidebar.rs`, `src/ui/menu.rs`, `src/ui/app.rs`
+- **Files**: `src/ui/site_dropdown.rs`(신규), `src/remote/url.rs`(신규), `src/ui/tabs.rs`, `src/ui/address_bar.rs`, `src/ui/sidebar.rs`, `src/ui/menu.rs`, `src/ui/app.rs`, `src/ui/panel.rs`·`src/ui/splitter.rs`(구현 중 편입 — 주소창 결과가 앱까지 닿으려면 중간 사슬의 시그니처도 함께 바뀐다. 착지점 두 줄과 같은 성격이라 작업 부피는 늘지 않았다), `src/ui/remote_states.rs`(구현 중 편입 — `sites`·`connected` 두 인자가 사슬을 따라 함께 늘어 `RemoteView` 한 묶음으로 모았다)
 - **Design**:
   - **배치**: 드롭다운(탭 스트립 `+` 오른쪽) · 주소창 URL 입력 · 사이드바 사이트 드래그 — **세 진입점이 같은 `Command` 변형과 같은 `ExplorerApp` 핸들러로 착지**하므로 한 task로 묶는다. FR-33/FR-34/FR-38로 쪼개면 그 착지점이 어느 한쪽에 먼저 들어가고 나머지가 순서 의존하게 되어 "독립 검증"이 오히려 깨진다. URL 파싱은 도메인 로직이라 `remote::url`
   - **파일 수 사유(공통 규칙 5개의 예외)**: 주 파일은 5개(`site_dropdown.rs`·`remote/url.rs`·`ui/tabs.rs`·`ui/address_bar.rs`·`ui/sidebar.rs`)이고, 더한 둘은 **착지점 두 줄**이다 — `ui/menu.rs`에 `Command` 변형 1개, `ui/app.rs`에 match arm 1개. 파일 수는 7이지만 작업 부피는 5개짜리 그대로다
