@@ -843,11 +843,11 @@ impl ExplorerApp {
             egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), dock::STRIP_HEIGHT));
         let body = egui::Rect::from_min_max(egui::pos2(rect.left(), strip.bottom()), rect.max);
         {
-            let connections = self.log_connections();
+            let connected = self.connected_conn_sites();
             let view = DockView {
                 queue: &self.queue,
                 failed,
-                connections: &connections,
+                connected: &connected,
             };
             let dock_action = dock::show_strip(&mut dock_ui, strip, &mut self.dock, &view);
             let queue_action = match self.dock.panel {
@@ -855,9 +855,22 @@ impl ExplorerApp {
                     queue_panel::show_queue(&mut dock_ui, body, &mut self.dock, &view, &self.sites)
                 }
                 Some(DockPanel::Log) => {
+                    // 큐와 **같은 연결별 탭 줄**을 먼저 그린다 — 도크에 줄은 하나다(디자인 `:272`).
+                    // 여기서 고른 사이트가 곧 "어느 서버의 로그를 볼지"가 된다
+                    let site_row = egui::Rect::from_min_size(
+                        body.min,
+                        egui::vec2(body.width(), queue_panel::SITE_ROW_HEIGHT),
+                    );
+                    queue_panel::show_site_tabs(
+                        &mut dock_ui,
+                        site_row,
+                        &mut self.dock,
+                        &view,
+                        &self.sites,
+                    );
                     // 지금 보고 있는 연결의 로그를 그린다 — 연결이 없으면 빈 화면이다
                     let body = egui::Rect::from_min_max(
-                        egui::pos2(body.left(), body.top() + log_panel::BODY_PAD_Y),
+                        egui::pos2(body.left(), site_row.bottom() + log_panel::BODY_PAD_Y),
                         body.max,
                     );
                     match log_conn.and_then(|conn| self.manager.get(conn)) {
@@ -1192,12 +1205,12 @@ impl ExplorerApp {
     /// 그 탭이 로컬이면 마지막으로 연 연결을 보인다: 로그를 여는 까닭은 대개 방금 무슨 일이
     /// 있었는지 보려는 것이라, 아무것도 안 보이는 것보다 최근 연결을 보이는 편이 쓸모 있다
     fn log_connection(&self) -> Option<ConnectionId> {
-        // 로그 탭에서 고른 연결이 있으면 그것이 먼저다 — 사용자가 직접 고른 것이기 때문이다.
-        // 그 연결이 이미 접혔으면 아래의 자동 선택으로 돌아간다
-        if let Some(chosen) = self.dock.log_conn
-            && self.manager.get(chosen).is_some()
+        // 연결별 탭에서 고른 사이트가 있으면 그 사이트의 연결이 먼저다 — 사용자가 고른 것이다.
+        // 그 사이트의 연결이 이미 접혔으면 아래의 자동 선택으로 돌아간다
+        if let Some(site) = self.dock.site
+            && let Some(conn) = self.site_connection(site)
         {
-            return Some(chosen);
+            return Some(conn);
         }
         let active = self
             .views
@@ -1207,22 +1220,16 @@ impl ExplorerApp {
         active.or_else(|| self.manager.ids().last().copied())
     }
 
-    /// 로그 화면의 연결 탭에 보일 것들 — 열려 있는 연결과 그 사이트 이름·실패 여부
-    fn log_connections(&self) -> Vec<(ConnectionId, String, bool)> {
-        self.manager
+    /// 지금 **연결이 열려 있는** 사이트들 — 연결별 탭이 큐가 비어 있어도 이들을 세운다
+    fn connected_conn_sites(&self) -> Vec<SiteId> {
+        let mut sites: Vec<SiteId> = self
+            .manager
             .ids()
             .iter()
-            .filter_map(|id| {
-                let connection = self.manager.get(*id)?;
-                let name = self
-                    .sites
-                    .get(connection.site)
-                    .map(|record| record.name.clone())
-                    .unwrap_or_else(|| connection.site.0.to_string());
-                let failed = matches!(connection.phase(), ConnPhase::Failed { .. });
-                Some((*id, name, failed))
-            })
-            .collect()
+            .filter_map(|id| self.manager.get(*id).map(|connection| connection.site))
+            .collect();
+        sites.dedup();
+        sites
     }
 
     /// 도크 탭 스트립의 조작 (인벤토리 #33·#34)

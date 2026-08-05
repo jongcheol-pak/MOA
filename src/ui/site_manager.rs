@@ -607,7 +607,8 @@ impl SiteManager {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(close));
         widgets::icon_button_styled(
             &mut child,
-            "✕",
+            // 아이콘 글꼴에서 가져온다 — `✕`(U+2715)는 이 앱의 글꼴에 없어 두부가 된다
+            egui_phosphor::regular::X,
             close.size(),
             theme::CLOSE_HOT,
             theme::HEADER_TEXT,

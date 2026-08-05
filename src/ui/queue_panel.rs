@@ -17,7 +17,7 @@ use eframe::egui;
 
 // ── 시각 토큰 (원본 `:272-292`) ──
 /// 연결별 탭 행 (`:272`)
-const SITE_ROW_HEIGHT: f32 = 28.0;
+pub const SITE_ROW_HEIGHT: f32 = 28.0;
 const SITE_ROW_PAD_X: f32 = 4.0;
 const SITE_TAB_GAP: f32 = 2.0;
 const SITE_TAB_PAD_X: f32 = 12.0;
@@ -247,8 +247,8 @@ pub fn show_queue(
     action
 }
 
-/// 연결별 탭 한 줄 (인벤토리 #35·#36)
-fn show_site_tabs(
+/// 연결별 탭 한 줄 (인벤토리 #35·#36) — **큐와 로그가 함께 쓴다**(도크에 줄은 하나다)
+pub fn show_site_tabs(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     state: &mut DockState,
@@ -264,20 +264,24 @@ fn show_site_tabs(
         egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
     );
 
-    // `전체` 다음에 큐에 항목이 있는 사이트들이 온다 — 원본도 큐에서 이름을 모은다 (`:722`)
+    // `전체` 다음에 **큐에 항목이 있거나 지금 연결된** 사이트들이 온다.
+    // 원본은 큐에서만 이름을 모으지만(`:722`), 그러면 연결만 하고 아직 아무것도 옮기지 않은
+    // 서버가 탭에 없어 고를 수 없다 (2026-08-05 사용자 보고)
     let counts = view.queue.counts_by_site();
     let mut order: Vec<SiteId> = sites
         .sites()
         .iter()
         .map(|record| record.id)
-        .filter(|id| counts.contains_key(id))
+        .filter(|id| counts.contains_key(id) || view.connected.contains(id))
         .collect();
     // 저장소에 없는 사이트의 항목도 빠뜨리지 않는다(지운 사이트의 잔여 전송)
     let mut extra: Vec<SiteId> = counts
         .keys()
         .copied()
+        .chain(view.connected.iter().copied())
         .filter(|id| !order.contains(id))
         .collect();
+    extra.dedup();
     extra.sort();
     order.append(&mut extra);
 
@@ -690,7 +694,7 @@ mod tests {
             ..DockState::default()
         };
         let view = DockView {
-            connections: &[],
+            connected: &[],
             queue: &queue,
             failed: &[first],
         };
@@ -702,5 +706,52 @@ mod tests {
         });
         // 연결별 탭을 고르지 않았으면 `전체`가 그대로다
         assert_eq!(state.site, None);
+    }
+
+    #[test]
+    fn 연결된_서버는_큐가_비어도_탭에_선다() {
+        // 사용자 보고(2026-08-05): 연결한 서버가 탭 줄에 없어 고를 수 없었다 —
+        // 원본대로 **큐에 든 항목**에서만 이름을 모았기 때문이다
+        let mut sites = SiteStore::new();
+        let 연결된 = sites.add("web-prod");
+        let 연결_없는 = sites.add("legacy");
+        let queue = TransferQueue::new();
+        let view = DockView {
+            queue: &queue,
+            failed: &[],
+            connected: &[연결된],
+        };
+        let mut state = DockState::default();
+        let ctx = egui::Context::default();
+        let mut texts = Vec::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect = egui::Rect::from_min_size(
+                    ui.max_rect().min,
+                    egui::vec2(900.0, SITE_ROW_HEIGHT),
+                );
+                show_site_tabs(ui, rect, &mut state, &view, &sites);
+            });
+        });
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                texts.push(text.galley.text().to_owned());
+            }
+        }
+        assert!(
+            texts.iter().any(|text| text.starts_with("web-prod")),
+            "연결된 서버가 탭에 없다: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text.starts_with(ALL_SITES)),
+            "`전체` 탭이 없다: {texts:?}"
+        );
+        // 연결도 없고 큐에도 없는 사이트는 서지 않는다 — 목록이 등록한 사이트 전부로 늘어나면
+        // 지금 무엇에 붙어 있는지가 오히려 안 보인다
+        let _ = 연결_없는;
+        assert!(
+            !texts.iter().any(|text| text.starts_with("legacy")),
+            "연결도 전송도 없는 사이트가 탭에 섰다: {texts:?}"
+        );
     }
 }
