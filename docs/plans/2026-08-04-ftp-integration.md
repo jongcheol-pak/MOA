@@ -524,7 +524,7 @@ PRD `## Out of Scope`의 "원격 관련 제외 (2026-08-04)" 전부를 따른다
 
 ### T10. 원격 탭 배지 · 연결 단계 화면 · 호스트 키 대화 [Type C]
 
-- **Files**: `src/ui/tabs.rs`, `src/ui/remote_states.rs`(신규), `src/ui/panel.rs`, `src/ui/theme.rs`, `src/ui/app.rs`, `src/ui/splitter.rs`(구현 중 편입 — `PanelOutcome`에 필드가 늘면 `merge_panel_outcome`의 구조 분해가 함께 바뀌어야 한다), `src/panel/tabs.rs`(구현 중 편입 — 연결 단계를 **모든 탭**에 퍼뜨리려면 `TabsModel::sources_mut`이 필요하다)
+- **Files**: `src/ui/tabs.rs`, `src/ui/remote_states.rs`(신규), `src/ui/panel.rs`, `src/ui/theme.rs`, `src/ui/app.rs`, `src/ui/splitter.rs`(구현 중 편입 — `PanelOutcome`에 필드가 늘면 `merge_panel_outcome`의 구조 분해가 함께 바뀌어야 한다), `src/panel/tabs.rs`(구현 중 편입 — 연결 단계를 **모든 탭**에 퍼뜨리려면 `TabsModel::sources_mut`이 필요하다), `src/remote/sftp.rs`(리뷰 수정으로 편입 — 지문 표를 세션 조립 시점(UI 스레드)이 아니라 `connect`(워커)에서 읽게 옮겼다)
 - **Design**:
   - **배치**: 배지는 기존 탭 스트립 안에, 단계별 본문(스켈레톤·빈 탭·실패)과 호스트 키 대화는 새 모듈 `ui::remote_states`
   - **신규 심볼**: `RemotePhase{Connecting,Ok,New,Error{message}}`(표시용 투영) / `show_badge` / `show_skeleton` / `show_empty` / `show_failed` → `FailedAction{Retry,OpenSettings,ViewLog}` / `show_hostkey_dialog` → `Option<HostKeyDecision>`(T3의 타입, D15·인벤토리 #96) / `theme`에 성공·경고·오류 3계열 + 보조 텍스트·테두리 토큰 추가

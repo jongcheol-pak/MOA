@@ -39,16 +39,34 @@ pub struct SftpSession {
     session: Option<Session>,
     /// 로그인 뒤에 열린다 — SFTP 하위 시스템은 인증이 끝나야 시작할 수 있다
     sftp: Option<Sftp>,
-    known_hosts: KnownHosts,
+    /// 알려진 서버 지문 표. **처음 필요할 때 워커 스레드에서 읽는다** — 세션을 만드는 곳은
+    /// 화면(UI 스레드)이라, 거기서 읽으면 파일 I/O가 UI 스레드에 놓인다(AGENTS 계층 규약)
+    known_hosts: Option<KnownHosts>,
     prompt: Option<HostKeyPrompt>,
 }
 
 impl SftpSession {
-    pub fn new(known_hosts: KnownHosts, prompt: Option<HostKeyPrompt>) -> SftpSession {
+    /// 지문 표는 이 세션이 **연결할 때**(워커 스레드) 파일에서 읽는다.
+    ///
+    /// 만들 때 읽지 않는 이유는 둘이다 — ① 세션 조립은 UI 스레드에서 일어난다,
+    /// ② 앱이 사본을 들고 있으면 방금 수락한 서버를 다음 연결에서 또 묻게 된다
+    pub fn new(prompt: Option<HostKeyPrompt>) -> SftpSession {
         SftpSession {
             session: None,
             sftp: None,
-            known_hosts,
+            known_hosts: None,
+            prompt,
+        }
+    }
+
+    /// 지문 표를 직접 주입해 만든다 — **테스트 전용 통로**다.
+    /// 파일에서 읽는 경로를 타면 테스트가 사용자 폴더의 실제 표를 건드린다
+    #[cfg(test)]
+    fn with_known_hosts(known_hosts: KnownHosts, prompt: Option<HostKeyPrompt>) -> SftpSession {
+        SftpSession {
+            session: None,
+            sftp: None,
+            known_hosts: Some(known_hosts),
             prompt,
         }
     }
@@ -65,19 +83,17 @@ impl SftpSession {
         })
     }
 
-    /// 서버 지문을 대조하고, 처음 보거나 바뀌었으면 사용자에게 묻는다
+    /// 서버 지문을 대조하고, 처음 보거나 바뀌었으면 사용자에게 묻는다.
+    ///
+    /// 이 함수는 `connect` 안에서만 불리므로 **워커 스레드에서 실행된다** — 지문 표를 여기서
+    /// 처음 읽는 것이 곧 "파일 I/O를 UI 스레드에 두지 않는다"이다
     fn verify_host_key(&mut self, host: &str, port: u16, fingerprint: &str) -> RemoteResult<()> {
-        let check = self.known_hosts.check(host, port, fingerprint);
-        let accepted = resolve_host_key(
-            &mut self.known_hosts,
-            host,
-            port,
-            &check,
-            self.prompt.as_deref_mut(),
-        )?;
+        let known = self.known_hosts.get_or_insert_with(KnownHosts::load);
+        let check = known.check(host, port, fingerprint);
+        let accepted = resolve_host_key(known, host, port, &check, self.prompt.as_deref_mut())?;
         if accepted {
             // 수락한 지문만 파일에 남긴다 (판정과 저장을 나눠 두어 판정이 단위 테스트 대상이 된다)
-            self.known_hosts.save();
+            known.save();
         }
         Ok(())
     }
@@ -722,7 +738,7 @@ mod tests {
 
     #[test]
     fn 연결_전에는_명령이_조용히_실패하지_않는다() {
-        let mut session = SftpSession::new(KnownHosts::empty(), None);
+        let mut session = SftpSession::with_known_hosts(KnownHosts::empty(), None);
         assert!(matches!(
             session.pwd().expect_err("로그인 전 PWD가 성공했다"),
             RemoteError::Protocol { .. }
@@ -736,7 +752,7 @@ mod tests {
         let mut record = SiteRecord::new(SiteId(1), "테스트".to_owned());
         record.protocol = Protocol::Ftp;
         record.host = "example.test".to_owned();
-        let mut session = SftpSession::new(KnownHosts::empty(), None);
+        let mut session = SftpSession::with_known_hosts(KnownHosts::empty(), None);
         assert!(matches!(
             session
                 .connect(&record)
@@ -759,7 +775,7 @@ mod tests {
 
         // 실서버 테스트는 지문을 자동 수락한다 — 확인 화면이 없는 환경이기 때문이다
         let prompt: HostKeyPrompt = Box::new(|_| HostKeyDecision::Accept);
-        let mut session = SftpSession::new(KnownHosts::empty(), Some(prompt));
+        let mut session = SftpSession::with_known_hosts(KnownHosts::empty(), Some(prompt));
         session.connect(&record).expect("연결");
         session.login(&record, &password).expect("로그인");
         let home = session.pwd().expect("홈");

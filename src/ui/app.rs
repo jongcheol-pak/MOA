@@ -13,7 +13,6 @@ use crate::fs::icons::IconCache;
 use crate::panel::tabs::TabPhase;
 use crate::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
 use crate::remote::ftp::FtpSession;
-use crate::remote::hostkey::KnownHosts;
 use crate::remote::manager::ConnectionManager;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
@@ -803,13 +802,12 @@ impl ExplorerApp {
         let record = self.sites.get(site)?.clone();
         // 익명 로그온이면 비밀번호가 없다 — 서버가 관례대로 무시한다
         let password = self.sites.password(site).unwrap_or_default();
+        // 세션은 **껍데기만** 만들어 넘긴다 — 소켓도 지문 표도 워커 스레드가 연결할 때 연다
+        // (AGENTS: UI 스레드에서 블로킹 I/O 금지)
         let session: Box<dyn RemoteSession> = if record.protocol.is_ssh() {
-            // 지문 표는 **연결할 때마다 읽는다** — 수락한 지문을 파일에 남기는 것은 워커이므로,
-            // 앱이 사본을 들고 있으면 방금 수락한 서버를 다음 연결에서 또 묻게 된다
-            Box::new(SftpSession::new(
-                KnownHosts::load(),
-                Some(self.hostkey.prompt(record.address())),
-            ))
+            Box::new(SftpSession::new(Some(
+                self.hostkey.prompt(record.address()),
+            )))
         } else {
             Box::new(FtpSession::new())
         };
@@ -1124,6 +1122,24 @@ mod tests {
         let ids = restored.layout.panel_ids();
         assert_eq!(restored.panels[&ids[0]].dir(), Path::new(r"D:\"));
         assert_eq!(restored.panels[&ids[1]].dir(), Path::new(r"C:\"));
+    }
+
+    #[test]
+    fn 연결_단계는_탭_단계로_옮겨진다() {
+        // 탭은 연결 없이도 존재하므로 둘을 따로 둔다 — `Idle`·`Closed`는 "이 탭에 연결이 없다"와
+        // 같은 뜻이라 `New`로 모인다. 실패는 **사유를 잃지 않아야** 실패 화면이 그것을 보인다
+        assert_eq!(to_tab_phase(&ConnPhase::Idle), TabPhase::New);
+        assert_eq!(to_tab_phase(&ConnPhase::Closed), TabPhase::New);
+        assert_eq!(to_tab_phase(&ConnPhase::Connecting), TabPhase::Connecting);
+        assert_eq!(to_tab_phase(&ConnPhase::Ready), TabPhase::Ok);
+        assert_eq!(
+            to_tab_phase(&ConnPhase::Failed {
+                detail: "530 Login incorrect".to_owned()
+            }),
+            TabPhase::Error {
+                message: "530 Login incorrect".to_owned()
+            }
+        );
     }
 
     #[test]
