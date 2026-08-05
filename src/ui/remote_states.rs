@@ -93,6 +93,8 @@ const FAIL_REASON_HINT: &str = "암호화 설정이 서버와 다를 수도 있�
 pub struct RemoteView<'a> {
     pub sites: &'a SiteStore,
     pub connected: &'a [SiteId],
+    /// 원격 트리가 읽어 둔 하위 폴더들 (T24) — 트리는 여기서 읽기만 한다
+    pub tree: &'a crate::remote::tree_cache::TreeCache,
 }
 
 impl RemoteView<'_> {

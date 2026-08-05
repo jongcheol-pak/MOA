@@ -25,7 +25,7 @@ use crate::ui::remote_states::{self, FailedAction, RemoteView};
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
 use crate::ui::theme;
-use crate::ui::tree::{FolderTreeView, TREE_WIDTH};
+use crate::ui::tree::{FolderTreeView, TREE_WIDTH, TreeChoice, TreeRequest, TreeSource};
 use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 use std::path::{Path, PathBuf};
@@ -33,6 +33,10 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 /// 트리와 목록을 가르는 세로 선 두께 — 현행 판 트리의 테두리(`WS_EX_CLIENTEDGE`)를 대신한다
+/// 트리 토글 라벨 — 원격 패널에서는 갈린다 (인벤토리 #94)
+const LOCAL_TREE_LABEL: &str = "폴더 트리";
+const REMOTE_TREE_LABEL: &str = "원격 트리";
+
 const TREE_BORDER: f32 = 1.0;
 
 /// 트리 영역 안쪽 여백 — 항목이 패널 가장자리에 붙지 않게 한다
@@ -209,6 +213,8 @@ pub struct PanelOutcome {
     pub drop: Option<DropOutcome>,
     /// 원격 목록 우클릭 메뉴에서 고른 것과 그 대상들 (FR-39)
     pub remote_menu: Option<RemoteMenuPick>,
+    /// 원격 트리가 청한 하위 조회 (FR-9 원격판) — 연결에 보내는 것은 앱이다
+    pub tree_request: Option<TreeRequest>,
 }
 
 /// 원격 단계 화면에서 사용자가 고른 조치 — 실행은 앱이 한다(연결을 앱이 쥔다)
@@ -893,7 +899,7 @@ impl PanelState {
 
         // 트리는 주소창 아래 좌측 고정폭을 차지한다 — 현행 Win32 판의 배치와 같다
         let area = ui.available_rect_before_wrap();
-        let mut tree_choice = None;
+        let mut tree_outcome = None;
         let content = if self.tree_visible {
             let split_x = area.left() + TREE_WIDTH.min(area.width());
             let tree_rect = egui::Rect::from_min_max(area.min, egui::pos2(split_x, area.bottom()));
@@ -903,7 +909,16 @@ impl PanelState {
                 area.y_range(),
                 egui::Stroke::new(TREE_BORDER, theme::TREE_LINE),
             );
-            tree_choice = ui
+            // 원격 탭이면 지금 보는 곳의 최상단을 뿌리로 삼는다 (#94 — 라벨도 함께 갈린다)
+            let source = match self.remote_tree_root() {
+                Some((conn, root)) => TreeSource::Remote {
+                    conn,
+                    root,
+                    cache: remote.tree,
+                },
+                None => TreeSource::Local,
+            };
+            tree_outcome = ui
                 .scope_builder(
                     // 이름을 붙이지 않으면 형제 영역과 같은 id를 갖게 되고, 그 안의 위젯 id까지
                     // 함께 겹친다(egui는 이름 없는 하위 영역에 전부 같은 이름을 준다)
@@ -912,10 +927,11 @@ impl PanelState {
                         .max_rect(tree_rect.shrink(TREE_PAD)),
                     |ui| {
                         ui.set_clip_rect(tree_rect);
-                        self.tree.show(ui, ctx)
+                        self.tree.show(ui, source)
                     },
                 )
-                .inner;
+                .inner
+                .into();
             egui::Rect::from_min_max(egui::pos2(split_x + TREE_BORDER, area.top()), area.max)
         } else {
             area
@@ -931,8 +947,22 @@ impl PanelState {
             .inner;
 
         // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
-        if let Some(path) = tree_choice {
-            self.navigate(path, ctx);
+        let mut tree_request = None;
+        if let Some(outcome) = tree_outcome {
+            match outcome.chosen {
+                // 트리에서 고른 폴더로 목록이 이동한다 (Acceptance ⑤)
+                Some(TreeChoice::Local(path)) => self.navigate(path, ctx),
+                Some(TreeChoice::Remote(path)) => self.navigate_remote(path),
+                None => {}
+            }
+            for request in outcome.requests {
+                match request {
+                    // 로컬 열거는 트리가 직접 워커를 띄운다 — 연결이 필요 없다
+                    TreeRequest::Local(path) => self.tree.start_local_load(path, ctx),
+                    // 원격은 앱이 보낸다 — 연결을 아는 것은 앱이다
+                    remote => tree_request = Some(remote),
+                }
+            }
         }
         let closed_conn = strip
             .tab
@@ -950,6 +980,28 @@ impl PanelState {
             closed_conn,
             drop,
             remote_menu,
+            tree_request,
+        }
+    }
+
+    /// 원격 트리의 뿌리 — 활성 탭이 연결된 원격일 때만 있다.
+    ///
+    /// 지금 보는 경로를 부모로 계속 거슬러 올라간 최상단이다. `/`로 못 박지 않는 이유는
+    /// 루트가 `/`가 아닌 서버가 있기 때문이다 (plan Edge Case)
+    fn remote_tree_root(&self) -> Option<(ConnectionId, RemotePath)> {
+        let conn = self.active_conn()?;
+        let mut root = self.tabs.active().source.remote_path()?.clone();
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        Some((conn, root))
+    }
+
+    /// 트리에서 고른 원격 폴더로 목록을 옮긴다 — 조회는 다음 프레임의 `request_remote_list`가 한다
+    fn navigate_remote(&mut self, path: RemotePath) {
+        let tab = self.tabs.active_mut();
+        if let TabSource::Remote { path: current, .. } = &mut tab.source {
+            *current = path;
         }
     }
 
@@ -970,15 +1022,19 @@ impl PanelState {
             TabSource::Local(_) => None,
         };
         let connected = !matches!(phase, Some(ref phase) if *phase != TabPhase::Ok);
+        // 원격 패널에서는 트리 토글의 라벨이 갈린다 (인벤토리 #94).
+        // 클로저 밖에서 정한다 — `Sides`의 클로저가 `self`를 통째로 빌린다
+        let tree_label = if self.is_remote() {
+            REMOTE_TREE_LABEL
+        } else {
+            LOCAL_TREE_LABEL
+        };
         // 왼쪽에 트리 토글·진행 상황, 오른쪽 끝에 항목 수를 둔다 (사용자 요청 7).
         // `Sides`는 오른쪽 것을 먼저 자리잡게 하므로, 오류 문구가 길어져도 항목 수가 밀리지 않는다
         egui::Sides::new().show(
             ui,
             |ui| {
-                if ui
-                    .selectable_label(self.tree_visible, "폴더 트리")
-                    .clicked()
-                {
+                if ui.selectable_label(self.tree_visible, tree_label).clicked() {
                     // `Sides` 클로저 안이라 `&mut self` 메서드를 부를 수 없어 필드를 직접 뒤집는다.
                     // 토글 진입점이 이 버튼 하나뿐이라 규칙이 흩어질 여지도 없다
                     self.tree_visible = !self.tree_visible;
@@ -1213,9 +1269,11 @@ mod tests {
 
     /// 패널을 한 프레임 그린다 — 사이트 목록은 호출부가 준다
     fn draw_once(panel: &mut PanelState, sites: &SiteStore) -> eframe::egui::FullOutput {
+        let tree = crate::remote::tree_cache::TreeCache::new();
         let remote = RemoteView {
             sites,
             connected: &[],
+            tree: &tree,
         };
         let ctx = egui::Context::default();
         let mut icons = crate::fs::icons::IconCache::new();
@@ -1905,5 +1963,50 @@ mod tests {
             clamp_menu_pos(screen, egui::pos2(600.0, 400.0), huge),
             egui::pos2(0.0, 0.0)
         );
+    }
+
+    #[test]
+    fn 원격_패널의_트리_토글은_원격_트리다() {
+        // Acceptance ① (인벤토리 #94) — 같은 자리의 라벨이 소스에 따라 갈린다
+        let 로컬 = drawn_texts(&draw_once(
+            &mut PanelState::new(std::path::PathBuf::from(r"C:\")),
+            &SiteStore::new(),
+        ));
+        assert!(
+            로컬.iter().any(|text| text == LOCAL_TREE_LABEL),
+            "로컬 패널의 토글이 `폴더 트리`가 아니다: {로컬:?}"
+        );
+        let 원격 = remote_screen_texts(TabPhase::Ok);
+        assert!(
+            원격.iter().any(|text| text == REMOTE_TREE_LABEL),
+            "원격 패널의 토글이 `원격 트리`가 아니다: {원격:?}"
+        );
+        assert!(
+            !원격.iter().any(|text| text == LOCAL_TREE_LABEL),
+            "원격 패널에 `폴더 트리`가 남아 있다"
+        );
+    }
+
+    #[test]
+    fn 트리에서_고른_원격_폴더로_목록이_옮겨간다() {
+        // Acceptance ⑤ — 이동은 트리가 아니라 패널이 한다(트리는 목록을 모른다)
+        let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+        panel.navigate_remote(RemotePath::new("/var/www/html"));
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www/html")
+        );
+    }
+
+    #[test]
+    fn 원격_트리의_뿌리는_최상단까지_거슬러_올라간다() {
+        // plan Edge Case — 루트가 `/`가 아닌 서버도 있어 `/`로 못 박지 않는다
+        let (panel, _) = remote_panel_in(TabPhase::Ok);
+        let (conn, root) = panel.remote_tree_root().expect("연결된 원격 탭");
+        assert_eq!(conn, ConnectionId(1));
+        assert_eq!(root.as_str(), "/");
+        // 로컬 탭에는 원격 트리가 없다
+        let 로컬 = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        assert!(로컬.remote_tree_root().is_none());
     }
 }

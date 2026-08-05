@@ -22,6 +22,7 @@ pub mod sftp;
 pub mod sites;
 pub mod testing;
 pub mod transfer;
+pub mod tree_cache;
 pub mod types;
 pub mod url;
 

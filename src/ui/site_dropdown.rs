@@ -186,11 +186,13 @@ mod tests {
                     // 항목 사이 기본 간격이 폭에 섞이지 않게 한다
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let before = ui.cursor().min.x;
+                    let tree = crate::remote::tree_cache::TreeCache::new();
                     show_site_dropdown(
                         ui,
                         RemoteView {
                             sites,
                             connected: &[],
+                            tree: &tree,
                         },
                         28.0,
                     );

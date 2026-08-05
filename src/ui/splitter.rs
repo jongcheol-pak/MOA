@@ -13,6 +13,7 @@ use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction, RemoteMenuPick};
 use crate::ui::remote_states::RemoteView;
 use crate::ui::theme;
+use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
 
@@ -59,6 +60,11 @@ pub struct LayoutOutcome {
     pub drop: Option<(PanelId, DropOutcome)>,
     /// 원격 메뉴에서 고른 것과 그 패널 (FR-39)
     pub remote_menu: Option<(PanelId, RemoteMenuPick)>,
+    /// 원격 트리가 청한 하위 조회들 (T24) — **모아서** 올린다.
+    ///
+    /// first-wins로 하나만 남기면 두 패널이 같은 프레임에 노드를 펼쳤을 때 한쪽이 영영
+    /// `읽는 중…`에 머문다(다시 청하려면 접었다 펴야 한다 — 캐시가 `Loading`으로 막는다)
+    pub tree_requests: Vec<(PanelId, TreeRequest)>,
 }
 
 /// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
@@ -75,6 +81,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         closed_conn,
         drop,
         remote_menu,
+        tree_request,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
@@ -112,6 +119,9 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
     {
         outcome.remote_url = Some((id, url));
     }
+    outcome
+        .tree_requests
+        .extend(tree_request.map(|request| (id, request)));
     // 닫힌 연결은 **모아서** 올린다 — 한 프레임에 여러 패널이 각자의 마지막 원격 탭을 닫을 수
     // 있고, first-wins로 하나만 남기면 나머지 연결의 워커·소켓이 그대로 남는다
     outcome.closed_conns.extend(closed_conn);
@@ -286,6 +296,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
+                tree_request: None,
             },
         );
         merge_panel_outcome(
@@ -299,6 +310,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
+                tree_request: None,
             },
         );
 
@@ -334,6 +346,7 @@ mod tests {
                     closed_conn: None,
                     drop: None,
                     remote_menu: None,
+                    tree_request: None,
                 },
             );
         }
@@ -361,6 +374,7 @@ mod tests {
                     closed_conn: Some(conn),
                     drop: None,
                     remote_menu: None,
+                    tree_request: None,
                 },
             );
         }

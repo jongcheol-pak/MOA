@@ -188,6 +188,13 @@ pub enum ConnEvent {
         op: OpKind,
         result: Result<(), RemoteError>,
     },
+    /// `List`가 실패했다 — **어느 요청이 실패했는지** 알린다 (T24).
+    ///
+    /// 실패를 로그에만 남기면, 답을 기다리던 쪽(원격 트리)이 영영 `읽는 중…`에 머문다
+    ListFailed {
+        generation: u64,
+        detail: String,
+    },
     /// `ListTree`의 답 — 찾은 **파일**들의 전체 경로와 크기다(폴더는 담지 않는다).
     ///
     /// 훑는 중 실패한 가지는 조용히 건너뛴다(권한 없는 폴더가 흔하다) — 그 사실은 서버 로그에 남는다
@@ -402,7 +409,11 @@ fn worker(mut worker: Worker) {
                         path,
                         entries,
                     }),
-                    Err(err) => worker.log(LogKind::Error, err.to_string()),
+                    Err(err) => {
+                        let detail = err.to_string();
+                        worker.log(LogKind::Error, detail.clone())
+                            && worker.emit(ConnEvent::ListFailed { generation, detail })
+                    }
                 };
                 if !alive {
                     break;
@@ -1294,5 +1305,31 @@ mod tests {
             Some((OpKind::Mkdir, true)),
             "실패 뒤에도 워커가 다음 명령을 처리해야 한다"
         );
+    }
+
+    #[test]
+    fn 조회가_실패하면_어느_요청인지_함께_알린다() {
+        // T24 Edge Case — 실패를 로그에만 남기면 답을 기다리던 트리가 영영 `읽는 중…`에 머문다
+        let server = FakeServer::new();
+        // `/없는곳`은 심지 않는다 — 가짜 서버가 "없는 폴더"로 답한다
+        let mut connection = spawn(&server, fast_retry());
+        connection.send(ConnCommand::Connect);
+        connection.send(ConnCommand::List {
+            generation: 77,
+            path: RemotePath::new("/없는곳"),
+        });
+
+        let mut failed = None;
+        wait_until(Duration::from_secs(3), || {
+            for event in connection.poll() {
+                if let ConnEvent::ListFailed { generation, detail } = event {
+                    failed = Some((generation, detail));
+                }
+            }
+            failed.is_some()
+        });
+        let (generation, detail) = failed.expect("실패 알림이 오지 않았다");
+        assert_eq!(generation, 77, "어느 요청이 실패했는지 알 수 없다");
+        assert!(!detail.is_empty(), "사유가 비어 있다");
     }
 }

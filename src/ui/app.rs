@@ -21,6 +21,7 @@ use crate::remote::queue::TransferQueue;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
 use crate::remote::transfer::{self, TransferRunner};
+use crate::remote::tree_cache::TreeCache;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
@@ -41,6 +42,7 @@ use crate::ui::status_bar::{self, StatusAction, StatusView};
 use crate::ui::theme;
 use crate::ui::titlebar::{self, WindowRequest};
 use crate::ui::toast::{self, Toast};
+use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -351,6 +353,12 @@ pub struct ExplorerApp {
     remote_ops: RemoteOps,
     /// 상태 줄에 잠깐 띄울 실패 사유와 그 만료 시각 (FR-39)
     notice: Option<(String, f64)>,
+    /// 원격 트리가 읽어 둔 하위 폴더들 (T24)
+    tree_cache: TreeCache,
+    /// 트리가 청한 조회의 답을 기다리는 자리 — 세대 → (연결, 경로, 캐시 세대)
+    pending_tree_lists: HashMap<u64, (ConnectionId, RemotePath, u64)>,
+    /// 트리 조회의 세대 번호
+    next_tree_list: u64,
     /// 로컬 폴더를 펼친 결과가 오는 통로 (FR-38) — 펼치기는 워커 스레드가 한다
     expand_tx: std::sync::mpsc::Sender<ExpandResult>,
     expand_rx: std::sync::mpsc::Receiver<ExpandResult>,
@@ -412,6 +420,9 @@ impl ExplorerApp {
             next_tree: 0,
             remote_ops: RemoteOps::default(),
             notice: None,
+            tree_cache: TreeCache::new(),
+            pending_tree_lists: HashMap::new(),
+            next_tree_list: 0,
             expand_tx,
             expand_rx,
             repaint,
@@ -1113,6 +1124,24 @@ impl ExplorerApp {
             .and_then(|panel| panel.remote_dir())
     }
 
+    /// 트리가 청한 하위 조회를 연결에 보낸다 (T24).
+    ///
+    /// 캐시가 "아직 안 읽었다"고 할 때만 실제로 나간다 — 펼침이 반복돼도 서버에는 한 번만
+    /// 묻는다 (Acceptance ②)
+    fn request_tree_children(&mut self, conn: ConnectionId, path: RemotePath) {
+        let Some(cache_generation) = self.tree_cache.begin(conn, &path) else {
+            return;
+        };
+        // 목록 조회(패널)와 **번호 공간을 나눈다** — 같은 번호가 겹치면 한쪽의 답을 다른 쪽이
+        // 가져가 서로 영영 기다린다. 트리 쪽은 높은 자리에서 센다
+        self.next_tree_list += 1;
+        let generation = TREE_LIST_BASE + self.next_tree_list;
+        self.pending_tree_lists
+            .insert(generation, (conn, path.clone(), cache_generation));
+        self.manager
+            .send(conn, ConnCommand::List { generation, path });
+    }
+
     /// 원격 폴더를 훑어 달라고 워커에 청한다 (FR-38).
     ///
     /// 화면이 한 겹씩 요청해 가며 훑지 않는 이유: 목록 응답 라우팅과 뒤섞이고 프레임마다
@@ -1369,6 +1398,15 @@ impl ExplorerApp {
                     path,
                     entries,
                 } => {
+                    // 트리가 청한 답이면 캐시로 간다 — 목록 화면은 이것을 모른다
+                    if let Some((conn, path, cache_generation)) =
+                        self.pending_tree_lists.remove(&generation)
+                    {
+                        let mut entries = entries;
+                        sort_tree_children(&mut entries);
+                        self.tree_cache.fill(conn, cache_generation, &path, entries);
+                        continue;
+                    }
                     let ExplorerApp { views, icons, .. } = self;
                     // 요청 하나에 답 하나다 — 받을 패널을 먼저 고르고 목록은 **복사 없이** 한 번만 넘긴다
                     let target = views
@@ -1416,6 +1454,14 @@ impl ExplorerApp {
                 ConnEvent::TransferDone { id, result } => {
                     self.runner
                         .on_done(&mut self.queue, id, result.map_err(|err| err.to_string()))
+                }
+                // 조회 실패 — 트리가 청한 것이면 그 노드에만 사유를 남긴다 (T24 Edge Case)
+                ConnEvent::ListFailed { generation, detail } => {
+                    if let Some((conn, path, cache_generation)) =
+                        self.pending_tree_lists.remove(&generation)
+                    {
+                        self.tree_cache.fail(conn, cache_generation, &path, detail);
+                    }
                 }
                 // 파일 작업의 답 — 성공하면 목록을 다시 읽고, 실패하면 사유를 남긴다 (FR-39)
                 ConnEvent::OpDone { op, result } => self.on_op_done(conn, op, result, now),
@@ -1692,6 +1738,8 @@ impl eframe::App for ExplorerApp {
         let mut dropped = None;
         // 원격 목록에서 고른 메뉴 항목 (FR-39)
         let mut remote_menu = None;
+        // 원격 트리가 청한 하위 조회 (T24)
+        let mut tree_requests = Vec::new();
         // 사이트 관리자의 `연결(C)`이 쓸 분할 영역 — 모달은 CentralPanel 밖에서 그리므로
         // 안에서 정해지는 이 값을 밖으로 들고 나온다
         let mut layout_area = None;
@@ -1777,6 +1825,7 @@ impl eframe::App for ExplorerApp {
                     RemoteView {
                         sites: &self.sites,
                         connected: &connected,
+                        tree: &self.tree_cache,
                     },
                 );
                 menu = outcome.menu;
@@ -1786,6 +1835,7 @@ impl eframe::App for ExplorerApp {
                 closed_conns = outcome.closed_conns;
                 dropped = outcome.drop;
                 remote_menu = outcome.remote_menu;
+                tree_requests = outcome.tree_requests;
             }
             // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
             // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
@@ -1808,12 +1858,23 @@ impl eframe::App for ExplorerApp {
             if let Some((target, (action, targets))) = remote_menu.take() {
                 self.apply_remote_menu(target, action, targets);
             }
+            // 트리가 펼쳐진 폴더의 하위를 청한다 (T24)
+            for (_, request) in tree_requests.drain(..) {
+                if let TreeRequest::Remote { conn, path } = request {
+                    self.request_tree_children(conn, path);
+                }
+            }
             // 마지막 원격 탭이 닫힌 연결을 접는다 — 워커와 소켓이 여기서 회수된다 (FR-32)
             for conn in closed_conns {
                 // 그 연결에 청해 둔 훑기는 답이 오지 않는다 — 함께 지우지 않으면
                 // 기다리는 자리가 영영 남는다
                 let site = self.manager.get(conn).map(|connection| connection.site);
                 self.manager.close(conn);
+                // 그 연결의 트리도 함께 버린다 (T24 Acceptance ④) — 답을 기다리던 자리도
+                // 함께 지운다(오지 않는 답을 영영 기다리게 두지 않는다)
+                self.tree_cache.forget(conn);
+                self.pending_tree_lists
+                    .retain(|_, (waiting, _, _)| *waiting != conn);
                 if let Some(site) = site
                     && self.site_connection(site).is_none()
                 {
@@ -1869,6 +1930,20 @@ struct RemoteOps {
     octal: String,
     /// 삭제 대화의 재귀 여부
     recursive: bool,
+}
+
+/// 트리 조회의 세대 번호가 시작하는 자리.
+///
+/// 패널의 목록 조회는 0부터 하나씩 올라간다 — 두 번호가 겹치면 한쪽의 답을 다른 쪽이
+/// 가져가 서로 영영 기다린다. 실제로 부딪히려면 패널이 이 값만큼 폴더를 옮겨야 한다
+const TREE_LIST_BASE: u64 = 1 << 40;
+
+/// 트리에 보일 차례로 줄을 세운다 — **목록과 같은 규칙**이라야 화면이 두 벌로 갈리지 않는다.
+/// (`remote::tree_cache`는 `panel`을 모르므로 정렬은 이쪽에서 맞춰 넘긴다)
+fn sort_tree_children(entries: &mut [crate::remote::types::RemoteEntry]) {
+    entries.sort_by(|a, b| {
+        crate::panel::file_list::compare_rows(a, "", b, "", crate::panel::file_list::SortKey::Name)
+    });
 }
 
 /// 파일 작업 실패 사유가 상태 줄에 머무는 시간(초) — 알림(FR-43)보다 조금 길게 둔다
