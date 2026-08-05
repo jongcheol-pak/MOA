@@ -16,6 +16,7 @@ pub mod ftp;
 pub mod hostkey;
 pub mod log;
 pub mod manager;
+pub mod queue;
 pub mod secret;
 pub mod sftp;
 pub mod sites;
