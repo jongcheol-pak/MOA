@@ -1493,6 +1493,21 @@ impl ExplorerApp {
         }
     }
 
+    /// 원격 위치가 바뀐 패널들이 새 위치의 목록을 청한다 (T24 Acceptance ⑤).
+    ///
+    /// 옮긴 쪽(트리·상위 이동)은 연결을 모르고 명령을 보낼 수단도 없다 — 깃발만 세워 두고
+    /// 여기서 거둔다
+    fn list_moved_panels(&mut self) {
+        let ExplorerApp { views, manager, .. } = self;
+        for view in views.values_mut() {
+            for panel in view.panels.values_mut() {
+                if panel.take_remote_dirty() {
+                    panel.request_remote_list(manager);
+                }
+            }
+        }
+    }
+
     /// 그 연결을 활성 탭으로 쓰는 패널들이 목록을 다시 청한다
     fn request_remote_list(&mut self, conn: ConnectionId) {
         let ExplorerApp { views, manager, .. } = self;
@@ -1858,6 +1873,9 @@ impl eframe::App for ExplorerApp {
             if let Some((target, (action, targets))) = remote_menu.take() {
                 self.apply_remote_menu(target, action, targets);
             }
+            // 원격 위치가 바뀐 패널은 목록을 다시 읽는다 — 트리 선택(T24 Acceptance ⑤)과
+            // 상위 이동이 이 길을 함께 쓴다
+            self.list_moved_panels();
             // 트리가 펼쳐진 폴더의 하위를 청한다 (T24)
             for (_, request) in tree_requests.drain(..) {
                 if let TreeRequest::Remote { conn, path } = request {

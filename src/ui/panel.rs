@@ -268,6 +268,12 @@ pub struct PanelState {
     pending_remote_url: Option<RemoteUrl>,
     /// 원격 목록 우클릭 메뉴가 뜰 자리 — `None`이면 닫혀 있다 (FR-39)
     remote_menu_at: Option<egui::Pos2>,
+    /// 원격 위치가 바뀌어 목록을 다시 읽어야 한다 — 앱이 다음 프레임에 거둬 간다.
+    ///
+    /// **위치를 옮기는 것과 서버에 묻는 것은 다른 일이다** — 옮기는 쪽(트리 선택·상위 이동)은
+    /// 연결을 모르고, 명령을 보내는 쪽(`ConnectionManager`)은 앱이 쥐고 있다. 그 사이를
+    /// 이 깃발이 잇는다(spec 리뷰 B1: 옮기기만 하고 아무도 다시 읽지 않던 자리)
+    remote_dirty: bool,
     /// 원격 목록 요청의 세대 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
     /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다
     remote_generation: u64,
@@ -301,6 +307,7 @@ impl PanelState {
             create: CreateOp::new(),
             pending_remote_url: None,
             remote_menu_at: None,
+            remote_dirty: false,
             remote_generation: 0,
             thumbs: ThumbnailCache::new(),
             thumb_textures: ThumbnailTextures::new(),
@@ -658,12 +665,20 @@ impl PanelState {
         self.create.start(dir, "파일", create::new_text_file, ctx);
     }
 
-    /// 활성 원격 탭이 가리키는 위치를 옮긴다. 연결·단계는 그대로 둔다 —
-    /// 목록 다시 읽기는 호출부가 `request_remote_list`로 잇는다(T10 배선)
+    /// 활성 원격 탭이 가리키는 위치를 옮긴다. 연결·단계는 그대로 둔다.
+    ///
+    /// 목록 다시 읽기는 **깃발을 세워** 앱에 맡긴다(`take_remote_dirty`) — 여기서 직접 보내지
+    /// 않는 이유는 패널이 `ConnectionManager`를 쥐고 있지 않기 때문이다
     pub fn set_remote_path(&mut self, target: RemotePath) {
         if let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source {
             *path = target;
+            self.remote_dirty = true;
         }
+    }
+
+    /// 옮긴 뒤 아직 다시 읽지 않았는가 — 앱이 프레임마다 거둬 `request_remote_list`로 잇는다
+    pub fn take_remote_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.remote_dirty)
     }
 
     /// 활성 원격 탭의 목록을 요청한다. 돌려주는 값은 이번 요청의 세대다.
@@ -997,12 +1012,11 @@ impl PanelState {
         Some((conn, root))
     }
 
-    /// 트리에서 고른 원격 폴더로 목록을 옮긴다 — 조회는 다음 프레임의 `request_remote_list`가 한다
+    /// 트리에서 고른 원격 폴더로 목록을 옮긴다 (Acceptance ⑤).
+    ///
+    /// 상위 이동과 **같은 길**을 쓴다 — 옮기고 깃발을 세우면 앱이 다시 읽는다
     fn navigate_remote(&mut self, path: RemotePath) {
-        let tab = self.tabs.active_mut();
-        if let TabSource::Remote { path: current, .. } = &mut tab.source {
-            *current = path;
-        }
+        self.set_remote_path(path);
     }
 
     /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 본문.
@@ -1989,13 +2003,33 @@ mod tests {
 
     #[test]
     fn 트리에서_고른_원격_폴더로_목록이_옮겨간다() {
-        // Acceptance ⑤ — 이동은 트리가 아니라 패널이 한다(트리는 목록을 모른다)
+        // Acceptance ⑤ — 옮기는 것으로 끝나면 화면은 옛 목록 그대로다(spec 리뷰 B1).
+        // 옮긴 뒤 **깃발이 서고**, 그 깃발을 거둔 쪽이 실제로 조회를 보내야 한다
         let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+        panel.take_remote_dirty();
         panel.navigate_remote(RemotePath::new("/var/www/html"));
         assert_eq!(
             panel.tabs.active().source.remote_path().map(|p| p.as_str()),
             Some("/var/www/html")
         );
+        assert!(panel.take_remote_dirty(), "다시 읽어 달라는 표시가 없다");
+        assert!(!panel.take_remote_dirty(), "깃발이 한 번에 거둬지지 않았다");
+
+        // 거둔 쪽이 그 위치로 조회를 보낸다 — 세대와 위치가 함께 맞아야 답을 받는다
+        let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
+        panel.request_remote_list(&manager);
+        assert!(
+            panel.awaits_remote_list(panel.remote_generation, &RemotePath::new("/var/www/html"))
+        );
+
+        // 상위 이동도 같은 길을 쓴다 — 옮기고 나서 아무도 다시 읽지 않던 자리였다
+        let ctx = egui::Context::default();
+        panel.handle_nav(NavAction::Up, &ctx);
+        assert_eq!(
+            panel.tabs.active().source.remote_path().map(|p| p.as_str()),
+            Some("/var/www")
+        );
+        assert!(panel.take_remote_dirty(), "상위 이동 뒤에 표시가 없다");
     }
 
     #[test]

@@ -129,7 +129,7 @@ impl FolderTreeView {
                     }
                 }
                 TreeSource::Remote { conn, root, cache } => {
-                    self.show_remote_node(ui, conn, &root, cache, &mut outcome);
+                    self.show_remote_node(ui, conn, &root, 0, cache, &mut outcome);
                 }
             });
         outcome
@@ -145,6 +145,7 @@ impl FolderTreeView {
         ui: &mut egui::Ui,
         conn: ConnectionId,
         path: &RemotePath,
+        depth: usize,
         cache: &TreeCache,
         outcome: &mut TreeOutcome,
     ) {
@@ -165,12 +166,16 @@ impl FolderTreeView {
         }
 
         let id = ui.make_persistent_id(path.as_str());
-        let header =
-            CollapsingState::load_with_default_open(ui.ctx(), id, false).show_header(ui, |ui| {
+        // 뿌리는 펼친 채로 시작한다 — 원격 트리를 켜자마자 접힌 줄 하나만 보이면
+        // 한 번 더 눌러야 무엇이 있는지 알 수 있다(로컬은 드라이브가 여럿이라 접어 둔다)
+        let header = CollapsingState::load_with_default_open(ui.ctx(), id, depth == 0).show_header(
+            ui,
+            |ui| {
                 if ui.selectable_label(is_selected, label).clicked() {
                     self.select(choice, outcome);
                 }
-            });
+            },
+        );
         header.body(|ui| {
             match cache.node(conn, path) {
                 Some(TreeNode::Loaded(children)) => {
@@ -180,7 +185,7 @@ impl FolderTreeView {
                         .map(|entry| path.join(&entry.name))
                         .collect();
                     for child in paths {
-                        self.show_remote_node(ui, conn, &child, cache, outcome);
+                        self.show_remote_node(ui, conn, &child, depth + 1, cache, outcome);
                     }
                 }
                 Some(TreeNode::Failed(detail)) => {
@@ -411,12 +416,18 @@ mod tests {
         let conn = ConnectionId(1);
         let root = RemotePath::new("/");
 
-        // egui의 `CollapsingState`는 접힌 채로 시작한다 — 본문(하위)은 펼쳐야 그려진다.
-        // 아직 아무것도 모르는 상태: 뿌리 자체는 접혀 있어 요청이 나가지 않는다
-        let closed = draw_remote(&cache, "/");
-        assert!(closed.requests.is_empty(), "접힌 트리가 조회를 청했다");
+        // 뿌리는 펼친 채로 시작하므로 첫 프레임에 곧바로 하위를 청한다
+        let first = draw_remote(&cache, "/");
+        assert_eq!(
+            first.requests,
+            vec![TreeRequest::Remote {
+                conn,
+                path: root.clone()
+            }],
+            "펼쳐진 뿌리가 하위를 청하지 않았다"
+        );
 
-        // 답이 담기면 화면은 그것을 그린다 — 이때도 새 요청은 없다
+        // 답이 담기면 화면은 그것을 그린다 — 이때는 새 요청이 없다
         cache.begin(conn, &root);
         cache.fill(
             conn,
