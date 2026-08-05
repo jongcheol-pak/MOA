@@ -54,8 +54,9 @@ const HEADERS: [&str; 7] = [
     "상태",
 ];
 /// 방향 글리프 (인벤토리 #44)
-const UPLOAD_GLYPH: &str = "↑";
-const DOWNLOAD_GLYPH: &str = "↓";
+/// 전송 방향 표시 — 아이콘 글꼴에서 가져온다 (프로젝트 규약)
+const UPLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_UP;
+const DOWNLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_DOWN;
 /// 상태 문구 (인벤토리 #45~#47)
 const STATE_WAIT: &str = "대기 중";
 const STATE_DONE: &str = "완료";
@@ -547,8 +548,10 @@ mod tests {
             ]
         );
         assert_eq!(ALL_SITES, "전체");
-        assert_eq!(UPLOAD_GLYPH, "↑");
-        assert_eq!(DOWNLOAD_GLYPH, "↓");
+        // 방향 표시는 **아이콘 글꼴**에서 온다 (프로젝트 규약 — 원본 화살표는 두부가 된다)
+        assert!(crate::ui::widgets::is_icon_font(UPLOAD_GLYPH));
+        assert!(crate::ui::widgets::is_icon_font(DOWNLOAD_GLYPH));
+        assert_ne!(UPLOAD_GLYPH, DOWNLOAD_GLYPH);
         assert_eq!(STATE_WAIT, "대기 중");
         assert_eq!(STATE_DONE, "완료");
         assert_eq!(STATE_RUNNING, "전송 중");

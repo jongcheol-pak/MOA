@@ -12,6 +12,19 @@ use eframe::egui;
 const DEFAULT_ICON_PX: f32 = 16.0;
 
 /// 프레임 없는 아이콘 버튼 — 기본 글자색·글꼴 크기로 그린다
+/// 이 글자가 **아이콘 글꼴(phosphor)의 것**인가 — 사용자 정의 영역(U+E000~U+F8FF)에 있는가.
+///
+/// 이 프로젝트의 아이콘은 전부 `egui_phosphor`에서 가져온다(AGENTS 규약). 원본 디자인의
+/// 유니코드 기호(`⏸`·`✕`·`⧉` 등)를 그대로 쓰면 **이 앱의 글꼴에 없어 두부(`?`)로 그려진다** —
+/// 실제로 도크 아이콘 셋이 그렇게 나갔다(2026-08-05). 시험이 이 함수로 규약을 지킨다
+pub fn is_icon_font(glyph: &str) -> bool {
+    let mut chars = glyph.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    chars.next().is_none() && ('\u{E000}'..='\u{F8FF}').contains(&first)
+}
+
 pub fn icon_button(
     ui: &mut egui::Ui,
     icon: &str,
@@ -163,8 +176,8 @@ pub const FORM_GAP: f32 = 10.0;
 const FORM_FIELD_PAD_X: f32 = 8.0;
 /// 라벨·필드 글자 크기
 pub const FORM_FONT_PX: f32 = 13.0;
-/// 드롭다운 오른쪽 캐럿
-const FORM_CARET: &str = "▾";
+/// 드롭다운 오른쪽 캐럿 — 아이콘 글꼴에서 (프로젝트 규약)
+const FORM_CARET: &str = egui_phosphor::regular::CARET_DOWN;
 const FORM_CARET_PX: f32 = 11.0;
 /// 캐럿과 값 사이 간격
 const FORM_CARET_GAP: f32 = 8.0;
@@ -366,7 +379,7 @@ const RADIO_SIZE: f32 = 14.0;
 const RADIO_DOT: f32 = 6.0;
 /// 체크 사각 한 변과 글리프 (`:453`)
 const CHECK_SIZE: f32 = 14.0;
-const CHECK_GLYPH: &str = "✓";
+const CHECK_GLYPH: &str = egui_phosphor::regular::CHECK;
 const CHECK_GLYPH_PX: f32 = 10.0;
 /// 표시와 글자 사이 (`:445`·`:452` `gap:8px`)
 const MARK_GAP: f32 = 8.0;
@@ -521,7 +534,13 @@ pub fn spinner_field(
 
     let mut next = value.clamp(*range.start(), *range.end());
     let half = arrows.height() / 2.0;
-    for (index, glyph) in ["▲", "▼"].into_iter().enumerate() {
+    for (index, glyph) in [
+        egui_phosphor::regular::CARET_UP,
+        egui_phosphor::regular::CARET_DOWN,
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let cell = egui::Rect::from_min_size(
             egui::pos2(arrows.left(), arrows.top() + index as f32 * half),
             egui::vec2(arrows.width(), half),
@@ -745,5 +764,64 @@ mod tests {
         );
         // 비활성 필드도 같은 자리를 차지한다 — 활성 여부로 행 높이가 흔들리지 않는다
         assert_eq!(field_size(240.0, false).x, 240.0);
+    }
+
+    #[test]
+    fn 아이콘_판정은_아이콘_글꼴만_받아들인다() {
+        assert!(is_icon_font(egui_phosphor::regular::CHECK));
+        assert!(is_icon_font(egui_phosphor::regular::CARET_DOWN));
+        // 원본 디자인의 기호들 — 이 앱 글꼴에 없어 두부가 된다
+        for glyph in ["\u{23F8}", "\u{2715}", "\u{29C9}", "\u{25B2}", "\u{2713}"] {
+            assert!(!is_icon_font(glyph), "{glyph:?}를 아이콘으로 보았다");
+        }
+        // 글자 여럿·빈 문자열은 아이콘이 아니다
+        assert!(!is_icon_font(""));
+        assert!(!is_icon_font("가나"));
+    }
+
+    #[test]
+    fn 화면_코드에_원본_아이콘_기호가_남아_있지_않다() {
+        // **규약: 아이콘은 `egui_phosphor`에서만 가져온다** (2026-08-05 사용자 결정).
+        // 원본 HTML의 기호를 그대로 쓰면 이 앱의 글꼴(맑은 고딕+phosphor)에 없어 두부가 된다.
+        // 소스를 훑어 그 기호가 **문자열 리터럴로** 다시 들어오는 것을 막는다
+        const 금지: [(char, &str); 11] = [
+            ('\u{23F8}', "일시정지"),
+            ('\u{2715}', "닫기"),
+            ('\u{29C9}', "복사"),
+            ('\u{25B2}', "위 캐럿"),
+            ('\u{25BC}', "아래 캐럿"),
+            ('\u{2713}', "체크"),
+            ('\u{27F3}', "새로 고침"),
+            ('\u{23F5}', "메뉴 화살표"),
+            ('\u{25BE}', "작은 아래 캐럿"),
+            ('\u{25B4}', "작은 위 캐럿"),
+            ('\u{2022}', "글머리 점"),
+        ];
+        let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut 발견 = Vec::new();
+        for entry in std::fs::read_dir(&ui_dir).expect("ui 디렉터리") {
+            let path = entry.expect("항목").path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("소스 읽기");
+            for (line_no, line) in text.lines().enumerate() {
+                // 주석은 설명하려고 그 기호를 적을 수 있다 — 코드 부분만 본다
+                let code = line.split("//").next().unwrap_or("");
+                for (glyph, 이름) in 금지 {
+                    if code.contains(&format!("\"{glyph}\"")) {
+                        발견.push(format!(
+                            "{}:{} {이름}({glyph})",
+                            path.file_name().unwrap_or_default().to_string_lossy(),
+                            line_no + 1
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            발견.is_empty(),
+            "아이콘은 `egui_phosphor`에서 가져와야 한다 — 원본 기호가 남았다: {발견:?}"
+        );
     }
 }

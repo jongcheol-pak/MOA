@@ -166,7 +166,11 @@ fn column_menu_label(ui: &egui::Ui, kind: ColumnKind, checked: bool) -> egui::te
     let font = egui::TextStyle::Button.resolve(ui.style());
     let mut job = egui::text::LayoutJob::default();
     job.append(
-        if checked { "✓" } else { " " },
+        if checked {
+            egui_phosphor::regular::CHECK
+        } else {
+            " "
+        },
         0.0,
         egui::TextFormat {
             font_id: font.clone(),
@@ -198,7 +202,11 @@ fn column_menu_label(ui: &egui::Ui, kind: ColumnKind, checked: bool) -> egui::te
 /// 있고(사이드바 `◧` 사례), 점만으로도 지금 모드가 드러난다
 fn view_items(ui: &mut egui::Ui, current: ViewMode, out: &mut Option<Command>) {
     for mode in ViewMode::ALL {
-        let mark = if mode == current { "•" } else { " " };
+        let mark = if mode == current {
+            egui_phosphor::regular::DOT_OUTLINE
+        } else {
+            " "
+        };
         let button = egui::Button::new(format!("{mark} {}", mode.label()));
         if ui.add(button).clicked() {
             *out = Some(Command::SetViewMode(mode));
@@ -489,7 +497,13 @@ mod tests {
             .collect();
         let found: Vec<String> = labels
             .iter()
-            .map(|label| label.trim_start_matches(['•', ' ']).to_owned())
+            .map(|label| {
+                // 표시 점은 아이콘 글꼴의 것이다 (프로젝트 규약) — 문구만 남겨 견준다
+                label
+                    .trim_start_matches(egui_phosphor::regular::DOT_OUTLINE)
+                    .trim_start()
+                    .to_owned()
+            })
             .filter(|label| expected.contains(label))
             .collect();
         assert_eq!(
@@ -504,7 +518,7 @@ mod tests {
         for current in [ViewMode::Details, ViewMode::Tiles, ViewMode::List] {
             let marked: Vec<String> = view_labels(current)
                 .into_iter()
-                .filter(|label| label.starts_with('•'))
+                .filter(|label| label.starts_with(egui_phosphor::regular::DOT_OUTLINE))
                 .collect();
             assert_eq!(
                 marked.len(),

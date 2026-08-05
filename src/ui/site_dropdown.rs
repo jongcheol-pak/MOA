@@ -54,7 +54,7 @@ pub fn show_site_dropdown(
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
-        "▾",
+        egui_phosphor::regular::CARET_DOWN,
         egui::FontId::proportional(CARET_FONT_PX),
         if open || response.hovered() {
             theme::TEXT

@@ -546,12 +546,13 @@ fn show_header(ui: &mut egui::Ui, input: HeaderInput<'_>, outcome: &mut DetailsO
             outcome.sort_click = Some(key);
         }
         column_menu_popup(&resp, is_remote, column_flags, outcome);
+        // 정렬 화살표도 아이콘 글꼴에서 온다 (프로젝트 규약 — 원본 삼각형은 두부 위험)
         let arrow = match kind.sort_key() {
             Some(key) if key == sort_key => {
                 if ascending {
-                    " ▲"
+                    egui_phosphor::regular::CARET_UP
                 } else {
-                    " ▼"
+                    egui_phosphor::regular::CARET_DOWN
                 }
             }
             _ => "",

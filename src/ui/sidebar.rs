@@ -455,7 +455,13 @@ impl WorkspaceSidebar {
                 egui::Sense::click(),
             )
             .on_hover_text("사이트 목록 새로 고침");
-        header_glyph(ui, refresh_rect, "⟳", REFRESH_FONT_PX, refresh.hovered());
+        header_glyph(
+            ui,
+            refresh_rect,
+            egui_phosphor::regular::ARROW_CLOCKWISE,
+            REFRESH_FONT_PX,
+            refresh.hovered(),
+        );
         if refresh.clicked() {
             actions.push(SidebarAction::RefreshSites);
         }

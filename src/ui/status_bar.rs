@@ -37,9 +37,10 @@ const DOT: f32 = 7.0;
 // ── 문구 (인벤토리 #53~#59) ──
 const QUEUE_LABEL: &str = "전송 큐";
 const LOG_LABEL: &str = "로그";
-/// 접힘·열림 캐럿 (인벤토리 #53·#59)
-const CARET_CLOSED: &str = "▲";
-const CARET_OPEN: &str = "▼";
+/// 접힘·열림 캐럿 (인벤토리 #53·#59) — **아이콘은 아이콘 글꼴(phosphor)에서만 가져온다**
+/// (프로젝트 규약, AGENTS 참조). 원본 HTML의 문자를 그대로 쓰면 글꼴에 없을 때 두부가 된다
+const CARET_CLOSED: &str = egui_phosphor::regular::CARET_UP;
+const CARET_OPEN: &str = egui_phosphor::regular::CARET_DOWN;
 /// 연결이 하나도 없을 때 (plan Edge Case)
 const NO_CONNECTION: &str = "연결 없음";
 /// 실패 알약 (인벤토리 #57)
@@ -106,8 +107,10 @@ pub fn format_current(queue: &TransferQueue) -> String {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| item.remote.as_str().to_owned());
     let arrow = match item.direction {
-        crate::remote::connection::TransferDirection::Upload => "↑",
-        crate::remote::connection::TransferDirection::Download => "↓",
+        crate::remote::connection::TransferDirection::Upload => egui_phosphor::regular::ARROW_UP,
+        crate::remote::connection::TransferDirection::Download => {
+            egui_phosphor::regular::ARROW_DOWN
+        }
     };
     match item.progress() {
         Some(ratio) => format!("{arrow} {name} — {}%", (ratio * 100.0).round() as u32),
@@ -423,8 +426,10 @@ mod tests {
         // 인벤토리 #53·#57·#59
         assert_eq!(QUEUE_LABEL, "전송 큐");
         assert_eq!(LOG_LABEL, "로그");
-        assert_eq!(CARET_CLOSED, "▲");
-        assert_eq!(CARET_OPEN, "▼");
+        // 캐럿은 **아이콘 글꼴의 것**이어야 한다 — 원본 기호(U+25B2·U+25BC)를 그대로 쓰면
+        // 이 앱 글꼴에 없어 두부가 된다 (프로젝트 규약)
+        assert!(widgets::is_icon_font(CARET_OPEN) && widgets::is_icon_font(CARET_CLOSED));
+        assert_ne!(CARET_OPEN, CARET_CLOSED, "여닫힘이 같은 글리프다");
         assert_eq!(FAIL_LABEL, "실패");
     }
 
@@ -505,7 +510,11 @@ mod tests {
                 speed: 100,
             },
         ]);
-        assert_eq!(format_current(&queue), "↑ app.bundle0.js — 62%");
+        // 방향 표시는 아이콘 글꼴의 것이다 — 글리프를 적어 두면 규약이 바뀔 때 여기가 먼저 깨진다
+        assert_eq!(
+            format_current(&queue),
+            format!("{} app.bundle0.js — 62%", egui_phosphor::regular::ARROW_UP)
+        );
     }
 
     #[test]
@@ -630,7 +639,8 @@ mod tests {
         let (text, color) = status_message(&plain);
         assert_eq!(color, theme::HEADER_TEXT);
         assert!(
-            text.contains('↑') || text.contains('↓'),
+            text.contains(egui_phosphor::regular::ARROW_UP)
+                || text.contains(egui_phosphor::regular::ARROW_DOWN),
             "진행 문구: {text}"
         );
 
