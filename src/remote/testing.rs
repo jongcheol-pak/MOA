@@ -242,7 +242,10 @@ impl RemoteSession for FakeSession {
         let total = self.server.download_bytes.load(Ordering::SeqCst);
         let remaining = total.saturating_sub(offset);
         // 바이트를 쌓아 두지 않고 그 자리에서 만들어 낸다 (D25-a)
-        let mut source = PatternReader { remaining };
+        let mut source = PatternReader {
+            position: offset,
+            remaining,
+        };
         finish(pump(&mut source, dest, progress))
     }
 
@@ -290,8 +293,13 @@ fn finish(outcome: crate::remote::Pumped) -> RemoteResult<u64> {
     }
 }
 
-/// 요청한 크기만큼 같은 바이트를 만들어 내주는 읽기 원본 — 메모리에 미리 쌓지 않는다
+/// 요청한 크기만큼 바이트를 만들어 내주는 읽기 원본 — 메모리에 미리 쌓지 않는다.
+///
+/// **자리마다 다른 값**을 낸다(`pattern_byte`) — 같은 바이트로 채우면 이어받기가 어긋나
+/// 몇 바이트 겹치거나 빠져도 결과가 같아 보여, "이어받은 파일이 원본과 같다"를 검증할 수 없다
 struct PatternReader {
+    /// 파일 안에서 지금 읽고 있는 자리 — 이어받기는 이 값이 오프셋에서 시작한다
+    position: u64,
     remaining: u64,
 }
 
@@ -301,10 +309,21 @@ impl Read for PatternReader {
             return Ok(0);
         }
         let take = buf.len().min(self.remaining as usize);
-        buf[..take].fill(0xAB);
+        for (index, slot) in buf[..take].iter_mut().enumerate() {
+            *slot = pattern_byte(self.position + index as u64);
+        }
+        self.position += take as u64;
         self.remaining -= take as u64;
         Ok(take)
     }
+}
+
+/// 가짜 서버가 자리 `offset`에 두는 바이트.
+///
+/// 251은 256과 서로 소인 소수라 값이 바이트 경계(64KB·4KB)와 같은 주기로 반복되지 않는다 —
+/// 한 블록만큼 어긋난 이어받기가 그대로 드러난다
+pub fn pattern_byte(offset: u64) -> u8 {
+    (offset % 251) as u8
 }
 
 /// 받은 바이트를 세기만 하는 쓰기 대상
@@ -390,6 +409,7 @@ mod tests {
         assert_eq!(moved, 300 * 1024);
 
         let mut source = PatternReader {
+            position: 0,
             remaining: 128 * 1024,
         };
         let sent = session

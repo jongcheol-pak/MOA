@@ -305,6 +305,25 @@ impl TransferRunner {
         queue.set_paused(false);
     }
 
+    /// 앱이 닫힌다 — 진행 중이던 것을 **대기로 되돌리고** 취소분의 `.part`를 마지막으로 치운다
+    /// (plan Edge Case: 전송 중 앱 종료 → `.part` 정리).
+    ///
+    /// **진행 중이던 `.part`는 지우지 않는다** — 큐는 저장돼 다음 실행에서 그대로 복원되고(T25),
+    /// 사용자가 다시 걸면 그 조각에서 이어받는다. 여기서 지우면 받아 둔 것을 매번 버리게 된다.
+    /// 대신 상태를 `Active`로 남기지 않는다: 저장된 큐가 "전송 중"이라고 주장하면 다음 실행의
+    /// 화면이 실제로는 아무것도 돌지 않는데 진행 중으로 보인다.
+    ///
+    /// 호출부는 앱의 종료 처리(`ExplorerApp::on_exit`)다 — 실행기를 앱에 배선하는 T19가 잇는다
+    pub fn shutdown(&mut self, queue: &mut TransferQueue) {
+        for (id, _) in self.assigned.drain() {
+            queue.update(id, TransferState::Wait);
+        }
+        // 취소해 두고 아직 못 치운 조각은 지금이 마지막 기회다 — 워커는 이미 멈췄다
+        let leftovers: Vec<PathBuf> = self.cancelling.drain().map(|(_, (_, part))| part).collect();
+        self.pending_delete.extend(leftovers);
+        self.sweep_pending_delete();
+    }
+
     /// 연결이 사라졌다 — 그 연결에 맡겼던 전송을 놓아준다.
     /// 큐 쪽 되돌리기는 `TransferQueue::requeue_site`가 한다.
     ///
@@ -335,7 +354,7 @@ mod tests {
 
     use super::*;
     use crate::remote::connection::{ConnEvent, ConnPhase};
-    use crate::remote::testing::{FakeServer, FakeSession};
+    use crate::remote::testing::{FakeServer, FakeSession, pattern_byte};
     use crate::remote::types::{RemotePath, RemoteSession, SiteRecord};
 
     fn temp_dir() -> PathBuf {
@@ -526,6 +545,160 @@ mod tests {
     }
 
     #[test]
+    fn 이어받은_파일이_원본과_바이트까지_같다() {
+        // Acceptance ③ — plan이 "결과가 원본과 같다(해시 비교)"로 못 박은 것.
+        //
+        // 가짜 서버가 **자리마다 다른 바이트**를 주므로(`testing::pattern_byte`), 이어 붙이는
+        // 지점이 한 바이트라도 겹치거나 빠지면 대조에서 드러난다. 균일한 값으로 채우면
+        // 어긋난 이어받기도 "같아 보여" 이 단언이 아무것도 지키지 못한다
+        const TOTAL: u64 = 200 * 1024;
+        const ALREADY: u64 = 40 * 1024 + 7; // 블록 경계와 어긋난 지점에서 이어받는다
+
+        let server = FakeServer::new();
+        server.set_download_size(TOTAL);
+        let (mut manager, sites, site) = manager_with_site(&server);
+        let mut queue = TransferQueue::new();
+        let mut runner = TransferRunner::new();
+        let local = temp_file("resume_e2e");
+        let part = part_path(&local);
+        let _ = std::fs::remove_file(&local);
+
+        // 앞부분만 받아 둔 상태를 만든다 — 실제로 끊겼을 때 디스크에 남는 것과 같은 모습이다
+        let head: Vec<u8> = (0..ALREADY).map(pattern_byte).collect();
+        std::fs::write(&part, &head).expect("부분 파일");
+
+        let id = queue.enqueue(
+            site,
+            TransferDirection::Download,
+            local.clone(),
+            RemotePath::new("/big.bin"),
+            TOTAL,
+        );
+        let _ = drain_until(&mut manager, Duration::from_secs(3), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, ConnEvent::Phase(ConnPhase::Ready)))
+        });
+        runner.start_ready(&mut queue, &manager, &sites, 0.0);
+        assert_eq!(runner.in_flight(), 1, "이어받기가 시작되지 않았다");
+        assert_eq!(
+            queue.get(id).expect("항목").state,
+            TransferState::Active {
+                sent: ALREADY,
+                speed: 0
+            },
+            "받아 둔 만큼에서 이어가야 한다"
+        );
+
+        let mut now = 0.0;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && runner.in_flight() > 0 {
+            for (_, event) in manager.poll() {
+                now += 0.1;
+                match event {
+                    ConnEvent::TransferProgress { id, transferred } => {
+                        runner.on_progress(&mut queue, id, transferred, now)
+                    }
+                    ConnEvent::TransferDone { id, result } => {
+                        runner.on_done(&mut queue, id, result.map_err(|e| e.to_string()))
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            queue.get(id).expect("항목").state.is_done(),
+            "이어받기가 끝나지 않았다: {:?}",
+            queue.get(id).map(|item| &item.state)
+        );
+        let got = std::fs::read(&local).expect("받은 파일");
+        let expected: Vec<u8> = (0..TOTAL).map(pattern_byte).collect();
+        assert_eq!(got.len(), expected.len(), "받은 크기가 원본과 다르다");
+        assert!(
+            got == expected,
+            "이어 붙인 자리가 어긋났다 — 처음 다른 바이트: {:?}",
+            got.iter()
+                .zip(expected.iter())
+                .position(|(a, b)| a != b)
+                .map(|at| (at, got[at], expected[at]))
+        );
+        assert!(!part.exists(), "`.part`가 남았다");
+        let _ = std::fs::remove_file(&local);
+    }
+
+    #[test]
+    fn 일시정지_뒤_다시_누르면_이어받아_끝난다() {
+        // Acceptance ④ 뒷문장 (spec 리뷰 M1) — 멈추는 것만이 아니라 **이어서 끝나는 것**까지 본다.
+        // 멈춘 지점은 기계 속도에 따라 다르므로, 받아 둔 조각을 만들어 둔 상태에서
+        // 멈춤 → 다시 누름 → 완료의 흐름을 확인한다
+        const TOTAL: u64 = 128 * 1024;
+        const ALREADY: u64 = 30 * 1024;
+
+        let server = FakeServer::new();
+        server.set_download_size(TOTAL);
+        let (mut manager, sites, site) = manager_with_site(&server);
+        let mut queue = TransferQueue::new();
+        let mut runner = TransferRunner::new();
+        let local = temp_file("pause_resume_e2e");
+        let part = part_path(&local);
+        let _ = std::fs::remove_file(&local);
+        std::fs::write(&part, (0..ALREADY).map(pattern_byte).collect::<Vec<u8>>())
+            .expect("부분 파일");
+
+        let id = queue.enqueue(
+            site,
+            TransferDirection::Download,
+            local.clone(),
+            RemotePath::new("/big.bin"),
+            TOTAL,
+        );
+        let _ = drain_until(&mut manager, Duration::from_secs(3), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, ConnEvent::Phase(ConnPhase::Ready)))
+        });
+
+        // 멈춰 있는 동안에는 시작되지 않는다
+        runner.pause(&mut queue, &manager);
+        runner.start_ready(&mut queue, &manager, &sites, 0.0);
+        assert_eq!(runner.in_flight(), 0);
+        assert_eq!(queue.get(id).expect("항목").state, TransferState::Wait);
+
+        // 다시 누르면 받아 둔 자리에서 이어간다
+        runner.resume(&mut queue);
+        runner.start_ready(&mut queue, &manager, &sites, 1.0);
+        assert_eq!(runner.in_flight(), 1, "다시 눌렀는데 시작되지 않았다");
+
+        let mut now = 1.0;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && runner.in_flight() > 0 {
+            for (_, event) in manager.poll() {
+                now += 0.1;
+                match event {
+                    ConnEvent::TransferProgress { id, transferred } => {
+                        runner.on_progress(&mut queue, id, transferred, now)
+                    }
+                    ConnEvent::TransferDone { id, result } => {
+                        runner.on_done(&mut queue, id, result.map_err(|e| e.to_string()))
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            queue.get(id).expect("항목").state.is_done(),
+            "끝나지 않았다"
+        );
+        let got = std::fs::read(&local).expect("받은 파일");
+        assert_eq!(got, (0..TOTAL).map(pattern_byte).collect::<Vec<u8>>());
+        let _ = std::fs::remove_file(&local);
+    }
+
+    #[test]
     fn 취소하면_받다_만_파일이_남지_않는다() {
         // Acceptance ⑤
         let server = FakeServer::new();
@@ -656,6 +829,50 @@ mod tests {
         runner.start_ready(&mut queue, &manager, &sites, 1.0);
         assert!(!part.exists(), "놓아준 뒤에도 치우지 못했다");
         assert_eq!(runner.pending_cleanup(), 0);
+    }
+
+    #[test]
+    fn 앱이_닫히면_진행_중이던_것이_대기로_돌아가고_취소분만_치워진다() {
+        // plan Edge Case — 저장된 큐가 "전송 중"이라고 주장하면 다음 실행 화면이 거짓말을 한다.
+        // 반대로 받아 둔 조각을 지우면 이어받기가 매번 처음부터가 된다
+        let mut runner = TransferRunner::new();
+        let mut queue = TransferQueue::new();
+        let running_local = temp_file("shutdown_running");
+        let running_part = part_path(&running_local);
+        std::fs::write(&running_part, vec![0u8; 64]).expect("부분 파일");
+        let cancelled_part = part_path(&temp_file("shutdown_cancelled"));
+        std::fs::write(&cancelled_part, vec![0u8; 32]).expect("부분 파일");
+
+        let id = queue.enqueue(
+            SiteId(1),
+            TransferDirection::Download,
+            running_local.clone(),
+            RemotePath::new("/x.bin"),
+            1000,
+        );
+        queue.update(id, TransferState::Active { sent: 64, speed: 1 });
+        runner.assigned.insert(
+            id,
+            Assignment {
+                conn: ConnectionId(0),
+                final_path: running_local.clone(),
+                working_path: running_part.clone(),
+                direction: TransferDirection::Download,
+                progress: ProgressSink::new(0.0),
+            },
+        );
+        runner
+            .cancelling
+            .insert(TransferId(99), (ConnectionId(0), cancelled_part.clone()));
+
+        runner.shutdown(&mut queue);
+
+        assert_eq!(queue.get(id).expect("항목").state, TransferState::Wait);
+        assert!(running_part.exists(), "이어받을 조각까지 지웠다");
+        assert!(!cancelled_part.exists(), "취소분이 남았다");
+        assert_eq!(runner.in_flight(), 0);
+        assert_eq!(runner.pending_cleanup(), 0);
+        let _ = std::fs::remove_file(&running_part);
     }
 
     #[test]
