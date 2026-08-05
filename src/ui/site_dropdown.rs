@@ -43,9 +43,8 @@ pub fn show_site_dropdown(
     connected: &[SiteId],
     height: f32,
 ) -> Option<SiteId> {
-    if sites.visible().next().is_none() {
-        return None;
-    }
+    // 등록된 사이트가 하나도 없으면 버튼 자체를 그리지 않는다
+    sites.visible().next()?;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(CARET_WIDTH, height), egui::Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), response.id);
@@ -181,7 +180,7 @@ mod tests {
     fn caret_width_in_strip(sites: &SiteStore) -> f32 {
         let ctx = egui::Context::default();
         let mut width = 0.0;
-        ctx.run_ui(Default::default(), |ui| {
+        let _ = ctx.run_ui(Default::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // 항목 사이 기본 간격이 폭에 섞이지 않게 한다
