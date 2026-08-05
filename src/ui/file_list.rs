@@ -8,7 +8,7 @@ use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, compare_rows};
 use crate::remote::types::RemoteEntry;
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
-use crate::ui::list_details::{self, Columns, DetailsInput};
+use crate::ui::list_details::{self, ColumnFlags, ColumnKind, Columns, DetailsInput};
 use crate::ui::list_grid::{self, GridInput};
 use crate::ui::view_mode::ViewMode;
 use eframe::egui;
@@ -64,6 +64,8 @@ pub struct FileListView {
     anchor: Option<usize>,
     /// 자세히 보기 열 폭 — 패널마다 독립이며 세션에 저장된다 (plan D3)
     columns: Columns,
+    /// 켤 수 있는 열(권한·소유자)의 표시 여부 — 원격 패널에서만 쓰인다 (FR-31)
+    column_flags: ColumnFlags,
     /// 폴더 개수 — 항목이 바뀔 때(`resort`) 한 번만 센다.
     /// 프레임마다 다시 세면 10만 항목 폴더에서 그 비용이 매 프레임 붙는다 (NFR-3)
     dir_count: usize,
@@ -89,6 +91,7 @@ impl FileListView {
             selection: BTreeSet::new(),
             anchor: None,
             columns: Columns::new(),
+            column_flags: ColumnFlags::default(),
             dir_count: 0,
             view_mode: ViewMode::default(),
         }
@@ -294,6 +297,7 @@ impl FileListView {
             sort_key,
             ascending,
             columns,
+            column_flags,
             view_mode,
             ..
         } = self;
@@ -305,6 +309,7 @@ impl FileListView {
             sort_key: *sort_key,
             ascending: *ascending,
             columns,
+            column_flags: *column_flags,
             view_mode: *view_mode,
             thumbnails,
             visible,
@@ -316,6 +321,9 @@ impl FileListView {
         };
 
         // 상태 변경은 그리기가 끝난 뒤에 한다 — 그리는 동안에는 목록이 빌려진 상태다
+        if let Some(kind) = outcome.column_toggle {
+            self.column_flags.toggle(kind);
+        }
         if let Some(key) = outcome.sort_click {
             self.apply_sort(key);
         } else if let Some((index, modifiers)) = outcome.select_request {
@@ -387,6 +395,7 @@ struct RenderRequest<'a> {
     sort_key: SortKey,
     ascending: bool,
     columns: &'a mut Columns,
+    column_flags: ColumnFlags,
     view_mode: ViewMode,
     thumbnails: &'a ThumbnailTextures,
     visible: &'a mut Vec<PathBuf>,
@@ -397,6 +406,8 @@ struct RenderRequest<'a> {
 struct RenderOutcome {
     action: FileListAction,
     sort_click: Option<SortKey>,
+    /// 열 메뉴에서 고른 열 — 자세히 보기에만 있다
+    column_toggle: Option<ColumnKind>,
     select_request: Option<(usize, egui::Modifiers)>,
     clear_selection: bool,
 }
@@ -422,6 +433,10 @@ fn render_rows<R: ListRow>(
                 sort_key: request.sort_key,
                 ascending: request.ascending,
                 columns: request.columns,
+                // 원격 목록을 담고 있다는 것이 곧 원격 패널이라는 뜻이다 —
+                // 별도 플래그를 하나 더 들면 둘이 어긋날 수 있다
+                is_remote: !request.local_paths,
+                column_flags: request.column_flags,
                 local_paths: request.local_paths,
             },
             icons,
@@ -430,6 +445,7 @@ fn render_rows<R: ListRow>(
         RenderOutcome {
             action: outcome.action,
             sort_click: outcome.sort_click,
+            column_toggle: outcome.column_toggle,
             select_request: outcome.select_request,
             clear_selection: outcome.clear_selection,
         }
@@ -453,6 +469,8 @@ fn render_rows<R: ListRow>(
         RenderOutcome {
             action: outcome.action,
             sort_click: None,
+            // 열은 자세히 보기에만 있다 — 격자 보기에는 머리글이 없다
+            column_toggle: None,
             select_request: outcome.select_request,
             clear_selection: outcome.clear_selection,
         }

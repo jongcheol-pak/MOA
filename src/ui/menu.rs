@@ -7,8 +7,22 @@
 //! 이 모듈은 상태를 바꾸지 않는다 — 무엇을 하라는 **명령만 값으로 돌려주고**,
 //! 실행은 `ui::app`이 한다(패널·워크스페이스 소유자가 거기이기 때문).
 use crate::app::layout::{SplitDir, SplitPlace};
+use crate::ui::list_details::{ALL_COLUMNS, ColumnFlags, ColumnKind};
+use crate::ui::theme;
 use crate::ui::view_mode::ViewMode;
 use eframe::egui;
+
+// ── 열 메뉴 시각 토큰 (원본 `FileExplorer-FTP.dc.html:337-342`) ──
+/// 메뉴 폭
+const COLUMN_MENU_WIDTH: f32 = 186.0;
+/// 항목 행 높이
+const COLUMN_MENU_ROW: f32 = 26.0;
+/// 캡션 글자 크기
+const COLUMN_MENU_CAPTION_PX: f32 = 12.0;
+/// 체크 글리프가 차지하는 폭 — 켜짐/꺼짐이 섞여도 라벨이 흔들리지 않게 자리를 고정한다
+const COLUMN_CHECK_WIDTH: f32 = 12.0;
+/// 열 메뉴 캡션 (인벤토리 #22)
+const COLUMN_MENU_CAPTION: &str = "표시할 컬럼";
 
 /// 분할 방향 — 새 패널이 놓일 자리를 사용자 관점으로 나타낸다.
 ///
@@ -107,6 +121,60 @@ pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Opti
         Command::ClosePanel,
         out,
     );
+}
+
+/// 열 메뉴 — 목록 머리글 우클릭으로 열린다 (인벤토리 #22~28).
+///
+/// 앞 넷은 **체크된 채 비활성**이다: 눌러도 아무 일이 없고 글자가 흐리다(원본의 `cursor:default`).
+/// 지우는 대신 남겨 두는 이유는 원본이 그렇기 때문이며, 어떤 열이 있는지 한눈에 보인다.
+///
+/// 뒤집을 열을 값으로 돌려주고 상태는 호출부가 바꾼다 — 이 모듈은 상태를 갖지 않는다
+pub fn column_menu_items(ui: &mut egui::Ui, flags: ColumnFlags, out: &mut Option<ColumnKind>) {
+    ui.set_width(COLUMN_MENU_WIDTH);
+    ui.label(
+        egui::RichText::new(COLUMN_MENU_CAPTION)
+            .size(COLUMN_MENU_CAPTION_PX)
+            .color(theme::TEXT_DIM),
+    );
+    for kind in ALL_COLUMNS {
+        let button = egui::Button::new(column_menu_label(ui, kind, flags.shows(kind)))
+            .min_size(egui::vec2(0.0, COLUMN_MENU_ROW));
+        // 고정 열도 그리기는 한다 — 클릭만 무시한다(원본과 같은 동작)
+        if ui.add(button).clicked() && !kind.is_fixed() {
+            *out = Some(kind);
+            ui.close();
+        }
+    }
+}
+
+/// 열 메뉴 한 줄의 글자 — 체크 글리프만 초록이고 라벨은 켤 수 있는지에 따라 색이 다르다
+fn column_menu_label(ui: &egui::Ui, kind: ColumnKind, checked: bool) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        if checked { "✓" } else { " " },
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: theme::OK_TEXT,
+            ..Default::default()
+        },
+    );
+    job.append(
+        kind.label(),
+        COLUMN_CHECK_WIDTH,
+        egui::TextFormat {
+            font_id: font,
+            // 끌 수 없는 열은 흐리게 — 눌러도 바뀌지 않는다는 것을 색으로 알린다
+            color: if kind.is_fixed() {
+                theme::TEXT_DIM
+            } else {
+                theme::TEXT
+            },
+            ..Default::default()
+        },
+    );
+    job
 }
 
 /// 보기 모드 8종 (FR-23) — 지금 쓰는 모드 왼쪽에 점을 찍는다.

@@ -28,9 +28,105 @@ pub const MIN_COL_WIDTH: f32 = 40.0;
 /// 열 경계 드래그 핸들 폭 — 경계 중심에서 좌우로 절반씩
 const HANDLE_WIDTH: f32 = 6.0;
 
-/// 자세히 보기의 열 — 이름·크기·종류·수정한 날짜 4개로 고정이다.
+/// 자세히 보기의 열 종류 (FR-31).
 ///
-/// **네 열 모두 고정 폭을 갖는다.** 종전에는 마지막 열이 "남는 폭 전부"였는데, 그러면 콘텐츠
+/// 앞 넷은 로컬·원격 어디서나 보이고, **권한·소유자는 원격 패널에서만** 켤 수 있다 —
+/// 로컬 파일의 권한은 ACL이고 소유자도 SID라, 같은 열에 담으면 두 체계가 한 칸에 섞인다
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ColumnKind {
+    Name,
+    Size,
+    Type,
+    Modified,
+    Permissions,
+    Owner,
+}
+
+impl ColumnKind {
+    /// 열 머리글과 열 메뉴에 쓰는 이름 (인벤토리 #23~28 원문 그대로)
+    pub fn label(self) -> &'static str {
+        match self {
+            ColumnKind::Name => "이름",
+            ColumnKind::Size => "크기",
+            ColumnKind::Type => "종류",
+            ColumnKind::Modified => "수정한 날짜",
+            ColumnKind::Permissions => "권한",
+            ColumnKind::Owner => "소유자",
+        }
+    }
+
+    /// 폭 배열에서의 자리
+    fn slot(self) -> usize {
+        match self {
+            ColumnKind::Name => 0,
+            ColumnKind::Size => 1,
+            ColumnKind::Type => 2,
+            ColumnKind::Modified => 3,
+            ColumnKind::Permissions => 4,
+            ColumnKind::Owner => 5,
+        }
+    }
+
+    /// 머리글을 눌러 정렬할 수 있는 열인가.
+    ///
+    /// **권한·소유자는 정렬 대상이 아니다** — 디자인이 이 두 열에 정렬을 주지 않았고,
+    /// `SortKey`를 늘리면 로컬 목록의 정렬 저장값까지 함께 바뀐다(이번 범위 밖)
+    fn sort_key(self) -> Option<SortKey> {
+        match self {
+            ColumnKind::Name => Some(SortKey::Name),
+            ColumnKind::Size => Some(SortKey::Size),
+            ColumnKind::Type => Some(SortKey::Type),
+            ColumnKind::Modified => Some(SortKey::Modified),
+            ColumnKind::Permissions | ColumnKind::Owner => None,
+        }
+    }
+
+    /// 끌 수 없는 열인가 — 앞 넷은 열 메뉴에서 항상 체크된 채 비활성이다 (인벤토리 #23~26)
+    pub fn is_fixed(self) -> bool {
+        !matches!(self, ColumnKind::Permissions | ColumnKind::Owner)
+    }
+}
+
+/// 열 메뉴에 보이는 순서 (원본 `FileExplorer-FTP.dc.html:890-897`)
+pub const ALL_COLUMNS: [ColumnKind; 6] = [
+    ColumnKind::Name,
+    ColumnKind::Size,
+    ColumnKind::Type,
+    ColumnKind::Modified,
+    ColumnKind::Permissions,
+    ColumnKind::Owner,
+];
+
+/// 켤 수 있는 열의 표시 여부 — 기본은 둘 다 꺼짐이다 (인벤토리 #27·#28)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ColumnFlags {
+    pub permissions: bool,
+    pub owner: bool,
+}
+
+impl ColumnFlags {
+    /// 그 열이 켜져 있는가. 고정 열은 늘 켜져 있다
+    pub fn shows(&self, kind: ColumnKind) -> bool {
+        match kind {
+            ColumnKind::Permissions => self.permissions,
+            ColumnKind::Owner => self.owner,
+            _ => true,
+        }
+    }
+
+    /// 켤 수 있는 열을 뒤집는다. 고정 열에는 아무 일도 하지 않는다
+    pub fn toggle(&mut self, kind: ColumnKind) {
+        match kind {
+            ColumnKind::Permissions => self.permissions = !self.permissions,
+            ColumnKind::Owner => self.owner = !self.owner,
+            _ => {}
+        }
+    }
+}
+
+/// 자세히 보기의 열 폭 — **여섯 열 몫을 늘 들고**, 그중 보이는 것만 그린다.
+///
+/// **모든 열이 고정 폭을 갖는다.** 종전에는 마지막 열이 "남는 폭 전부"였는데, 그러면 콘텐츠
 /// 폭이 뷰포트 폭에 의존해 가로 스크롤과 순환한다(스크롤 폭을 정하려면 콘텐츠 폭이 필요한데
 /// 콘텐츠 폭이 다시 뷰포트에 의존). 합이 뷰포트보다 좁을 때만 `effective`가 마지막 열을
 /// 늘려 빈틈을 없앤다 (plan D2)
@@ -46,9 +142,10 @@ impl Default for Columns {
 }
 
 impl Columns {
-    pub const COUNT: usize = 4;
-    /// 기본 폭 (plan 시각 속성 표) — 앞 세 값은 종전 상수를 그대로 잇는다
-    const DEFAULT: [f32; Columns::COUNT] = [320.0, 90.0, 150.0, 150.0];
+    pub const COUNT: usize = 6;
+    /// 기본 폭 — 앞 넷은 종전 값을 그대로 잇는다.
+    /// 권한은 `rwxr-xr-x` 아홉 글자가, 소유자는 흔한 계정 이름이 잘리지 않을 만큼 잡았다
+    const DEFAULT: [f32; Columns::COUNT] = [320.0, 90.0, 150.0, 150.0, 100.0, 110.0];
 
     pub fn new() -> Columns {
         Columns {
@@ -57,12 +154,12 @@ impl Columns {
     }
 
     /// 저장된 폭으로 되살린다 (FR-11 세션 복원).
-    /// 길이가 다르거나 유한하지 않은 값이 섞이면 그 값만 기본값으로 되돌린다 —
-    /// 설정 파일이 손상돼도 목록이 못 그려지는 상태로 시작하지 않게 한다
+    ///
+    /// **앞에서부터 있는 만큼만 받는다** — 열이 넷이던 시절의 세션에는 권한·소유자 폭이 없고,
+    /// 길이가 다르다고 전부 버리면 사용자가 맞춰 둔 이름·크기 폭까지 초기화된다 (plan Edge Case).
+    /// 유한하지 않은 값이 섞이면 그 자리만 기본값으로 되돌린다 — 설정 파일이 손상돼도
+    /// 목록이 못 그려지는 상태로 시작하지 않게 한다
     pub fn from_saved(saved: &[f32]) -> Columns {
-        if saved.len() != Columns::COUNT {
-            return Columns::new();
-        }
         let mut widths = Columns::DEFAULT;
         for (slot, &value) in widths.iter_mut().zip(saved) {
             if value.is_finite() {
@@ -72,27 +169,44 @@ impl Columns {
         Columns { widths }
     }
 
-    /// 세션에 저장할 폭
+    /// 세션에 저장할 폭 — 보이지 않는 열의 폭도 함께 남긴다(다시 켰을 때 그대로 돌아온다)
     pub fn to_saved(self) -> Vec<f32> {
         self.widths.to_vec()
     }
 
-    /// 조절된 그대로의 폭 — 뷰포트를 반영하지 않은 값
-    pub fn widths(&self) -> [f32; Columns::COUNT] {
-        self.widths
+    /// 이 패널에 보일 열 — 로컬은 앞 넷뿐이고, 원격은 켜 둔 것이 뒤에 붙는다 (Acceptance ①)
+    pub fn visible(is_remote: bool, flags: ColumnFlags) -> Vec<ColumnKind> {
+        ALL_COLUMNS
+            .into_iter()
+            .filter(|kind| {
+                if kind.is_fixed() {
+                    true
+                } else {
+                    is_remote && flags.shows(*kind)
+                }
+            })
+            .collect()
     }
 
-    /// 네 열의 폭 합 — 가로 스크롤 콘텐츠 폭의 근거
-    pub fn content_width(&self) -> f32 {
-        self.widths.iter().sum()
+    /// 조절된 그대로의 폭 — 뷰포트를 반영하지 않은 값
+    pub fn widths_of(&self, visible: &[ColumnKind]) -> Vec<f32> {
+        visible
+            .iter()
+            .map(|kind| self.widths[kind.slot()])
+            .collect()
+    }
+
+    /// 보이는 열의 폭 합 — 가로 스크롤 콘텐츠 폭의 근거
+    pub fn content_width(&self, visible: &[ColumnKind]) -> f32 {
+        visible.iter().map(|kind| self.widths[kind.slot()]).sum()
     }
 
     /// 실제로 그릴 폭. 합이 뷰포트보다 좁으면 **마지막 열만 늘려** 오른쪽 빈틈을 없앤다.
-    /// 늘리는 것은 표시뿐이며 저장되는 폭(`widths`)은 그대로다 — 창 크기를 바꿀 때마다
+    /// 늘리는 것은 표시뿐이며 저장되는 폭은 그대로다 — 창 크기를 바꿀 때마다
     /// 사용자가 정한 폭이 덮어써지면 안 된다
-    pub fn effective(&self, viewport_width: f32) -> [f32; Columns::COUNT] {
-        let mut widths = self.widths;
-        let slack = viewport_width - self.content_width();
+    pub fn effective(&self, visible: &[ColumnKind], viewport_width: f32) -> Vec<f32> {
+        let mut widths = self.widths_of(visible);
+        let slack = viewport_width - widths.iter().sum::<f32>();
         if slack > 0.0
             && let Some(last) = widths.last_mut()
         {
@@ -101,23 +215,24 @@ impl Columns {
         widths
     }
 
-    /// 드래그로 `index` 열의 폭을 바꾼다. 최소 폭 아래로는 줄지 않는다
-    pub fn apply_drag(&mut self, index: usize, delta: f32) {
-        if let Some(width) = self.widths.get_mut(index) {
-            *width = (*width + delta).max(MIN_COL_WIDTH);
-        }
+    /// 드래그로 그 열의 폭을 바꾼다. 최소 폭 아래로는 줄지 않는다
+    pub fn apply_drag(&mut self, kind: ColumnKind, delta: f32) {
+        let width = &mut self.widths[kind.slot()];
+        *width = (*width + delta).max(MIN_COL_WIDTH);
     }
 }
 
 /// 열 왼쪽 경계의 x 오프셋 (첫 열은 0). 헤더와 행이 같은 x를 쓰게 하는 계산의 정본
-fn x_offsets(widths: &[f32; Columns::COUNT]) -> [f32; Columns::COUNT] {
-    let mut offsets = [0.0; Columns::COUNT];
+fn x_offsets(widths: &[f32]) -> Vec<f32> {
     let mut acc = 0.0;
-    for (offset, width) in offsets.iter_mut().zip(widths) {
-        *offset = acc;
-        acc += width;
-    }
-    offsets
+    widths
+        .iter()
+        .map(|width| {
+            let offset = acc;
+            acc += width;
+            offset
+        })
+        .collect()
 }
 
 /// 자세히 보기가 그리는 데 필요한 목록 상태 — 소유하지 않고 빌려 쓴다
@@ -131,6 +246,10 @@ pub struct DetailsInput<'a, R: ListRow> {
     pub sort_key: SortKey,
     pub ascending: bool,
     pub columns: &'a mut Columns,
+    /// 원격 패널인가 — 권한·소유자 열과 그 메뉴 항목은 여기서만 보인다 (Acceptance ①)
+    pub is_remote: bool,
+    /// 켤 수 있는 열의 현재 상태
+    pub column_flags: ColumnFlags,
     /// 항목이 로컬 파일인가. 원격이면 **전체 경로로 하는 일**(셸 아이콘 정밀 조회)을 하지 않는다 —
     /// 원격 이름을 로컬 경로에 이어 붙이면 있지도 않은 파일을 셸에 묻게 된다 (D11)
     pub local_paths: bool,
@@ -146,6 +265,8 @@ pub struct DetailsOutcome {
     pub sort_click: Option<SortKey>,
     /// 빈 영역 클릭 — 선택 해제
     pub clear_selection: bool,
+    /// 열 메뉴에서 뒤집기로 고른 열 — 상태 변경은 호출부가 한다 (인벤토리 #27·#28)
+    pub column_toggle: Option<ColumnKind>,
 }
 
 /// 자세히 보기를 그린다.
@@ -172,14 +293,18 @@ pub fn show<R: ListRow>(
         sort_key,
         ascending,
         columns,
+        is_remote,
+        column_flags,
         local_paths,
     } = input;
+    // 보일 열은 패널 종류와 토글로 정해진다 — 로컬 패널에는 권한·소유자가 아예 없다
+    let visible = Columns::visible(is_remote, column_flags);
 
     let scroll = egui::ScrollArea::both().auto_shrink([false, false]);
     let output = scroll.show_viewport(ui, |ui, viewport| {
         // 뷰포트 폭은 **스크롤 영역 안에서** 잰다 — 바깥의 `available_width`는 세로 스크롤 막대
         // 폭을 빼지 않아, 그만큼 마지막 열이 넓어져 늘 가로 스크롤이 생긴다
-        let widths = columns.effective(viewport.width());
+        let widths = columns.effective(&visible, viewport.width());
         let offsets = x_offsets(&widths);
         let content_width = widths.iter().sum::<f32>();
         let content_height = HEADER_HEIGHT + row_count as f32 * ROW_HEIGHT;
@@ -190,13 +315,18 @@ pub fn show<R: ListRow>(
 
         show_header(
             ui,
-            columns,
-            &widths,
-            &offsets,
-            left,
-            top,
-            sort_key,
-            ascending,
+            HeaderInput {
+                columns,
+                visible: &visible,
+                widths: &widths,
+                offsets: &offsets,
+                left,
+                top,
+                sort_key,
+                ascending,
+                is_remote,
+                column_flags,
+            },
             &mut outcome,
         );
 
@@ -278,35 +408,17 @@ pub fn show<R: ListRow>(
                 );
             }
 
-            let size_text = if entry.is_dir() {
-                String::new()
-            } else {
-                format_size_kb(entry.size())
-            };
-            let cells = [
-                (
-                    entry.name(),
-                    left + offsets[0] + NAME_X,
-                    widths[0] - NAME_X - CELL_PAD,
-                ),
-                (
-                    size_text,
-                    left + offsets[1] + CELL_PAD,
-                    widths[1] - CELL_PAD * 2.0,
-                ),
-                (
-                    type_names[index].clone(),
-                    left + offsets[2] + CELL_PAD,
-                    widths[2] - CELL_PAD * 2.0,
-                ),
-                (
-                    format_filetime(entry.modified_key()),
-                    left + offsets[3] + CELL_PAD,
-                    widths[3] - CELL_PAD * 2.0,
-                ),
-            ];
             let painter = ui.painter();
-            for (text, x, width) in cells {
+            for (slot, kind) in visible.iter().enumerate() {
+                let text = cell_text(entry, &type_names[index], *kind);
+                // 이름 열만 아이콘 자리를 비켜 시작한다
+                let leading = if *kind == ColumnKind::Name {
+                    NAME_X
+                } else {
+                    CELL_PAD
+                };
+                let x = left + offsets[slot] + leading;
+                let width = widths[slot] - leading - CELL_PAD;
                 if text.is_empty() || width <= 0.0 {
                     continue;
                 }
@@ -345,53 +457,99 @@ pub fn show<R: ListRow>(
     outcome
 }
 
-/// 열 머리글 — 클릭으로 정렬, 경계 드래그로 폭 조절, 현재 정렬 열에 방향 표시
-#[allow(clippy::too_many_arguments)]
-fn show_header(
-    ui: &mut egui::Ui,
-    columns: &mut Columns,
-    widths: &[f32; Columns::COUNT],
-    offsets: &[f32; Columns::COUNT],
+/// 셀 하나에 보일 문자열.
+///
+/// **심볼릭 링크는 이름 뒤에 `→ 대상`이 붙는다** (FR-31·README §3) — 링크인지 아닌지가
+/// 목록에서 드러나야 지우거나 옮길 때 실수하지 않는다
+fn cell_text<R: ListRow>(entry: &R, type_name: &str, kind: ColumnKind) -> String {
+    match kind {
+        ColumnKind::Name => match entry.link_target() {
+            Some(target) => format!("{} → {target}", entry.name()),
+            None => entry.name(),
+        },
+        ColumnKind::Size => {
+            if entry.is_dir() {
+                String::new()
+            } else {
+                format_size_kb(entry.size())
+            }
+        }
+        ColumnKind::Type => type_name.to_owned(),
+        ColumnKind::Modified => format_filetime(entry.modified_key()),
+        // 서버가 주지 않았으면 빈칸이다 — 없는 값을 지어내지 않는다 (plan Edge Case)
+        ColumnKind::Permissions => entry.permissions().unwrap_or_default(),
+        ColumnKind::Owner => entry.owner().unwrap_or_default().to_owned(),
+    }
+}
+
+/// 머리글이 그리기에 필요한 것 — 인자가 많아 한 묶음으로 든다
+struct HeaderInput<'a> {
+    columns: &'a mut Columns,
+    visible: &'a [ColumnKind],
+    widths: &'a [f32],
+    offsets: &'a [f32],
     left: f32,
     top: f32,
     sort_key: SortKey,
     ascending: bool,
-    outcome: &mut DetailsOutcome,
-) {
+    is_remote: bool,
+    column_flags: ColumnFlags,
+}
+
+/// 열 머리글 — 클릭으로 정렬, 경계 드래그로 폭 조절, 현재 정렬 열에 방향 표시,
+/// 우클릭으로 열 메뉴 (인벤토리 #22~28)
+fn show_header(ui: &mut egui::Ui, input: HeaderInput<'_>, outcome: &mut DetailsOutcome) {
+    let HeaderInput {
+        columns,
+        visible,
+        widths,
+        offsets,
+        left,
+        top,
+        sort_key,
+        ascending,
+        is_remote,
+        column_flags,
+    } = input;
     let header_rect = egui::Rect::from_min_size(
         egui::pos2(left, top),
         egui::vec2(widths.iter().sum(), HEADER_HEIGHT),
     );
     ui.painter().rect_filled(header_rect, 0.0, theme::HEADER_BG);
-    let labels = [
-        (SortKey::Name, "이름"),
-        (SortKey::Size, "크기"),
-        (SortKey::Type, "종류"),
-        (SortKey::Modified, "수정한 날짜"),
-    ];
     let font = egui::TextStyle::Body.resolve(ui.style());
 
-    for (index, (key, label)) in labels.into_iter().enumerate() {
-        let width = widths[index];
+    for (slot, kind) in visible.iter().enumerate() {
+        let width = widths[slot];
         if width <= 0.0 {
             continue;
         }
-        let x = left + offsets[index];
+        let x = left + offsets[slot];
         let cell = egui::Rect::from_min_size(egui::pos2(x, top), egui::vec2(width, HEADER_HEIGHT));
-        if ui
-            .interact(cell, ui.id().with(("head", label)), egui::Sense::click())
-            .clicked()
+        let resp = ui.interact(
+            cell,
+            ui.id().with(("head", kind.label())),
+            egui::Sense::click(),
+        );
+        // 정렬할 수 없는 열(권한·소유자)은 눌러도 기준이 바뀌지 않는다
+        if resp.clicked()
+            && let Some(key) = kind.sort_key()
         {
             outcome.sort_click = Some(key);
         }
-        let arrow = if sort_key == key {
-            if ascending { " ▲" } else { " ▼" }
-        } else {
-            ""
+        column_menu_popup(&resp, is_remote, column_flags, outcome);
+        let arrow = match kind.sort_key() {
+            Some(key) if key == sort_key => {
+                if ascending {
+                    " ▲"
+                } else {
+                    " ▼"
+                }
+            }
+            _ => "",
         };
         let galley = elided_galley(
             ui.painter(),
-            format!("{label}{arrow}"),
+            format!("{}{arrow}", kind.label()),
             font.clone(),
             width - CELL_PAD * 2.0,
         );
@@ -404,8 +562,8 @@ fn show_header(
 
     // 드래그 핸들은 머리글 셀보다 **나중에** 등록한다 — egui는 겹칠 때 나중 위젯을 위로 보므로
     // 경계 위에서 누른 것이 정렬 클릭으로 새지 않는다
-    for index in 0..Columns::COUNT {
-        let boundary = left + offsets[index] + widths[index];
+    for (slot, kind) in visible.iter().enumerate() {
+        let boundary = left + offsets[slot] + widths[slot];
         let handle = egui::Rect::from_min_size(
             egui::pos2(boundary - HANDLE_WIDTH / 2.0, top),
             egui::vec2(HANDLE_WIDTH, HEADER_HEIGHT),
@@ -414,60 +572,94 @@ fn show_header(
         // 경계를 톡 눌렀을 때 아래 머리글 셀로 새어 의도치 않게 정렬이 바뀐다
         let resp = ui.interact(
             handle,
-            ui.id().with(("col_handle", index)),
+            ui.id().with(("col_handle", slot)),
             egui::Sense::click_and_drag(),
         );
         if resp.hovered() || resp.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         if resp.dragged() {
-            columns.apply_drag(index, resp.drag_delta().x);
+            columns.apply_drag(*kind, resp.drag_delta().x);
         }
     }
+}
+
+/// 머리글 우클릭으로 여는 열 메뉴 (인벤토리 #22~28).
+///
+/// **로컬 패널에서는 열지 않는다** — 켤 수 있는 항목이 원격 전용 둘뿐이라, 로컬에서 열면
+/// 끌 수 없는 항목 넷만 늘어선 메뉴가 뜬다
+fn column_menu_popup(
+    response: &egui::Response,
+    is_remote: bool,
+    flags: ColumnFlags,
+    outcome: &mut DetailsOutcome,
+) {
+    if !is_remote {
+        return;
+    }
+    egui::Popup::context_menu(response).show(|ui| {
+        crate::ui::menu::column_menu_items(ui, flags, &mut outcome.column_toggle);
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::types::RemoteEntry;
+
+    /// 로컬 패널이 보이는 열 — 앞 넷뿐이다
+    fn local_visible() -> Vec<ColumnKind> {
+        Columns::visible(false, ColumnFlags::default())
+    }
+
+    fn remote_entry(name: &str, mode: Option<u32>, owner: Option<&str>) -> RemoteEntry {
+        RemoteEntry {
+            name: name.to_owned(),
+            is_dir: false,
+            is_symlink: false,
+            link_target: None,
+            size: 1024,
+            modified: None,
+            mode,
+            owner: owner.map(str::to_owned),
+        }
+    }
 
     #[test]
-    fn 기본_폭은_네_열_모두_양수다() {
+    fn 기본_폭은_여섯_열_모두_양수다() {
         let columns = Columns::new();
-        for width in columns.widths() {
-            assert!(width >= MIN_COL_WIDTH, "기본 폭이 최소 폭보다 작다");
+        for kind in ALL_COLUMNS {
+            let width = columns.widths_of(&[kind])[0];
+            assert!(
+                width >= MIN_COL_WIDTH,
+                "{kind:?}의 기본 폭이 최소 폭보다 작다"
+            );
         }
     }
 
     #[test]
     fn 드래그로_폭이_바뀐다() {
         let mut columns = Columns::new();
-        let before = columns.widths()[0];
-        columns.apply_drag(0, 50.0);
-        assert_eq!(columns.widths()[0], before + 50.0);
+        let before = columns.widths_of(&[ColumnKind::Name])[0];
+        columns.apply_drag(ColumnKind::Name, 50.0);
+        assert_eq!(columns.widths_of(&[ColumnKind::Name])[0], before + 50.0);
     }
 
     #[test]
     fn 최소_폭_아래로는_줄지_않는다() {
         // 열이 0폭이 되면 다시 넓힐 핸들조차 잡을 수 없다
         let mut columns = Columns::new();
-        columns.apply_drag(1, -10_000.0);
-        assert_eq!(columns.widths()[1], MIN_COL_WIDTH);
+        columns.apply_drag(ColumnKind::Size, -10_000.0);
+        assert_eq!(columns.widths_of(&[ColumnKind::Size])[0], MIN_COL_WIDTH);
     }
 
     #[test]
-    fn 없는_열_인덱스는_무시된다() {
-        let mut columns = Columns::new();
-        let before = columns.widths();
-        columns.apply_drag(Columns::COUNT, 100.0);
-        assert_eq!(columns.widths(), before);
-    }
-
-    #[test]
-    fn 콘텐츠_폭은_네_열의_합이다() {
+    fn 콘텐츠_폭은_보이는_열의_합이다() {
         let columns = Columns::new();
+        let visible = local_visible();
         assert_eq!(
-            columns.content_width(),
-            columns.widths().iter().sum::<f32>()
+            columns.content_width(&visible),
+            columns.widths_of(&visible).iter().sum::<f32>()
         );
     }
 
@@ -475,14 +667,16 @@ mod tests {
     fn 뷰포트가_넓으면_마지막_열만_늘어난다() {
         // 오른쪽에 빈 띠가 남지 않게 한다. 늘어나는 것은 표시뿐이라 저장 폭은 그대로다
         let columns = Columns::new();
-        let viewport = columns.content_width() + 200.0;
-        let effective = columns.effective(viewport);
+        let visible = local_visible();
+        let viewport = columns.content_width(&visible) + 200.0;
+        let effective = columns.effective(&visible, viewport);
+        let base = columns.widths_of(&visible);
         assert_eq!(effective.iter().sum::<f32>(), viewport);
-        assert_eq!(effective[..3], columns.widths()[..3]);
-        assert_eq!(effective[3], columns.widths()[3] + 200.0);
+        assert_eq!(effective[..3], base[..3]);
+        assert_eq!(effective[3], base[3] + 200.0);
         assert_eq!(
-            columns.widths(),
-            Columns::new().widths(),
+            columns.to_saved(),
+            Columns::new().to_saved(),
             "저장 폭이 바뀌었다"
         );
     }
@@ -491,45 +685,173 @@ mod tests {
     fn 뷰포트가_좁으면_폭을_줄이지_않는다() {
         // 줄이면 가로 스크롤이 생길 이유가 사라진다 — 좁을 때는 스크롤로 본다
         let columns = Columns::new();
-        let effective = columns.effective(100.0);
-        assert_eq!(effective, columns.widths());
-        assert!(columns.content_width() > 100.0);
+        let visible = local_visible();
+        assert_eq!(
+            columns.effective(&visible, 100.0),
+            columns.widths_of(&visible)
+        );
+        assert!(columns.content_width(&visible) > 100.0);
     }
 
     #[test]
     fn 열_오프셋은_앞_열_폭의_누적이다() {
         let widths = [100.0, 50.0, 70.0, 30.0];
-        assert_eq!(x_offsets(&widths), [0.0, 100.0, 150.0, 220.0]);
+        assert_eq!(x_offsets(&widths), vec![0.0, 100.0, 150.0, 220.0]);
     }
 
     #[test]
     fn 저장된_폭을_되살린다() {
-        let saved = vec![200.0, 60.0, 120.0, 90.0];
-        assert_eq!(
-            Columns::from_saved(&saved).widths(),
-            [200.0, 60.0, 120.0, 90.0]
-        );
+        let saved = vec![200.0, 60.0, 120.0, 90.0, 80.0, 70.0];
+        assert_eq!(Columns::from_saved(&saved).to_saved(), saved);
     }
 
     #[test]
-    fn 길이가_다른_저장값은_기본값으로_돌아간다() {
-        // 열 구성이 바뀐 옛 세션 파일 — 일부만 적용하면 어느 열의 폭인지 알 수 없다
+    fn 열이_넷이던_옛_세션은_앞_넷만_되살린다() {
+        // 권한·소유자가 없던 시절의 저장값 — 전부 버리면 사용자가 맞춰 둔 폭까지 사라진다
+        // (plan Edge Case: 열 폭 저장값에 5·6번째가 없는 옛 세션 → 기본 폭)
+        let old = vec![200.0, 60.0, 120.0, 90.0];
+        let restored = Columns::from_saved(&old).to_saved();
+        assert_eq!(restored[..4], old[..], "옛 세션의 폭이 버려졌다");
         assert_eq!(
-            Columns::from_saved(&[1.0, 2.0]).widths(),
-            Columns::new().widths()
+            restored[4..],
+            Columns::new().to_saved()[4..],
+            "없던 열은 기본 폭이어야 한다"
         );
     }
 
     #[test]
     fn 손상된_저장값은_안전한_폭으로_보정된다() {
-        let saved = vec![f32::NAN, -50.0, f32::INFINITY, 120.0];
+        let saved = vec![f32::NAN, -50.0, f32::INFINITY, 120.0, f32::NAN, 60.0];
         let columns = Columns::from_saved(&saved);
-        for width in columns.widths() {
+        for width in columns.to_saved() {
             assert!(
                 width.is_finite() && width >= MIN_COL_WIDTH,
                 "보정되지 않은 폭: {width}"
             );
         }
-        assert_eq!(columns.widths()[3], 120.0, "정상 값까지 바뀌었다");
+        assert_eq!(columns.to_saved()[3], 120.0, "정상 값까지 바뀌었다");
+    }
+
+    #[test]
+    fn 로컬_패널에는_권한과_소유자_열이_없다() {
+        // Acceptance ① — 로컬 파일의 권한은 ACL이라 이 두 열로 표현할 수 없다.
+        // 토글을 켜 둔 채 로컬 탭으로 돌아와도 나타나지 않아야 한다
+        let 켠_상태 = ColumnFlags {
+            permissions: true,
+            owner: true,
+        };
+        for flags in [ColumnFlags::default(), 켠_상태] {
+            let visible = Columns::visible(false, flags);
+            assert_eq!(
+                visible,
+                vec![
+                    ColumnKind::Name,
+                    ColumnKind::Size,
+                    ColumnKind::Type,
+                    ColumnKind::Modified
+                ],
+                "로컬 패널에 원격 전용 열이 나타났다"
+            );
+        }
+    }
+
+    #[test]
+    fn 원격_패널은_켠_열만_뒤에_붙는다() {
+        // Acceptance ④ — 열을 켜면 폭 합이 늘어 가로 스크롤이 생긴다
+        let columns = Columns::new();
+        let 꺼짐 = Columns::visible(true, ColumnFlags::default());
+        assert_eq!(꺼짐, local_visible(), "기본값은 둘 다 꺼짐이다");
+
+        let 권한만 = Columns::visible(
+            true,
+            ColumnFlags {
+                permissions: true,
+                owner: false,
+            },
+        );
+        assert_eq!(권한만.last(), Some(&ColumnKind::Permissions));
+        assert!(columns.content_width(&권한만) > columns.content_width(&꺼짐));
+
+        let 둘_다 = Columns::visible(
+            true,
+            ColumnFlags {
+                permissions: true,
+                owner: true,
+            },
+        );
+        assert_eq!(둘_다.len(), 6);
+        assert!(columns.content_width(&둘_다) > columns.content_width(&권한만));
+    }
+
+    #[test]
+    fn 앞_넷은_끌_수_없고_뒤_둘만_뒤집힌다() {
+        // Acceptance ② · 인벤토리 #23~28
+        let mut flags = ColumnFlags::default();
+        for kind in [
+            ColumnKind::Name,
+            ColumnKind::Size,
+            ColumnKind::Type,
+            ColumnKind::Modified,
+        ] {
+            assert!(kind.is_fixed(), "{kind:?}는 고정 열이어야 한다");
+            assert!(flags.shows(kind), "고정 열은 늘 켜져 있다");
+            flags.toggle(kind);
+            assert!(flags.shows(kind), "고정 열이 꺼졌다");
+        }
+        for kind in [ColumnKind::Permissions, ColumnKind::Owner] {
+            assert!(!kind.is_fixed());
+            assert!(!flags.shows(kind), "기본값은 꺼짐이다");
+            flags.toggle(kind);
+            assert!(flags.shows(kind));
+            flags.toggle(kind);
+            assert!(!flags.shows(kind));
+        }
+    }
+
+    #[test]
+    fn 권한과_소유자_열은_정렬_대상이_아니다() {
+        // 디자인이 이 두 열에 정렬을 주지 않았다 — 눌러도 기준이 바뀌지 않는다
+        assert_eq!(ColumnKind::Name.sort_key(), Some(SortKey::Name));
+        assert_eq!(ColumnKind::Modified.sort_key(), Some(SortKey::Modified));
+        assert_eq!(ColumnKind::Permissions.sort_key(), None);
+        assert_eq!(ColumnKind::Owner.sort_key(), None);
+    }
+
+    #[test]
+    fn 심볼릭_링크는_이름_뒤에_대상이_붙는다() {
+        // Acceptance ③ · FR-31 — 링크인지 아닌지가 목록에서 드러나야 실수하지 않는다
+        let mut link = remote_entry("current", None, None);
+        link.is_symlink = true;
+        link.link_target = Some("/releases/2026-08".to_owned());
+        assert_eq!(
+            cell_text(&link, "링크", ColumnKind::Name),
+            "current → /releases/2026-08"
+        );
+
+        // 링크가 아니면 이름만 나온다
+        let plain = remote_entry("app.log", None, None);
+        assert_eq!(cell_text(&plain, "로그", ColumnKind::Name), "app.log");
+    }
+
+    #[test]
+    fn 권한을_주지_않는_서버의_칸은_비어_있다() {
+        // plan Edge Case — `0o777` 같은 기본값을 지어내면 화면이 서버가 하지 않은 말을 한다
+        let 없음 = remote_entry("a.txt", None, None);
+        assert_eq!(cell_text(&없음, "텍스트", ColumnKind::Permissions), "");
+        assert_eq!(cell_text(&없음, "텍스트", ColumnKind::Owner), "");
+
+        let 있음 = remote_entry("a.txt", Some(0o755), Some("deploy"));
+        assert_eq!(
+            cell_text(&있음, "텍스트", ColumnKind::Permissions),
+            "rwxr-xr-x"
+        );
+        assert_eq!(cell_text(&있음, "텍스트", ColumnKind::Owner), "deploy");
+    }
+
+    #[test]
+    fn 소유자가_숫자_uid만_있어도_그대로_보인다() {
+        // plan Edge Case — 서버가 이름을 안 주면 숫자가 곧 소유자다
+        let entry = remote_entry("a.txt", None, Some("1000"));
+        assert_eq!(cell_text(&entry, "텍스트", ColumnKind::Owner), "1000");
     }
 }

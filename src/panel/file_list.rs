@@ -541,6 +541,15 @@ pub trait ListRow {
 
     /// 소문자 확장자 (`""` = 없음/폴더)
     fn extension(&self) -> String;
+
+    /// POSIX 권한 표기(`rwxr-xr-x`) — **원격 항목만** 갖는다 (FR-31).
+    ///
+    /// 로컬은 `None`이다: Windows 파일의 권한은 ACL이라 이 아홉 글자로 옮길 수 없고,
+    /// 억지로 흉내 내면 화면이 실제 권한과 다른 말을 하게 된다
+    fn permissions(&self) -> Option<String>;
+
+    /// 소유자 — **원격 항목만** 갖는다. 서버가 이름을 주지 않으면 숫자 uid 그대로다
+    fn owner(&self) -> Option<&str>;
 }
 
 /// 유닉스 초(UTC) → FILETIME 눈금. 두 목록이 같은 자로 정렬되게 맞춘다
@@ -584,6 +593,15 @@ impl ListRow for FileEntry {
     fn extension(&self) -> String {
         self.extension()
     }
+
+    /// 로컬 파일의 권한은 ACL이라 아홉 글자 표기로 옮길 수 없다 — 흉내 내지 않는다
+    fn permissions(&self) -> Option<String> {
+        None
+    }
+
+    fn owner(&self) -> Option<&str> {
+        None
+    }
 }
 
 impl ListRow for crate::remote::types::RemoteEntry {
@@ -619,6 +637,16 @@ impl ListRow for crate::remote::types::RemoteEntry {
 
     fn extension(&self) -> String {
         self.extension()
+    }
+
+    /// 서버가 권한을 주지 않았으면 `None`이다 — 빈칸으로 보인다 (plan Edge Case).
+    /// `0o777` 같은 기본값을 지어내지 않는 것은 서버가 하지 않은 말을 화면이 하지 않게 하기 위함이다
+    fn permissions(&self) -> Option<String> {
+        self.permissions_string()
+    }
+
+    fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
     }
 }
 
