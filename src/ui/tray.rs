@@ -229,6 +229,14 @@ pub(crate) unsafe fn handle_callback(hwnd: HWND, msg: u32, lparam: LPARAM) -> bo
         notify(TrayEvent::Recreated);
         return false; // 다른 곳도 이 통지를 봐야 하므로 삼키지 않는다
     }
+    // 두 번째 프로세스가 "네가 이미 떠 있으니 나와라"고 알렸다 (FR-51).
+    // 하는 일이 트레이 더블클릭과 같으므로 같은 루틴을 그대로 쓴다
+    if msg != 0 && msg == crate::app::single_instance::wake_message() {
+        // 안전성: 우리 창 프로시저가 받은 메시지라 `hwnd`는 우리 창이다
+        unsafe { restore_window(hwnd) };
+        notify(TrayEvent::Shown);
+        return true;
+    }
     if msg != TRAY_CALLBACK {
         return false;
     }
@@ -342,6 +350,16 @@ mod tests {
         unsafe {
             let _ = DestroyIcon(icon);
         }
+    }
+
+    #[test]
+    fn 깨우기_메시지가_다른_메시지와_겹치지_않는다() {
+        // 겹치면 중복 실행 알림이 트레이 조작이나 폴더 열거 완료로 읽힌다
+        let wake = crate::app::single_instance::wake_message();
+        assert_ne!(wake, 0);
+        assert_ne!(wake, TRAY_CALLBACK);
+        assert_ne!(wake, taskbar_created_message());
+        assert_ne!(wake, crate::fs::enumerate::WM_APP_ENUM_DONE);
     }
 
     #[test]

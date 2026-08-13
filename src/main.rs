@@ -15,6 +15,16 @@ use moa::ui::app_icon;
 use moa::ui::window_start;
 
 fn main() -> eframe::Result {
+    // **가장 먼저 판정한다** (FR-51) — 두 번째 프로세스라면 COM 초기화·세션 읽기가
+    // 전부 헛일이고, 세션 파일을 읽는 동안 첫 프로세스가 그것을 쓰고 있을 수도 있다
+    let instance = moa::app::single_instance::acquire();
+    if !instance.is_first() {
+        // 이미 떠 있는 앱을 앞으로 불러내고 조용히 물러난다 —
+        // 창이 둘이 되면 두 프로세스가 같은 설정 파일에 서로 덮어쓴다
+        moa::app::single_instance::wake_existing();
+        return Ok(());
+    }
+
     let com = init_com();
     // 셸 팝업 메뉴를 다크로 만드는 프로세스 전역 정책 — 창을 만들기 전에 켜야 적용된다.
     // 제목 표시줄은 앱이 직접 그리므로(FR-22) 이 정책의 대상이 아니지만,
