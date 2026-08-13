@@ -12,7 +12,7 @@
 //! 어긋난다. 로컬은 이 모듈이 워커 스레드로 직접 읽고, 원격은 **읽어 달라는 요청을 값으로
 //! 올려보낸다**(연결을 아는 것은 앱이다 — `remote::tree_cache`가 받아 둔다).
 use crate::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
-use crate::panel::file_list::{SortKey, compare_entries};
+use crate::panel::file_list::{ListRow, SortKey, compare_entries};
 use crate::remote::connection::ConnectionId;
 use crate::remote::tree_cache::{TreeCache, TreeNode};
 use crate::remote::types::RemotePath;
@@ -94,6 +94,11 @@ pub struct FolderTreeView {
     selected: Option<TreeChoice>,
     tx: Sender<(PathBuf, Vec<PathBuf>)>,
     rx: Receiver<(PathBuf, Vec<PathBuf>)>,
+    /// 숨김·시스템 폴더를 보일지 (FR-13) — 목록과 같은 값을 받는다.
+    ///
+    /// 트리만 따로 두면 같은 창에서 목록의 숨긴 폴더는 사라지는데 트리에는 남아,
+    /// 설정이 반만 듣는 것처럼 보인다
+    show_hidden: bool,
 }
 
 impl Default for FolderTreeView {
@@ -111,7 +116,22 @@ impl FolderTreeView {
             selected: None,
             tx,
             rx,
+            show_hidden: true,
         }
+    }
+
+    /// 숨김 폴더 표시 여부를 받는다 (FR-13). **바뀌었으면 `true`**.
+    ///
+    /// 바뀌면 읽어 둔 하위 목록을 **통째로 버린다** — 항목마다 속성을 쥐고 있지 않아
+    /// 걸러진 것을 되돌릴 수 없다(목록이 폴더를 다시 읽는 것과 같은 이유). 펼침 상태도
+    /// 함께 풀리지만, 설정을 바꾸는 일이 드물어 다시 읽는 편이 단순하다
+    pub fn set_show_hidden(&mut self, show: bool) -> bool {
+        if self.show_hidden == show {
+            return false;
+        }
+        self.show_hidden = show;
+        self.nodes.clear();
+        true
     }
 
     /// 트리를 그리고, 고른 폴더와 새로 펼쳐진 폴더의 조회 요청을 돌려준다.
@@ -289,9 +309,10 @@ impl FolderTreeView {
         self.nodes.insert(path.clone(), Node::Loading);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let show_hidden = self.show_hidden;
         std::thread::spawn(move || {
             let children = match enumerate_dir(&path) {
-                EnumOutcome::Ok(entries) => child_dirs(&path, entries),
+                EnumOutcome::Ok(entries) => child_dirs(&path, entries, show_hidden),
                 // 접근 거부·삭제·오류 — 하위 없음으로 다룬다
                 _ => Vec::new(),
             };
@@ -345,8 +366,8 @@ pub fn drive_roots() -> Vec<PathBuf> {
 
 /// 열거 결과에서 하위 폴더만 골라 이름 자연 정렬로 돌려준다.
 /// 정렬은 목록과 같은 규칙을 쓴다 — 종류 인자는 이름 정렬에서 쓰이지 않아 빈 문자열을 넘긴다
-fn child_dirs(parent: &Path, mut entries: Vec<FileEntry>) -> Vec<PathBuf> {
-    entries.retain(|e| e.is_dir);
+fn child_dirs(parent: &Path, mut entries: Vec<FileEntry>, show_hidden: bool) -> Vec<PathBuf> {
+    entries.retain(|e| e.is_dir && (show_hidden || !e.is_hidden()));
     entries.sort_by(|a, b| compare_entries(a, "", b, "", SortKey::Name));
     entries
         .iter()
@@ -385,7 +406,7 @@ mod tests {
             entry("사진", true),
             entry("설치.exe", false),
         ];
-        let children = child_dirs(Path::new(r"C:\Users"), entries);
+        let children = child_dirs(Path::new(r"C:\Users"), entries, true);
         assert_eq!(children, vec![PathBuf::from(r"C:\Users\사진")]);
     }
 
@@ -393,10 +414,42 @@ mod tests {
     fn 하위_폴더는_자연_정렬된다() {
         // "폴더10"이 "폴더2"보다 뒤에 와야 한다 (사전식이면 앞에 온다)
         let entries = vec![entry("폴더10", true), entry("폴더2", true)];
-        let children = child_dirs(Path::new(r"D:\"), entries);
+        let children = child_dirs(Path::new(r"D:\"), entries, true);
         assert_eq!(
             children,
             vec![PathBuf::from(r"D:\폴더2"), PathBuf::from(r"D:\폴더10")]
+        );
+    }
+
+    #[test]
+    fn 숨김을_끄면_트리에서도_숨김_폴더가_빠진다() {
+        // 목록에서만 사라지면 같은 창의 두 곳이 다르게 보인다 (FR-13)
+        use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+        let mut 숨김 = entry("숨긴폴더", true);
+        숨김.attributes = FILE_ATTRIBUTE_HIDDEN.0;
+        let mut 시스템 = entry("System Volume Information", true);
+        시스템.attributes = FILE_ATTRIBUTE_SYSTEM.0;
+        let 항목 = || vec![entry("보통", true), 숨김.clone(), 시스템.clone()];
+
+        let 켬 = child_dirs(Path::new(r"D:\"), 항목(), true);
+        assert_eq!(켬.len(), 3, "켜져 있으면 전부 보여야 한다");
+        let 끔 = child_dirs(Path::new(r"D:\"), 항목(), false);
+        assert_eq!(끔, vec![PathBuf::from(r"D:\보통")]);
+    }
+
+    #[test]
+    fn 트리_설정이_바뀌면_읽어_둔_하위를_버린다() {
+        let mut tree = FolderTreeView::new();
+        assert!(
+            !tree.set_show_hidden(true),
+            "기본값과 같은데 바뀌었다고 한다"
+        );
+        tree.nodes
+            .insert(PathBuf::from(r"D:\"), Node::Loaded(Rc::new(Vec::new())));
+        assert!(tree.set_show_hidden(false), "값이 바뀌었는데 알리지 않았다");
+        assert!(
+            tree.nodes.is_empty(),
+            "걸러진 것을 되돌릴 수 없는데 캐시가 남았다"
         );
     }
 

@@ -73,6 +73,8 @@ impl FontScan {
         self.ready.as_deref()
     }
 
+    /// 아직 읽는 중인가 — **시험 전용**이다. 화면은 `names()`가 `None`인 것으로 충분하다
+    #[cfg(test)]
     pub fn is_scanning(&self) -> bool {
         self.pending.is_some()
     }

@@ -1015,6 +1015,8 @@ impl PanelState {
     /// 쥐고 있지 않아 되돌릴 수 없다(`FileListView::set_show_hidden` 주석)
     pub fn apply_display_rules(&mut self, display: DisplayRules, ctx: &egui::Context) {
         self.list.set_show_extensions(display.show_extensions);
+        // 트리도 같은 값을 받는다 — 목록에서만 사라지면 설정이 반만 듣는 것처럼 보인다
+        self.tree.set_show_hidden(display.show_hidden);
         if self.list.set_show_hidden(display.show_hidden) {
             self.reload_active_tab(ctx);
         }
