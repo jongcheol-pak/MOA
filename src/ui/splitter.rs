@@ -10,7 +10,9 @@ use crate::remote::url::RemoteUrl;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::DropOutcome;
 use crate::ui::menu::{Command, PanelMenuState};
-use crate::ui::panel::{MenuRequest, PanelOutcome, PanelState, RemoteAction, RemoteMenuPick};
+use crate::ui::panel::{
+    DisplayRules, MenuRequest, PanelOutcome, PanelState, RemoteAction, RemoteMenuPick,
+};
 use crate::ui::remote_states::RemoteView;
 use crate::ui::theme;
 use crate::ui::tree::TreeRequest;
@@ -141,7 +143,7 @@ pub fn show_layout(
     icons: &mut IconCache,
     textures: &mut IconTextures,
     remote: RemoteView<'_>,
-    show_extensions: bool,
+    display: DisplayRules,
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
@@ -179,7 +181,7 @@ pub fn show_layout(
             .scope_builder(builder, |ui| {
                 ui.set_clip_rect(pane);
                 {
-                    panel.set_show_extensions(show_extensions);
+                    panel.apply_display_rules(display, ctx);
                     panel.show(ui, ctx, icons, textures, remote, menu_state)
                 }
             })

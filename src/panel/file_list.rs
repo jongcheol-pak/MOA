@@ -8,6 +8,7 @@ use windows::Win32::Graphics::Gdi::{
     DeleteObject, DrawTextW, FillRect, HDC, HGDIOBJ, SelectObject, SetBkMode, SetTextColor,
     TRANSPARENT,
 };
+use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Controls::{
@@ -559,6 +560,12 @@ pub trait ListRow {
 
     fn is_dir(&self) -> bool;
 
+    /// 숨김 항목인가 — `숨김 항목` 설정이 꺼져 있으면 목록에서 빠진다 (FR-13).
+    ///
+    /// 로컬은 `FILE_ATTRIBUTE_HIDDEN`·`FILE_ATTRIBUTE_SYSTEM`을, 원격은 이름이 `.`으로
+    /// 시작하는지를 본다 — 유닉스 계열 서버에는 숨김 속성이 따로 없고 그 관례가 곧 규칙이다
+    fn is_hidden(&self) -> bool;
+
     fn is_symlink(&self) -> bool;
 
     /// 심볼릭 링크가 가리키는 곳 — 이름 뒤에 `→ 대상`으로 붙는다 (FR-31)
@@ -612,6 +619,11 @@ impl ListRow for FileEntry {
         self.is_dir
     }
 
+    fn is_hidden(&self) -> bool {
+        const HIDDEN: u32 = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
+        self.attributes & HIDDEN != 0
+    }
+
     fn is_symlink(&self) -> bool {
         // 로컬 목록은 링크를 따로 표시하지 않는다 (원격 전용 표시다 — FR-31)
         false
@@ -656,6 +668,12 @@ impl ListRow for crate::remote::types::RemoteEntry {
 
     fn is_dir(&self) -> bool {
         self.is_dir
+    }
+
+    fn is_hidden(&self) -> bool {
+        // 유닉스 계열 서버에는 숨김 속성이 없다 — `.`으로 시작하는 이름이 그 관례다.
+        // `..`는 이름이 점으로 시작하지만 화면 장치이므로 걸러지면 안 된다
+        !self.is_parent() && self.name.starts_with('.')
     }
 
     fn is_symlink(&self) -> bool {
@@ -792,6 +810,7 @@ mod tests {
             is_dir,
             size,
             modified,
+            attributes: 0,
         }
     }
 
@@ -947,6 +966,34 @@ mod tests {
             compare_rows(&dir, "", &file, "", SortKey::Modified),
             std::cmp::Ordering::Less
         );
+    }
+
+    /// 속성이 붙은 로컬 항목 — 숨김 판정 시험용
+    fn entry_with(name: &str, attributes: u32) -> FileEntry {
+        let mut e = entry(name, false, 0, 0);
+        e.attributes = attributes;
+        e
+    }
+
+    #[test]
+    fn 로컬_숨김은_숨김_또는_시스템_속성이다() {
+        use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
+        assert!(!entry_with("보통.txt", 0).is_hidden());
+        assert!(entry_with("숨김.txt", FILE_ATTRIBUTE_HIDDEN.0).is_hidden());
+        // 시스템 파일도 함께 숨긴다 (`pagefile.sys` — plan Edge Case)
+        assert!(entry_with("pagefile.sys", FILE_ATTRIBUTE_SYSTEM.0).is_hidden());
+        // 이름이 점으로 시작해도 로컬은 속성으로만 판정한다 — 윈도우의 규칙이다
+        assert!(!entry_with(".gitignore", 0).is_hidden());
+    }
+
+    #[test]
+    fn 원격_숨김은_점으로_시작하는_이름이다() {
+        // 유닉스 계열 서버에는 숨김 속성이 없다 (D8)
+        assert!(!remote("보통.txt", false, 0, None).is_hidden());
+        assert!(remote(".bashrc", false, 0, None).is_hidden());
+        assert!(remote(".ssh", true, 0, None).is_hidden());
+        // `..`는 이름이 점으로 시작하지만 화면 장치다 — 걸러지면 맨 윗줄이 사라진다
+        assert!(!remote("..", true, 0, None).is_hidden());
     }
 
     #[test]

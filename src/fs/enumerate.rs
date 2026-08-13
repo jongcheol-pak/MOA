@@ -24,6 +24,11 @@ pub struct FileEntry {
     pub size: u64,
     /// FILETIME 원시값 (100ns 단위) — 정렬·표시 시 변환
     pub modified: u64,
+    /// `WIN32_FIND_DATAW`의 원시 속성값 — 숨김·시스템 판정에 쓴다 (FR-13).
+    ///
+    /// 판정 결과(`bool`)가 아니라 원시값을 든다: 무엇을 숨길지는 화면 쪽 규칙이고,
+    /// 열거는 OS가 준 사실만 실어 나른다
+    pub attributes: u32,
 }
 
 impl FileEntry {
@@ -156,6 +161,7 @@ fn push_entry(data: &WIN32_FIND_DATAW, out: &mut Vec<FileEntry>) {
         size: ((data.nFileSizeHigh as u64) << 32) | data.nFileSizeLow as u64,
         modified: ((data.ftLastWriteTime.dwHighDateTime as u64) << 32)
             | data.ftLastWriteTime.dwLowDateTime as u64,
+        attributes: data.dwFileAttributes,
     });
 }
 
@@ -183,6 +189,8 @@ fn to_extended_pattern(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
+    use windows::core::PCWSTR;
 
     fn make_temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("fe_enum_test_{name}_{}", std::process::id()));
@@ -298,6 +306,49 @@ mod tests {
     }
 
     #[test]
+    fn 숨김_속성이_그대로_실린다() {
+        // 무엇을 숨길지는 화면 규칙이고(FR-13), 열거는 OS가 준 사실만 나른다
+        let dir = make_temp_dir("hidden");
+        std::fs::write(dir.join("보통.txt"), b"x").unwrap();
+        let 숨긴것 = dir.join("숨김.txt");
+        std::fs::write(&숨긴것, b"x").unwrap();
+        set_hidden_for_test(&숨긴것);
+
+        let EnumOutcome::Ok(entries) = enumerate_dir(&dir) else {
+            panic!("열거 실패");
+        };
+        let 찾기 = |name: &str| {
+            entries
+                .iter()
+                .find(|e| e.name_string() == name)
+                .unwrap_or_else(|| panic!("{name}이 없다"))
+        };
+        assert_eq!(
+            찾기("보통.txt").attributes & FILE_ATTRIBUTE_HIDDEN.0,
+            0,
+            "숨기지 않은 파일에 숨김 속성이 붙었다"
+        );
+        assert_ne!(
+            찾기("숨김.txt").attributes & FILE_ATTRIBUTE_HIDDEN.0,
+            0,
+            "숨김 속성이 실리지 않았다"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 시험용으로 파일에 숨김 속성을 건다 — Rust 표준 라이브러리에는 이 조작이 없다
+    fn set_hidden_for_test(path: &Path) {
+        use windows::Win32::Storage::FileSystem::SetFileAttributesW;
+        use windows::core::HSTRING;
+        let wide = HSTRING::from(path.as_os_str());
+        // 안전성: 널 종단 경로와 속성 상수를 넘기는 단순 호출이다
+        unsafe {
+            SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_HIDDEN).expect("속성 설정");
+        }
+    }
+
+    #[test]
     fn 확장자_추출_규칙() {
         let mk = |name: &str, is_dir: bool| {
             let mut v: Vec<u16> = name.encode_utf16().collect();
@@ -307,6 +358,7 @@ mod tests {
                 is_dir,
                 size: 0,
                 modified: 0,
+                attributes: 0,
             }
         };
         assert_eq!(mk("A.TXT", false).extension(), "txt");

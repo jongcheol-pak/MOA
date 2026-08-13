@@ -315,6 +315,7 @@ fn local_entry(name: &str, is_dir: bool) -> FileEntry {
         is_dir,
         size: 0,
         modified: 0,
+        attributes: 0,
     }
 }
 

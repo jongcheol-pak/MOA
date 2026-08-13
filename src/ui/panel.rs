@@ -211,6 +211,18 @@ struct DirWatch {
     rx: Receiver<()>,
 }
 
+/// 앱 설정이 정하는 목록 표시 규칙 (FR-13·FR-52).
+///
+/// 둘을 묶는 이유: 같은 곳(앱 설정)에서 와서 같은 자리에 내려가고, 낱개로 넘기면
+/// 이미 `#[allow(clippy::too_many_arguments)]`가 붙은 `show_layout`의 인자가 더 늘어난다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayRules {
+    /// 이름 뒤 확장자를 보인다 (FR-52)
+    pub show_extensions: bool,
+    /// 숨김·시스템 항목을 보인다 (FR-13)
+    pub show_hidden: bool,
+}
+
 impl PanelState {
     pub fn new(start: PathBuf) -> PanelState {
         PanelState {
@@ -993,13 +1005,19 @@ impl PanelState {
         }
     }
 
-    /// 앱 설정이 정한 확장자 표시 여부를 목록에 내려 준다 — **`show` 직전에 부른다** (FR-52).
+    /// 앱 설정이 정한 표시 규칙을 목록에 내려 준다 — **`show` 직전에 부른다**.
     ///
     /// `show`의 인자로 받지 않는 이유: 그리기 인자가 이미 일곱이라 하나만 더해도
     /// clippy가 막고, 무엇이 배치이고 무엇이 설정인지도 읽기 어려워진다. 목록이 스스로
-    /// 설정을 읽게 하지 않는 이유는 `FileListView::set_show_extensions` 주석에 있다
-    pub fn set_show_extensions(&mut self, show: bool) {
-        self.list.set_show_extensions(show);
+    /// 설정을 읽게 하지 않는 이유는 `FileListView::set_show_extensions` 주석에 있다.
+    ///
+    /// 숨김 항목 설정이 **바뀐 프레임에는 폴더를 다시 읽는다** — 목록은 거른 항목을
+    /// 쥐고 있지 않아 되돌릴 수 없다(`FileListView::set_show_hidden` 주석)
+    pub fn apply_display_rules(&mut self, display: DisplayRules, ctx: &egui::Context) {
+        self.list.set_show_extensions(display.show_extensions);
+        if self.list.set_show_hidden(display.show_hidden) {
+            self.reload_active_tab(ctx);
+        }
     }
 
     /// 패널 하나를 그리고 이번 프레임의 조작을 처리한다.
@@ -1396,6 +1414,9 @@ fn with_local_parent_first(dir: &Path, entries: Vec<FileEntry>) -> Vec<FileEntry
         is_dir: true,
         size: 0,
         modified: 0,
+        // 실제 파일이 아니라 화면 장치다 — 어떤 필터에도 걸리지 않게 속성을 비운다.
+        // 숨김 항목을 꺼도 `..`는 첫 줄에 남아야 한다 (FR-31)
+        attributes: 0,
     });
     out.extend(entries.into_iter().filter(|entry| !entry.is_parent()));
     out

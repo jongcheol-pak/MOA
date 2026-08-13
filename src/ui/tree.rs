@@ -374,6 +374,7 @@ mod tests {
             is_dir,
             size: 0,
             modified: 0,
+            attributes: 0,
         }
     }
 

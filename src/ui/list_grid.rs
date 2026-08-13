@@ -430,6 +430,7 @@ mod tests {
             is_dir,
             size: 10,
             modified: 0,
+            attributes: 0,
         }
     }
 
