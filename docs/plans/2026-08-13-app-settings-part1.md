@@ -45,6 +45,8 @@
 
 ## Deferred / Follow-up
 
+- 숨김 항목 토글이 **원격 패널에서도 재조회를 부른다**(quality 리뷰 S1). 로컬은 감시 갱신 때마다 어차피 다시 읽지만 원격은 네트워크 왕복이다 — 설정 변경이 드물어 이번엔 그대로 두었다. 거슬리면 원격만 응답을 캐시해 재필터하는 길이 있다.
+
 - **다음 분할 plan**: `docs/plans/2026-08-13-app-settings-part2.md` — T1~T8 (언어 전환 전면 적용, 미실행)
 - 트레이 아이콘의 상태 표시(전송 중 배지 등) — FR-36 전송 큐와 이어 붙일 여지가 있으나 이번 요구에 없다
 - 설정 화면에 키보드 단축키 배정(`Ctrl+,` 등) — 진입점은 타이틀바 메뉴 하나로 충분하고, 단축키 표를 손대는 작업이 따로 있다(대장의 `사이트 관리자 단축키 Ctrl+S` 항목과 같은 성격)
@@ -387,21 +389,21 @@
   - **Acceptance**: Given `파일 보기` 그룹의 `파일 확장명`이 off, When 목록을 보면, Then `보고서.hwp`가 `보고서`로 보이고 폴더·`..`·`.gitignore`(앞이 빈 이름)는 그대로다. **원격 패널도 같게** 보인다. 이 상태에서 파일을 더블클릭하면 정상 실행되고, 이름 정렬 순서·선택 유지·셸 컨텍스트 메뉴가 확장자 표시 때와 **똑같다**. on으로 되돌리면 확장자가 다시 보인다.
   - **Files**:
     - 주: `src/panel/file_list.rs`(`ListRow:520`·`impl FileEntry:575`·`impl RemoteEntry:625`)
-    - 동반: `src/ui/list_details.rs:476-477`, `src/ui/list_grid.rs:256,279,324,340`, `src/ui/file_list.rs`(플래그 전달), `src/ui/panel.rs`(설정 값 전달)
+    - 동반: `src/ui/list_details.rs:476-477`, `src/ui/list_grid.rs:256,279,324,340`, `src/ui/file_list.rs`(플래그 전달), `src/ui/panel.rs`(설정 값 전달), `src/ui/splitter.rs`(앱→패널 전달 경유)
     - 테스트: `src/panel/file_list.rs`(`mod tests` — 로컬·원격 각각 폴더/`..`/확장자 없음/일반 파일 4케이스), `src/ui/file_list.rs`(경로 조립·정렬이 원본을 쓰는지)
   - **Edge Cases**: 이름이 `.`으로만 됨 / 확장자가 여러 개(`a.tar.gz` → `a.tar`) / 이름 끝이 `.`(`a.` → `a.` 그대로 — 잘라도 얻는 게 없다) / 심볼릭 링크의 `이름 → 대상` 표기에서 이름 부분만 잘라야 한다(`list_details.rs:476`) / 격자 보기의 `내용` 모드는 이름·종류·크기 3줄이라 이름 줄만 대상(`list_grid.rs:340`)
   - **Halt Forecast**:
     - (i) "어디에 적용하는가(경로 오염 위험)" → D7·전제 13에서 확정
   - **Depends on**: T3
 
-- [ ] **T12. 숨김·시스템 항목 표시 토글**
+- [x] **T12. 숨김·시스템 항목 표시 토글**
   - **Type**: C
   - **Design**: ① 로컬 속성 보존은 `src/fs/enumerate.rs`, 판정은 `ListRow`, 거르기는 목록 모델(`src/ui/file_list.rs`). ② 신규 심볼 — `FileEntry.attributes: u32`(필드), `ListRow::is_hidden(&self) -> bool`(로컬: `FILE_ATTRIBUTE_HIDDEN|FILE_ATTRIBUTE_SYSTEM`, 원격: 이름이 `.`으로 시작). ③ `fs`가 속성을 실어 주고 `panel`이 판정하며 `ui`가 거른다. ④ 이번에 추상화하지 않을 것: 필터 체인·사용자 정의 규칙을 두지 않는다(불리언 하나).
     **`..` 항목의 속성값**: `ui/panel.rs:1381 with_local_parent_first`가 만드는 상위 이동 줄은 실제 파일이 아니라 화면 장치이므로 `attributes: 0`으로 둔다 — 어떤 필터에도 걸리지 않아 FR-31의 "`..`는 항상 첫 줄"이 유지된다. 테스트 헬퍼 6곳도 같은 이유로 `0`을 기본값으로 쓴다.
   - **Acceptance**: Given `파일 보기` 그룹의 `숨김 항목`이 off, When 목록을 보면, Then `FILE_ATTRIBUTE_HIDDEN` 또는 `FILE_ATTRIBUTE_SYSTEM`이 붙은 로컬 항목과 이름이 `.`으로 시작하는 원격 항목이 보이지 않고, **폴더·파일 개수(상태 줄)도 거른 뒤 기준**으로 센다. on이면 전부 보인다(현재 동작과 같다). `..` 항목은 토글과 무관하게 항상 첫 줄에 남는다. 토글을 바꾸면 새로 고침 없이 즉시 반영된다.
   - **Files**:
     - 주: `src/fs/enumerate.rs`(`FileEntry:20`·`push_entry:153`), `src/panel/file_list.rs`(`ListRow` 구현 2곳 — `:575`·`:625`)
-    - 동반: `src/ui/panel.rs`(`with_local_parent_first:1381`의 `..` 생성 + 설정 값 전달·변경 시 재정렬), `src/ui/file_list.rs`(거르기·`dir_count`/`file_count` 재계산)
+    - 동반: `src/ui/panel.rs`(`with_local_parent_first:1381`의 `..` 생성 + 설정 값 전달·변경 시 재정렬), `src/ui/file_list.rs`(거르기·`dir_count`/`file_count` 재계산), `src/ui/splitter.rs`(앱→패널 전달 경유)
     - 테스트(**`FileEntry` 생성 헬퍼가 있어 필드 추가로 전부 깨진다 — 6곳 모두 갱신**): `src/fs/enumerate.rs:305`, `src/panel/file_list.rs:769`, `src/ui/file_list.rs:630`, `src/ui/list_grid.rs:392`, `src/ui/panel/tests.rs:313`, `src/ui/tree.rs:372`
     - 신규 테스트: `src/fs/enumerate.rs`(숨김 속성 파일을 만들어 `attributes`가 실리는지), `src/panel/file_list.rs`(`is_hidden` 로컬·원격 판정), `src/ui/file_list.rs`(거른 뒤 개수)
   - **Edge Cases**: 숨김 폴더 안으로 직접 들어감(주소창 입력) → 목록은 비어 보일 수 있어도 진입 자체는 막지 않는다 / 숨김 항목이 선택된 상태에서 토글을 끔 → 선택에서 빠져야 한다(보이지 않는 항목이 선택돼 있으면 삭제·복사가 예상 밖으로 동작한다) / `FILE_ATTRIBUTE_SYSTEM`만 붙은 항목(`pagefile.sys`) → 함께 숨긴다 / 변경 감시(`FR-10`)로 새 항목이 들어올 때도 같은 필터를 지난다
@@ -488,6 +490,12 @@
   - **규약(quality 리뷰 M4)**: 규약을 지키는지 **소스 텍스트를 grep하는 테스트로 확인하지 않는다** — 줄바꿈·중간 변수로 쉽게 우회되어 "막는다"고 주장만 하는 거짓 안전망이 된다. `selected_paths()`·`drag_items()`를 실제로 불러 경로가 원본 이름인지 보는 행동 기반 테스트로 바꿨다.
   - 한계(기록): 격자 보기는 그려진 **문자열을 관측할 수단이 없어**(테스트 하네스가 "보인 파일 경로"만 모은다) 이름 줄만 잘리는지는 코드 검토로만 확인했다. 화면 확인 항목이다.
   - 관측: `cargo test --lib` 1회에서 원인 미상 1건 실패가 있었으나 이후 4회 연속 664건 전부 통과 — 재현되지 않았다.
+
+- T12 완료: 숨김·시스템 항목 표시 토글. `FileEntry.attributes`(원시 `u32`)를 열거가 실어 주고, `ListRow::is_hidden`이 판정하며, 목록이 **항목을 받는 자리에서 한 번만** 거른다.
+  - 설계: 거르기를 그리는 자리가 아니라 `set_entries`/`set_remote_entries` 입구에 둔 이유는 `type_names`·`icon_indices`가 항목과 **인덱스로 짝지어져** 있어서다 — 그리며 거르면 셋이 어긋난다. 개수(`dir_count`/`file_count`)는 `resort()`가 거른 뒤 모델을 세므로 자동으로 맞는다.
+  - 설계: 토글이 바뀐 프레임에는 **폴더를 다시 읽는다**(`set_show_hidden`이 변화 여부를 돌려준다). 거른 항목을 되돌리려면 항목뿐 아니라 짝지어진 두 배열까지 함께 쥐어야 해서, 다시 읽는 편이 단순하다.
+  - 판정 기준(D8): 로컬은 `FILE_ATTRIBUTE_HIDDEN|SYSTEM`, 원격은 이름이 `.`으로 시작. `..`는 로컬에서 `attributes: 0`으로, 원격에서 `is_parent()` 예외로 지켜 어떤 필터에도 걸리지 않는다.
+  - 리뷰: spec MINOR 2(둘 다 결함 아님 — plan Files에 `splitter.rs` 보완으로 처리), quality 지적 0.
 
 ## Next Steps
 
