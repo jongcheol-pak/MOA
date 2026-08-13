@@ -23,8 +23,14 @@ const CAPTION_WIDTH: f32 = 46.0;
 const RIGHT_GROUP_WIDTH: f32 = BUTTON_SIZE + CAPTION_WIDTH * 3.0;
 /// 좌측 토글 버튼 앞 여백
 const LEFT_MARGIN: f32 = 2.0;
-/// 좌측 버튼군 전체 폭 — 여백 + 사이드바 토글 1개
-const LEFT_GROUP_WIDTH: f32 = LEFT_MARGIN + BUTTON_SIZE;
+/// 앱 아이콘 한 변 — 36px 줄에서 위아래 여백이 남게 잡는다
+const APP_ICON_SIZE: f32 = 20.0;
+/// 앱 아이콘 좌우 여백
+const APP_ICON_GAP: f32 = 6.0;
+/// 앱 아이콘이 차지하는 폭 (좌우 여백 포함)
+const APP_ICON_WIDTH: f32 = APP_ICON_SIZE + APP_ICON_GAP * 2.0;
+/// 좌측 영역 전체 폭 — 여백 + 앱 아이콘 + 사이드바 토글 1개
+const LEFT_GROUP_WIDTH: f32 = LEFT_MARGIN + APP_ICON_WIDTH + BUTTON_SIZE;
 const TITLE_FONT_PX: f32 = 14.0;
 /// 타이틀바 아래 구분선 두께
 const SEPARATOR_THICKNESS: f32 = 1.0;
@@ -65,7 +71,12 @@ pub struct TitlebarOutcome {
 ///
 /// `title`은 활성 워크스페이스 이름이다 — 작업 표시줄에 뜨는 OS 창 제목("파일 탐색기")과는
 /// 별개다(D8). 좌우 버튼을 뺀 폭에서 넘치면 egui가 말줄임한다
-pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> TitlebarOutcome {
+pub fn show_titlebar(
+    ui: &mut egui::Ui,
+    title: &str,
+    state: TitlebarState,
+    icon: Option<egui::TextureId>,
+) -> TitlebarOutcome {
     let mut outcome = TitlebarOutcome::default();
     let bar = ui.max_rect();
 
@@ -98,7 +109,7 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
     // 좌우 클로저는 각자 자기 결과만 돌려준다 — 하나의 `outcome`을 양쪽에서 빌릴 수 없다
     let (command, window) = egui::Sides::new().height(TITLEBAR_HEIGHT).show(
         ui,
-        |ui| show_left(ui, state),
+        |ui| show_left(ui, state, icon),
         |ui| show_right(ui, state),
     );
     outcome.command = command;
@@ -135,10 +146,37 @@ pub fn show_titlebar(ui: &mut egui::Ui, title: &str, state: TitlebarState) -> Ti
     outcome
 }
 
+/// 앱 아이콘 — 워크스페이스 토글 왼쪽에 놓이는 표시 전용 그림(누를 수 없다).
+/// 줄 높이만큼 자리를 잡고 그 안에서 세로 가운데에 그린다.
+///
+/// **아이콘이 없어도 자리는 잡는다** — 그래야 토글 버튼 위치가 `LEFT_GROUP_WIDTH`와
+/// 어긋나지 않는다(그 값이 창 끌기·크기 조절이 비켜야 할 구간을 정한다)
+fn show_app_icon(ui: &mut egui::Ui, icon: Option<egui::TextureId>) {
+    ui.add_space(APP_ICON_GAP);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(APP_ICON_SIZE, TITLEBAR_HEIGHT),
+        egui::Sense::hover(),
+    );
+    if let Some(icon) = icon {
+        ui.painter().image(
+            icon,
+            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(APP_ICON_SIZE)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+    ui.add_space(APP_ICON_GAP);
+}
+
 /// 좌측 — 워크스페이스 목록 표시 토글.
 /// 사이드바가 접히면 그 안의 접기 버튼도 함께 사라지므로, 다시 펼 수 있는 자리가 여기다
-fn show_left(ui: &mut egui::Ui, state: TitlebarState) -> Option<Command> {
+fn show_left(
+    ui: &mut egui::Ui,
+    state: TitlebarState,
+    icon: Option<egui::TextureId>,
+) -> Option<Command> {
     ui.add_space(LEFT_MARGIN);
+    show_app_icon(ui, icon);
     let hint = if state.sidebar_collapsed {
         "워크스페이스 목록 보이기"
     } else {
@@ -429,6 +467,7 @@ mod tests {
                     maximized: false,
                     sidebar_collapsed: false,
                 },
+                None,
             )
             .window;
         });

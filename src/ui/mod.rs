@@ -4,6 +4,7 @@
 //! 순수 로직과 `fs`(열거·감시·아이콘·셸)를 조립해 그린다. 단방향이며 하위 모듈은 `ui`를 모른다.
 pub mod address_bar;
 pub mod app;
+pub mod app_icon;
 pub mod dock;
 pub mod file_list;
 pub mod icon_tex;

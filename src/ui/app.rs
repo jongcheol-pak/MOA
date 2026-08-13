@@ -24,6 +24,7 @@ use crate::remote::transfer::{self, TransferRunner};
 use crate::remote::tree_cache::TreeCache;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
+use crate::ui::app_icon;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::{self, DragItem, DropOutcome, DropTarget};
@@ -52,6 +53,9 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 
 /// 맑은 고딕 — egui 기본 폰트에는 한글 글리프가 없어 파일명이 두부(□)로 보인다
 const KOREAN_FONT_PATH: &str = r"C:\Windows\Fonts\malgun.ttf";
+/// 타이틀바 앱 아이콘으로 올릴 원본 크기(px) — 20px 자리에 그리므로 고배율 화면에서도
+/// 늘어나지 않게 한 단계 큰 항목을 쓴다
+const APP_ICON_TEXTURE_PX: u32 = 48;
 
 /// 삭제 확인 대화 폭 — 문구 두 줄이 접히지 않을 만큼
 const REMOVE_DIALOG_WIDTH: f32 = 360.0;
@@ -311,6 +315,9 @@ pub struct ExplorerApp {
     /// 아이콘 캐시 — 앱 전역 공유 (패널마다 두면 같은 아이콘을 중복 보관하게 된다)
     icons: IconCache,
     textures: IconTextures,
+    /// 타이틀바 왼쪽에 그릴 앱 아이콘 — 시작할 때 한 번 올린다.
+    /// 읽지 못하면 `None`(그 자리를 비워 두고 나머지는 그대로 그린다)
+    app_icon: Option<egui::TextureHandle>,
     /// 워크스페이스 목록(이름·부제·활성) — 표시 데이터의 정본 (FR-15)
     workspaces: WorkspaceList,
     /// 워크스페이스별 탐색 상태 — **방문한 것만** 들어 있다 (D1).
@@ -413,6 +420,7 @@ impl ExplorerApp {
             korean_font,
             icons: IconCache::new(),
             textures: IconTextures::new(),
+            app_icon: app_icon::load_texture(&cc.egui_ctx, APP_ICON_TEXTURE_PX),
             workspaces: WorkspaceList::new(),
             views: HashMap::new(),
             restored: HashMap::new(),
@@ -708,7 +716,9 @@ impl ExplorerApp {
             // 구분선은 `titlebar`가 앱 팔레트 색으로 직접 그린다 — egui 기본 구분선은 끈다
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
-            .show(ui, |ui| titlebar::show_titlebar(ui, &title, state))
+            .show(ui, |ui| {
+                titlebar::show_titlebar(ui, &title, state, self.app_icon.as_ref().map(|t| t.id()))
+            })
             .inner;
         // 창 가장자리 크기 조절 — 모서리는 크기 조절이 우선이고(버튼이 가져가면 대각선으로 창을
         // 잡을 자리가 사라진다), 버튼 위쪽 변은 버튼이 우선한다(`show_resize_handles`가 가른다)

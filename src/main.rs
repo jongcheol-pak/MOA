@@ -11,6 +11,7 @@ use eframe::egui;
 use file_explorer::app;
 use file_explorer::app::settings::load_session;
 use file_explorer::ui::app::{ExplorerApp, init_com, uninit_com};
+use file_explorer::ui::app_icon;
 use file_explorer::ui::window_start;
 
 fn main() -> eframe::Result {
@@ -27,6 +28,11 @@ fn main() -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("파일 탐색기")
         .with_decorations(false);
+    // 작업 표시줄·Alt+Tab에 뜨는 창 아이콘. 실행 파일 자체의 아이콘은 `build.rs`가
+    // 같은 그림을 리소스로 담아 처리한다 — 창 아이콘은 OS가 리소스에서 자동으로 가져가지 않는다
+    if let Some(icon) = app_icon::icon_data() {
+        viewport = viewport.with_icon(icon);
+    }
     match session.as_ref().map(|s| &s.window) {
         Some(window) => {
             // **최대화는 여기서 걸지 않는다** — `with_maximized(true)`는 창을 만든 직후
