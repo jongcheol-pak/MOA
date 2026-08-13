@@ -514,6 +514,9 @@ const TOGGLE_TRACK_H: f32 = 20.0;
 /// 손잡이 반지름 — 트랙 안쪽에 여백(`TOGGLE_PAD`)을 남기고 들어간다
 const TOGGLE_KNOB_R: f32 = 7.0;
 const TOGGLE_PAD: f32 = 3.0;
+// 손잡이가 트랙 두께를 넘으면 위아래가 잘려 보인다. 값을 손볼 때 눈으로 확인하지 않아도
+// 되도록 **빌드 자체가 막는다** — 시험으로 두면 상수끼리의 비교라 clippy가 걷어낸다
+const _: () = assert!(TOGGLE_KNOB_R + TOGGLE_PAD <= TOGGLE_TRACK_H / 2.0);
 /// 꺼짐 상태의 트랙 채움 — 체크박스의 빈 상자(`WELL_BG`)보다 한 단계 밝다.
 /// 스위치는 상자와 달리 테두리만으로는 "눌러서 켜는 것"임이 드러나지 않아 면으로 보인다
 const TOGGLE_OFF_BG: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x3A);
@@ -784,15 +787,6 @@ mod tests {
         assert!(
             ((center - off) - (on - center)).abs() < f32::EPSILON,
             "좌우 여백이 다르다"
-        );
-    }
-
-    #[test]
-    fn 토글_손잡이는_트랙_두께_안에_들어간다() {
-        // 세로로도 넘치지 않아야 한다 — 트랙 반지름보다 손잡이가 크면 위아래가 잘린다
-        assert!(
-            TOGGLE_KNOB_R + TOGGLE_PAD <= TOGGLE_TRACK_H / 2.0 + f32::EPSILON,
-            "손잡이 반지름 {TOGGLE_KNOB_R} + 여백 {TOGGLE_PAD}이 트랙 반지름을 넘는다"
         );
     }
 
