@@ -152,23 +152,55 @@ fn load_icon() -> Option<HICON> {
     let image = app_icon::decode(app_icon::ICO_BYTES, TRAY_ICON_PX)?;
     let width = image.width as i32;
     let height = image.height as i32;
-    // Win32 아이콘의 색 비트맵은 BGRA 순서이고 **아래에서 위로** 쌓인다
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    // 색 성분 순서만 바꾼다(RGBA → BGRA). **행 순서는 건드리지 않는다** —
+    // `app_icon::decode`가 이미 위에서 아래로 내주고, 아래 `biHeight`를 음수로 줘서
+    // "이 데이터는 top-down"임을 GDI에 명시한다(`ui::icon_tex`가 쓰는 것과 같은 방법).
+    // 손으로 뒤집고 방향을 밝히지 않는 API에 넘기면 어느 쪽이 맞는지 코드로 알 수 없다
     let mut bgra = Vec::with_capacity(image.rgba.len());
-    for row in image.rgba.chunks_exact(width as usize * 4).rev() {
-        for pixel in row.chunks_exact(4) {
-            bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
-        }
+    for pixel in image.rgba.chunks_exact(4) {
+        bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
     }
     // 안전성: 비트맵·아이콘 핸들을 이 함수 안에서 만들고, 아이콘을 만든 뒤 비트맵은 지운다
     // (`CreateIconIndirect`가 자기 사본을 갖는다 — MSDN)
     unsafe {
-        use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
-        let color = CreateBitmap(width, height, 1, 32, Some(bgra.as_ptr().cast()));
+        use windows::Win32::Graphics::Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateCompatibleDC, DIB_RGB_COLORS,
+            DeleteDC, DeleteObject, SetDIBits,
+        };
+        let color = CreateBitmap(width, height, 1, 32, None);
         if color.is_invalid() {
             return None;
         }
-        // 마스크는 32비트 알파를 쓸 때도 있어야 한다 — 전부 0(불투명)으로 둔다
-        let mask_bits = vec![0u8; (width as usize).div_ceil(8) * height as usize];
+        let mut header = BITMAPINFO::default();
+        header.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+        header.bmiHeader.biWidth = width;
+        // 음수 = top-down (첫 행이 그림 위쪽) — 뒤집기 없이 그대로 실을 수 있다
+        header.bmiHeader.biHeight = -height;
+        header.bmiHeader.biPlanes = 1;
+        header.bmiHeader.biBitCount = 32;
+        header.bmiHeader.biCompression = BI_RGB.0;
+        let hdc = CreateCompatibleDC(None);
+        let written = SetDIBits(
+            Some(hdc),
+            color,
+            0,
+            height as u32,
+            bgra.as_ptr().cast(),
+            &header,
+            DIB_RGB_COLORS,
+        );
+        let _ = DeleteDC(hdc);
+        if written == 0 {
+            let _ = DeleteObject(color.into());
+            return None;
+        }
+        // 마스크는 32비트 알파를 쓸 때도 있어야 한다 — 전부 0(불투명)으로 둔다.
+        // 한 줄은 word(2바이트) 정렬이어야 한다(`CreateBitmap` 규약)
+        let stride = (width as usize).div_ceil(16) * 2;
+        let mask_bits = vec![0u8; stride * height as usize];
         let mask = CreateBitmap(width, height, 1, 1, Some(mask_bits.as_ptr().cast()));
         if mask.is_invalid() {
             let _ = DeleteObject(color.into());
