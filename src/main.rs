@@ -37,6 +37,16 @@ fn main() -> eframe::Result {
     // 창을 만들기 전에 세션을 읽는다 — 지난번 크기·위치로 떠야 한다 (FR-11).
     // 화면 밖으로 저장된 위치는 창이 뜬 뒤 모니터 크기를 알고 나서 앱이 보정한다
     let session = load_session();
+    // 저장된 언어를 **창을 만들기 전에** 적용한다 (FR-53) — 첫 프레임이 그려질 때
+    // 이미 정해져 있어야 화면이 한국어로 한 번 그려졌다가 영어로 바뀌는 것이 보이지 않는다.
+    // `moa::i18n`을 부르기만 한다 — `mod i18n;`을 여기 두면 같은 파일이 두 모듈로
+    // 컴파일돼 전역 현재 언어가 둘이 된다
+    moa::i18n::set_language(
+        session
+            .as_ref()
+            .map(|session| session.settings.language)
+            .unwrap_or_default(),
+    );
     // 창 장식을 끄고 제목 표시줄을 앱이 그린다 (FR-22) — 그 줄에 사이드바 토글·설정 버튼을 두기 위함.
     // 대가로 창 그림자·둥근 모서리를 잃는다(eframe에는 winit의 무장식 그림자 확장에 닿을 길이 없다)
     let mut viewport = egui::ViewportBuilder::default()
