@@ -56,6 +56,102 @@ pub struct Session {
     /// 하단 도크의 열림 상태
     #[serde(default)]
     pub dock: DockSession,
+    /// 앱 전역 설정 (FR-47). 스키마 버전을 올리지 않고 더한다 — 버전이 다르면
+    /// `parse_session`이 통째로 폴백해 기존 워크스페이스가 전부 초기화되기 때문이다 (D2)
+    #[serde(default)]
+    pub settings: AppSettings,
+}
+
+/// 앱 전역 설정 한 벌 (FR-47~FR-53).
+///
+/// 화면(설정 대화)이 이 값을 바꾸고 `ui::app`이 각 기능에 나눠 준다.
+/// **항목별 트레이트·옵저버를 두지 않는다**(plan 비추상화 선언) — 값 몇 개를 매 프레임
+/// 읽는 것으로 충분하고, 갈래를 만들면 설정 하나 늘 때마다 배선이 함께 는다
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppSettings {
+    /// 앱 글꼴 이름 (FR-48). `None`이면 기본 글꼴(맑은 고딕)
+    pub font_family: Option<String>,
+    /// 윈도우 시작 시 자동 실행 (FR-49).
+    ///
+    /// **정본은 레지스트리이고 이 값은 사본이다** — 다른 도구가 Run 키를 지웠을 수 있어
+    /// 화면에 보일 때는 레지스트리를 다시 읽는다 (T6)
+    pub auto_start: bool,
+    /// 닫기를 누르면 종료 대신 트레이로 보낸다 (FR-50)
+    pub tray_on_close: bool,
+    /// 목록에 파일 확장명을 보인다 (FR-52). 끄면 이름만 보인다
+    pub show_extensions: bool,
+    /// 숨김·시스템 항목을 목록에 보인다 (FR-13)
+    pub show_hidden: bool,
+    /// 화면 문구 언어 (FR-53). part2가 실제 전환에 쓰고, 이 part는 저장만 한다
+    pub language: LanguageSetting,
+}
+
+impl Default for AppSettings {
+    fn default() -> AppSettings {
+        AppSettings {
+            font_family: None,
+            auto_start: false,
+            tray_on_close: false,
+            // 확장자·숨김 항목의 기본값이 `true`인 것은 **지금 동작을 그대로 두기 위해서다**
+            // — 이 설정이 생기기 전의 앱은 둘 다 보였다(사용자 확정). 탐색기 기본값(둘 다 숨김)을
+            // 따르면 이미 쓰던 사람의 화면이 업데이트만으로 달라진다
+            show_extensions: true,
+            show_hidden: true,
+            language: LanguageSetting::System,
+        }
+    }
+}
+
+impl AppSettings {
+    /// 실제로 적용할 글꼴 이름 — 빈 문자열은 "고르지 않음"과 같게 본다.
+    /// 저장 파일이 손으로 편집돼 `""`가 들어오는 경우를 한곳에서 걸러 낸다
+    pub fn font_family(&self) -> Option<&str> {
+        self.font_family
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    }
+}
+
+/// 언어 선택 (FR-53) — `시스템 기본`이면 Windows UI 언어를 따른다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+// 문자열로 주고받는다 — 알 수 없는 값이 와도 `From`이 기본값으로 받아 주므로
+// **설정 파일이 손상돼도 파싱이 실패하지 않는다**(실패하면 세션 전체가 폴백된다)
+#[serde(from = "String", into = "String")]
+pub enum LanguageSetting {
+    #[default]
+    System,
+    Korean,
+    English,
+}
+
+impl LanguageSetting {
+    /// 저장 키 — 화면 표시 이름과 분리한다(표시 이름은 언어에 따라 바뀌지만 이 값은 고정)
+    pub fn key(self) -> &'static str {
+        match self {
+            LanguageSetting::System => "system",
+            LanguageSetting::Korean => "ko",
+            LanguageSetting::English => "en",
+        }
+    }
+}
+
+impl From<String> for LanguageSetting {
+    fn from(value: String) -> LanguageSetting {
+        match value.as_str() {
+            "ko" => LanguageSetting::Korean,
+            "en" => LanguageSetting::English,
+            // "system"과 알 수 없는 값 모두 여기로 — 모르는 키에 기본값을 주는 것이 이 변환의 목적이다
+            _ => LanguageSetting::System,
+        }
+    }
+}
+
+impl From<LanguageSetting> for String {
+    fn from(value: LanguageSetting) -> String {
+        value.key().to_owned()
+    }
 }
 
 /// 저장되는 사이트 목록.
@@ -437,6 +533,7 @@ mod tests {
             sites: SiteSession::default(),
             queue: Vec::new(),
             dock: DockSession::default(),
+            settings: AppSettings::default(),
             window: WindowState {
                 x: 100,
                 y: 50,

@@ -5,8 +5,8 @@
 use crate::app::layout::TreeShape;
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir, SplitPlace};
 use crate::app::settings::{
-    SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, Session, SidebarSession,
-    WindowState, save_session,
+    AppSettings, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, Session,
+    SidebarSession, WindowState, save_session,
 };
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
@@ -347,6 +347,8 @@ pub struct ExplorerApp {
     /// 인덱스가 아니라 id로 잡는다 — 확인 대화는 프레임을 넘겨 살아 있는데,
     /// 그 사이 순서가 바뀌면 인덱스는 다른 워크스페이스를 가리킨다 (D12 ①과 같은 이유)
     pending_remove: Option<WorkspaceId>,
+    /// 앱 전역 설정 (FR-47) — 설정 대화가 바꾸고 각 기능이 읽는다
+    settings: AppSettings,
     /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
     /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
     manager: ConnectionManager,
@@ -444,6 +446,7 @@ impl ExplorerApp {
             queue: TransferQueue::new(),
             runner: TransferRunner::new(),
             dock: DockState::default(),
+            settings: AppSettings::default(),
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
@@ -490,6 +493,7 @@ impl ExplorerApp {
         self.sites = session.sites.clone();
         self.queue = session::restore_queue(&session);
         self.dock = DockState::from_session(&session.dock);
+        self.settings = session.settings.clone();
         self.sidebar_width = session.sidebar.width as f32;
         self.sidebar_collapsed = session.sidebar.collapsed;
         self.restoring_maximized = if session.window.maximized {
@@ -538,20 +542,25 @@ impl ExplorerApp {
                 },
             })
             .collect();
-        session::to_session(
-            self.window.clone(),
-            SidebarSession {
-                width: self.sidebar_width as i32,
-                collapsed: self.sidebar_collapsed,
-            },
-            self.workspaces.active_index(),
-            &workspaces,
-            RemoteSnapshot {
-                sites: &self.sites,
-                queue: &self.queue,
-                dock: self.dock.to_session(),
-            },
-        )
+        // 앱 설정은 `to_session`이 아니라 여기서 싣는다 — `to_session`은 창·워크스페이스를
+        // 옮기는 자리라 인자를 하나 더 받으면 그 책임이 흐려지고, 호출부(테스트 7곳)도 함께 는다
+        Session {
+            settings: self.settings.clone(),
+            ..session::to_session(
+                self.window.clone(),
+                SidebarSession {
+                    width: self.sidebar_width as i32,
+                    collapsed: self.sidebar_collapsed,
+                },
+                self.workspaces.active_index(),
+                &workspaces,
+                RemoteSnapshot {
+                    sites: &self.sites,
+                    queue: &self.queue,
+                    dock: self.dock.to_session(),
+                },
+            )
+        }
     }
 
     /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다

@@ -84,6 +84,9 @@ pub fn to_session(
         sites: remote.sites.clone(),
         queue: to_queue_session(remote.queue),
         dock: remote.dock,
+        // 앱 설정은 창·워크스페이스와 성격이 달라 이 함수가 받지 않는다 —
+        // 부르는 쪽(`ExplorerApp::collect_session`)이 자기 값으로 덮어쓴다
+        settings: Default::default(),
         workspaces: workspaces
             .iter()
             .map(|workspace| WorkspaceSession {
@@ -263,6 +266,7 @@ pub fn clamp_window(window: WindowState, monitor_w: i32, monitor_h: i32) -> Wind
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::settings::{AppSettings, LanguageSetting};
 
     /// 원격 쪽이 비어 있는 저장 — 로컬만 다루는 시험이 쓴다
     fn empty_remote() -> RemoteSnapshot<'static> {
@@ -661,6 +665,86 @@ mod tests {
                 "봉인된 비밀번호 자리가 없다"
             );
         }
+    }
+
+    #[test]
+    fn 앱_설정이_없는_옛_세션도_그대로_복원된다() {
+        // T1 Acceptance — 설정은 스키마 버전을 올리지 않고 더했다(D2). 버전을 올렸다면
+        // `parse_session`이 통째로 폴백해 기존 워크스페이스·분할·탭이 전부 초기화된다
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
+        let json = serde_json::to_string(&session).expect("직렬화");
+        let settings_json = serde_json::to_string(&AppSettings::default()).expect("직렬화");
+        let without_settings = json.replace(&format!(",\"settings\":{settings_json}"), "");
+        assert!(
+            !without_settings.contains("\"settings\""),
+            "테스트가 settings 필드를 실제로 걷어내지 못했다"
+        );
+
+        let parsed = parse_session(&without_settings).expect("옛 세션이 거부됐다");
+        assert_eq!(parsed.settings, AppSettings::default());
+        assert_eq!(restore(&parsed).len(), sample().len());
+    }
+
+    #[test]
+    fn 앱_설정이_왕복한다() {
+        let saved = AppSettings {
+            font_family: Some("굴림".into()),
+            auto_start: true,
+            tray_on_close: true,
+            show_extensions: false,
+            show_hidden: false,
+            language: LanguageSetting::English,
+        };
+        let mut session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
+        session.settings = saved.clone();
+        let text = serde_json::to_string(&session).expect("직렬화");
+        let parsed = parse_session(&text).expect("파싱");
+        assert_eq!(parsed.settings, saved);
+    }
+
+    #[test]
+    fn 알_수_없는_언어_키는_기본값이_된다() {
+        // 설정 파일이 손으로 편집돼도 **세션 전체가 폴백되지 않아야** 한다 —
+        // 파싱이 실패하면 워크스페이스까지 함께 날아간다
+        let mut session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
+        session.settings.language = LanguageSetting::Korean;
+        let text = serde_json::to_string(&session)
+            .expect("직렬화")
+            .replace("\"language\":\"ko\"", "\"language\":\"klingon\"");
+        let parsed = parse_session(&text).expect("알 수 없는 언어 키에 세션이 통째로 폴백됐다");
+        assert_eq!(parsed.settings.language, LanguageSetting::System);
+    }
+
+    #[test]
+    fn 빈_글꼴_이름은_고르지_않은_것과_같다() {
+        let blank = AppSettings {
+            font_family: Some("   ".into()),
+            ..Default::default()
+        };
+        assert_eq!(blank.font_family(), None);
+        let picked = AppSettings {
+            font_family: Some("맑은 고딕".into()),
+            ..Default::default()
+        };
+        assert_eq!(picked.font_family(), Some("맑은 고딕"));
     }
 
     #[test]
