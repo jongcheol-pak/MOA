@@ -132,7 +132,13 @@ unsafe fn open_run_key(access: u32, create: bool) -> Option<HKEY> {
 /// 레지스트리에 적은 `--tray` 인자로 판정한다 — 사용자가 직접 실행하면 그 인자가 없다.
 /// 부팅 후 경과 시간 같은 추정을 쓰지 않는 이유는 그것이 틀릴 수 있어서다
 pub fn started_by_autostart() -> bool {
-    std::env::args().any(|arg| arg == TRAY_ARG)
+    has_tray_arg(std::env::args())
+}
+
+/// 인자 목록에 자동 실행 표식이 있는가 — 판정만 떼어 시험할 수 있게 한다
+/// (`std::env::args()`는 시험에서 바꿀 수 없다)
+fn has_tray_arg(args: impl Iterator<Item = String>) -> bool {
+    args.skip(1).any(|arg| arg == TRAY_ARG)
 }
 
 #[cfg(test)]
@@ -185,5 +191,24 @@ mod tests {
     fn 인자가_없으면_자동_실행이_아니다() {
         // 시험은 `--tray` 없이 돌아간다
         assert!(!started_by_autostart());
+    }
+
+    #[test]
+    fn 표식이_있을_때만_자동_실행으로_본다() {
+        let with = ["moa.exe", TRAY_ARG].map(String::from);
+        assert!(has_tray_arg(with.into_iter()), "표식이 있는데 못 알아본다");
+
+        let without = ["moa.exe"].map(String::from);
+        assert!(
+            !has_tray_arg(without.into_iter()),
+            "표식이 없는데 있다고 한다"
+        );
+
+        // 첫 인자는 실행 파일 경로다 — 그 경로에 우연히 같은 글자가 들어와도 표식이 아니다
+        let path_only = [TRAY_ARG, "평범한인자"].map(String::from);
+        assert!(
+            !has_tray_arg(path_only.into_iter()),
+            "실행 파일 경로를 표식으로 읽었다"
+        );
     }
 }

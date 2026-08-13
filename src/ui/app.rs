@@ -398,6 +398,12 @@ pub struct ExplorerApp {
     hidden: bool,
     /// 트레이 메뉴 `종료`로 끝내는 중인가 — 그때는 닫기를 가로채지 않는다
     quitting: bool,
+    /// 자동 실행으로 시작해 **창 없이 트레이로만** 올라와야 하는가 (FR-49).
+    ///
+    /// 곧바로 숨기지 않고 요청으로 들고 있는 이유: 세션이 최대화 상태였으면 그 복원이
+    /// 여러 프레임에 걸쳐 재시도되는데(`restoring_maximized`), 그 전에 숨기면 프레임이
+    /// 멈춰 복원이 영영 끝나지 않는다. 복원이 끝난 뒤에 숨긴다
+    hide_on_start: bool,
     /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
     /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
     manager: ConnectionManager,
@@ -449,6 +455,8 @@ impl ExplorerApp {
         cc: &eframe::CreationContext<'_>,
         com: ComStatus,
         session: Option<Session>,
+        // 자동 실행으로 시작했는가 (FR-49) — 트레이 설정이 켜져 있으면 창 없이 올라온다
+        start_hidden: bool,
     ) -> ExplorerApp {
         // **저장된 글꼴을 첫 프레임부터 적용한다** (FR-48) — 여기서 기본값으로 등록해 두고
         // 세션을 읽은 뒤에 다시 등록하면, 시작할 때마다 맑은 고딕으로 한 번 그려졌다가
@@ -514,6 +522,7 @@ impl ExplorerApp {
             tray_rx,
             hidden: false,
             quitting: false,
+            hide_on_start: start_hidden,
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
@@ -1397,6 +1406,29 @@ impl ExplorerApp {
     ///
     /// 타이틀바 `✕`뿐 아니라 `Alt+F4`·작업 표시줄 닫기·시스템 메뉴까지 **모든 종료 경로가
     /// 이 한 지점으로 모인다** — 버튼 핸들러에서 막으면 나머지 길로 들어온 종료를 놓친다 (D4)
+    /// 자동 실행으로 시작했으면 창을 숨긴다 — **최대화 복원이 끝난 뒤에** (FR-49).
+    ///
+    /// 트레이 아이콘이 올라간 것을 확인하고 숨긴다: 아이콘 없이 숨기면 창을 되부를
+    /// 방법이 사라진다(`종료` 토글이 꺼져 있는 경우가 그렇다 — 그때는 그냥 창을 띄운다)
+    fn hide_on_start(&mut self, ctx: &egui::Context) {
+        if !self.hide_on_start {
+            return;
+        }
+        // 최대화 복원이 도는 중이면 기다린다 — 숨기면 그 프레임이 멈춰 복원이 끝나지 않는다
+        if self.restoring_maximized > 0 {
+            return;
+        }
+        // 이 요청은 한 번만 쓴다
+        self.hide_on_start = false;
+        if !self.settings.tray_on_close || self.tray.is_none() {
+            // 트레이로 갈 수 없으면 창을 띄운 채로 둔다 — 부를 방법이 없어지면 안 된다
+            return;
+        }
+        self.persist_session();
+        self.hidden = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
     fn intercept_close(&mut self, ctx: &egui::Context) {
         if !ctx.input(|input| input.viewport().close_requested()) {
             return;
@@ -2336,6 +2368,7 @@ impl eframe::App for ExplorerApp {
         self.show_site_manager(&ctx, layout_area);
         self.sync_tray(ctx.input(|input| input.time));
         self.poll_tray(&ctx);
+        self.hide_on_start(&ctx);
         self.show_settings_dialog(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);

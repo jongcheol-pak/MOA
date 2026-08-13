@@ -25,6 +25,10 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
+    // 자동 실행으로 시작했으면 창 없이 트레이로만 올라온다 (FR-49, D9) —
+    // 부팅할 때마다 창이 튀어나오는 것이 자동 실행을 끄게 만드는 가장 흔한 이유다
+    let start_hidden = moa::app::autostart::started_by_autostart();
+
     let com = init_com();
     // 셸 팝업 메뉴를 다크로 만드는 프로세스 전역 정책 — 창을 만들기 전에 켜야 적용된다.
     // 제목 표시줄은 앱이 직접 그리므로(FR-22) 이 정책의 대상이 아니지만,
@@ -64,7 +68,7 @@ fn main() -> eframe::Result {
     let result = eframe::run_native(
         "moa",
         options,
-        Box::new(move |cc| Ok(Box::new(ExplorerApp::new(cc, com, session)))),
+        Box::new(move |cc| Ok(Box::new(ExplorerApp::new(cc, com, session, start_hidden)))),
     );
     // 안전성: init_com과 같은 스레드에서 1회 호출한다 (owned일 때만 실제 해제)
     unsafe { uninit_com(com) };
