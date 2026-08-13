@@ -295,10 +295,10 @@
 
 - [ ] **T5. 글꼴 선택 UI와 런타임 적용**
   - **Type**: C
-  - **Design**: ① 선택 UI는 `settings_dialog.rs`의 `모양` 그룹(`widgets::dropdown_field` 재사용), 적용은 `ui/app.rs`의 `install_fonts`를 확장한다. **목록은 워커 스레드가 만든다**(사용자 결정 A, 2026-08-13) — 대화를 열 때 스레드를 하나 띄워 `app::fonts::installed_korean_fonts()`(1.5초)를 부르고 **각 이름을 egui에 실제로 등록해 한글 폭 > 0인 것만 남긴 뒤** 1회용 채널로 돌려준다(`ui/panel.rs`의 `DirLoad`와 같은 방식). 준비될 때까지 드롭다운은 현재 글꼴만 보이고 `글꼴 목록을 읽는 중`을 알린다. 이렇게 해야 **목록에 있는데 고르면 깨지는 글꼴이 없다**(실측 `D2Coding`). ② 신규 심볼 없음 — `install_fonts(ctx, family: Option<&str>) -> bool`로 시그니처만 넓힌다(`None`이면 지금처럼 맑은 고딕). 고른 글꼴은 `app::fonts::load_font`가 준 바이트를 `egui::FontData::from_owned`로 등록한다(T4 실측 — 모음 글꼴도 단일 sfnt로 와서 face 인덱스가 필요 없다). ③ `ui::app`이 `app::fonts`를 부른다. ④ 이번에 추상화하지 않을 것: 글꼴 폴백 체인을 설정으로 만들지 않는다(고른 글꼴 → 맑은 고딕 → egui 기본, 2단 폴백 고정).
+  - **Design**: ① 선택 UI는 `settings_dialog.rs`의 `모양` 그룹(`widgets::dropdown_field` 재사용), 적용은 `ui/app.rs`의 `install_fonts`를 확장한다. **목록은 워커 스레드가 만든다**(사용자 결정 A, 2026-08-13). 그 상태·스레드는 **`src/ui/font_scan.rs`(신규)** 에 둔다 — 계획은 `ui/app.rs`라고 적었으나 그 파일이 이미 2,700줄이라 워커를 더 얹으면 분리 검토선에서 더 멀어진다(AGENTS 파일 책임 규약). `ui/panel/workers.rs`가 패널 워커를 따로 둔 것과 같은 자리다. 대화를 열 때 스레드를 하나 띄워 `app::fonts::installed_korean_fonts()`(1.5초)를 부르고 **각 이름을 egui에 실제로 등록해 한글 폭 > 0인 것만 남긴 뒤** 1회용 채널로 돌려준다(`ui/panel.rs`의 `DirLoad`와 같은 방식). 준비될 때까지 드롭다운은 현재 글꼴만 보이고 `글꼴 목록을 읽는 중`을 알린다. 이렇게 해야 **목록에 있는데 고르면 깨지는 글꼴이 없다**(실측 `D2Coding`). ② 신규 심볼 없음 — `install_fonts(ctx, family: Option<&str>) -> bool`로 시그니처만 넓힌다(`None`이면 지금처럼 맑은 고딕). 고른 글꼴은 `app::fonts::load_font`가 준 바이트와 **face 인덱스**를 `egui::FontData { font, index, tweak }`로 등록한다 — 모음 글꼴(굴림·바탕 등)은 파일 하나에 여러 글꼴이 들어 있어 인덱스가 없으면 언제나 첫 번째만 나온다(D3 변경 참조. `from_owned`는 인덱스를 0으로 고정하므로 쓰지 않는다). ③ `ui::app`이 `app::fonts`를 부른다. ④ 이번에 추상화하지 않을 것: 글꼴 폴백 체인을 설정으로 만들지 않는다(고른 글꼴 → 맑은 고딕 → egui 기본, 2단 폴백 고정).
   - **Acceptance**: 대화를 열면 창이 멈추지 않고(목록 조회가 UI 스레드를 막지 않는다) 잠시 뒤 목록이 채워지며, **그 목록의 모든 글꼴은 골랐을 때 한글이 두부(□)로 깨지지 않는다**(등록해 폭 > 0인 것만 담기 때문 — `D2Coding`처럼 읽히지만 파싱되지 않는 글꼴은 목록에 없다). Given 설정 화면, When `모양` 그룹의 글꼴 드롭다운에서 다른 글꼴을 고르면, Then **다음 프레임에** 파일 목록·타이틀바·메뉴 글꼴이 바뀌고(전제 7 — `set_fonts`는 다음 pass부터 적용되므로 호출과 함께 `ctx.request_repaint()`로 그 프레임을 보장한다) 아이콘(phosphor)은 그대로 보이며 값이 저장된다. 앱을 다시 켜도 그 글꼴이 유지된다. 저장된 글꼴을 읽지 못하면(글꼴 삭제 등) 맑은 고딕으로 시작하고 **설정 값은 그대로 둔다**(사용자가 글꼴을 다시 설치하면 되살아난다).
   - **Files**:
-    - 주: `src/ui/app.rs`(`install_fonts:137`·`:402` + 목록 워커·수신), `src/ui/settings_dialog.rs`
+    - 주: `src/ui/font_scan.rs`(신규 — 목록 워커), `src/ui/app.rs`(`install_fonts` 확장·시작 시 적용·워커 배선), `src/ui/settings_dialog.rs`(`모양` 그룹)
     - 동반: `src/ui/list_common.rs:254`, `src/ui/menu.rs:438`, `src/ui/list_grid.rs:405,489,634`(테스트 호출부 5곳)
     - 테스트: `src/ui/app.rs`(`mod tests` — 없는 글꼴 이름 → 폴백 반환)
   - **Edge Cases**: 매 프레임 `set_fonts`를 부르면 글꼴 아틀라스를 다시 만들어 느려진다 → **값이 바뀐 프레임에만** 부른다 / 목록 조회는 대화를 열 때 워커에서 한 번만 — 이미 받아 둔 목록이 있으면 다시 부르지 않는다 / 목록이 오기 전에 대화를 닫으면 결과를 버린다(수신 측이 사라져도 `send` 실패는 무해) / 워커가 만드는 검증용 `egui::Context`는 화면 컨텍스트와 별개다 — 화면 글꼴을 건드리지 않는다 / 12MB급 글꼴을 읽는 동안 한 프레임 멈춤 → 허용(설정 조작 중 1회, NFR-3의 목록 스크롤과 성격이 다르다)
@@ -426,7 +426,7 @@
 - **T5 — `install_fonts` 공개 시그니처 변경** (`ui/app.rs:137`): 글꼴 이름 인자를 더한다. 호출부 **6곳**(앱 시작 1 + 테스트 5 — `list_common.rs:254`·`menu.rs:438`·`list_grid.rs:405,489,634`)을 함께 고친다. 계획된 변경이며 되돌리기는 인자 제거 1줄
 - **T12 — `FileEntry` 구조체에 `attributes: u32` 필드 추가** (`fs/enumerate.rs:20`): 숨김·시스템 판정에 필요하다. **생성 지점 8곳**(프로덕션 2 + 테스트 6)을 함께 고친다 — 목록은 T12 Files에 있다
 - **T1 — `Session` 구조체에 `settings` 필드 추가** (비파괴 — `#[serde(default)]`, 스키마 버전 불변)
-- **T3·T7·T9 — 신규 모듈 4개 추가** (`ui/settings_dialog.rs`·`ui/tray.rs`·`app/fonts.rs`·`app/autostart.rs`·`app/single_instance.rs`)와 그에 따른 `mod.rs` 등록
+- **T3·T5·T7·T9 — 신규 모듈 추가** (`ui/settings_dialog.rs`·`ui/font_scan.rs`·`ui/tray.rs`·`app/fonts.rs`·`app/autostart.rs`·`app/single_instance.rs`)와 그에 따른 `mod.rs` 등록
 - **T3 — `Command` enum에 `OpenAppSettings` variant 추가** (`ui/menu.rs:56`)
 - **T11 — `ListRow` 트레이트에 메서드 2개 추가** (`display_name`·`is_hidden`): 구현체 2개를 함께 고친다
 
@@ -468,25 +468,28 @@
 
 ## Next Steps
 
-- **T5에서 Halt (2026-08-13)** — 글꼴 읽기 경로(D3)를 바꿔야 하는지 사용자 결정 필요. 상세는 아래 「T5 실측 기록」.
-- 재개 방법: 결정을 받은 뒤 `pjc:implement-task docs/plans/2026-08-13-app-settings-part1.md`로 T5부터 이어서 실행
-- 현재 상태: T1~T4 완료. T5는 워커(`ui/font_scan.rs`)·드롭다운·`install_fonts` 확장·시작 시 적용까지 구현돼 있고 시험 7건 중 6건 통과·1건 실패(`고른_글꼴이_실제로_등록된다` — 굴림으로 한글이 그려지지 않는다)
+- 권장 다음 액션: T6부터 `pjc:implement-task docs/plans/2026-08-13-app-settings-part1.md`로 이어서 실행
+- 남은 분할 plan: `docs/plans/2026-08-13-app-settings-part2.md` — part1 완료 후 별도 실행
 
-### T5 실측 기록 (2026-08-13)
+### T4·T5 실측 기록 (2026-08-13) — 글꼴 읽기 경로가 두 번 뒤집혔다
 
-**GDI(`GetFontData`) 경로로는 모음 글꼴(TTC)을 쓸 수 없다.**
+계획은 GDI(`GetFontData`)로 글꼴 바이트를 얻기로 했는데(D3 A안), 두 단계에 걸쳐 틀린 것이 드러났다.
 
-| 글꼴 | 파일 크기 | `GetFontData` | 차이 | egui 파싱 |
+**1차 (T4)**: 모음 글꼴(TTC)에서 `ttcf` 테이블이 없고 매직이 `0x00010000`이라 "GDI가 단일 sfnt를 뽑아 준다"고 결론냈다. → **매직만 보고 파싱까지 확인하지 않은 오판.**
+
+**2차 (T5)**: 등록 검증을 붙이자 굴림·굴림체·돋움·돋움체·바탕·궁서가 **전부 걸러졌다**(93개 중 58개만 남음). 파일 크기를 재 보니 원인이 드러났다.
+
+| 글꼴 | 파일 | `GetFontData` | 차이 | 파싱 |
 |---|---|---|---|---|
-| 맑은 고딕 (`malgun.ttf`, 단일) | 13,459,196 | 13,459,196 | 0 | ✅ |
-| 굴림 (`gulim.ttc`, 모음) | 13,533,424 | 13,533,384 | **-40** | ❌ |
-| 바탕 (`batang.ttc`, 모음) | 16,273,348 | 16,273,308 | **-40** | ❌ |
+| 맑은 고딕 (단일 TTF) | 13,459,196 | 13,459,196 | 0 | ✅ |
+| 굴림 (`gulim.ttc`) | 13,533,424 | 13,533,384 | **-40** | ❌ |
+| 바탕 (`batang.ttc`) | 16,273,348 | 16,273,308 | **-40** | ❌ |
 
-GDI는 모음에서 **헤더만 단일 폰트로 바꾼 데이터**를 준다(매직이 `0x00010000`이라 T4에서는 정상으로 보였다). 그런데 내부 테이블 오프셋은 원본 파일 기준이라 40바이트씩 어긋나 글꼴 파서가 읽지 못한다 — **T4의 "모음도 그대로 쓸 수 있다"는 결론이 틀렸다**(매직만 보고 파싱까지 확인하지 않은 탓).
+GDI는 모음에서 **헤더만 단일 글꼴 모양으로 바꾼 데이터**를 주는데 내부 테이블 오프셋은 원본 파일 기준이라 40바이트씩 어긋난다.
 
-**결과**: 등록 검증을 통과한 글꼴이 93개 중 **58개**뿐이고, 걸러진 35개에 **굴림·굴림체·돋움·돋움체·바탕·궁서** 등 Windows 기본 한글 글꼴이 전부 들어 있다. 남는 것은 HY 계열·Ebrima·Gadugi 등이다.
+**해소 (사용자 승인 A)**: 글꼴 파일을 직접 읽는다(D3 → C). 레지스트리 매핑은 값 이름이 **영문**(`Gulim & GulimChe & Dotum & DotumChe (TrueType)` → `gulim.ttc`)이고 열거는 한글(`굴림`)이라 짝지을 수 없어, 파일 안의 `name` 테이블에서 한국어 이름을 직접 읽는다. 모음 글꼴은 face 인덱스를 함께 얻어 `egui::FontData.index`에 넣는다.
 
-이 상태로는 FR-48("설치된 글꼴 중 한글 글리프를 가진 것만 목록에")이 사실상 반쪽이 된다.
+**함께 잡은 것**: 글꼴마다 폴더를 다시 훑어 O(n²)가 되던 것(실측 90개에 63초)을 `FontCatalog::scan()` 한 번 재사용으로 바꿨다(20초).
 
 ## Open Questions
 
