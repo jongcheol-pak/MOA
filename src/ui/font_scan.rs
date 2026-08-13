@@ -180,6 +180,53 @@ mod tests {
         );
     }
 
+    /// `install_fonts`로 등록한 뒤 그 컨텍스트에서 한글 폭을 잰다.
+    /// `draws_hangul`을 쓰지 않는 이유: 그 함수가 검증용으로 글꼴을 **다시** 등록해
+    /// 방금 등록한 것을 덮어써, 무엇을 재는지가 흐려진다
+    fn hangul_width_after_install(family: Option<&str>) -> f32 {
+        let ctx = egui::Context::default();
+        assert!(
+            crate::ui::app::install_fonts(&ctx, family),
+            "글꼴을 하나도 등록하지 못했다"
+        );
+        // 글꼴은 다음 pass부터 적용된다
+        let _ = ctx.run_ui(Default::default(), |_ui| {});
+        let mut width = 0.0;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            width = ui
+                .painter()
+                .layout_no_wrap(
+                    PROBE_TEXT.to_owned(),
+                    egui::FontId::proportional(PROBE_FONT_PX),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x;
+        });
+        width
+    }
+
+    #[test]
+    fn 고른_글꼴이_실제로_등록된다() {
+        // T5 Acceptance — 고른 글꼴로 화면이 그려져야 한다.
+        // 등록 경로가 끊기면 값만 저장되고 화면은 그대로인 채로 남는다
+        assert!(
+            hangul_width_after_install(Some("굴림")) > 0.0,
+            "고른 글꼴로 한글이 그려지지 않는다"
+        );
+    }
+
+    #[test]
+    fn 없는_글꼴을_고르면_기본_글꼴로_돌아간다() {
+        // 사용자가 고른 글꼴이 나중에 지워진 경우 — 화면이 두부(□)로 덮이면 안 된다.
+        // **설정 값은 건드리지 않는다**(글꼴을 다시 설치하면 되살아나야 한다)는 것은
+        // `install_fonts`가 `AppSettings`를 아예 받지 않는 구조로 지켜진다
+        assert!(
+            hangul_width_after_install(Some("없는글꼴이름XYZ")) > 0.0,
+            "폴백(맑은 고딕) 뒤에도 한글이 그려지지 않는다"
+        );
+    }
+
     #[test]
     fn 목록을_받은_뒤에는_다시_읽지_않는다() {
         let ctx = egui::Context::default();

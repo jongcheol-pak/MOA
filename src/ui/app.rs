@@ -419,7 +419,15 @@ impl ExplorerApp {
         com: ComStatus,
         session: Option<Session>,
     ) -> ExplorerApp {
-        let korean_font = install_fonts(&cc.egui_ctx, None);
+        // **저장된 글꼴을 첫 프레임부터 적용한다** (FR-48) — 여기서 기본값으로 등록해 두고
+        // 세션을 읽은 뒤에 다시 등록하면, 시작할 때마다 맑은 고딕으로 한 번 그려졌다가
+        // 고른 글꼴로 바뀌는 것이 눈에 보인다
+        let korean_font = install_fonts(
+            &cc.egui_ctx,
+            session
+                .as_ref()
+                .and_then(|session| session.settings.selected_font()),
+        );
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
