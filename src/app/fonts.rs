@@ -6,12 +6,12 @@
 //! 글꼴 파일을 직접 찾지 않고 GDI에 묻는다 — 레지스트리의 글꼴 항목은 표시 이름과
 //! 다르게 적혀 있고(`맑은 고딕 & 맑은 고딕 Semilight (TrueType)`), 사용자별 설치 글꼴과
 //! 패키지 글꼴은 경로 규칙이 또 다르다. 이름에서 글꼴을 찾는 일은 OS가 이미 하고 있다 (D3).
+use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateFontIndirectW, DEFAULT_PITCH, DeleteDC, DeleteObject, ENUMLOGFONTEXW,
-    EnumFontFamiliesExW, FF_DONTCARE, GDI_ERROR, GetFontData, GetTextFaceW, HDC,
-    HANGUL_CHARSET, LOGFONTW, SelectObject, TEXTMETRICW,
+    EnumFontFamiliesExW, FF_DONTCARE, GDI_ERROR, GetFontData, GetTextFaceW, HANGUL_CHARSET, HDC,
+    LOGFONTW, SelectObject, TEXTMETRICW,
 };
-use windows::Win32::Foundation::LPARAM;
 
 /// `LOGFONTW.lfFaceName`의 칸 수 — Win32가 정한 상한(널 종단 포함 32)
 const FACE_NAME_LEN: usize = 32;
@@ -68,7 +68,7 @@ pub fn load_font(name: &str) -> Option<Vec<u8>> {
 fn face_request(name: &str) -> LOGFONTW {
     let mut logfont = LOGFONTW {
         lfCharSet: HANGUL_CHARSET,
-        lfPitchAndFamily: (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u8,
+        lfPitchAndFamily: DEFAULT_PITCH.0 | FF_DONTCARE.0,
         ..Default::default()
     };
     // 널 종단 자리를 남긴다 — 넘치는 이름은 어차피 GDI가 찾지 못한다
@@ -110,13 +110,7 @@ unsafe fn read_selected_font(hdc: HDC, requested: &str) -> Option<Vec<u8>> {
             return None;
         }
         let mut bytes = vec![0u8; size as usize];
-        let read = GetFontData(
-            hdc,
-            0,
-            0,
-            Some(bytes.as_mut_ptr().cast()),
-            size,
-        );
+        let read = GetFontData(hdc, 0, 0, Some(bytes.as_mut_ptr().cast()), size);
         (read == size).then_some(bytes)
     }
 }
@@ -133,7 +127,7 @@ fn enumerate_hangul_faces() -> Vec<String> {
         }
         let request = LOGFONTW {
             lfCharSet: HANGUL_CHARSET,
-            lfPitchAndFamily: (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u8,
+            lfPitchAndFamily: DEFAULT_PITCH.0 | FF_DONTCARE.0,
             ..Default::default()
         };
         EnumFontFamiliesExW(
@@ -214,41 +208,16 @@ mod tests {
     }
 
     #[test]
-    fn 목록의_모든_글꼴은_실제로_등록되고_한글_폭이_잰다() {
-        // 바이트가 돌아오는 것과 글꼴로 **파싱되는** 것은 다르다 — 손상되거나 이 앱이
-        // 다루지 못하는 형식이면 폭이 0이 되어 화면에서야 드러난다. 목록에 있는 이름은
-        // 반드시 적용 가능해야 하므로 등록까지 해 본다
+    fn 목록의_모든_이름은_바이트를_얻을_수_있다() {
+        // 목록에 있는데 읽지 못하는 이름이 있으면 고르는 순간 실패한다.
+        //
+        // **여기까지가 이 계층의 몫이다** — 그 바이트가 실제로 글꼴로 파싱되는지는
+        // egui에 등록해 봐야 알 수 있고(실측: `D2Coding`은 읽히지만 폭이 0), `app`은
+        // `ui`를 모르므로 그 검증은 T5가 화면 쪽에서 한다
         let fonts = installed_korean_fonts();
         assert!(!fonts.is_empty(), "한글 글꼴이 하나도 없다");
         for name in &fonts {
-            let bytes = load_font(name).unwrap_or_else(|| panic!("{name}을 읽지 못했다"));
-            let ctx = eframe::egui::Context::default();
-            let mut definitions = eframe::egui::FontDefinitions::default();
-            definitions.font_data.insert(
-                "시험".to_owned(),
-                std::sync::Arc::new(eframe::egui::FontData::from_owned(bytes)),
-            );
-            definitions
-                .families
-                .entry(eframe::egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "시험".to_owned());
-            ctx.set_fonts(definitions);
-            // 글꼴은 다음 pass부터 적용된다 — 한 프레임 돌리고 나서 재야 한다
-            let _ = ctx.run_ui(Default::default(), |_ui| {});
-            let mut width = 0.0;
-            let _ = ctx.run_ui(Default::default(), |ui| {
-                width = ui
-                    .painter()
-                    .layout_no_wrap(
-                        "한글".to_owned(),
-                        eframe::egui::FontId::proportional(14.0),
-                        eframe::egui::Color32::WHITE,
-                    )
-                    .size()
-                    .x;
-            });
-            assert!(width > 0.0, "{name}으로 한글 폭이 0이다");
+            assert!(load_font(name).is_some(), "{name}을 읽지 못했다");
         }
     }
 

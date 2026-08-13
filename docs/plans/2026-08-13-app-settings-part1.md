@@ -277,13 +277,14 @@
 
 - [ ] **T4. 시스템 글꼴 열거와 글꼴 바이트 읽기**
   - **Type**: C
-  - **Design**: ① `src/app/fonts.rs` 신규 — Win32 GDI를 쓰지만 파일시스템 열거(`fs`)도 UI(`ui`)도 아닌 "앱 환경 조회"라 `app`에 둔다(`app::theme`이 `DwmSetWindowAttribute`를 쓰는 것과 같은 자리). ② 신규 심볼 — `installed_korean_fonts() -> Vec<String>`(한글 지원 글꼴 이름을 가나다순 중복 없이), `load_font(name: &str) -> Option<Vec<u8>>`. ③ `ui`가 이것을 부르고, `fonts`는 아무것도 참조하지 않는다. ④ 이번에 추상화하지 않을 것: 글꼴 캐시·메타데이터 구조체를 두지 않는다(이름·바이트·face 인덱스 셋이면 충분하다).
+  - **Design**: ① `src/app/fonts.rs` 신규 — Win32 GDI를 쓰지만 파일시스템 열거(`fs`)도 UI(`ui`)도 아닌 "앱 환경 조회"라 `app`에 둔다(`app::theme`이 `DwmSetWindowAttribute`를 쓰는 것과 같은 자리). ② 신규 심볼 — `installed_korean_fonts() -> Vec<String>`(한글 지원 글꼴 이름을 가나다순 중복 없이), `load_font(name: &str) -> Option<Vec<u8>>`. ③ `ui`가 이것을 부르고, `fonts`는 아무것도 참조하지 않는다. **`installed_korean_fonts()`는 1.5초쯤 걸린다**(실측: 이름 열거 1ms + 93개 전수 읽기 1,525ms) — 이름만 세지 않고 실제로 읽어 확인하기 때문이다. 그래서 **UI 스레드에서 부르면 안 되고**, T5가 워커에서 부른다(AGENTS "UI 스레드에서 블로킹 I/O 금지"). ④ 이번에 추상화하지 않을 것: 글꼴 캐시·메타데이터 구조체를 두지 않는다(이름과 바이트면 충분하다).
     **`load_font`의 세 단계**: ⓐ `CreateFontIndirectW`+`SelectObject` 뒤 **`GetTextFaceW`로 실제 선택된 face 이름이 요청 이름과 같은지 확인**한다 — GDI 폰트 매퍼는 없는 이름을 오류 없이 비슷한 글꼴로 대체하므로, 이 확인이 없으면 삭제된 글꼴에 대해 **엉뚱한 글꼴 바이트가 성공처럼 반환된다**(FR-48의 폴백 요구가 무증상으로 죽는다). 다르면 `None`. ⓑ `GetFontData(hdc, 0, 0, ..)`로 원본 바이트를 받는다.
     **face 인덱스는 다루지 않는다 (2026-08-13 실측으로 확정)**: 계획 단계에서는 모음 글꼴이 컬렉션 통째로 올 것을 걱정해 `ttcf` 테이블로 인덱스를 찾는 절차를 뒀으나, 실제로 재 보니 **GDI가 모음에서도 단일 sfnt를 뽑아 준다** — 굴림·굴림체·바탕·돋움 모두 `ttcf` 테이블이 `GDI_ERROR`이고 데이터 매직이 `0x00010000`(단일 TrueType)이었다. 따라서 `egui::FontData::from_owned`(index 0)로 충분하고, 쓰이지 않을 모음 파싱 경로를 만들지 않는다(규칙 5 YAGNI).
-  - **Acceptance**: Given 한국어 Windows, When `installed_korean_fonts()`를 부르면, Then 결과에 `맑은 고딕`과 **글꼴 모음에 든 `굴림`·`바탕`이 함께** 있고 한글 글리프가 없는 `Wingdings`·`Webdings`는 없다. **목록의 모든 이름에 대해** `load_font(name)`이 `Some`이고, 그것을 `egui::FontData::from_owned`로 등록하면 한글 문자열의 폭 계산이 0이 아니다(= 바이트 반환에 그치지 않고 실제로 파싱된다). 목록에 없는 이름(`load_font("없는글꼴")`)은 **GDI가 굴림으로 조용히 대체하더라도** `None`을 반환한다(실측: `없는글꼴이름XYZ` → 실제 선택 `굴림`, 데이터 크기까지 굴림과 동일).
+  - **Acceptance**: Given 한국어 Windows, When `installed_korean_fonts()`를 부르면, Then 결과에 `맑은 고딕`과 **글꼴 모음에 든 `굴림`·`바탕`이 함께** 있고 한글 글리프가 없는 `Wingdings`·`Webdings`는 없다. **목록의 모든 이름에 대해** `load_font(name)`이 `Some`이다(바이트를 얻을 수 있다). 목록에 없는 이름(`load_font("없는글꼴")`)은 **GDI가 굴림으로 조용히 대체하더라도** `None`을 반환한다(실측: `없는글꼴이름XYZ` → 실제 선택 `굴림`, 데이터 크기까지 굴림과 동일).
+    **글꼴이 실제로 파싱되는지(한글 폭 > 0)는 T5가 확인한다** — 그 검증은 egui에 등록해 봐야 알 수 있는데 `app` 계층은 `ui`를 모르므로(AGENTS 의존 방향) 여기 둘 수 없다. 실측에서 `D2Coding`이 그 경계였다: 바이트는 읽히는데 등록하면 한글 폭이 0이다.
   - **Files**:
     - 주: `src/app/fonts.rs`(신규), `src/app/mod.rs`
-    - 테스트: `src/app/fonts.rs`(`mod tests` — ① 목록에 `맑은 고딕`·`굴림` 포함, `Wingdings` 부재 ② **목록의 모든 이름이 `load_font` → `FontData` 등록 → 한글 폭 > 0까지 통과**(바이트 반환만으로는 부족하다 — 모음·손상 글꼴이 여기서 걸러진다) ③ 없는 이름은 `None`)
+    - 테스트: `src/app/fonts.rs`(`mod tests` — ① 목록에 `맑은 고딕`·`굴림` 포함, `Wingdings`·세로쓰기(`@`) 부재 ② 목록이 정렬·중복 없음 ③ 목록의 모든 이름이 `load_font`로 읽힘 ④ 없는 이름은 `None`)
   - **Edge Cases**: `EnumFontFamiliesExW` 콜백이 같은 이름을 여러 번 준다(굵기·기울임별) → 중복 제거 / 이름이 `@`로 시작하는 세로쓰기 글꼴 → 제외 / GDI 핸들 누수 → `CreateCompatibleDC`·`CreateFontIndirectW`를 반드시 짝지어 해제(`unsafe` 격리 함수 안에서) / 글꼴이 하나도 없는 환경 → 빈 목록이어도 패닉하지 않고 현재 글꼴 유지 / **`CreateFontIndirectW`는 요청한 이름의 글꼴이 없으면 오류를 내지 않고 가장 비슷한 글꼴로 조용히 대체한다** — `load_font`는 `SelectObject` 뒤 `GetTextFaceW`(`Graphics/Gdi/mod.rs:1293`)로 **실제 선택된 이름이 요청한 이름과 같은지 확인**하고, 다르면 `None`을 돌려준다(엉뚱한 글꼴 바이트가 적용되는 것을 막는다. 저장된 글꼴이 나중에 삭제된 경우가 이 경로다)
   - **Halt Forecast**:
     - (i) "이름만으로 바이트를 얻을 수 있는가" → 전제 6에서 확인 완료
@@ -292,13 +293,13 @@
 
 - [ ] **T5. 글꼴 선택 UI와 런타임 적용**
   - **Type**: C
-  - **Design**: ① 선택 UI는 `settings_dialog.rs`의 `모양` 그룹(`widgets::dropdown_field` 재사용), 적용은 `ui/app.rs`의 `install_fonts`를 확장한다. ② 신규 심볼 없음 — `install_fonts(ctx, family: Option<&str>) -> bool`로 시그니처만 넓힌다(`None`이면 지금처럼 맑은 고딕). 고른 글꼴은 `app::fonts::load_font`가 준 바이트를 `egui::FontData::from_owned`로 등록한다(T4 실측 — 모음 글꼴도 단일 sfnt로 와서 face 인덱스가 필요 없다). ③ `ui::app`이 `app::fonts`를 부른다. ④ 이번에 추상화하지 않을 것: 글꼴 폴백 체인을 설정으로 만들지 않는다(고른 글꼴 → 맑은 고딕 → egui 기본, 2단 폴백 고정).
-  - **Acceptance**: Given 설정 화면, When `모양` 그룹의 글꼴 드롭다운에서 다른 글꼴을 고르면, Then **다음 프레임에** 파일 목록·타이틀바·메뉴 글꼴이 바뀌고(전제 7 — `set_fonts`는 다음 pass부터 적용되므로 호출과 함께 `ctx.request_repaint()`로 그 프레임을 보장한다) 아이콘(phosphor)은 그대로 보이며 값이 저장된다. 앱을 다시 켜도 그 글꼴이 유지된다. 저장된 글꼴을 읽지 못하면(글꼴 삭제 등) 맑은 고딕으로 시작하고 **설정 값은 그대로 둔다**(사용자가 글꼴을 다시 설치하면 되살아난다).
+  - **Design**: ① 선택 UI는 `settings_dialog.rs`의 `모양` 그룹(`widgets::dropdown_field` 재사용), 적용은 `ui/app.rs`의 `install_fonts`를 확장한다. **목록은 워커 스레드가 만든다**(사용자 결정 A, 2026-08-13) — 대화를 열 때 스레드를 하나 띄워 `app::fonts::installed_korean_fonts()`(1.5초)를 부르고 **각 이름을 egui에 실제로 등록해 한글 폭 > 0인 것만 남긴 뒤** 1회용 채널로 돌려준다(`ui/panel.rs`의 `DirLoad`와 같은 방식). 준비될 때까지 드롭다운은 현재 글꼴만 보이고 `글꼴 목록을 읽는 중`을 알린다. 이렇게 해야 **목록에 있는데 고르면 깨지는 글꼴이 없다**(실측 `D2Coding`). ② 신규 심볼 없음 — `install_fonts(ctx, family: Option<&str>) -> bool`로 시그니처만 넓힌다(`None`이면 지금처럼 맑은 고딕). 고른 글꼴은 `app::fonts::load_font`가 준 바이트를 `egui::FontData::from_owned`로 등록한다(T4 실측 — 모음 글꼴도 단일 sfnt로 와서 face 인덱스가 필요 없다). ③ `ui::app`이 `app::fonts`를 부른다. ④ 이번에 추상화하지 않을 것: 글꼴 폴백 체인을 설정으로 만들지 않는다(고른 글꼴 → 맑은 고딕 → egui 기본, 2단 폴백 고정).
+  - **Acceptance**: 대화를 열면 창이 멈추지 않고(목록 조회가 UI 스레드를 막지 않는다) 잠시 뒤 목록이 채워지며, **그 목록의 모든 글꼴은 골랐을 때 한글이 두부(□)로 깨지지 않는다**(등록해 폭 > 0인 것만 담기 때문 — `D2Coding`처럼 읽히지만 파싱되지 않는 글꼴은 목록에 없다). Given 설정 화면, When `모양` 그룹의 글꼴 드롭다운에서 다른 글꼴을 고르면, Then **다음 프레임에** 파일 목록·타이틀바·메뉴 글꼴이 바뀌고(전제 7 — `set_fonts`는 다음 pass부터 적용되므로 호출과 함께 `ctx.request_repaint()`로 그 프레임을 보장한다) 아이콘(phosphor)은 그대로 보이며 값이 저장된다. 앱을 다시 켜도 그 글꼴이 유지된다. 저장된 글꼴을 읽지 못하면(글꼴 삭제 등) 맑은 고딕으로 시작하고 **설정 값은 그대로 둔다**(사용자가 글꼴을 다시 설치하면 되살아난다).
   - **Files**:
-    - 주: `src/ui/app.rs`(`install_fonts:137`·`:402`), `src/ui/settings_dialog.rs`
+    - 주: `src/ui/app.rs`(`install_fonts:137`·`:402` + 목록 워커·수신), `src/ui/settings_dialog.rs`
     - 동반: `src/ui/list_common.rs:254`, `src/ui/menu.rs:438`, `src/ui/list_grid.rs:405,489,634`(테스트 호출부 5곳)
     - 테스트: `src/ui/app.rs`(`mod tests` — 없는 글꼴 이름 → 폴백 반환)
-  - **Edge Cases**: 매 프레임 `set_fonts`를 부르면 글꼴 아틀라스를 다시 만들어 느려진다 → **값이 바뀐 프레임에만** 부른다 / 글꼴 목록 열거를 매 프레임 하지 않는다(대화가 열릴 때 한 번) / 12MB급 글꼴을 읽는 동안 한 프레임 멈춤 → 허용(설정 조작 중 1회, NFR-3의 목록 스크롤과 성격이 다르다)
+  - **Edge Cases**: 매 프레임 `set_fonts`를 부르면 글꼴 아틀라스를 다시 만들어 느려진다 → **값이 바뀐 프레임에만** 부른다 / 목록 조회는 대화를 열 때 워커에서 한 번만 — 이미 받아 둔 목록이 있으면 다시 부르지 않는다 / 목록이 오기 전에 대화를 닫으면 결과를 버린다(수신 측이 사라져도 `send` 실패는 무해) / 워커가 만드는 검증용 `egui::Context`는 화면 컨텍스트와 별개다 — 화면 글꼴을 건드리지 않는다 / 12MB급 글꼴을 읽는 동안 한 프레임 멈춤 → 허용(설정 조작 중 1회, NFR-3의 목록 스크롤과 성격이 다르다)
   - **Halt Forecast**:
     - (i) "런타임 교체가 되는가" → 전제 7에서 확인 완료
     - (ii-a) `install_fonts` 공개 시그니처 변경(호출부 6곳) → `## 사전 승인 항목`에 등록
