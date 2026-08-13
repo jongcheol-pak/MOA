@@ -233,7 +233,7 @@
 
 <!-- T1~T3 (설정 기반·화면 뼈대) -->
 
-- [ ] **T1. 앱 설정 모델과 세션 저장·복원**
+- [x] **T1. 앱 설정 모델과 세션 저장·복원**
   - **Type**: C
   - **Design**: ① `src/app/settings.rs`에 둔다(세션 직렬화가 이미 사는 곳). ② 신규 심볼 — `AppSettings`(앱 전역 설정 한 벌), `LanguageSetting`(`System`/`Korean`/`English` — **이 part에서는 저장만 하고 화면에 노출하지 않는다**, part2가 쓴다). ③ `Session`이 `AppSettings`를 소유하고, `ui::app`이 읽어 각 기능에 나눠 준다 — `settings`는 `ui`를 모른다. ④ 이번에 추상화하지 않을 것: 설정 항목별 트레이트·옵저버·변경 이벤트 버스를 두지 않는다(값 7개를 매 프레임 읽는 것으로 충분하다).
   - **Acceptance**: Given 필드가 없는 기존 v3 `settings.json`, When 앱이 읽으면, Then 폴백 없이 세션이 복원되고 `AppSettings`는 기본값(`font_family: None`, `auto_start: false`, `tray_on_close: false`, `show_extensions: true`, `show_hidden: true`, `language: System`)이 된다. 값을 채워 저장한 뒤 다시 읽으면 왕복이 일치한다. `SESSION_VERSION`은 3 그대로다.
