@@ -338,7 +338,7 @@
     - (i) "아이콘 리소스를 새로 만들어야 하는가" → 전제 11에서 확인(기존 재사용)
   - **Depends on**: T3
 
-- [ ] **T8. 닫기 가로채기와 창 숨김·복원**
+- [x] **T8. 닫기 가로채기와 창 숨김·복원**
   - **Type**: D
   - **Design**: ① `ui/app.rs`의 프레임 처리(`logic`/`ui`)·`track_window:649`·`on_exit:1932`. ② 신규 심볼 없음 — `ExplorerApp`에 `hidden: bool`과 분기를 더한다. ③ 숨기기는 `ViewportCommand::Visible(false)`로 보내고(그 시점엔 창이 보여 프레임이 돈다), 되살리기는 프로시저가 이미 끝낸 뒤이므로 앱은 **`TrayEvent::Shown`을 받은 프레임에** ⓐ `hidden = false`로 내리고 ⓑ `ViewportCommand::Visible(true)`를 한 번 보내 winit 가시성 캐시를 맞춘다(전제 9-c — 이걸 빼면 이후 최대화 등 창 플래그 변경 때 `apply_diff`가 `SW_HIDE`를 재적용해 창이 갑자기 사라진다). **`ctx.input(|i| i.viewport().visible())`로 파생시키지 않는다** — Windows에서 그 값은 늘 `None`이라 숨김·표시를 구분하지 못한다(전제 9-a). ④ 이번에 추상화하지 않을 것: 창 표시 상태 머신 타입을 만들지 않는다(`hidden`·`quitting` 불리언 둘).
     **숨김 판정에 "트레이 아이콘이 실제로 올라가 있는가"를 함께 본다**(구현 중 추가): `sync_tray`가 등록 실패 시 토글을 되돌리지만 `intercept_close`가 `sync_tray`보다 먼저 도는 프레임이 있어, 그 사이에 닫으면 **아이콘 없이 창만 사라져 되부를 방법이 없어진다**.

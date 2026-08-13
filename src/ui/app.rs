@@ -1393,10 +1393,6 @@ impl ExplorerApp {
         }
     }
 
-    /// 앱 설정 대화 (FR-47) — 바뀐 값은 그 자리에서 저장한다.
-    ///
-    /// 즉시 저장인 이유는 이 화면에 `취소`가 없기 때문이다(사용자 결정) — 닫기만 있는
-    /// 화면에서 저장을 닫을 때로 미루면, 앱이 그 사이에 죽었을 때 바꾼 값이 사라진다
     /// 닫기 요청을 가로채 창만 숨긴다 (FR-50).
     ///
     /// 타이틀바 `✕`뿐 아니라 `Alt+F4`·작업 표시줄 닫기·시스템 메뉴까지 **모든 종료 경로가
@@ -1467,14 +1463,21 @@ impl ExplorerApp {
                 TrayEvent::Recreated => self.tray = None,
                 // 메뉴 `종료` — 평소 닫기와 같은 길로 보낸다(세션 저장이 그 길에 있다)
                 TrayEvent::Quit => {
-                    // 이 닫기는 가로채지 않는다 — 트레이로 보내는 것이 아니라 실제 종료다
+                    // 이 닫기는 가로채지 않는다 — 트레이로 보내는 것이 아니라 실제 종료다.
+                    // 프로시저가 창을 이미 되살렸으므로 숨김 상태도 함께 내린다 —
+                    // 그러지 않으면 마지막 프레임에 `track_window`가 멈춘 채로 끝난다
                     self.quitting = true;
+                    self.hidden = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
         }
     }
 
+    /// 앱 설정 대화 (FR-47) — 바뀐 값은 그 자리에서 저장한다.
+    ///
+    /// 즉시 저장인 이유는 이 화면에 `취소`가 없기 때문이다(사용자 결정) — 닫기만 있는
+    /// 화면에서 저장을 닫을 때로 미루면, 앱이 그 사이에 죽었을 때 바꾼 값이 사라진다
     fn show_settings_dialog(&mut self, ctx: &egui::Context) {
         if !self.settings_dialog.is_open() {
             return;
