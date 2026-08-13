@@ -11,7 +11,6 @@ use eframe::egui;
 /// 아이콘 글꼴 기본 크기 — 타이틀바 캡션 버튼이 쓰던 값이 기준이다
 const DEFAULT_ICON_PX: f32 = 16.0;
 
-/// 프레임 없는 아이콘 버튼 — 기본 글자색·글꼴 크기로 그린다
 /// 이 글자가 **아이콘 글꼴(phosphor)의 것**인가 — 사용자 정의 영역(U+E000~U+F8FF)에 있는가.
 ///
 /// 이 프로젝트의 아이콘은 전부 `egui_phosphor`에서 가져온다(AGENTS 규약). 원본 디자인의
@@ -39,6 +38,7 @@ pub fn hover_backdrop(painter: &egui::Painter, rect: egui::Rect, fill: egui::Col
     painter.rect_filled(square, HOVER_CORNER_RADIUS, fill);
 }
 
+/// 프레임 없는 아이콘 버튼 — 기본 글자색·글꼴 크기로 그린다
 pub fn icon_button(
     ui: &mut egui::Ui,
     icon: &str,

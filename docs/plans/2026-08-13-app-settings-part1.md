@@ -45,6 +45,8 @@
 
 ## Deferred / Follow-up
 
+- **유휴 메모리가 2026-08-05 대비 45MB 늘어난 원인 미상** — 같은 코드(`6fe19e0`)에서도 172.9MB가 나와 이번 작업과 무관함은 밝혔으나, 무엇이 늘렸는지는 못 밝혔다. NFR-2(150MB)를 넘긴 상태이므로 언젠가 그래픽 드라이버·OS 상태를 통제한 조건에서 다시 재야 한다.
+
 - 숨김 항목 토글이 **원격 패널에서도 재조회를 부른다**(quality 리뷰 S1). 로컬은 감시 갱신 때마다 어차피 다시 읽지만 원격은 네트워크 왕복이다 — 설정 변경이 드물어 이번엔 그대로 두었다. 거슬리면 원격만 응답을 캐시해 재필터하는 길이 있다.
 
 - **다음 분할 plan**: `docs/plans/2026-08-13-app-settings-part2.md` — T1~T8 (언어 전환 전면 적용, 미실행)
@@ -332,7 +334,7 @@
   - **Acceptance**: Given `종료` 그룹의 토글이 켜진 상태, When 앱이 실행 중이면, Then 트레이에 MOA 아이콘이 **창이 떠 있는 동안에도** 보이고 마우스를 올리면 `MOA` 툴팁이 뜬다. 토글을 끄면 아이콘이 즉시 사라진다. **정상 종료 시** `Drop`이 `NIM_DELETE`를 보내 아이콘이 즉시 사라진다(강제 종료 시 남는 유령 아이콘은 OS가 마우스 접촉 때 정리하는 영역이라 이 task의 판정 대상이 아니다). 아이콘 우클릭 시 `실행`·`종료` 두 항목의 메뉴가 뜬다.
   - **Files**:
     - 주: `src/ui/tray.rs`(신규), `src/ui/mod.rs`
-    - 동반: `src/ui/app_icon.rs`(`ICO_BYTES`를 `pub`으로 — 트레이가 같은 그림을 쓴다), `src/ui/shell_host.rs`(`shell_menu_proc:91` — 트레이 콜백 갈래 + `new:31`의 `dwRefData`에 `TrayContext` 싣기 + `Drop`에서 회수), `src/ui/app.rs`(`Tray` 소유·`Quit` 폴링)
+    - 동반: `src/ui/app_icon.rs`(`ICO_BYTES`를 `pub`으로 — 트레이가 같은 그림을 쓴다), `src/ui/shell_host.rs`(`shell_menu_proc:91` — 트레이 콜백 갈래 + `new:31`의 `dwRefData`에 `TrayContext` 싣기 + `Drop`에서 회수), `src/ui/app.rs`(`Tray` 소유·`Quit` 폴링), `src/ui/settings_dialog.rs`(`종료` 그룹 토글 — **T13에서 누락을 발견해 채웠다**)
     - 테스트: `src/ui/tray.rs`(`mod tests` — 마우스 메시지 코드(`WM_LBUTTONDBLCLK`·`WM_RBUTTONUP`)→동작 분류, 메뉴 항목 ID→`TrayEvent` 매핑. 실제 아이콘 등록은 HWND가 필요해 테스트 비대상)
   - **Edge Cases**: 탐색기(explorer.exe) 재시작 → `TaskbarCreated` 등록 메시지를 받아 아이콘을 다시 등록한다 / 프로세스가 비정상 종료해 유령 아이콘이 남음 → `NOTIFYICONDATAW`에 `uVersion`을 설정하고 `Drop`에서 `NIM_DELETE`, 그래도 남는 경우는 OS가 마우스 접촉 시 정리한다 / 우클릭 메뉴가 뜬 채 포커스를 잃음 → `SetForegroundWindow`를 메뉴 표시 전에 부른다(Win32 관례) / 아이콘 리소스를 못 읽음 → 트레이 기능을 조용히 끄지 말고 토글을 되돌린다
   - **Halt Forecast**:
@@ -414,7 +416,7 @@
 
 <!-- T13 (마무리) -->
 
-- [ ] **T13. 문서 갱신과 성능 재측정**
+- [x] **T13. 문서 갱신과 성능 재측정**
   - **Type**: C
   - **Acceptance**: `README.md`에 설정 화면과 네 기능이 현재 구현대로 기재된다(없는 기능 기재 0건). `AGENTS.md`의 데이터 접근 항목이 "세션 + 앱 설정"을 담는다는 사실을 반영한다. NFR-1(콜드 스타트 1초)·NFR-2(유휴 150MB)를 재측정해 수치를 plan Progress Log에 남기고, 기준을 넘으면 원인을 특정한다. `cargo build`·`cargo test`·`cargo clippy --all-targets -- -D warnings`·`cargo fmt --check`가 전부 통과한다.
   - **Files**:
@@ -496,6 +498,14 @@
   - 설계: 토글이 바뀐 프레임에는 **폴더를 다시 읽는다**(`set_show_hidden`이 변화 여부를 돌려준다). 거른 항목을 되돌리려면 항목뿐 아니라 짝지어진 두 배열까지 함께 쥐어야 해서, 다시 읽는 편이 단순하다.
   - 판정 기준(D8): 로컬은 `FILE_ATTRIBUTE_HIDDEN|SYSTEM`, 원격은 이름이 `.`으로 시작. `..`는 로컬에서 `attributes: 0`으로, 원격에서 `is_parent()` 예외로 지켜 어떤 필터에도 걸리지 않는다.
   - 리뷰: spec MINOR 2(둘 다 결함 아님 — plan Files에 `splitter.rs` 보완으로 처리), quality 지적 0.
+
+- T13 완료: README·AGENTS.md 갱신과 NFR 재측정.
+  - **T7의 누락을 여기서 발견해 함께 고쳤다**: 설정 대화의 `종료` 그룹이 `준비 중` 자리 표시인 채여서 **FR-50을 켤 방법이 아예 없었다**. 트레이 코드는 T7~T8에서 다 들어갔는데 그것을 켜는 토글만 빠진 것 — plan T7의 Files에 `settings_dialog.rs`가 없었던 것이 원인이다.
+    - **규약**: task가 "설정 값을 소비하는 코드"를 만들면 **그 값을 바꾸는 UI가 어느 task에 있는지** plan Files로 확인한다. 값·소비부·UI 셋 중 하나만 빠져도 빌드·테스트는 전부 통과하고 기능만 없다.
+  - **규약(리뷰가 네 번째로 잡음)**: 함수를 기존 함수 사이에 끼워 넣으면 **앞 함수의 doc 주석이 새 함수에 딸려 붙는다**(Rust doc은 "바로 다음 아이템"에 귀속). 이번 회차에 `PanelState::show`·`FileListView::view_mode`·`show_file_group`·`intercept_close` 넷이 그렇게 설명을 잃었고, 훑는 김에 **이번 회차 이전부터 깨져 있던** `icon_button`(`6a2dd5c`가 `is_icon_font`를 끼우며 물려간 것)도 되돌렸다. 빌드·clippy·테스트 어느 것도 잡지 못하므로 **삽입 후 위아래 두 줄을 눈으로 보는 것이 유일한 방어**다(위키 `[PROJECT-FACT]`에 큐잉).
+  - **NFR 재측정(기본 레이아웃·5회 중앙값)**: 시작 277ms(NFR-1 1초 충족) · 유휴 173.8MB(NFR-2 150MB **초과**) · exe 7.69MB.
+    - **초과는 이번 작업의 회귀가 아니다**: 이 기능이 하나도 없는 `6fe19e0`을 같은 조건으로 따로 빌드해 재니 172.9MB(시작 378ms)로 사실상 같았다. 차이가 0.9MB(편차 범위)라 plan Edge Case가 말한 "트레이·뮤텍스·글꼴을 하나씩 빼며 좁히기"는 나눌 몫이 없어 하지 않았다.
+    - **2026-08-05 측정치(127.9MB)와의 45MB 차이는 원인 미상**이다. 같은 코드에서도 그만큼 나오므로 측정 환경 변화로 보고 있으나 확증은 없다 — 남은 이슈로 둔다.
 
 ## Next Steps
 

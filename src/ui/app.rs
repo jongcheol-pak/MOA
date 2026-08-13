@@ -1402,10 +1402,6 @@ impl ExplorerApp {
         }
     }
 
-    /// 닫기 요청을 가로채 창만 숨긴다 (FR-50).
-    ///
-    /// 타이틀바 `✕`뿐 아니라 `Alt+F4`·작업 표시줄 닫기·시스템 메뉴까지 **모든 종료 경로가
-    /// 이 한 지점으로 모인다** — 버튼 핸들러에서 막으면 나머지 길로 들어온 종료를 놓친다 (D4)
     /// 자동 실행으로 시작했으면 창을 숨긴다 — **최대화 복원이 끝난 뒤에** (FR-49).
     ///
     /// 트레이 아이콘이 올라간 것을 확인하고 숨긴다: 아이콘 없이 숨기면 창을 되부를
@@ -1429,6 +1425,10 @@ impl ExplorerApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
+    /// 닫기 요청을 가로채 창만 숨긴다 (FR-50).
+    ///
+    /// 타이틀바 `✕`뿐 아니라 `Alt+F4`·작업 표시줄 닫기·시스템 메뉴까지 **모든 종료 경로가
+    /// 이 한 지점으로 모인다** — 버튼 핸들러에서 막으면 나머지 길로 들어온 종료를 놓친다 (D4)
     fn intercept_close(&mut self, ctx: &egui::Context) {
         if !ctx.input(|input| input.viewport().close_requested()) {
             return;

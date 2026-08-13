@@ -291,11 +291,6 @@ fn show_font_group(
     outcome
 }
 
-/// `파일 보기` 그룹의 두 토글 — 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
-/// (다른 그룹은 부수 효과가 있어 각자의 task가 채운다).
-///
-/// 그룹 하나를 따로 뗀 이유: 이 부분만 그려 시험할 수 있어야 **앞 그룹들이 채워질 때**
-/// 좌표가 밀려 시험이 엉뚱한 자리를 누르는 일이 없다
 /// `종료` 그룹 — 닫기를 눌렀을 때 트레이로 보낼지 (FR-50).
 ///
 /// 켜면 트레이 아이콘이 **창이 떠 있는 동안에도** 올라온다 — 닫기를 누르기 전에
@@ -309,6 +304,11 @@ fn show_exit_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOut
     outcome
 }
 
+/// `파일 보기` 그룹의 두 토글 — 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
+/// (`시작`·`모양` 그룹은 레지스트리·글꼴이라는 부수 효과가 있어 각자 따로 있다).
+///
+/// 그룹 하나를 따로 뗀 이유: 이 부분만 그려 시험할 수 있어야 **앞 그룹들의 줄 수가 바뀔 때**
+/// 좌표가 밀려 시험이 엉뚱한 자리를 누르는 일이 없다
 fn show_file_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::default();
     if widgets::toggle_row(ui, LABEL_SHOW_EXTENSIONS, settings.show_extensions) {
