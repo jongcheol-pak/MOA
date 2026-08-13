@@ -490,12 +490,22 @@ fn sort_rows<R: ListRow>(
         .zip(icon_indices.drain(..))
         .map(|((row, type_name), icon)| (row, type_name, icon))
         .collect();
-    zipped.sort_by(|(a, ta, _), (b, tb, _)| match (a.is_dir(), b.is_dir()) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => {
-            let ord = compare_rows(a, ta, b, tb, key);
-            if ascending { ord } else { ord.reverse() }
+    zipped.sort_by(|(a, ta, _), (b, tb, _)| {
+        // 상위 이동(`..`)은 **어느 열로 어느 방향으로 정렬하든 맨 위**다 — 정렬 대상이 아니라
+        // 목록 밖으로 나가는 문이라, 내림차순에서 바닥으로 밀려나면 매번 찾아 내려가야 한다.
+        // 폴더 우선보다도 앞에 둔다(그것도 방향과 무관한 규칙이다 — part1 D13)
+        match (a.is_parent(), b.is_parent()) {
+            (true, false) => return std::cmp::Ordering::Less,
+            (false, true) => return std::cmp::Ordering::Greater,
+            _ => {}
+        }
+        match (a.is_dir(), b.is_dir()) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => {
+                let ord = compare_rows(a, ta, b, tb, key);
+                if ascending { ord } else { ord.reverse() }
+            }
         }
     });
     let (mut dir_count, mut file_count) = (0, 0);
@@ -844,6 +854,31 @@ mod tests {
         assert!(v.entry_at(0).is_none());
         v.selection.insert(0);
         assert!(v.selected_paths().is_empty());
+    }
+
+    #[test]
+    fn 상위_이동_줄은_어떤_정렬에서도_맨_위다() {
+        // 사용자 보고(2026-08-13): 내림차순으로 정렬하면 `..`가 목록 바닥으로 내려가
+        // 위로 올라가려면 매번 끝까지 스크롤해야 했다
+        let mut v = view(vec![
+            (entry("..", true, 0, 0), "파일 폴더"),
+            (entry("docs", true, 0, 0), "파일 폴더"),
+            (entry("zzz", true, 0, 0), "파일 폴더"),
+            (entry("a.txt", false, 10, 5), "텍스트"),
+        ]);
+        assert_eq!(names(&v)[0], "..", "이름 오름차순에서 첫 줄이 아니다");
+
+        // 같은 열을 다시 누르면 내림차순 — 그래도 `..`는 그대로 맨 위다
+        v.apply_sort(SortKey::Name);
+        assert_eq!(names(&v), vec!["..", "zzz", "docs", "a.txt"]);
+
+        // 다른 열로 정렬해도, 그 열을 뒤집어도 마찬가지다
+        for key in [SortKey::Size, SortKey::Type, SortKey::Modified] {
+            v.apply_sort(key);
+            assert_eq!(names(&v)[0], "..", "{key:?} 오름차순에서 밀려났다");
+            v.apply_sort(key);
+            assert_eq!(names(&v)[0], "..", "{key:?} 내림차순에서 밀려났다");
+        }
     }
 
     #[test]
