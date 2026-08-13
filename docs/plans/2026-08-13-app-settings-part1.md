@@ -94,7 +94,8 @@
 
 | 위험 | 영향 | 완화책 |
 |---|---|---|
-| TTC(글꼴 모음)를 목록에서 빼면 **Windows 기본 한글 글꼴 대부분이 사라진다** — 굴림·굴림체·돋움·돋움체(`gulim.ttc`), 바탕·궁서(`batang.ttc`) | 선택지가 맑은 고딕 계열만 남아 FR-48이 사실상 무의미해진다 | **빼지 않는다.** `epaint-0.35.0/src/text/fonts.rs:118-128`의 `FontData`에 `index: u32`("Which font face in the file to use")가 있어 모음 안의 face를 지정할 수 있다. T4가 `GetFontData(hdc, 'ttcf', ..)`로 모음 여부를 판별하고 그 안에서 요청한 face의 인덱스를 찾아 함께 돌려주며, T5는 `FontData { font, index, .. }`로 등록한다(`from_owned`는 index 0 고정이라 쓰지 않는다) |
+| ~~TTC(글꼴 모음)를 목록에서 빼면 기본 한글 글꼴 대부분이 사라진다~~ **→ 위험 자체가 없었다 (2026-08-13 실측)** | — | GDI가 모음에서도 **단일 sfnt를 뽑아 준다**(굴림·굴림체·바탕·돋움 모두 `ttcf` 없음·매직 `0x00010000`). 따라서 모음을 뺄 이유도, face 인덱스를 다룰 이유도 없다 — `from_owned`로 그대로 등록된다 |
+| **GDI 폰트 매퍼가 없는 글꼴 이름을 조용히 대체한다** (실측: `없는글꼴이름XYZ` → `굴림`, 크기까지 동일) | 저장된 글꼴이 삭제된 뒤 **엉뚱한 글꼴이 성공처럼 적용**되고 FR-48의 폴백이 무증상으로 죽는다 | `load_font`가 `SelectObject` 뒤 `GetTextFaceW`로 실제 선택된 이름을 대조하고 다르면 `None`(T4 Design ⓐ). 이 경로를 검증하는 시험이 T4 Acceptance ③이다 |
 | 숨긴 동안 eframe이 프레임을 도는지 **코드만으로 단정할 수 없다**(전제 9-a) | 프레임 폴링에 기대면 더블클릭해도 창이 안 돌아와 작업 관리자로 죽여야 한다 | **폴링에 기대지 않는다** — 창 복원은 창 프로시저가 `ShowWindow`+`SetForegroundWindow`로 직접 하고, 앱은 사후 통지(`TrayEvent::Shown`)만 받는다(D5). 이 설계는 프레임이 돌든 안 돌든 작동한다. T7·T8 Acceptance에 "숨긴 상태에서 더블클릭 → 복원"을 넣어 실측한다 |
 | 프로시저의 `ShowWindow`와 winit의 가시성 캐시가 어긋난다(전제 9-c) | 복원 뒤 최대화 등 창 조작 때 `apply_diff`가 `SW_HIDE`를 재적용해 **창이 갑자기 사라진다** | 복원 통지를 받은 프레임에 `ViewportCommand::Visible(true)`를 한 번 보내 캐시를 맞춘다(T8 Design ③). 이미 보이는 창에 대한 멱등 호출이라 부작용이 없다 |
 | 뮤텍스로 중복을 막을 때 기존 창을 **찾는** 수단이 없음(창 제목은 사용자가 바꾸는 워크스페이스 이름이 아니라 "MOA" 고정이지만 다른 앱과 겹칠 수 있다) | 두 번째 프로세스가 조용히 죽기만 하고 창이 안 뜸 | `RegisterWindowMessageW`로 앱 고유 메시지를 만들어 `HWND_BROADCAST`로 쏘고, 기존 프로세스의 서브클래스가 그것을 받아 자기 창을 띄운다(창 찾기 불필요). T9 Design에 확정 |
@@ -276,21 +277,22 @@
 
 - [ ] **T4. 시스템 글꼴 열거와 글꼴 바이트 읽기**
   - **Type**: C
-  - **Design**: ① `src/app/fonts.rs` 신규 — Win32 GDI를 쓰지만 파일시스템 열거(`fs`)도 UI(`ui`)도 아닌 "앱 환경 조회"라 `app`에 둔다(`app::theme`이 `DwmSetWindowAttribute`를 쓰는 것과 같은 자리). ② 신규 심볼 — `installed_korean_fonts() -> Vec<String>`(한글 지원 글꼴 이름을 가나다순 중복 없이), `LoadedFont { bytes: Vec<u8>, index: u32 }`, `load_font(name: &str) -> Option<LoadedFont>`. ③ `ui`가 이것을 부르고, `fonts`는 아무것도 참조하지 않는다. ④ 이번에 추상화하지 않을 것: 글꼴 캐시·메타데이터 구조체를 두지 않는다(이름·바이트·face 인덱스 셋이면 충분하다).
-    **`load_font`의 세 단계**: ⓐ `CreateFontIndirectW`+`SelectObject` 뒤 **`GetTextFaceW`로 실제 선택된 face 이름이 요청 이름과 같은지 확인**한다 — GDI 폰트 매퍼는 없는 이름을 오류 없이 비슷한 글꼴로 대체하므로, 이 확인이 없으면 삭제된 글꼴에 대해 **엉뚱한 글꼴 바이트가 성공처럼 반환된다**(FR-48의 폴백 요구가 무증상으로 죽는다). 다르면 `None`. ⓑ `GetFontData(hdc, u32::from_be_bytes(*b"ttcf"), 0, None, 0)`가 성공하면 글꼴 모음이므로 그 헤더에서 요청 face의 인덱스를 찾고, 실패(`GDI_ERROR`)면 단일 글꼴이라 `index = 0`. ⓒ `GetFontData(hdc, 0, 0, ..)`로 원본 바이트를 받는다.
-  - **Acceptance**: Given 한국어 Windows, When `installed_korean_fonts()`를 부르면, Then 결과에 `맑은 고딕`과 **글꼴 모음에 든 `굴림`·`바탕`이 함께** 있고 한글 글리프가 없는 `Wingdings`·`Webdings`는 없다. **목록의 모든 이름에 대해** `load_font(name)`이 `Some`이고, 그것을 `egui::FontData { font, index, .. }`로 등록하면 한글 문자열의 폭 계산이 0이 아니다(= 바이트 반환에 그치지 않고 실제로 파싱된다). 목록에 없는 이름(`load_font("없는글꼴")`)은 GDI가 대체 글꼴을 골라도 `None`을 반환한다.
+  - **Design**: ① `src/app/fonts.rs` 신규 — Win32 GDI를 쓰지만 파일시스템 열거(`fs`)도 UI(`ui`)도 아닌 "앱 환경 조회"라 `app`에 둔다(`app::theme`이 `DwmSetWindowAttribute`를 쓰는 것과 같은 자리). ② 신규 심볼 — `installed_korean_fonts() -> Vec<String>`(한글 지원 글꼴 이름을 가나다순 중복 없이), `load_font(name: &str) -> Option<Vec<u8>>`. ③ `ui`가 이것을 부르고, `fonts`는 아무것도 참조하지 않는다. ④ 이번에 추상화하지 않을 것: 글꼴 캐시·메타데이터 구조체를 두지 않는다(이름·바이트·face 인덱스 셋이면 충분하다).
+    **`load_font`의 세 단계**: ⓐ `CreateFontIndirectW`+`SelectObject` 뒤 **`GetTextFaceW`로 실제 선택된 face 이름이 요청 이름과 같은지 확인**한다 — GDI 폰트 매퍼는 없는 이름을 오류 없이 비슷한 글꼴로 대체하므로, 이 확인이 없으면 삭제된 글꼴에 대해 **엉뚱한 글꼴 바이트가 성공처럼 반환된다**(FR-48의 폴백 요구가 무증상으로 죽는다). 다르면 `None`. ⓑ `GetFontData(hdc, 0, 0, ..)`로 원본 바이트를 받는다.
+    **face 인덱스는 다루지 않는다 (2026-08-13 실측으로 확정)**: 계획 단계에서는 모음 글꼴이 컬렉션 통째로 올 것을 걱정해 `ttcf` 테이블로 인덱스를 찾는 절차를 뒀으나, 실제로 재 보니 **GDI가 모음에서도 단일 sfnt를 뽑아 준다** — 굴림·굴림체·바탕·돋움 모두 `ttcf` 테이블이 `GDI_ERROR`이고 데이터 매직이 `0x00010000`(단일 TrueType)이었다. 따라서 `egui::FontData::from_owned`(index 0)로 충분하고, 쓰이지 않을 모음 파싱 경로를 만들지 않는다(규칙 5 YAGNI).
+  - **Acceptance**: Given 한국어 Windows, When `installed_korean_fonts()`를 부르면, Then 결과에 `맑은 고딕`과 **글꼴 모음에 든 `굴림`·`바탕`이 함께** 있고 한글 글리프가 없는 `Wingdings`·`Webdings`는 없다. **목록의 모든 이름에 대해** `load_font(name)`이 `Some`이고, 그것을 `egui::FontData::from_owned`로 등록하면 한글 문자열의 폭 계산이 0이 아니다(= 바이트 반환에 그치지 않고 실제로 파싱된다). 목록에 없는 이름(`load_font("없는글꼴")`)은 **GDI가 굴림으로 조용히 대체하더라도** `None`을 반환한다(실측: `없는글꼴이름XYZ` → 실제 선택 `굴림`, 데이터 크기까지 굴림과 동일).
   - **Files**:
     - 주: `src/app/fonts.rs`(신규), `src/app/mod.rs`
     - 테스트: `src/app/fonts.rs`(`mod tests` — ① 목록에 `맑은 고딕`·`굴림` 포함, `Wingdings` 부재 ② **목록의 모든 이름이 `load_font` → `FontData` 등록 → 한글 폭 > 0까지 통과**(바이트 반환만으로는 부족하다 — 모음·손상 글꼴이 여기서 걸러진다) ③ 없는 이름은 `None`)
   - **Edge Cases**: `EnumFontFamiliesExW` 콜백이 같은 이름을 여러 번 준다(굵기·기울임별) → 중복 제거 / 이름이 `@`로 시작하는 세로쓰기 글꼴 → 제외 / GDI 핸들 누수 → `CreateCompatibleDC`·`CreateFontIndirectW`를 반드시 짝지어 해제(`unsafe` 격리 함수 안에서) / 글꼴이 하나도 없는 환경 → 빈 목록이어도 패닉하지 않고 현재 글꼴 유지 / **`CreateFontIndirectW`는 요청한 이름의 글꼴이 없으면 오류를 내지 않고 가장 비슷한 글꼴로 조용히 대체한다** — `load_font`는 `SelectObject` 뒤 `GetTextFaceW`(`Graphics/Gdi/mod.rs:1293`)로 **실제 선택된 이름이 요청한 이름과 같은지 확인**하고, 다르면 `None`을 돌려준다(엉뚱한 글꼴 바이트가 적용되는 것을 막는다. 저장된 글꼴이 나중에 삭제된 경우가 이 경로다)
   - **Halt Forecast**:
     - (i) "이름만으로 바이트를 얻을 수 있는가" → 전제 6에서 확인 완료
-    - (i) "TTC(글꼴 모음)를 어떻게 다루는가" → Design ⓑ·Risks 1행에서 확정(**제외하지 않는다** — `GetFontData('ttcf')`로 판별해 face 인덱스를 함께 돌려주고 `FontData.index`로 등록한다. 제외하면 굴림·바탕 등 기본 한글 글꼴이 목록에서 사라진다)
+    - (i) "TTC(글꼴 모음)를 어떻게 다루는가" → **실측으로 해소** — GDI가 모음에서도 단일 sfnt를 뽑아 주므로 특별 취급이 필요 없다(Design ⓑ). 굴림·바탕도 그대로 목록에 남는다
   - **Depends on**: -
 
 - [ ] **T5. 글꼴 선택 UI와 런타임 적용**
   - **Type**: C
-  - **Design**: ① 선택 UI는 `settings_dialog.rs`의 `모양` 그룹(`widgets::dropdown_field` 재사용), 적용은 `ui/app.rs`의 `install_fonts`를 확장한다. ② 신규 심볼 없음 — `install_fonts(ctx, family: Option<&str>) -> bool`로 시그니처만 넓힌다(`None`이면 지금처럼 맑은 고딕). 고른 글꼴은 `app::fonts::load_font`가 준 `bytes`·`index`를 `egui::FontData { font, index, .. }`로 등록한다(T4 — 모음 글꼴 때문에 `from_owned`를 쓰지 않는다). ③ `ui::app`이 `app::fonts`를 부른다. ④ 이번에 추상화하지 않을 것: 글꼴 폴백 체인을 설정으로 만들지 않는다(고른 글꼴 → 맑은 고딕 → egui 기본, 2단 폴백 고정).
+  - **Design**: ① 선택 UI는 `settings_dialog.rs`의 `모양` 그룹(`widgets::dropdown_field` 재사용), 적용은 `ui/app.rs`의 `install_fonts`를 확장한다. ② 신규 심볼 없음 — `install_fonts(ctx, family: Option<&str>) -> bool`로 시그니처만 넓힌다(`None`이면 지금처럼 맑은 고딕). 고른 글꼴은 `app::fonts::load_font`가 준 바이트를 `egui::FontData::from_owned`로 등록한다(T4 실측 — 모음 글꼴도 단일 sfnt로 와서 face 인덱스가 필요 없다). ③ `ui::app`이 `app::fonts`를 부른다. ④ 이번에 추상화하지 않을 것: 글꼴 폴백 체인을 설정으로 만들지 않는다(고른 글꼴 → 맑은 고딕 → egui 기본, 2단 폴백 고정).
   - **Acceptance**: Given 설정 화면, When `모양` 그룹의 글꼴 드롭다운에서 다른 글꼴을 고르면, Then **다음 프레임에** 파일 목록·타이틀바·메뉴 글꼴이 바뀌고(전제 7 — `set_fonts`는 다음 pass부터 적용되므로 호출과 함께 `ctx.request_repaint()`로 그 프레임을 보장한다) 아이콘(phosphor)은 그대로 보이며 값이 저장된다. 앱을 다시 켜도 그 글꼴이 유지된다. 저장된 글꼴을 읽지 못하면(글꼴 삭제 등) 맑은 고딕으로 시작하고 **설정 값은 그대로 둔다**(사용자가 글꼴을 다시 설치하면 되살아난다).
   - **Files**:
     - 주: `src/ui/app.rs`(`install_fonts:137`·`:402`), `src/ui/settings_dialog.rs`
@@ -457,8 +459,26 @@
 
 ## Next Steps
 
-- 권장 다음 액션: 승인 후 `pjc:implement-task`로 T1부터 실행
-- 남은 분할 plan: `docs/plans/2026-08-13-app-settings-part2.md` — part1 완료 후 `pjc:implement-task`로 별도 실행
+- **T4에서 Halt (2026-08-13)** — 글꼴 목록 검증 수준에 사용자 결정 필요. 상세는 아래 「T4 실측 기록」.
+- 재개 방법: 결정을 받은 뒤 `pjc:implement-task docs/plans/2026-08-13-app-settings-part1.md`로 T4부터 이어서 실행
+- 현재 상태: T1~T3 완료(커밋 `cd9d661`·`a3bc1f0`·`ba8614f`), T4는 `src/app/fonts.rs` 구현체가 있고 시험 4건 중 3건 통과·1건 실패(실패가 곧 이 Halt의 근거)
+
+### T4 실측 기록 (2026-08-13)
+
+계획이 세운 전제 둘이 실측과 달랐다.
+
+1. **모음 글꼴(TTC) 특별 취급은 필요 없었다** — `GetFontData`가 모음에서도 단일 sfnt를 뽑아 준다(굴림·굴림체·바탕·돋움 모두 `ttcf` 테이블 없음, 매직 `0x00010000`). face 인덱스 탐색 절차를 계획에서 걷어냈다(Design ⓑ·Risks 표 갱신 완료). **더 단순해지는 방향이라 자체 해소했다.**
+2. **GDI 폰트 대체가 실재한다** — `없는글꼴이름XYZ`가 `굴림`으로 조용히 대체되고 데이터 크기까지 같다. `GetTextFaceW` 대조가 없으면 삭제된 글꼴이 다른 글꼴로 되살아난다. 계획대로 구현했고 시험으로 고정했다.
+
+**해소하지 못한 것 (이 Halt의 사유)**:
+
+| 측정 | 값 |
+|---|---|
+| 한글 문자셋 글꼴 이름 열거 | 93개, **1ms** |
+| 그 93개를 `load_font`로 전수 읽기 | **1,525ms**, 90개 성공 |
+| 그중 egui가 파싱하지 못하는 글꼴 | `D2Coding` (바이트는 읽히나 등록 시 한글 폭 0) |
+
+T4 Acceptance는 "**목록의 모든 이름에 대해** `load_font`가 `Some`이고, 등록하면 한글 폭이 0이 아니다"를 요구한다. 이를 T4 안에서 보장하려면 목록을 만들 때마다 전 글꼴을 읽고(1.5초) egui에 등록까지 해야 하는데, 그 호출 지점은 설정 대화를 여는 순간이라 **창이 그만큼 멈춘다**. 검증 수준·수행 위치가 UX와 맞물려 있어 계획만으로는 정할 수 없다.
 
 ## Open Questions
 
