@@ -315,7 +315,7 @@
   - **Acceptance**: Given 설정 화면, When `시작` 그룹의 토글을 켜면, Then `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`에 `MOA` 값이 현재 exe 절대 경로(따옴표로 감싸고 `--tray` 인자 포함)로 생기고, 끄면 그 값이 사라진다. 앱을 다시 켜면 **레지스트리의 실제 상태**가 토글에 반영된다(설정 파일 값이 아니라 레지스트리가 정본).
   - **Files**:
     - 주: `src/app/autostart.rs`(신규), `src/app/mod.rs`
-    - 동반: `src/ui/settings_dialog.rs`(`시작` 그룹)
+    - 동반: `src/ui/settings_dialog.rs`(`시작` 그룹), `src/ui/app.rs`(등록 실패 알림을 토스트로 — `SettingsOutcome.notice`를 소비하는 유일한 지점)
     - 테스트: `src/app/autostart.rs`(`mod tests` — 켜기→읽기→끄기→읽기 왕복. 실제 HKCU를 쓰되 테스트 종료 시 반드시 원상 복구)
   - **Edge Cases**: 경로에 공백이 있는 exe → 따옴표 필수 / 이전에 다른 경로로 등록돼 있음(앱을 옮긴 경우) → 켜져 있으면 현재 경로로 덮어쓴다 / 레지스트리 쓰기 실패(정책 차단) → 토글을 되돌리고 조용히 무시하지 않는다(상태가 어긋나면 안 된다) / 값 이름 충돌 → `MOA` 고정
   - **Halt Forecast**:
