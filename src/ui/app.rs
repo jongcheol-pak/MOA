@@ -1381,6 +1381,11 @@ impl ExplorerApp {
             self.korean_font = install_fonts(ctx, self.settings.selected_font());
             ctx.request_repaint();
         }
+        // 자동 실행 등록이 막힌 환경 등 — 조용히 넘기면 토글이 왜 안 움직였는지 알 수 없다
+        if let Some(notice) = outcome.notice {
+            self.toast
+                .show(notice.to_owned(), ctx.input(|input| input.time));
+        }
         if outcome.changed {
             self.persist_session();
         }

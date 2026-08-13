@@ -1,4 +1,5 @@
 //! 앱 셸 — 메인 창·레이아웃·설정
+pub mod autostart;
 pub mod fonts;
 pub mod layout;
 pub mod layout_host;

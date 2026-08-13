@@ -7,6 +7,7 @@
 //! 바꾼 값은 **즉시 반영·저장**된다(사용자 결정). 일곱 항목이 모두 독립적인 토글·선택이라
 //! 서로 엮어 검증할 것이 없고, 글꼴·언어는 바뀌는 결과를 보며 고르는 편이 확실하다.
 //! 그래서 바닥 버튼은 `닫기` 하나이고 `취소`가 없다.
+use crate::app::autostart;
 use crate::app::settings::AppSettings;
 use crate::ui::theme;
 use crate::ui::widgets;
@@ -58,6 +59,9 @@ const LABEL_FONT: &str = "글꼴";
 const DEFAULT_FONT_LABEL: &str = "기본값 (맑은 고딕)";
 /// 목록을 읽는 동안 보이는 안내 — 워커가 1.5초쯤 걸린다
 const FONT_SCANNING: &str = "글꼴 목록을 읽는 중…";
+const LABEL_AUTO_START: &str = "윈도우 시작 시 실행";
+/// 레지스트리 쓰기가 막힌 환경에서 보이는 안내 — 조용히 되돌리면 왜 안 켜지는지 알 수 없다
+const AUTO_START_FAILED: &str = "시작 프로그램 설정을 바꾸지 못했습니다";
 const LABEL_SHOW_EXTENSIONS: &str = "파일 확장명";
 const LABEL_SHOW_HIDDEN: &str = "숨김 항목";
 const BUTTON_CLOSE: &str = "닫기";
@@ -75,6 +79,8 @@ pub struct SettingsOutcome {
     pub changed: bool,
     /// 글꼴이 바뀌었다 — `install_fonts`를 다시 불러야 화면에 반영된다 (FR-48)
     pub font_changed: bool,
+    /// 사용자에게 알릴 것이 생겼다 — 지금은 자동 실행 등록 실패뿐이다 (FR-49)
+    pub notice: Option<&'static str>,
 }
 
 /// 대화가 그릴 글꼴 목록 — 워커가 아직 읽는 중이면 `None`.
@@ -195,9 +201,9 @@ fn show_body(
     group_title(&mut body, GROUP_APPEARANCE, Divider::Skip);
     let font = show_font_group(&mut body, settings, fonts);
 
-    // 시작 — 자동 실행 (T6)
+    // 시작 — 자동 실행
     group_title(&mut body, GROUP_STARTUP, Divider::Draw);
-    pending_hint(&mut body);
+    let startup = show_startup_group(&mut body, settings);
 
     // 종료 — 트레이 전환 (T7)
     group_title(&mut body, GROUP_EXIT, Divider::Draw);
@@ -208,9 +214,31 @@ fn show_body(
     let files = show_file_group(&mut body, settings);
 
     SettingsOutcome {
-        changed: font.changed || files.changed,
+        changed: font.changed || startup.changed || files.changed,
         font_changed: font.font_changed,
+        notice: startup.notice,
     }
+}
+
+/// `시작` 그룹 — 윈도우 시작 시 자동 실행 (FR-49).
+///
+/// **화면에 보이는 값은 레지스트리에서 읽는다**(설정 파일이 아니라) — 다른 도구가 그 등록을
+/// 지웠을 수 있고, 그때 설정 파일만 믿으면 켜져 있다고 잘못 알린다
+fn show_startup_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
+    let mut outcome = SettingsOutcome::default();
+    let enabled = autostart::is_enabled();
+    if widgets::toggle_row(ui, LABEL_AUTO_START, enabled) {
+        match autostart::set_enabled(!enabled) {
+            Ok(()) => {
+                // 설정 파일의 값은 사본이다 — 정본(레지스트리)과 맞춰 둔다
+                settings.auto_start = !enabled;
+                outcome.changed = true;
+            }
+            // 실패를 조용히 삼키면 토글은 움직였는데 실제로는 안 바뀐 상태가 된다
+            Err(_) => outcome.notice = Some(AUTO_START_FAILED),
+        }
+    }
+    outcome
 }
 
 /// `모양` 그룹 — 글꼴 고르기 (FR-48).
