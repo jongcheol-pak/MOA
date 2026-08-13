@@ -107,12 +107,13 @@ pub fn show_titlebar(
     }
 
     // 좌우 클로저는 각자 자기 결과만 돌려준다 — 하나의 `outcome`을 양쪽에서 빌릴 수 없다
-    let (command, window) = egui::Sides::new().height(TITLEBAR_HEIGHT).show(
+    let (left_command, (window, right_command)) = egui::Sides::new().height(TITLEBAR_HEIGHT).show(
         ui,
         |ui| show_left(ui, state, icon),
         |ui| show_right(ui, state),
     );
-    outcome.command = command;
+    // 좌우에서 동시에 명령이 나올 수는 없다(한 프레임에 두 버튼을 누를 수 없다)
+    outcome.command = left_command.or(right_command);
     // 버튼을 눌렀으면 그 요청이 배경 끌기보다 우선한다
     if window.is_some() {
         outcome.window = window;
@@ -195,9 +196,13 @@ fn show_left(
 
 /// 우측 — 설정 버튼과 최소화·최대화·닫기.
 /// `Sides`의 오른쪽 영역은 오른쪽부터 채워지므로 **닫기를 먼저** 추가해야
-/// 화면에서 왼→오 순서가 설정·최소화·최대화·닫기가 된다
-fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> Option<WindowRequest> {
+/// 화면에서 왼→오 순서가 설정·최소화·최대화·닫기가 된다.
+///
+/// 창 조작과 명령을 함께 돌려주는 것은 설정 메뉴가 이쪽에 있기 때문이다 —
+/// 그 메뉴는 창을 건드리지 않고 `Command`를 낸다
+fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>, Option<Command>) {
     let mut request = None;
+    let mut command = None;
     if caption_button(ui, egui_phosphor::regular::X, theme::CLOSE_HOT)
         .on_hover_text("닫기")
         .clicked()
@@ -222,16 +227,15 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> Option<WindowRequest> 
     {
         request = Some(WindowRequest::Minimize);
     }
-    show_settings_menu(ui);
-    request
+    show_settings_menu(ui, &mut command);
+    (request, command)
 }
 
-/// 설정 메뉴 — 항목은 **표시만** 하고 각 기능은 아직 만들지 않았다.
-/// 고를 수 있는 것이 없으므로 돌려줄 결과도 없다.
+/// 설정 메뉴 — `설정`만 동작하고 나머지 넷은 아직 표시만 한다 (FR-22).
 ///
 /// 다섯 항목을 배열+반복으로 묶지 않은 이유: 각 항목이 곧 서로 다른 화면·동작으로 갈라질
 /// 자리라, 지금 묶으면 채우는 순간 다시 풀어야 한다
-fn show_settings_menu(ui: &mut egui::Ui) {
+fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
     let response = icon_button(
         ui,
         egui_phosphor::regular::GEAR,
@@ -240,7 +244,10 @@ fn show_settings_menu(ui: &mut egui::Ui) {
     )
     .on_hover_text("설정");
     egui::Popup::menu(&response).show(|ui| {
-        pending_item(ui, "설정");
+        if ui.button("설정").clicked() {
+            *out = Some(Command::OpenAppSettings);
+            ui.close();
+        }
         pending_item(ui, "업데이트");
         pending_item(ui, "릴리즈 노트");
         ui.separator();

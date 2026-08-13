@@ -18,6 +18,7 @@ pub mod queue_panel;
 pub mod remote_menu;
 pub mod remote_states;
 pub mod session;
+pub mod settings_dialog;
 pub mod shell_host;
 pub mod sidebar;
 pub mod site_dropdown;

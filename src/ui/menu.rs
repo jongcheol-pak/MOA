@@ -69,6 +69,11 @@ pub enum Command {
     /// 파일 목록 보기 모드를 바꾼다 (FR-23)
     SetViewMode(ViewMode),
     ToggleSidebar,
+    /// 앱 설정 대화를 연다 (FR-47) — 타이틀바 설정 메뉴의 `설정` 항목이 유일한 진입점이다.
+    ///
+    /// 이름에 `App`을 붙인 것은 이 코드베이스에 `RemoteAction::OpenSettings`·
+    /// `FailedAction::OpenSettings`가 이미 있고 **둘 다 사이트 관리자**를 뜻하기 때문이다 (D11)
+    OpenAppSettings,
     /// 이 사이트를 **그 패널의 새 원격 탭**으로 열고 연결한다 (FR-33·FR-34·FR-38).
     ///
     /// 탭 스트립에서 여는 둘(`연결 사이트를 새 탭으로` 드롭다운·스트립에 끌어다 놓기)이

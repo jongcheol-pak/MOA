@@ -35,6 +35,7 @@ use crate::ui::queue_panel::{self, QueueAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, RemoteSnapshot, TabSpec, WorkspaceState};
+use crate::ui::settings_dialog::SettingsDialog;
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
@@ -349,6 +350,8 @@ pub struct ExplorerApp {
     pending_remove: Option<WorkspaceId>,
     /// 앱 전역 설정 (FR-47) — 설정 대화가 바꾸고 각 기능이 읽는다
     settings: AppSettings,
+    /// 앱 설정 대화 (FR-47) — 타이틀바 설정 메뉴의 `설정`이 연다
+    settings_dialog: SettingsDialog,
     /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
     /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
     manager: ConnectionManager,
@@ -447,6 +450,7 @@ impl ExplorerApp {
             runner: TransferRunner::new(),
             dock: DockState::default(),
             settings: AppSettings::default(),
+            settings_dialog: SettingsDialog::new(),
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
@@ -1321,6 +1325,20 @@ impl ExplorerApp {
         }
     }
 
+    /// 앱 설정 대화 (FR-47) — 바뀐 값은 그 자리에서 저장한다.
+    ///
+    /// 즉시 저장인 이유는 이 화면에 `취소`가 없기 때문이다(사용자 결정) — 닫기만 있는
+    /// 화면에서 저장을 닫을 때로 미루면, 앱이 그 사이에 죽었을 때 바꾼 값이 사라진다
+    fn show_settings_dialog(&mut self, ctx: &egui::Context) {
+        if !self.settings_dialog.is_open() {
+            return;
+        }
+        let outcome = self.settings_dialog.show(ctx, &mut self.settings);
+        if outcome.changed {
+            self.persist_session();
+        }
+    }
+
     /// 사이트 관리자 대화 (FR-27) — 등록 결과를 받아 연결까지 잇는다.
     ///
     /// `area`는 `연결(C)`이 패널을 좌우로 나눌 때 쓴다(T14와 같은 착지점). 아직 배치를 모르는
@@ -1420,6 +1438,7 @@ impl ExplorerApp {
                 }
             }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
+            Command::OpenAppSettings => self.settings_dialog.open(),
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -2144,6 +2163,7 @@ impl eframe::App for ExplorerApp {
         self.hostkey.show(&ctx);
         // 사이트 관리자도 자체 레이어를 쓴다 (FR-27)
         self.show_site_manager(&ctx, layout_area);
+        self.show_settings_dialog(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);
         // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
