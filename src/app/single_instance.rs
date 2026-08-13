@@ -12,6 +12,8 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
     HWND_BROADCAST, PostMessageW, RegisterWindowMessageW,
 };
+#[cfg(test)]
+use windows::core::HSTRING;
 use windows::core::{PCWSTR, w};
 
 /// 뮤텍스 이름 — `Local\` 접두로 **로그온 세션 단위**로 가른다.
@@ -47,10 +49,19 @@ pub struct Guard {
 /// COM 초기화·세션 로드보다 먼저 부르는 이유: 두 번째 프로세스라면 그 준비가 전부 헛일이고,
 /// 세션 파일을 읽는 동안 첫 프로세스가 그것을 쓰고 있을 수도 있다
 pub fn acquire() -> Instance {
+    acquire_named(MUTEX_NAME)
+}
+
+/// 이름을 받아 판정한다 — **시험이 프로덕션과 다른 이름을 쓰기 위해** 갈라 두었다.
+///
+/// 갈라 두지 않으면 시험이 실제 앱과 같은 뮤텍스를 다투게 된다: 개발 중 트레이에
+/// MOA를 띄워 둔 채(이 기능이 바로 그것을 권한다) `cargo test`를 돌리면 첫 획득부터
+/// `AlreadyRunning`이 나와 시험이 머신 상태에 따라 깨진다
+fn acquire_named(name: PCWSTR) -> Instance {
     // 안전성: 이름 있는 뮤텍스를 만든다. 이미 있으면 그 핸들을 받고 `GetLastError`가 알려 준다.
     // 핸들은 `Guard`가 들고 있다가 프로세스가 끝날 때 OS가 닫는다
     unsafe {
-        let Ok(handle) = CreateMutexW(None, true, MUTEX_NAME) else {
+        let Ok(handle) = CreateMutexW(None, true, name) else {
             // 뮤텍스를 만들지 못하면 판정할 수 없다 — 막기보다 여는 쪽을 택한다
             // (앱이 아예 안 뜨는 것보다 창이 둘인 편이 낫다)
             return Instance::First(Guard {
@@ -98,14 +109,23 @@ pub fn wake_message() -> u32 {
 mod tests {
     use super::*;
 
+    /// 시험 전용 이름 — **프로덕션 이름을 쓰지 않는다**(위 `acquire_named` 주석 참조).
+    /// 프로세스 번호를 붙여 시험끼리도 서로 다투지 않게 한다
+    fn test_mutex_name() -> HSTRING {
+        HSTRING::from(format!(
+            r"Local\MOA-single-instance-test-{}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn 두_번째_획득은_이미_실행_중으로_본다() {
-        let first = acquire();
+        let name = test_mutex_name();
+        let first = acquire_named(PCWSTR(name.as_ptr()));
         assert!(first.is_first(), "처음인데 이미 실행 중이라고 한다");
-        // 같은 프로세스에서 다시 부르면 뮤텍스가 이미 있다
-        let second = acquire();
+        // 같은 이름을 다시 청하면 뮤텍스가 이미 있다 — 두 번째 프로세스와 같은 상황이다
+        let second = acquire_named(PCWSTR(name.as_ptr()));
         assert!(!second.is_first(), "두 번째인데 처음이라고 한다");
-        // 가드를 놓으면 다시 처음이 될 수 있어야 한다 — 앱이 죽은 뒤의 상황이다
         drop(first);
         drop(second);
     }
