@@ -211,19 +211,6 @@ struct DirWatch {
     rx: Receiver<()>,
 }
 
-/// 앱 설정이 정하는 목록 표시 규칙 (FR-13·FR-52).
-///
-/// 값을 하나씩 인자로 늘리지 않고 묶는다 — 확장자·숨김 항목처럼 성격이 같은 것이
-/// 더 늘 수 있고, 그때마다 `show`의 인자가 하나씩 붙으면 호출부가 무엇을 넘기는지
-/// 읽기 어려워진다
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DisplayRules {
-    /// 이름 뒤 확장자를 보인다 (FR-52)
-    pub show_extensions: bool,
-    /// 숨김·시스템 항목을 보인다 (FR-13)
-    pub show_hidden: bool,
-}
-
 impl PanelState {
     pub fn new(start: PathBuf) -> PanelState {
         PanelState {
@@ -1006,21 +993,21 @@ impl PanelState {
         }
     }
 
+    /// 앱 설정이 정한 확장자 표시 여부를 목록에 내려 준다 — **`show` 직전에 부른다** (FR-52).
+    ///
+    /// `show`의 인자로 받지 않는 이유: 그리기 인자가 이미 일곱이라 하나만 더해도
+    /// clippy가 막고, 무엇이 배치이고 무엇이 설정인지도 읽기 어려워진다. 목록이 스스로
+    /// 설정을 읽게 하지 않는 이유는 `FileListView::set_show_extensions` 주석에 있다
+    pub fn set_show_extensions(&mut self, show: bool) {
+        self.list.set_show_extensions(show);
+    }
+
     /// 패널 하나를 그리고 이번 프레임의 조작을 처리한다.
     /// 세로 구성은 탭 스트립 / 주소창 / (폴더 트리 | 상태 · 파일 목록)이며,
     /// 트리를 숨기면 목록이 그 폭까지 차지한다 (FR-9).
     ///
     /// 셸 메뉴 요청과 분할 요청은 실행하지 않고 반환한다 — 셸 메뉴는 모달이라 그리기가 끝난 뒤에
     /// 띄워야 하고, 분할은 트리를 바꾸므로 이 패널을 그리는 도중에 할 수 없다
-    /// 앱 설정이 정한 표시 규칙을 목록에 내려 준다 — **`show` 직전에 부른다**.
-    ///
-    /// `show`의 인자로 받지 않는 이유: 그리기 인자가 이미 일곱이라 하나만 더해도
-    /// 무엇이 배치이고 무엇이 설정인지 읽기 어려워진다. 목록이 스스로 설정을 읽게
-    /// 하지 않는 이유는 `FileListView::set_show_extensions` 주석에 있다
-    pub fn apply_display_rules(&mut self, display: DisplayRules) {
-        self.list.set_show_extensions(display.show_extensions);
-    }
-
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,

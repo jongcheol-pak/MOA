@@ -105,7 +105,6 @@ impl FileListView {
         }
     }
 
-    /// 지금 쓰는 보기 모드 — 메뉴의 현재 표시와 세션 저장에 쓴다
     /// 앱 설정의 표시 규칙을 받는다 (FR-52) — 패널마다 다르지 않으므로 매 프레임 넘겨받는다.
     ///
     /// 목록이 스스로 설정을 읽지 않는 이유: `panel`·`ui::file_list`는 앱 설정을 모르는 층이고,
@@ -114,6 +113,7 @@ impl FileListView {
         self.show_extensions = show;
     }
 
+    /// 지금 쓰는 보기 모드 — 메뉴의 현재 표시와 세션 저장에 쓴다
     pub fn view_mode(&self) -> ViewMode {
         self.view_mode
     }
@@ -958,25 +958,32 @@ mod tests {
     }
 
     #[test]
-    fn 경로_조립은_확장자를_뗀_이름을_쓰지_않는다() {
+    fn 확장자를_꺼도_경로와_정렬은_원본_이름을_쓴다() {
         // **규약: `display_name()`은 그리는 자리에만** (D7). 경로를 잘린 이름으로 만들면
-        // 확장자를 끈 순간 파일 실행·셸 메뉴·끌어놓기가 통째로 깨진다.
-        // 소스를 훑어 경로 조립 줄에 그 메서드가 들어오는 것을 막는다
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
-        let mut 발견 = Vec::new();
-        for name in ["list_details.rs", "list_grid.rs", "file_list.rs"] {
-            let source = std::fs::read_to_string(dir.join(name)).expect("소스");
-            // 시험 코드는 제외한다 — 이 검사 자신이 두 낱말을 한 줄에 담는다
-            let 본문 = match source.split_once("mod tests") {
-                Some((앞, _)) => 앞,
-                None => &source,
-            };
-            for (번호, 줄) in 본문.lines().enumerate() {
-                if 줄.contains(".join(") && 줄.contains("display_name") {
-                    발견.push(format!("{name}:{}: {}", 번호 + 1, 줄.trim()));
-                }
-            }
-        }
-        assert!(발견.is_empty(), "경로를 표시용 이름으로 만든다: {발견:?}");
+        // 확장자를 끈 순간 파일 실행·셸 메뉴·끌어놓기가 통째로 깨진다
+        let mut v = view(vec![
+            (entry("파일10.txt", false, 0, 0), "텍스트"),
+            (entry("파일2.txt", false, 0, 0), "텍스트"),
+        ]);
+        v.set_show_extensions(false);
+        v.dir = PathBuf::from(r"C:\문서");
+        v.selection = (0..2).collect();
+
+        // 셸 메뉴·삭제·복사가 받는 경로는 확장자를 포함한 원본이다
+        assert_eq!(
+            v.selected_paths(),
+            vec![
+                PathBuf::from(r"C:\문서\파일2.txt"),
+                PathBuf::from(r"C:\문서\파일10.txt"),
+            ]
+        );
+        // 정렬도 원본 기준 — 숫자 인지 정렬이 확장자를 뗀 뒤 무너지면 순서가 달라진다
+        assert_eq!(names(&v), vec!["파일2.txt", "파일10.txt"]);
+        // 끌어놓기가 싣는 경로도 같다
+        let items = v.drag_items(0, None);
+        assert!(
+            matches!(&items[0], DragItem::Local { path, .. } if path.ends_with("파일2.txt")),
+            "끌어놓기 경로가 원본 이름이 아니다: {items:?}"
+        );
     }
 }

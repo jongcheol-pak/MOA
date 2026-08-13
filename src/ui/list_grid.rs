@@ -435,7 +435,12 @@ mod tests {
 
     /// 격자를 한 프레임 그리고 이번 프레임에 "보인 파일"로 수집된 목록을 돌려준다.
     /// `preloaded`에 담긴 이름은 텍스처가 이미 올라간 상태로 만든다
-    fn visible_after_draw(mode: ViewMode, names: &[&str], preloaded: &[&str]) -> Vec<PathBuf> {
+    fn visible_after_draw(
+        mode: ViewMode,
+        names: &[&str],
+        preloaded: &[&str],
+        show_extensions: bool,
+    ) -> Vec<PathBuf> {
         let dir = PathBuf::from(r"C:\테스트");
         let ctx = egui::Context::default();
         crate::ui::app::install_fonts(&ctx, None);
@@ -478,7 +483,7 @@ mod tests {
                     icon_indices: &mut icon_indices,
                     selection: &selection,
                     type_names: &type_names,
-                    show_extensions: true,
+                    show_extensions,
                     mode,
                     thumbnails: &textures,
                     visible: &mut visible,
@@ -500,6 +505,7 @@ mod tests {
             ViewMode::MediumIcons,
             &["사진1.jpg", "사진2.jpg"],
             &["사진1.jpg"], // 첫 장은 텍스처가 이미 올라간 상태
+            true,
         );
         assert!(
             visible.iter().any(|p| p.ends_with("사진1.jpg")),
@@ -511,7 +517,7 @@ mod tests {
     #[test]
     fn 자세히와_목록에서는_썸네일을_요청하지_않는다() {
         // 16px 자리에 미리보기는 알아볼 수 없고 디스크만 읽는다 (FR-24)
-        let visible = visible_after_draw(ViewMode::List, &["사진1.jpg"], &[]);
+        let visible = visible_after_draw(ViewMode::List, &["사진1.jpg"], &[], true);
         assert!(
             visible.is_empty(),
             "목록 보기가 썸네일을 요청했다: {visible:?}"

@@ -861,6 +861,19 @@ mod tests {
     }
 
     #[test]
+    fn 확장자를_꺼도_링크_대상은_그대로다() {
+        // plan Edge Case — 자를 것은 **이름뿐**이다. 대상 경로까지 자르면
+        // 링크가 어디를 가리키는지 화면이 거짓말을 한다
+        let mut link = remote_entry("current.bak", None, None);
+        link.is_symlink = true;
+        link.link_target = Some("/releases/2026-08.tar.gz".to_owned());
+        assert_eq!(
+            cell_text(&link, "링크", ColumnKind::Name, false),
+            "current → /releases/2026-08.tar.gz"
+        );
+    }
+
+    #[test]
     fn 권한을_주지_않는_서버의_칸은_비어_있다() {
         // plan Edge Case — `0o777` 같은 기본값을 지어내면 화면이 서버가 하지 않은 말을 한다
         let 없음 = remote_entry("a.txt", None, None);
