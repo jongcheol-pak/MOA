@@ -58,8 +58,24 @@ pub struct Session {
     pub dock: DockSession,
     /// 앱 전역 설정 (FR-47). 스키마 버전을 올리지 않고 더한다 — 버전이 다르면
     /// `parse_session`이 통째로 폴백해 기존 워크스페이스가 전부 초기화되기 때문이다 (D2)
-    #[serde(default)]
+    #[serde(default, deserialize_with = "settings_or_default")]
     pub settings: AppSettings,
+}
+
+/// 손상된 `settings`를 **그 자리에서만** 삼킨다 — 세션 전체를 잃지 않기 위해서다.
+///
+/// `#[serde(default)]`는 키가 **없을 때만** 기본값을 준다. 키는 있는데 타입이 어긋나면
+/// (`"auto_start": "yes"`처럼 손으로 편집됐거나, 설정이 객체가 아닌 값으로 덮인 경우)
+/// 그 오류가 `Session` 역직렬화 전체로 번져 워크스페이스·분할·탭까지 통째로 폴백된다.
+/// 설정 하나 때문에 탐색 상태를 잃는 것은 대가가 맞지 않으므로 여기서 끊는다
+fn settings_or_default<'de, D>(deserializer: D) -> Result<AppSettings, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // 일단 원시 값으로 받아 낸 뒤 변환을 시도한다 — 이 단계에서 실패하면 그것은
+    // JSON 자체가 깨진 것이라 어차피 세션 전체가 읽히지 않는다
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(raw).unwrap_or_default())
 }
 
 /// 앱 전역 설정 한 벌 (FR-47~FR-53).
@@ -105,8 +121,12 @@ impl Default for AppSettings {
 
 impl AppSettings {
     /// 실제로 적용할 글꼴 이름 — 빈 문자열은 "고르지 않음"과 같게 본다.
-    /// 저장 파일이 손으로 편집돼 `""`가 들어오는 경우를 한곳에서 걸러 낸다
-    pub fn font_family(&self) -> Option<&str> {
+    /// 저장 파일이 손으로 편집돼 `""`가 들어오는 경우를 한곳에서 걸러 낸다.
+    ///
+    /// **이름을 필드(`font_family`)와 다르게 둔 이유**: 같으면 `settings.font_family`(저장값)와
+    /// `settings.font_family()`(적용값)가 둘 다 컴파일돼, 글꼴을 적용하는 쪽이 필드를 그대로
+    /// 읽어도 아무 경고 없이 이 정규화가 건너뛰어진다
+    pub fn selected_font(&self) -> Option<&str> {
         self.font_family
             .as_deref()
             .map(str::trim)

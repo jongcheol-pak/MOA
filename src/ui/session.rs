@@ -739,12 +739,71 @@ mod tests {
             font_family: Some("   ".into()),
             ..Default::default()
         };
-        assert_eq!(blank.font_family(), None);
+        assert_eq!(blank.selected_font(), None);
         let picked = AppSettings {
             font_family: Some("맑은 고딕".into()),
             ..Default::default()
         };
-        assert_eq!(picked.font_family(), Some("맑은 고딕"));
+        assert_eq!(picked.selected_font(), Some("맑은 고딕"));
+    }
+
+    #[test]
+    fn 손상된_설정은_그_자리만_기본값이_되고_세션은_살아남는다() {
+        // T1 Edge Case — `#[serde(default)]`만으로는 **키가 없는 경우**만 막힌다.
+        // 값이 있는데 타입이 어긋나면 그 오류가 `Session` 전체로 번져 워크스페이스까지 잃는다
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
+        let json = serde_json::to_string(&session).expect("직렬화");
+        let settings_json = serde_json::to_string(&AppSettings::default()).expect("직렬화");
+
+        for broken in [
+            // bool 자리에 문자열
+            r#"{"auto_start":"yes"}"#,
+            // 설정이 객체가 아님
+            r#""garbage""#,
+            // 배열
+            r#"[1,2,3]"#,
+            // 일부 필드만 있고 그중 하나가 잘못된 타입
+            r#"{"show_hidden":123,"tray_on_close":true}"#,
+        ] {
+            let damaged = json.replace(&settings_json, broken);
+            assert_ne!(
+                damaged, json,
+                "테스트가 settings를 실제로 손상시키지 못했다"
+            );
+            let parsed = parse_session(&damaged)
+                .unwrap_or_else(|| panic!("손상된 설정({broken})에 세션 전체가 폴백됐다"));
+            assert_eq!(parsed.settings, AppSettings::default());
+            // 세션의 나머지는 그대로여야 한다 — 이것이 이 테스트의 요점이다
+            assert_eq!(restore(&parsed).len(), sample().len());
+        }
+    }
+
+    #[test]
+    fn 설정의_일부_필드만_있어도_나머지는_기본값이_된다() {
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
+        let json = serde_json::to_string(&session).expect("직렬화");
+        let settings_json = serde_json::to_string(&AppSettings::default()).expect("직렬화");
+        let partial = json.replace(&settings_json, r#"{"show_hidden":false}"#);
+
+        let parsed = parse_session(&partial).expect("일부 필드만 있는 설정이 거부됐다");
+        assert!(!parsed.settings.show_hidden, "적힌 값이 반영되지 않았다");
+        assert!(
+            parsed.settings.show_extensions,
+            "없는 필드가 기본값이 아니다"
+        );
+        assert_eq!(parsed.settings.language, LanguageSetting::System);
     }
 
     #[test]
