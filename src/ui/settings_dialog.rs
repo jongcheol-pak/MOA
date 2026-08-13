@@ -44,6 +44,8 @@ const GROUP_GAP_BOTTOM: f32 = 6.0;
 /// 닫기 버튼 좌우 여백
 const CLOSE_PAD_X: f32 = 16.0;
 const CLOSE_MIN_WIDTH: f32 = 72.0;
+/// 글꼴 드롭다운 폭 — 라벨(96px) 뒤 남는 자리에 맞춘다
+const FONT_FIELD_WIDTH: f32 = 240.0;
 
 // ── 문구 ──
 const TITLE: &str = "설정";
@@ -51,6 +53,11 @@ const GROUP_APPEARANCE: &str = "모양";
 const GROUP_STARTUP: &str = "시작";
 const GROUP_EXIT: &str = "종료";
 const GROUP_FILES: &str = "파일 보기";
+const LABEL_FONT: &str = "글꼴";
+/// 아무 글꼴도 고르지 않은 상태의 표시 — 목록 맨 앞 항목이기도 하다
+const DEFAULT_FONT_LABEL: &str = "기본값 (맑은 고딕)";
+/// 목록을 읽는 동안 보이는 안내 — 워커가 1.5초쯤 걸린다
+const FONT_SCANNING: &str = "글꼴 목록을 읽는 중…";
 const LABEL_SHOW_EXTENSIONS: &str = "파일 확장명";
 const LABEL_SHOW_HIDDEN: &str = "숨김 항목";
 const BUTTON_CLOSE: &str = "닫기";
@@ -66,6 +73,17 @@ const PENDING_HINT: &str = "준비 중";
 pub struct SettingsOutcome {
     /// 값이 하나라도 바뀌었다 — 세션을 저장해야 한다
     pub changed: bool,
+    /// 글꼴이 바뀌었다 — `install_fonts`를 다시 불러야 화면에 반영된다 (FR-48)
+    pub font_changed: bool,
+}
+
+/// 대화가 그릴 글꼴 목록 — 워커가 아직 읽는 중이면 `None`.
+///
+/// 목록을 대화가 직접 만들지 않는 이유: 만드는 데 1.5초가 걸려 UI 스레드에서 할 수 없다
+/// (`ui::font_scan`). 대화는 받은 것을 그리기만 한다
+#[derive(Debug, Clone, Copy)]
+pub struct FontChoices<'a> {
+    pub names: Option<&'a [String]>,
 }
 
 /// 설정 대화 (FR-47) — 열림 상태만 들고 값은 빌려 쓴다.
@@ -96,7 +114,12 @@ impl SettingsDialog {
     }
 
     /// 대화를 그린다. 닫혀 있으면 아무것도 그리지 않는다
-    pub fn show(&mut self, ctx: &egui::Context, settings: &mut AppSettings) -> SettingsOutcome {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut AppSettings,
+        fonts: FontChoices<'_>,
+    ) -> SettingsOutcome {
         if !self.open {
             return SettingsOutcome::default();
         }
@@ -132,7 +155,7 @@ impl SettingsDialog {
                     egui::pos2(rect.right() - BODY_PAD_X, footer.top()),
                 );
                 show_header(ui, header);
-                outcome = show_body(ui, body, settings);
+                outcome = show_body(ui, body, settings, fonts);
                 if show_footer(ui, footer) {
                     close_requested = true;
                 }
@@ -160,12 +183,17 @@ fn show_header(ui: &egui::Ui, rect: egui::Rect) {
 ///
 /// **항목을 배열+반복으로 묶지 않는다**(plan 비추상화 선언) — 그룹마다 컨트롤 종류와
 /// 부수 효과(글꼴 재등록·레지스트리 쓰기·트레이 아이콘)가 달라, 묶으면 채우는 순간 다시 풀어야 한다
-fn show_body(ui: &mut egui::Ui, rect: egui::Rect, settings: &mut AppSettings) -> SettingsOutcome {
+fn show_body(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    settings: &mut AppSettings,
+    fonts: FontChoices<'_>,
+) -> SettingsOutcome {
     let mut body = ui.new_child(egui::UiBuilder::new().max_rect(rect));
 
-    // 모양 — 글꼴 (T5가 드롭다운을 넣는다)
+    // 모양 — 글꼴
     group_title(&mut body, GROUP_APPEARANCE, Divider::Skip);
-    pending_hint(&mut body);
+    let font = show_font_group(&mut body, settings, fonts);
 
     // 시작 — 자동 실행 (T6)
     group_title(&mut body, GROUP_STARTUP, Divider::Draw);
@@ -177,7 +205,63 @@ fn show_body(ui: &mut egui::Ui, rect: egui::Rect, settings: &mut AppSettings) ->
 
     // 파일 보기 — 확장명·숨김 항목
     group_title(&mut body, GROUP_FILES, Divider::Draw);
-    show_file_group(&mut body, settings)
+    let files = show_file_group(&mut body, settings);
+
+    SettingsOutcome {
+        changed: font.changed || files.changed,
+        font_changed: font.font_changed,
+    }
+}
+
+/// `모양` 그룹 — 글꼴 고르기 (FR-48).
+///
+/// 목록이 아직 준비되지 않았으면(워커가 읽는 중) 드롭다운 대신 안내를 보인다 —
+/// 빈 목록을 열 수 있게 두면 고를 것이 없는 상자를 여닫게 된다
+fn show_font_group(
+    ui: &mut egui::Ui,
+    settings: &mut AppSettings,
+    fonts: FontChoices<'_>,
+) -> SettingsOutcome {
+    let mut outcome = SettingsOutcome::default();
+    // 표시할 현재 값을 먼저 복사해 둔다 — 아래 클로저가 `settings`를 통째로 빌려야 해서
+    // 빌린 문자열을 그 안으로 들고 갈 수 없다
+    let current = settings
+        .selected_font()
+        .unwrap_or(DEFAULT_FONT_LABEL)
+        .to_owned();
+
+    let Some(names) = fonts.names else {
+        widgets::form_label(ui, LABEL_FONT, true);
+        ui.painter().text(
+            egui::pos2(ui.cursor().left(), ui.cursor().top()),
+            egui::Align2::LEFT_TOP,
+            FONT_SCANNING,
+            egui::FontId::proportional(widgets::FORM_FONT_PX),
+            theme::TEXT_DIM,
+        );
+        ui.add_space(widgets::FORM_FIELD_HEIGHT);
+        return outcome;
+    };
+
+    // 맨 앞에 기본 글꼴을 둔다 — 고른 글꼴을 되돌릴 길이 목록 안에 있어야 한다
+    let mut options: Vec<&str> = Vec::with_capacity(names.len() + 1);
+    options.push(DEFAULT_FONT_LABEL);
+    options.extend(names.iter().map(String::as_str));
+
+    ui.horizontal(|ui| {
+        widgets::form_label(ui, LABEL_FONT, true);
+        if let Some(index) =
+            widgets::dropdown_field(ui, "설정 글꼴", &current, FONT_FIELD_WIDTH, true, &options)
+        {
+            let picked = (index > 0).then(|| options[index].to_owned());
+            if picked.as_deref() != settings.selected_font() {
+                settings.font_family = picked;
+                outcome.changed = true;
+                outcome.font_changed = true;
+            }
+        }
+    });
+    outcome
 }
 
 /// `파일 보기` 그룹의 두 토글 — 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
@@ -264,6 +348,11 @@ fn show_footer(ui: &mut egui::Ui, rect: egui::Rect) -> bool {
 mod tests {
     use super::*;
 
+    /// 목록이 아직 준비되지 않은 상태 — 대부분의 시험은 글꼴 목록과 무관하다
+    fn no_fonts() -> FontChoices<'static> {
+        FontChoices { names: None }
+    }
+
     #[test]
     fn 닫힌_대화는_아무것도_그리지_않는다() {
         let ctx = egui::Context::default();
@@ -272,7 +361,7 @@ mod tests {
         assert!(!dialog.is_open());
         let _ = ctx.run_ui(Default::default(), |_ui| {});
         assert_eq!(
-            dialog.show(&ctx, &mut settings),
+            dialog.show(&ctx, &mut settings, no_fonts()),
             SettingsOutcome::default(),
             "닫혀 있는데 결과가 나왔다"
         );
@@ -316,7 +405,7 @@ mod tests {
         let mut settings = AppSettings::default();
         let output = ctx.run_ui(Default::default(), |ui| {
             let rect = ui.max_rect();
-            show_body(ui, rect, &mut settings);
+            show_body(ui, rect, &mut settings, no_fonts());
         });
         let lines = output
             .shapes

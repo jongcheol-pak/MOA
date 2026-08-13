@@ -402,7 +402,7 @@ mod tests {
     fn visible_after_draw(mode: ViewMode, names: &[&str], preloaded: &[&str]) -> Vec<PathBuf> {
         let dir = PathBuf::from(r"C:\테스트");
         let ctx = egui::Context::default();
-        crate::ui::app::install_fonts(&ctx);
+        crate::ui::app::install_fonts(&ctx, None);
 
         // 텍스처를 미리 올려 둔다 — 픽셀 캐시에 넣고 sync로 승격시킨다
         let mut cache = ThumbnailCache::new();
@@ -486,7 +486,7 @@ mod tests {
         // 폴더는 폴더 아이콘이 맞다 — 셸에 물어도 의미가 없다
         let dir = PathBuf::from(r"C:\테스트");
         let ctx = egui::Context::default();
-        crate::ui::app::install_fonts(&ctx);
+        crate::ui::app::install_fonts(&ctx, None);
         let entries = vec![entry("문서", true), entry("사진.jpg", false)];
         let mut icon_indices = vec![None; entries.len()];
         let type_names = vec!["폴더".to_owned(), "파일".to_owned()];
@@ -631,7 +631,7 @@ mod tests {
         use crate::remote::types::RemoteEntry;
 
         let ctx = egui::Context::default();
-        crate::ui::app::install_fonts(&ctx);
+        crate::ui::app::install_fonts(&ctx, None);
         let rows = vec![
             RemoteEntry {
                 name: "public_html".to_owned(),

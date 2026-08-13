@@ -440,7 +440,7 @@ mod tests {
             }
         }
         let ctx = egui::Context::default();
-        crate::ui::app::install_fonts(&ctx);
+        crate::ui::app::install_fonts(&ctx, None);
         let output = ctx.run_ui(Default::default(), draw);
         let mut labels = Vec::new();
         for clipped in &output.shapes {

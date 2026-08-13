@@ -251,7 +251,7 @@ mod tests {
     /// 폭 기준 검증이 무의미해진다
     fn layout(text: &str, width: f32, rows: usize) -> (usize, bool) {
         let ctx = egui::Context::default();
-        let has_font = crate::ui::app::install_fonts(&ctx);
+        let has_font = crate::ui::app::install_fonts(&ctx, None);
         let mut result = (0, false);
         let _ = ctx.run_ui(Default::default(), |ui| {
             let font = egui::TextStyle::Body.resolve(ui.style());

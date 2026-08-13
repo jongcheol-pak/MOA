@@ -26,6 +26,7 @@ use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, Si
 use crate::remote::url::RemoteUrl;
 use crate::ui::app_icon;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
+use crate::ui::font_scan::FontScan;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::{self, DragItem, DropOutcome, DropTarget};
 use crate::ui::log_panel;
@@ -35,7 +36,7 @@ use crate::ui::queue_panel::{self, QueueAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, RemoteSnapshot, TabSpec, WorkspaceState};
-use crate::ui::settings_dialog::SettingsDialog;
+use crate::ui::settings_dialog::{FontChoices, SettingsDialog};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
@@ -130,14 +131,26 @@ pub unsafe fn uninit_com(com: ComStatus) {
     }
 }
 
-/// 앱이 쓰는 글꼴을 등록한다 — 한글 본문 글꼴(맑은 고딕)과 아이콘 글꼴(Phosphor).
+/// 앱이 쓰는 글꼴을 등록한다 — 한글 본문 글꼴과 아이콘 글꼴(Phosphor).
 ///
-/// 반환값은 **한글 글꼴 적용 여부**다. 맑은 고딕을 읽지 못해도 아이콘 글꼴은 등록되므로
+/// `family`가 있으면 그 글꼴을, 없거나 읽지 못하면 **맑은 고딕**을 쓴다 (FR-48).
+/// 사용자가 고른 글꼴이 나중에 지워졌을 때 화면이 두부(□)로 덮이지 않게 하는 폴백이며,
+/// **설정 값은 건드리지 않는다** — 글꼴을 다시 설치하면 되살아나야 한다.
+///
+/// 반환값은 **한글 글꼴 적용 여부**다. 어느 것도 읽지 못해도 아이콘 글꼴은 등록되므로
 /// 타이틀바 버튼은 그대로 보인다(파일명만 기본 글꼴로 표시된다).
-/// 등록은 한 번에 끝낸다 — `set_fonts`를 두 번 부르면 뒤엣것이 앞엣것을 덮어쓴다
-pub fn install_fonts(ctx: &egui::Context) -> bool {
+/// 등록은 한 번에 끝낸다 — `set_fonts`를 두 번 부르면 뒤엣것이 앞엣것을 덮어쓴다.
+///
+/// **반영은 다음 pass부터다**(egui `Context::set_fonts` 문서) — 부르는 쪽이 그 프레임을
+/// 보장하려면 `ctx.request_repaint()`를 함께 부른다
+pub fn install_fonts(ctx: &egui::Context, family: Option<&str>) -> bool {
     let mut fonts = egui::FontDefinitions::default();
-    let korean = match std::fs::read(KOREAN_FONT_PATH) {
+    let picked = family.and_then(crate::app::fonts::load_font);
+    let bytes = match picked {
+        Some(bytes) => Ok(bytes),
+        None => std::fs::read(KOREAN_FONT_PATH),
+    };
+    let korean = match bytes {
         Ok(bytes) => {
             fonts.font_data.insert(
                 "malgun".to_owned(),
@@ -352,6 +365,8 @@ pub struct ExplorerApp {
     settings: AppSettings,
     /// 앱 설정 대화 (FR-47) — 타이틀바 설정 메뉴의 `설정`이 연다
     settings_dialog: SettingsDialog,
+    /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 대화를 처음 열 때 한 번만 읽는다
+    font_scan: FontScan,
     /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
     /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
     manager: ConnectionManager,
@@ -404,7 +419,7 @@ impl ExplorerApp {
         com: ComStatus,
         session: Option<Session>,
     ) -> ExplorerApp {
-        let korean_font = install_fonts(&cc.egui_ctx);
+        let korean_font = install_fonts(&cc.egui_ctx, None);
         theme::apply_dark(&cc.egui_ctx);
         // HWND 획득·서브클래스 설치는 창이 만들어진 이 시점에만 가능하다
         let shell = ShellHost::new(cc);
@@ -451,6 +466,7 @@ impl ExplorerApp {
             dock: DockState::default(),
             settings: AppSettings::default(),
             settings_dialog: SettingsDialog::new(),
+            font_scan: FontScan::new(),
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
@@ -1333,7 +1349,23 @@ impl ExplorerApp {
         if !self.settings_dialog.is_open() {
             return;
         }
-        let outcome = self.settings_dialog.show(ctx, &mut self.settings);
+        // 목록 만들기는 1.5초쯤 걸려 워커에 맡긴다 — 대화를 여는 순간 창이 멈추면 안 된다.
+        // 이미 받아 둔 목록이 있으면 `ensure_started`가 아무 일도 하지 않는다
+        self.font_scan.ensure_started(ctx);
+        self.font_scan.poll();
+
+        let outcome = self.settings_dialog.show(
+            ctx,
+            &mut self.settings,
+            FontChoices {
+                names: self.font_scan.names(),
+            },
+        );
+        if outcome.font_changed {
+            // 글꼴은 다음 pass부터 적용된다 — 그 프레임이 오도록 다시 그리기를 요청한다
+            self.korean_font = install_fonts(ctx, self.settings.selected_font());
+            ctx.request_repaint();
+        }
         if outcome.changed {
             self.persist_session();
         }
