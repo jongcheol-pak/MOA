@@ -8,11 +8,11 @@
 #![windows_subsystem = "windows"]
 
 use eframe::egui;
-use file_explorer::app;
-use file_explorer::app::settings::load_session;
-use file_explorer::ui::app::{ExplorerApp, init_com, uninit_com};
-use file_explorer::ui::app_icon;
-use file_explorer::ui::window_start;
+use moa::app;
+use moa::app::settings::load_session;
+use moa::ui::app::{ExplorerApp, init_com, uninit_com};
+use moa::ui::app_icon;
+use moa::ui::window_start;
 
 fn main() -> eframe::Result {
     let com = init_com();
@@ -26,7 +26,7 @@ fn main() -> eframe::Result {
     // 창 장식을 끄고 제목 표시줄을 앱이 그린다 (FR-22) — 그 줄에 사이드바 토글·설정 버튼을 두기 위함.
     // 대가로 창 그림자·둥근 모서리를 잃는다(eframe에는 winit의 무장식 그림자 확장에 닿을 길이 없다)
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("파일 탐색기")
+        .with_title("MOA")
         .with_decorations(false);
     // 작업 표시줄·Alt+Tab에 뜨는 창 아이콘. 실행 파일 자체의 아이콘은 `build.rs`가
     // 같은 그림을 리소스로 담아 처리한다 — 창 아이콘은 OS가 리소스에서 자동으로 가져가지 않는다
@@ -52,7 +52,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     let result = eframe::run_native(
-        "file_explorer",
+        "moa",
         options,
         Box::new(move |cc| Ok(Box::new(ExplorerApp::new(cc, com, session)))),
     );

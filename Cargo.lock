@@ -637,20 +637,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
-name = "file_explorer"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui-phosphor",
- "raw-window-handle",
- "serde",
- "serde_json",
- "ssh2",
- "suppaftp",
- "windows",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1333,6 +1319,20 @@ checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "moa"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui-phosphor",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "ssh2",
+ "suppaftp",
+ "windows",
 ]
 
 [[package]]

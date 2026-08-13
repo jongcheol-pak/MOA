@@ -412,7 +412,7 @@ mod tests {
     use crate::remote::types::{RemotePath, RemoteSession, SiteRecord};
 
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join("file_explorer_transfer_tests");
+        let dir = std::env::temp_dir().join("moa_transfer_tests");
         let _ = std::fs::create_dir_all(&dir);
         dir
     }

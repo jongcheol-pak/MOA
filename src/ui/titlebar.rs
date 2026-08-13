@@ -69,7 +69,7 @@ pub struct TitlebarOutcome {
 
 /// 타이틀바 한 줄을 그리고 이번 프레임의 요청을 돌려준다.
 ///
-/// `title`은 활성 워크스페이스 이름이다 — 작업 표시줄에 뜨는 OS 창 제목("파일 탐색기")과는
+/// `title`은 활성 워크스페이스 이름이다 — 작업 표시줄에 뜨는 OS 창 제목("MOA")과는
 /// 별개다(D8). 좌우 버튼을 뺀 폭에서 넘치면 egui가 말줄임한다
 pub fn show_titlebar(
     ui: &mut egui::Ui,

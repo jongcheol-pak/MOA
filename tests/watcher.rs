@@ -1,5 +1,5 @@
 //! 변경 감시 통합 테스트 (T3 Acceptance) — HWND 비의존, 채널 수신으로 검증
-use file_explorer::fs::watcher::DirWatcher;
+use moa::fs::watcher::DirWatcher;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 

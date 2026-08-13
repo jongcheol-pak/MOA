@@ -1,5 +1,5 @@
 [package]
-name = "file_explorer"
+name = "moa"
 version = "0.1.0"
 edition = "2024"
 

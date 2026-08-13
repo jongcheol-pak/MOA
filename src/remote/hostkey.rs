@@ -6,13 +6,15 @@
 //!
 //! 확인 대화 화면은 `ui`(T10)가 만든다 — 이 모듈은 판정과 저장만 한다.
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 /// 지문 표를 두는 앱 폴더. `app::settings`의 설정 파일과 같은 자리다
 /// (`remote`가 `app`을 참조하지 않도록 이름만 따로 든다 — AGENTS 계층 규약)
-const APP_DIR: &str = "FileExplorer";
+const APP_DIR: &str = "MOA";
+/// 앱 이름이 `FileExplorer`이던 시절의 폴더 — 처음 한 번 파일을 옮겨 오는 데만 쓴다
+const LEGACY_APP_DIR: &str = "FileExplorer";
 const FILE_NAME: &str = "known_hosts.json";
 
 /// 서버 지문 대조 결과
@@ -35,7 +37,7 @@ pub enum HostKeyDecision {
 
 /// 호스트·포트 → SHA256 지문 표.
 ///
-/// 저장 위치는 `%APPDATA%\FileExplorer\known_hosts.json`이며 설정 파일과 같은 폴더다.
+/// 저장 위치는 `%APPDATA%\MOA\known_hosts.json`이며 설정 파일과 같은 폴더다.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownHosts {
     /// `호스트:포트` → `SHA256:...`
@@ -54,6 +56,7 @@ impl KnownHosts {
         let Some(path) = known_hosts_path() else {
             return KnownHosts::empty();
         };
+        migrate_from_legacy_dir(&path);
         let Ok(text) = std::fs::read_to_string(path) else {
             return KnownHosts::empty();
         };
@@ -109,6 +112,29 @@ impl KnownHosts {
 /// 지문 파일 경로 — `%APPDATA%` 미설정(비정상 환경)이면 `None`
 fn known_hosts_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join(APP_DIR).join(FILE_NAME))
+}
+
+/// 앱 이름을 바꾸기 전 폴더에 있던 지문 표를 새 폴더로 **복사**해 온다 (설정 파일과 같은 규약).
+///
+/// 옮겨 오지 못하면 표가 비어 모든 서버를 `Unknown`으로 보고 사용자에게 다시 묻는다 —
+/// 조용히 수락하는 경로는 생기지 않는다
+fn migrate_from_legacy_dir(path: &Path) {
+    if path.exists() {
+        return;
+    }
+    let Some(base) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let legacy = PathBuf::from(base).join(LEGACY_APP_DIR).join(FILE_NAME);
+    if !legacy.exists() {
+        return;
+    }
+    if let Some(dir) = path.parent()
+        && std::fs::create_dir_all(dir).is_err()
+    {
+        return;
+    }
+    let _ = std::fs::copy(&legacy, path);
 }
 
 fn entry_key(host: &str, port: u16) -> String {

@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use file_explorer::remote::testing::{FakeServer, FakeSession};
-use file_explorer::remote::types::{NoProgress, RemotePath, RemoteSession, SiteId, SiteRecord};
+use moa::remote::testing::{FakeServer, FakeSession};
+use moa::remote::types::{NoProgress, RemotePath, RemoteSession, SiteId, SiteRecord};
 
 /// 한 건의 크기 — 계획이 정한 값 (Acceptance ②)
 const GIB: u64 = 1024 * 1024 * 1024;

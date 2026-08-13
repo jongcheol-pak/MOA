@@ -4,7 +4,7 @@
 //! (분할 → 비율 조절 → 중첩 분할 → 닫기)을 이어서 수행했을 때 배치가 일관적인지 본다.
 //! egui 쪽 `ui::splitter`는 이 결과를 좌표 변환만 해서 그리므로, 이 테스트가 통과하면
 //! 화면 배치의 근거가 검증된 셈이다(그리기 자체는 HUMAN-VERIFY).
-use file_explorer::app::layout::{LayoutTree, Rect, SplitDir, SplitPlace};
+use moa::app::layout::{LayoutTree, Rect, SplitDir, SplitPlace};
 
 const AREA: Rect = Rect {
     x: 0,

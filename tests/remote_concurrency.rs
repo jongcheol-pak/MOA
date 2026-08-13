@@ -6,10 +6,10 @@
 //!
 //! 여기서 지키려는 것은 하나다: **한 연결이 막혀도 앱은 계속 돈다.** UI 스레드는 채널만
 //! 확인하므로(NFR-10), 응답 없는 서버는 그 연결의 워커 스레드 하나만 붙잡는다.
-use file_explorer::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
-use file_explorer::remote::manager::ConnectionManager;
-use file_explorer::remote::testing::{FakeServer, FakeSession, fake_entry};
-use file_explorer::remote::types::{RemoteEntry, RemotePath, SiteId, SiteRecord};
+use moa::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
+use moa::remote::manager::ConnectionManager;
+use moa::remote::testing::{FakeServer, FakeSession, fake_entry};
+use moa::remote::types::{RemoteEntry, RemotePath, SiteId, SiteRecord};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

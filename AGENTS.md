@@ -19,7 +19,7 @@
 - **Format**: `cargo fmt`
 
 ## 데이터 접근
-- **DB/스토어**: 없음 (설정은 `%APPDATA%\FileExplorer\settings.json` 로컬 파일 — 스키마 v3, v2는 승격해 읽는다)
+- **DB/스토어**: 없음 (설정은 `%APPDATA%\MOA\settings.json` 로컬 파일 — 스키마 v3, v2는 승격해 읽는다)
 - **비밀번호**: `%APPDATA%` 파일에 **DPAPI로 봉인해서만** 담는다 (`remote::secret`). 평문을 파일·로그·문서에 남기지 않는다
 
 ## 원격 기능 테스트
@@ -55,7 +55,7 @@
 
 ## 산출물·파일 관리
 - **빌드 산출물**: `target/` (gitignore)
-- **런타임 생성물**: `%APPDATA%\FileExplorer\settings.json` (설정·세션)
+- **런타임 생성물**: `%APPDATA%\MOA\settings.json` (설정·세션)
 
 ## Conventions
 - **아키텍처**: 계층형(단일 crate) — 모듈로만 분리 (ui / app / panel / fs). 의존은 단방향이며 `ui`만 상위다: `app`·`panel`·`fs`는 `ui`를 모른다. GUI 도구로 도메인 규칙이 얇아 crate 분리는 하지 않는다.

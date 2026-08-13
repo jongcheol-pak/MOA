@@ -1,4 +1,4 @@
-//! 세션 저장/복원 — %APPDATA%\FileExplorer\settings.json (FR-11·FR-20, plan D9·D18, NFR-7)
+//! 세션 저장/복원 — %APPDATA%\MOA\settings.json (FR-11·FR-20, plan D9·D18, NFR-7)
 //!
 //! 스키마 v3: v2 + {sites, queue[], dock} 이며 탭이 문자열에서 `TabSession{kind,path,site}`로
 //! 넓어졌다 (FR-44). v2 파일은 **승격**되어 그대로 살아난다(`promote_v2`) — 원격 쪽 필드는
@@ -11,7 +11,7 @@
 //! 손상·구버전(v1)·미래 version 파일은 전부 "세션 없음"으로 폴백한다 (사용자 결정: 마이그레이션 없음).
 use crate::app::layout::{SplitDir, TreeShape};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 현재 스키마 버전 — 필드가 바뀌면 올리고 하위 호환 처리를 추가한다 (D15).
 /// v1(워크스페이스 개념 이전) 파일은 폴백되어 기본 워크스페이스 1개로 시작한다
@@ -34,7 +34,9 @@ pub const SIDEBAR_MIN_WIDTH: i32 = 160;
 pub const SIDEBAR_MAX_WIDTH: i32 = 480;
 
 /// 저장 파일명을 품는 앱 폴더 (%APPDATA% 하위)
-const APP_DIR: &str = "FileExplorer";
+const APP_DIR: &str = "MOA";
+/// 앱 이름이 `FileExplorer`이던 시절의 폴더 — 처음 한 번 파일을 옮겨 오는 데만 쓴다
+const LEGACY_APP_DIR: &str = "FileExplorer";
 const FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -297,6 +299,30 @@ fn settings_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join(APP_DIR).join(FILE_NAME))
 }
 
+/// 앱 이름을 바꾸기 전 폴더에 있던 설정을 새 폴더로 **복사**해 온다.
+///
+/// 새 폴더에 이미 파일이 있으면 아무것도 하지 않는다 — 새 이름으로 한 번이라도 저장했으면
+/// 그쪽이 최신이다. 옛 파일은 지우지 않는다: 복사가 어긋나도 되돌릴 자리를 남긴다.
+/// 실패는 조용히 넘긴다(기본 레이아웃으로 뜰 뿐이다 — 저장 실패와 같은 규약)
+fn migrate_from_legacy_dir(path: &Path) {
+    if path.exists() {
+        return;
+    }
+    let Some(base) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let legacy = PathBuf::from(base).join(LEGACY_APP_DIR).join(FILE_NAME);
+    if !legacy.exists() {
+        return;
+    }
+    if let Some(dir) = path.parent()
+        && std::fs::create_dir_all(dir).is_err()
+    {
+        return;
+    }
+    let _ = std::fs::copy(&legacy, path);
+}
+
 /// 종료 시 저장 — 디렉터리가 없으면 생성. 실패는 조용히 생략 (T4 Edge: 디스크 풀 등 —
 /// 다음 실행은 이전/기본값으로 뜬다)
 pub fn save_session(session: &Session) {
@@ -314,7 +340,9 @@ pub fn save_session(session: &Session) {
 
 /// 시작 시 로드 — 없음/손상/버전 불일치/무결성 위반은 전부 None (기본 레이아웃 폴백)
 pub fn load_session() -> Option<Session> {
-    let text = std::fs::read_to_string(settings_path()?).ok()?;
+    let path = settings_path()?;
+    migrate_from_legacy_dir(&path);
+    let text = std::fs::read_to_string(path).ok()?;
     parse_session(&text)
 }
 

@@ -163,7 +163,7 @@ impl MainWindow {
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 WINDOW_CLASS,
-                w!("파일 탐색기"),
+                w!("MOA"),
                 // WS_CLIPCHILDREN: 자식(사이드바·패널)이 덮은 영역을 부모가 다시 칠하지 않게 한다.
                 // 없으면 사이드바 드래그 중 자식 이동마다 부모가 흰 배경으로 erase → 깜빡임
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
