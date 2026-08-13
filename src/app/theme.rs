@@ -105,6 +105,29 @@ pub fn disable_window_transitions(hwnd: HWND) {
     }
 }
 
+/// 창이 **아직 그리지 않은 자리**를 흰색 대신 앱 배경색으로 칠하게 한다.
+///
+/// 창 클래스의 기본 배경 브러시는 흰색이라, 창이 처음 표시되거나 크기가 바뀌어 GL이 아직
+/// 내보내지 않은 영역이 생기면 그 자리가 **흰 사각형으로 번쩍인다**(2026-08-13 실측:
+/// 최대화 복원 순간 약 60ms). 앱은 고정 다크라 브러시를 창 배경색으로 바꿔 두면
+/// 그 순간에도 색이 이어져 번쩍임이 보이지 않는다.
+///
+/// 브러시는 프로세스가 사는 동안 창 클래스가 들고 있어야 하므로 해제하지 않는다 —
+/// 창 하나짜리 앱에서 한 번 만들고 끝이며, 종료 시 OS가 거둔다.
+/// 기존 브러시도 지우지 않는다(시스템 소유일 수 있다)
+pub fn paint_unpainted_as_window_bg(hwnd: HWND) {
+    use windows::Win32::Graphics::Gdi::CreateSolidBrush;
+    use windows::Win32::UI::WindowsAndMessaging::{GCLP_HBRBACKGROUND, SetClassLongPtrW};
+    // 안전성: 유효한 최상위 창 핸들에 클래스 배경 브러시를 건다. 브러시는 앱 수명 동안 유효하며
+    // (해제하지 않는다) 실패해도 종전처럼 기본 브러시가 쓰일 뿐이라 동작에는 영향이 없다
+    unsafe {
+        let brush = CreateSolidBrush(WINDOW_BG);
+        if !brush.is_invalid() {
+            SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, brush.0 as isize);
+        }
+    }
+}
+
 /// 최상위 창 타이틀바를 다크로 전환한다.
 /// 미지원 OS(구버전 Windows)에서는 실패하지만 앱 동작에는 영향 없으므로 반환을 무시한다.
 pub fn apply_dark_titlebar(hwnd: HWND) {

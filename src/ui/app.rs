@@ -65,6 +65,12 @@ const DEFAULT_WINDOW: WindowState = WindowState {
     maximized: false,
 };
 
+/// 세션의 최대화 상태를 되살릴 때 명령을 다시 걸어 볼 프레임 수.
+///
+/// 보통 한두 프레임이면 걸린다. 그럼에도 세는 것은 명령이 먹지 않는 환경에서 **영영
+/// 창 크기를 저장하지 못하는 상태**로 남지 않기 위함이다 — 다 쓰면 평소 추적으로 돌아간다
+const MAXIMIZE_RETRY_FRAMES: u8 = 30;
+
 /// 셸 메뉴를 쓸 수 없을 때 화면에 보일 문구.
 /// 원인이 무엇이든 사용자가 할 수 있는 일은 재시작뿐이라 한 문구로 통일한다
 const SHELL_UNAVAILABLE: &str =
@@ -322,6 +328,14 @@ pub struct ExplorerApp {
     window: WindowState,
     /// 첫 프레임에 화면 안으로 보정할 복원 위치 — 모니터 크기는 창이 뜬 뒤에야 알 수 있다
     restore_window: Option<WindowState>,
+    /// 세션이 최대화였는데 아직 그 상태로 만들지 못했다면 **남은 시도 프레임 수**.
+    ///
+    /// **최대화는 창을 만들 때가 아니라 첫 프레임을 그린 뒤에 건다** — 창 생성 단계에서 걸면
+    /// winit가 `ShowWindow(SW_MAXIMIZE)`로 아직 그리지 않은 창을 드러내 흰 사각형이 번쩍인다
+    /// (`ui::window_start` 참조). 최대화가 실제로 걸릴 때까지는 관측한 사각형을 저장하지
+    /// 않는다 — 그러지 않으면 되돌릴 "일반 크기"가 작업 영역 크기로 덮인다.
+    /// 세어 두는 이유는 명령이 먹지 않는 환경에서도 **언젠가는 평소 추적으로 돌아가기** 위함이다
+    restoring_maximized: u8,
     /// 삭제 확인을 기다리는 워크스페이스 (FR-18).
     /// 인덱스가 아니라 id로 잡는다 — 확인 대화는 프레임을 넘겨 살아 있는데,
     /// 그 사이 순서가 바뀌면 인덱스는 다른 워크스페이스를 가리킨다 (D12 ①과 같은 이유)
@@ -385,6 +399,8 @@ impl ExplorerApp {
         // 최대화·복원 때 OS가 옛 화면과 새 화면을 겹쳐 페이드하면 글자가 이중으로 보인다 (FR-22)
         if let Some(shell) = &shell {
             crate::app::theme::disable_window_transitions(shell.hwnd());
+            // 아직 그리지 않은 자리가 흰색으로 번쩍이지 않게 한다 (창 표시·최대화 순간)
+            crate::app::theme::paint_unpainted_as_window_bg(shell.hwnd());
         }
         let (expand_tx, expand_rx) = std::sync::mpsc::channel();
         let repaint: Arc<dyn Fn() + Send + Sync> = {
@@ -405,6 +421,7 @@ impl ExplorerApp {
             sidebar_collapsed: false,
             window: DEFAULT_WINDOW,
             restore_window: None,
+            restoring_maximized: 0,
             pending_remove: None,
             // 워커가 소식을 올리면 창을 다시 그리게 한다 — 입력이 없으면 egui는 프레임을
             // 돌리지 않아, 이 신호가 없으면 목록이 사용자가 마우스를 움직일 때까지 안 나타난다
@@ -467,6 +484,11 @@ impl ExplorerApp {
         self.dock = DockState::from_session(&session.dock);
         self.sidebar_width = session.sidebar.width as f32;
         self.sidebar_collapsed = session.sidebar.collapsed;
+        self.restoring_maximized = if session.window.maximized {
+            MAXIMIZE_RETRY_FRAMES
+        } else {
+            0
+        };
         self.window = session.window.clone();
         self.restore_window = Some(session.window);
     }
@@ -613,6 +635,9 @@ impl ExplorerApp {
     /// 창 위치·크기를 따라간다. 최대화 중에는 갱신하지 않는다 —
     /// 그때의 사각형은 화면 전체라, 저장해 버리면 다음 실행에서 되돌릴 일반 크기가 사라진다.
     /// 복원 위치가 화면 밖이면(모니터 구성 변경) 첫 프레임에 화면 안으로 옮긴다.
+    ///
+    /// 세션이 최대화였다면 **여기서 비로소 최대화를 건다** — 창을 만들 때 걸면 아직 그리지
+    /// 않은 창이 드러나 흰 사각형이 번쩍인다(`ui::window_start` 참조)
     fn track_window(&mut self, ctx: &egui::Context) {
         let (rect, maximized, monitor) = ctx.input(|input| {
             let viewport = input.viewport();
@@ -622,6 +647,22 @@ impl ExplorerApp {
                 viewport.monitor_size,
             )
         });
+        // 최대화가 실제로 걸릴 때까지는 관측한 사각형도, 최대화 여부도 반영하지 않는다 —
+        // 그 사이의 창은 "작업 영역만 한 일반 창"이라, 그대로 받으면 되돌릴 일반 크기가 덮인다
+        if self.restoring_maximized > 0 {
+            if maximized {
+                self.restoring_maximized = 0;
+                self.window.maximized = true;
+            } else if ctx.cumulative_pass_nr() > 0 {
+                // **첫 프레임에는 걸지 않는다** — eframe은 첫 프레임을 그린 뒤에야 창을 보이게
+                // 하는데(glow_integration `post_rendering`), 그 전에 최대화를 걸면
+                // `ShowWindow(SW_MAXIMIZE)`가 아직 아무것도 그려지지 않은 창을 먼저 드러내
+                // 흰 사각형이 번쩍인다(2026-08-13 실측 — 이것이 이 결함의 두 번째 경로다)
+                self.restoring_maximized -= 1;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            }
+            return;
+        }
         self.window.maximized = maximized;
         if let Some(rect) = rect
             && !maximized
