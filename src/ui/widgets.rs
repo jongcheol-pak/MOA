@@ -517,9 +517,12 @@ const TOGGLE_PAD: f32 = 3.0;
 // 손잡이가 트랙 두께를 넘으면 위아래가 잘려 보인다. 값을 손볼 때 눈으로 확인하지 않아도
 // 되도록 **빌드 자체가 막는다** — 시험으로 두면 상수끼리의 비교라 clippy가 걷어낸다
 const _: () = assert!(TOGGLE_KNOB_R + TOGGLE_PAD <= TOGGLE_TRACK_H / 2.0);
-/// 꺼짐 상태의 트랙 채움 — 체크박스의 빈 상자(`WELL_BG`)보다 한 단계 밝다.
-/// 스위치는 상자와 달리 테두리만으로는 "눌러서 켜는 것"임이 드러나지 않아 면으로 보인다
-const TOGGLE_OFF_BG: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x3A);
+/// 꺼짐 상태의 트랙 채움 — 팔레트의 `BORDER_CONTROL`을 그대로 쓴다.
+///
+/// 스위치는 체크박스와 달리 테두리만으로는 "눌러서 켜는 것"임이 드러나지 않아 면으로 보이는데,
+/// 그 면은 배경(`WELL_BG`)보다 밝으면서 켜짐(`ACCENT`)과는 확실히 구분돼야 한다.
+/// **같은 값을 지역 상수로 다시 만들지 않는다** — 그러면 팔레트 정본이 갈려
+/// 나중에 한쪽만 바뀐다(`theme.rs`가 경계하는 상황)
 
 /// 손잡이 중심의 x 좌표 — 트랙 왼쪽 끝과 켜짐 여부로 정해진다.
 ///
@@ -574,7 +577,11 @@ pub fn toggle_row(ui: &mut egui::Ui, label: &str, on: bool) -> bool {
     painter.rect_filled(
         track,
         TOGGLE_TRACK_H / 2.0,
-        if on { theme::ACCENT } else { TOGGLE_OFF_BG },
+        if on {
+            theme::ACCENT
+        } else {
+            theme::BORDER_CONTROL
+        },
     );
     painter.circle_filled(
         egui::pos2(toggle_knob_x(track.left(), on), track.center().y),
@@ -787,6 +794,48 @@ mod tests {
         assert!(
             ((center - off) - (on - center)).abs() < f32::EPSILON,
             "좌우 여백이 다르다"
+        );
+    }
+
+    #[test]
+    fn 토글을_누르면_바뀜을_알린다() {
+        // Acceptance ① — 배선(`Sense::click()` → `.clicked()`)이 실제로 이어졌는지는
+        // 눈으로는 확인되지 않는다. 포인터 이벤트를 직접 넣어 반환값을 본다
+        fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }
+        }
+        fn frame(ctx: &egui::Context, time: f64, events: Vec<egui::Event>) -> bool {
+            let input = egui::RawInput {
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut toggled = false;
+            let _ = ctx.run_ui(input, |ui| {
+                toggled = toggle_row(ui, "닫기 시 트레이로", false);
+            });
+            toggled
+        }
+
+        let ctx = egui::Context::default();
+        // 첫 프레임에 위젯이 자리를 잡아야 그다음 클릭이 그 자리에 닿는다
+        assert!(
+            !frame(&ctx, 0.0, Vec::new()),
+            "그리기만 했는데 눌렸다고 한다"
+        );
+        let spot = egui::pos2(20.0, 20.0);
+        assert!(
+            !frame(&ctx, 0.05, vec![press(spot, true)]),
+            "누르는 중에 이미 바뀜을 알렸다"
+        );
+        assert!(
+            frame(&ctx, 0.10, vec![press(spot, false)]),
+            "손을 뗐는데 바뀜을 알리지 않았다"
         );
     }
 
