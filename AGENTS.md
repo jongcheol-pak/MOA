@@ -19,7 +19,8 @@
 - **Format**: `cargo fmt`
 
 ## 데이터 접근
-- **DB/스토어**: 없음 (설정은 `%APPDATA%\MOA\settings.json` 로컬 파일 — 스키마 v3, v2는 승격해 읽는다)
+- **DB/스토어**: 없음 (`%APPDATA%\MOA\settings.json` 로컬 파일 하나에 **세션 + 앱 설정**을 함께 담는다 — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
+- **레지스트리**: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`의 `MOA` 값이 **자동 실행 설정의 정본**이다 (설정 파일 값은 사본 — 다른 도구가 지웠을 수 있어 화면에 보일 때마다 다시 읽는다)
 - **비밀번호**: `%APPDATA%` 파일에 **DPAPI로 봉인해서만** 담는다 (`remote::secret`). 평문을 파일·로그·문서에 남기지 않는다
 
 ## 원격 기능 테스트

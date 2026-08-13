@@ -62,11 +62,10 @@ const FONT_SCANNING: &str = "글꼴 목록을 읽는 중…";
 const LABEL_AUTO_START: &str = "윈도우 시작 시 실행";
 /// 레지스트리 쓰기가 막힌 환경에서 보이는 안내 — 조용히 되돌리면 왜 안 켜지는지 알 수 없다
 const AUTO_START_FAILED: &str = "시작 프로그램 설정을 바꾸지 못했습니다";
+const LABEL_TRAY_ON_CLOSE: &str = "닫으면 트레이로 보내기";
 const LABEL_SHOW_EXTENSIONS: &str = "파일 확장명";
 const LABEL_SHOW_HIDDEN: &str = "숨김 항목";
 const BUTTON_CLOSE: &str = "닫기";
-/// 아직 항목이 붙지 않은 그룹의 자리 표시 — T5·T6·T7이 각자 채운다
-const PENDING_HINT: &str = "준비 중";
 
 /// 대화가 한 프레임에 만들어 낸 결과.
 ///
@@ -205,16 +204,16 @@ fn show_body(
     group_title(&mut body, GROUP_STARTUP, Divider::Draw);
     let startup = show_startup_group(&mut body, settings);
 
-    // 종료 — 트레이 전환 (T7)
+    // 종료 — 트레이 전환
     group_title(&mut body, GROUP_EXIT, Divider::Draw);
-    pending_hint(&mut body);
+    let exit = show_exit_group(&mut body, settings);
 
     // 파일 보기 — 확장명·숨김 항목
     group_title(&mut body, GROUP_FILES, Divider::Draw);
     let files = show_file_group(&mut body, settings);
 
     SettingsOutcome {
-        changed: font.changed || startup.changed || files.changed,
+        changed: font.changed || startup.changed || exit.changed || files.changed,
         font_changed: font.font_changed,
         notice: startup.notice,
     }
@@ -297,6 +296,19 @@ fn show_font_group(
 ///
 /// 그룹 하나를 따로 뗀 이유: 이 부분만 그려 시험할 수 있어야 **앞 그룹들이 채워질 때**
 /// 좌표가 밀려 시험이 엉뚱한 자리를 누르는 일이 없다
+/// `종료` 그룹 — 닫기를 눌렀을 때 트레이로 보낼지 (FR-50).
+///
+/// 켜면 트레이 아이콘이 **창이 떠 있는 동안에도** 올라온다 — 닫기를 누르기 전에
+/// "이 앱은 트레이로 간다"는 것을 알 수 있어야 한다
+fn show_exit_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
+    let mut outcome = SettingsOutcome::default();
+    if widgets::toggle_row(ui, LABEL_TRAY_ON_CLOSE, settings.tray_on_close) {
+        settings.tray_on_close = !settings.tray_on_close;
+        outcome.changed = true;
+    }
+    outcome
+}
+
 fn show_file_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::default();
     if widgets::toggle_row(ui, LABEL_SHOW_EXTENSIONS, settings.show_extensions) {
@@ -337,18 +349,6 @@ fn group_title(ui: &mut egui::Ui, text: &str, divider: Divider) {
         theme::TEXT_MUTED,
     );
     ui.add_space(GROUP_FONT_PX + GROUP_GAP_BOTTOM);
-}
-
-/// 아직 항목이 없는 그룹의 자리 — 빈 그룹 제목만 떠 있으면 고장으로 보인다
-fn pending_hint(ui: &mut egui::Ui) {
-    ui.painter().text(
-        egui::pos2(ui.cursor().left(), ui.cursor().top()),
-        egui::Align2::LEFT_TOP,
-        PENDING_HINT,
-        egui::FontId::proportional(widgets::FORM_FONT_PX),
-        theme::TEXT_DIM,
-    );
-    ui.add_space(widgets::FORM_FIELD_HEIGHT);
 }
 
 /// 푸터 — 오른쪽 끝 `닫기`. 눌렸으면 `true`
@@ -456,7 +456,7 @@ mod tests {
         }
 
         // **그룹 하나만 떼어 그린다** — `show_body` 전체를 그리면 앞 그룹 셋의 높이에
-        // 좌표가 딸려, T5~T7이 그 그룹을 채우는 순간 이 시험이 엉뚱한 자리를 누르게 된다
+        // 좌표가 딸려, 그 그룹의 줄 수가 바뀔 때마다 이 시험이 엉뚱한 자리를 누르게 된다
         let ctx = egui::Context::default();
         let mut settings = AppSettings::default();
         assert!(settings.show_extensions, "기본값이 바뀌었다");
@@ -485,5 +485,46 @@ mod tests {
             "토글을 눌렀는데 값이 뒤집히지 않았다"
         );
         assert!(settings.show_hidden, "누르지 않은 토글까지 바뀌었다");
+    }
+
+    #[test]
+    fn 트레이_토글을_누르면_값이_뒤집힌다() {
+        // FR-50 — 이 토글이 없으면 트레이 기능을 켤 방법이 없다
+        fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }
+        }
+
+        let ctx = egui::Context::default();
+        let mut settings = AppSettings::default();
+        assert!(!settings.tray_on_close, "기본값이 바뀌었다");
+
+        // 첫 프레임에 토글을 등록해 둔다 — egui는 지난 프레임의 배치로 눌린 곳을 가린다
+        let mut outcome = SettingsOutcome::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            outcome = show_exit_group(ui, &mut settings);
+        });
+        assert!(!outcome.changed, "누르지도 않았는데 바뀌었다고 한다");
+
+        let spot = egui::pos2(40.0, widgets::FORM_FIELD_HEIGHT / 2.0);
+        for (time, event) in [(0.05, press(spot, true)), (0.10, press(spot, false))] {
+            let input = egui::RawInput {
+                time: Some(time),
+                events: vec![event],
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                outcome = show_exit_group(ui, &mut settings);
+            });
+        }
+        assert!(outcome.changed, "토글을 눌렀는데 저장 신호가 서지 않았다");
+        assert!(
+            settings.tray_on_close,
+            "토글을 눌렀는데 값이 뒤집히지 않았다"
+        );
     }
 }
