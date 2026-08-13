@@ -68,9 +68,11 @@ pub struct FileListView {
     columns: Columns,
     /// 켤 수 있는 열(권한·소유자)의 표시 여부 — 원격 패널에서만 쓰인다 (FR-31)
     column_flags: ColumnFlags,
-    /// 폴더 개수 — 항목이 바뀔 때(`resort`) 한 번만 센다.
-    /// 프레임마다 다시 세면 10만 항목 폴더에서 그 비용이 매 프레임 붙는다 (NFR-3)
+    /// 폴더·파일 개수 — 항목이 바뀔 때(`resort`) 한 번만 센다.
+    /// 프레임마다 다시 세면 10만 항목 폴더에서 그 비용이 매 프레임 붙는다 (NFR-3).
+    /// 둘의 합이 줄 수와 다를 수 있다 — 상위 이동(`..`) 줄은 어느 쪽도 아니다
     dir_count: usize,
+    file_count: usize,
     /// 보기 모드 — 패널마다 독립이며 세션에 저장된다 (FR-23)
     view_mode: ViewMode,
 }
@@ -95,6 +97,7 @@ impl FileListView {
             columns: Columns::new(),
             column_flags: ColumnFlags::default(),
             dir_count: 0,
+            file_count: 0,
             view_mode: ViewMode::default(),
         }
     }
@@ -203,9 +206,10 @@ impl FileListView {
         self.model.is_empty()
     }
 
-    /// 폴더 수와 파일 수 — 목록 위 상태 줄에 쓴다
+    /// 폴더 수와 파일 수 — 목록 위 상태 줄에 쓴다.
+    /// 상위 이동(`..`) 줄은 실제 항목이 아니라 어느 쪽에도 세지 않는다
     pub fn counts(&self) -> (usize, usize) {
-        (self.dir_count, self.model.len() - self.dir_count)
+        (self.dir_count, self.file_count)
     }
 
     /// 선택된 항목들의 전체 경로 — 셸 컨텍스트 메뉴 대상 (FR-8)
@@ -218,6 +222,8 @@ impl FileListView {
         self.selection
             .iter()
             .filter_map(|&i| rows.get(i))
+            // 상위 이동은 대상이 아니다 — 셸 메뉴로 지우거나 복사할 것이 아니다
+            .filter(|e| !e.is_parent())
             .map(|e| self.dir.join(e.name_string()))
             .collect()
     }
@@ -255,7 +261,7 @@ impl FileListView {
         // 폴더 수는 여기서 센다 — 항목이 바뀌는 경로(`set_entries`)가 반드시 이 함수를 지나므로
         // 집계가 목록과 어긋날 수 없다. 정렬 때마다 다시 세지만 정렬은 사용자 클릭 시에만
         // 일어나고 비용도 이미 정렬(O(n log n))에 묻힌다
-        self.dir_count = match &mut self.model {
+        (self.dir_count, self.file_count) = match &mut self.model {
             ListModel::Local(rows) => sort_rows(rows, type_names, icon_indices, key, asc),
             ListModel::Remote(rows) => sort_rows(rows, type_names, icon_indices, key, asc),
         };
@@ -383,6 +389,8 @@ impl FileListView {
             ListModel::Local(rows) => indices
                 .iter()
                 .filter_map(|index| rows.get(*index))
+                // 상위 이동은 실을 것이 아니다 — 끌어다 놓으면 위 폴더째 옮기게 된다
+                .filter(|row| !row.is_parent())
                 .map(|row| DragItem::Local {
                     path: self.dir.join(row.name()),
                     is_dir: row.is_dir(),
@@ -395,6 +403,7 @@ impl FileListView {
                 indices
                     .iter()
                     .filter_map(|index| rows.get(*index))
+                    .filter(|row| !row.is_parent())
                     .map(|row| DragItem::Remote {
                         path: dir.join(&row.name()),
                         is_dir: row.is_dir(),
@@ -417,6 +426,8 @@ impl FileListView {
         self.selection
             .iter()
             .filter_map(|index| rows.get(*index))
+            // 상위 이동은 올릴 것이 아니다 — 위 폴더를 통째로 보내게 된다
+            .filter(|row| !row.is_parent())
             .map(|row| (self.dir.join(row.name()), row.is_dir()))
             .collect()
     }
@@ -432,7 +443,7 @@ impl FileListView {
             .iter()
             .filter_map(|index| rows.get(*index))
             // 상위 이동은 대상이 아니다 — 지우거나 이름을 바꿀 것이 아니다
-            .filter(|row| row.name() != "..")
+            .filter(|row| !row.is_parent())
             .map(|row| RemoteTarget {
                 path: dir.join(&row.name()),
                 is_dir: row.is_dir(),
@@ -465,14 +476,14 @@ fn restore_selection<R: ListRow>(rows: &[R], keep: &HashSet<Vec<u16>>) -> BTreeS
 }
 
 /// 정렬 — 항목·종류 문자열·아이콘 인덱스를 함께 옮겨 인덱스 짝이 어긋나지 않게 한다.
-/// 돌려주는 값은 폴더 수다
+/// 돌려주는 값은 (폴더 수, 파일 수)이며 상위 이동(`..`) 줄은 어느 쪽에도 세지 않는다
 fn sort_rows<R: ListRow>(
     rows: &mut Vec<R>,
     type_names: &mut Vec<String>,
     icon_indices: &mut Vec<Option<i32>>,
     key: SortKey,
     ascending: bool,
-) -> usize {
+) -> (usize, usize) {
     let mut zipped: Vec<(R, String, Option<i32>)> = rows
         .drain(..)
         .zip(type_names.drain(..))
@@ -487,16 +498,21 @@ fn sort_rows<R: ListRow>(
             if ascending { ord } else { ord.reverse() }
         }
     });
-    let mut dir_count = 0;
+    let (mut dir_count, mut file_count) = (0, 0);
     for (row, type_name, icon) in zipped {
-        if row.is_dir() {
-            dir_count += 1;
+        // 상위 이동 줄은 세지 않는다 — 이 폴더에 실제로 든 것이 아니다
+        if !row.is_parent() {
+            if row.is_dir() {
+                dir_count += 1;
+            } else {
+                file_count += 1;
+            }
         }
         rows.push(row);
         type_names.push(type_name);
         icon_indices.push(icon);
     }
-    dir_count
+    (dir_count, file_count)
 }
 
 /// 그리기에 필요한 것들 — 모델 종류마다 같은 것을 넘기므로 한 묶음으로 든다
@@ -828,6 +844,36 @@ mod tests {
         assert!(v.entry_at(0).is_none());
         v.selection.insert(0);
         assert!(v.selected_paths().is_empty());
+    }
+
+    #[test]
+    fn 상위_이동_줄은_세지도_고르지도_않는다() {
+        // 로컬 목록의 `..`는 이 폴더에 든 것이 아니다 — 개수에서 빠지고, 골라도
+        // 셸 메뉴·올리기·끌기의 대상이 되지 않는다(위 폴더째 지우거나 옮기게 된다)
+        let mut v = view(vec![
+            (entry("..", true, 0, 0), "파일 폴더"),
+            (entry("docs", true, 0, 0), "파일 폴더"),
+            (entry("a.txt", false, 10, 0), "텍스트"),
+        ]);
+        assert_eq!(names(&v), vec!["..", "docs", "a.txt"]);
+        assert_eq!(v.counts(), (1, 1), "상위 이동 줄까지 세고 있다");
+
+        v.dir = PathBuf::from(r"C:\Users\Public");
+        v.selection.insert(0);
+        assert!(
+            v.selected_paths().is_empty(),
+            "셸 메뉴 대상에 `..`가 들었다"
+        );
+        assert!(v.selected_local().is_empty(), "올리기 대상에 `..`가 들었다");
+        assert!(v.drag_items(0, None).is_empty(), "끌기에 `..`가 실렸다");
+
+        // 함께 고른 실제 항목은 그대로 대상이다
+        v.selection.insert(2);
+        assert_eq!(
+            v.selected_paths(),
+            vec![PathBuf::from(r"C:\Users\Public\a.txt")]
+        );
+        assert_eq!(v.drag_items(0, None).len(), 1);
     }
 
     #[test]

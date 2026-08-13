@@ -484,7 +484,12 @@ fn cell_text<R: ListRow>(entry: &R, type_name: &str, kind: ColumnKind) -> String
             }
         }
         ColumnKind::Type => type_name.to_owned(),
-        ColumnKind::Modified => format_filetime(entry.modified_key()),
+        // 시각을 모르는 줄(상위 이동 `..`·서버가 시각을 주지 않은 항목)은 빈칸이다 —
+        // 0을 그대로 옮기면 FILETIME의 기점인 `1601-01-01`이 진짜 날짜인 양 보인다
+        ColumnKind::Modified => match entry.modified_key() {
+            0 => String::new(),
+            ticks => format_filetime(ticks),
+        },
         // 서버가 주지 않았으면 빈칸이다 — 없는 값을 지어내지 않는다 (plan Edge Case)
         ColumnKind::Permissions => entry.permissions().unwrap_or_default(),
         ColumnKind::Owner => entry.owner().unwrap_or_default().to_owned(),

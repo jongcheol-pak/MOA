@@ -308,6 +308,74 @@ fn 원격_목록의_첫_줄은_언제나_상위_이동이다() {
     assert_eq!(with_parent_first(Vec::new()).len(), 1);
 }
 
+/// 로컬 항목 하나 — 이름은 널 종단 UTF-16이라는 불변식을 지켜 만든다
+fn local_entry(name: &str, is_dir: bool) -> FileEntry {
+    FileEntry {
+        name: name.encode_utf16().chain(std::iter::once(0)).collect(),
+        is_dir,
+        size: 0,
+        modified: 0,
+    }
+}
+
+#[test]
+fn 로컬_목록에도_상위_이동_줄이_붙는다() {
+    // 사용자 보고(2026-08-13): 원격 목록에는 `..`가 있는데 로컬 목록에는 없었다
+    let 보통_폴더 = with_local_parent_first(
+        Path::new(r"C:\Program Files"),
+        vec![local_entry("Android", true), local_entry("a.txt", false)],
+    );
+    let names: Vec<String> = 보통_폴더.iter().map(|e| e.name_string()).collect();
+    assert_eq!(names, vec!["..", "Android", "a.txt"]);
+
+    // 드라이브 루트에는 올라갈 곳이 없다 — 눌러도 아무 일 없는 줄을 두지 않는다
+    let 루트 = with_local_parent_first(Path::new(r"C:\"), vec![local_entry("Windows", true)]);
+    let names: Vec<String> = 루트.iter().map(|e| e.name_string()).collect();
+    assert_eq!(names, vec!["Windows"]);
+
+    // 열거가 `..`를 함께 주더라도 둘이 되지 않는다
+    let 중복 = with_local_parent_first(
+        Path::new(r"C:\Users"),
+        vec![local_entry("..", true), local_entry("Public", true)],
+    );
+    let names: Vec<String> = 중복.iter().map(|e| e.name_string()).collect();
+    assert_eq!(names, vec!["..", "Public"]);
+}
+
+#[test]
+fn 로컬_상위_이동을_더블클릭하면_위_폴더로_간다() {
+    let ctx = egui::Context::default();
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    // 열거 결과가 도착한 것처럼 커밋시킨다 — 목록을 채우는 실제 경로를 그대로 지난다
+    panel.start_load(
+        std::path::PathBuf::from(r"C:\Users\Public"),
+        PendingNav::Push,
+        &ctx,
+    );
+    panel.apply_enumerated(
+        EnumOutcome::Ok(vec![local_entry("Documents", true)]),
+        &mut icons,
+    );
+
+    let names: Vec<String> = match panel.list.model() {
+        crate::ui::file_list::ListModel::Local(rows) => {
+            rows.iter().map(|e| e.name_string()).collect()
+        }
+        crate::ui::file_list::ListModel::Remote(_) => Vec::new(),
+    };
+    assert_eq!(names, vec!["..", "Documents"], "첫 줄이 상위 이동이 아니다");
+    assert_eq!(
+        panel.list.counts(),
+        (1, 0),
+        "상위 이동 줄을 폴더로 세면 개수가 실제와 달라진다"
+    );
+
+    // 첫 줄을 더블클릭하면 위 폴더를 읽으러 간다 — `C:\Users\Public\..`이 아니다
+    panel.handle_list_action(FileListAction::Open(0), &ctx);
+    assert_eq!(panel.pending_dir, std::path::PathBuf::from(r"C:\Users"));
+}
+
 #[test]
 fn 원격_탭에서는_로컬_전용_작업이_일어나지_않는다() {
     // 열거·감시·썸네일·새 파일은 로컬에만 있는 일이다 (plan T9 ②)

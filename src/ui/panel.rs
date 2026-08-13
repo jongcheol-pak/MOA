@@ -8,10 +8,11 @@
 //!
 //! 워커 스레드에 맡기는 일(열거·만들기)은 `workers`가, 테스트는 `tests`가 든다.
 use crate::fs::create;
-use crate::fs::enumerate::EnumOutcome;
+use crate::fs::enumerate::{EnumOutcome, FileEntry};
 use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
+use crate::panel::file_list::{ListRow, PARENT_ENTRY};
 use crate::panel::tabs::{CloseOutcome, TabPhase, TabSource, TabState, TabsModel};
 use crate::remote::connection::{ConnCommand, ConnectionId};
 use crate::remote::manager::ConnectionManager;
@@ -408,6 +409,8 @@ impl PanelState {
                 }
                 // 감시 대상도 이 시점에 맞춘다 — 커밋된 폴더만 감시한다(열거 실패한 곳은 아니다)
                 self.watch(&dir);
+                // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
+                let entries = with_local_parent_first(&dir, entries);
                 self.list.set_entries(dir, entries, icons);
             }
             // 실패해도 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋)
@@ -942,6 +945,13 @@ impl PanelState {
                 }
                 let entry = self.list.entry_at(index)?;
                 let dir = self.tabs.active().source.local_path()?;
+                // 첫 줄(`..`)은 위 폴더로 간다. `dir.join("..")`을 그대로 넘기지 않는 이유는
+                // 그 경로가 정리되지 않은 채 주소창·히스토리에 그대로 남기 때문이다
+                if entry.is_parent() {
+                    let parent = dir.parent()?.to_path_buf();
+                    self.navigate(parent, ctx);
+                    return None;
+                }
                 let target = dir.join(entry.name_string());
                 if entry.is_dir {
                     self.navigate(target, ctx);
@@ -1307,9 +1317,6 @@ impl PanelState {
     }
 }
 
-/// 원격 목록의 상위 이동 항목 이름 — 만드는 곳과 해석하는 곳이 같은 값을 쓴다
-const PARENT_ENTRY: &str = "..";
-
 /// 원격 목록의 첫 줄을 언제나 상위 이동(`..`)으로 맞춘다.
 ///
 /// 서버·프로토콜에 따라 `..`를 주기도 하고 안 주기도 한다 — 그대로 두면 같은 조작이
@@ -1331,5 +1338,30 @@ fn with_parent_first(entries: Vec<RemoteEntry>) -> Vec<RemoteEntry> {
             .into_iter()
             .filter(|entry| entry.name != PARENT_ENTRY),
     );
+    out
+}
+
+/// 로컬 목록에도 상위 이동(`..`) 줄을 얹는다 — 원격 목록과 같은 자리, 같은 조작이다.
+///
+/// **드라이브 루트(`C:\`)에서는 얹지 않는다** — 올라갈 곳이 없는데 줄만 있으면 눌러도
+/// 아무 일이 없는 항목이 된다(원격은 서버 루트에서도 `..`를 주는 곳이 있어 그대로 두지만,
+/// 로컬은 위가 있는지 여기서 곧바로 알 수 있다).
+/// 열거는 `.`·`..`을 이미 걸러 내지만, 두 벌이 되지 않게 여기서도 한 번 더 거른다
+fn with_local_parent_first(dir: &Path, entries: Vec<FileEntry>) -> Vec<FileEntry> {
+    if dir.parent().is_none() {
+        return entries;
+    }
+    let mut out = Vec::with_capacity(entries.len() + 1);
+    out.push(FileEntry {
+        // `FileEntry.name`은 널 종단 UTF-16이라는 불변식을 지킨다 — 정렬이 그 형태를 요구한다
+        name: PARENT_ENTRY
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect(),
+        is_dir: true,
+        size: 0,
+        modified: 0,
+    });
+    out.extend(entries.into_iter().filter(|entry| !entry.is_parent()));
     out
 }

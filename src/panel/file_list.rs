@@ -504,6 +504,11 @@ pub fn compare_entries(
     compare_rows(a, type_a, b, type_b, key)
 }
 
+/// 목록 맨 위의 상위 이동 줄 이름 — 로컬·원격이 같은 값을 쓴다.
+///
+/// 만드는 곳(`ui::panel`)과 해석하는 곳(선택·개수·드래그 제외)이 갈라져 있어 한 자리에 둔다
+pub const PARENT_ENTRY: &str = "..";
+
 /// 목록 한 줄이 정렬·표시에 내주어야 하는 것 (plan T7).
 ///
 /// 로컬(`fs::enumerate::FileEntry`)과 원격(`remote::types::RemoteEntry`)은 이름·시각을 담는
@@ -522,6 +527,14 @@ pub trait ListRow {
     /// 널 종단 UTF-16을 받으므로 여기서 그 형태로 내준다. 로컬 항목은 이미 그 모양이라
     /// 빌려주고, 원격 항목만 그때 만든다
     fn name_sort_key(&self) -> std::borrow::Cow<'_, [u16]>;
+
+    /// 상위 이동(`..`) 줄인가 — 실제 항목이 아니므로 **선택·개수·끌기에서 빠진다**.
+    ///
+    /// 기본 구현은 표시 이름을 만들어 견준다. 이름을 UTF-16으로 든 로컬 항목은 문자열을
+    /// 새로 만들지 않도록 따로 구현한다(10만 항목 폴더에서 매 정렬마다 도는 자리다 — NFR-3)
+    fn is_parent(&self) -> bool {
+        self.name() == PARENT_ENTRY
+    }
 
     fn is_dir(&self) -> bool;
 
@@ -567,6 +580,11 @@ impl ListRow for FileEntry {
     fn name_sort_key(&self) -> std::borrow::Cow<'_, [u16]> {
         // 이미 널 종단 UTF-16이라 그대로 빌려준다
         std::borrow::Cow::Borrowed(&self.name)
+    }
+
+    /// 널 종단 UTF-16 `..`과 곧바로 견준다 — 표시용 문자열을 만들지 않는다
+    fn is_parent(&self) -> bool {
+        self.name == [b'.' as u16, b'.' as u16, 0]
     }
 
     fn is_dir(&self) -> bool {
