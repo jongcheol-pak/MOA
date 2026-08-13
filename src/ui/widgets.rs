@@ -506,6 +506,84 @@ pub fn check_row(ui: &mut egui::Ui, label: &str, checked: bool) -> bool {
         .clicked()
 }
 
+// ── 토글 스위치 (설정 화면 — FR-47) ──
+
+/// 스위치 트랙의 가로·세로. 세로가 곧 트랙의 지름이라 이 값이 둥글기를 정한다
+const TOGGLE_TRACK_W: f32 = 36.0;
+const TOGGLE_TRACK_H: f32 = 20.0;
+/// 손잡이 반지름 — 트랙 안쪽에 여백(`TOGGLE_PAD`)을 남기고 들어간다
+const TOGGLE_KNOB_R: f32 = 7.0;
+const TOGGLE_PAD: f32 = 3.0;
+/// 꺼짐 상태의 트랙 채움 — 체크박스의 빈 상자(`WELL_BG`)보다 한 단계 밝다.
+/// 스위치는 상자와 달리 테두리만으로는 "눌러서 켜는 것"임이 드러나지 않아 면으로 보인다
+const TOGGLE_OFF_BG: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x3A);
+
+/// 손잡이 중심의 x 좌표 — 트랙 왼쪽 끝과 켜짐 여부로 정해진다.
+///
+/// 그리기와 떼어 둔 이유: 위치 계산은 눈으로 확인하기 어려운데 시험으로는 쉽게 고정된다
+fn toggle_knob_x(track_left: f32, on: bool) -> f32 {
+    if on {
+        track_left + TOGGLE_TRACK_W - TOGGLE_PAD - TOGGLE_KNOB_R
+    } else {
+        track_left + TOGGLE_PAD + TOGGLE_KNOB_R
+    }
+}
+
+/// 라벨 + 오른쪽 끝 on/off 스위치 한 줄 (FR-47). 눌렸으면 `true`.
+///
+/// 체크박스(`check_row`)가 아니라 스위치인 것은 요청 문구가 "on/off 토글 버튼"이기
+/// 때문이다. 높이·글꼴·글자색은 `check_row`와 같은 값을 써서 같은 폼 안에서 줄이 어긋나지 않는다.
+///
+/// **비활성 상태를 두지 않는다** — 설정 화면의 토글은 전부 항상 누를 수 있다(plan Edge Case).
+/// 조건부로 잠기는 항목이 생기면 그때 `enabled` 인자를 더한다
+pub fn toggle_row(ui: &mut egui::Ui, label: &str, on: bool) -> bool {
+    let row_width = ui.available_width().max(TOGGLE_TRACK_W);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(row_width, FORM_FIELD_HEIGHT),
+        egui::Sense::click(),
+    );
+
+    // 라벨이 길면 스위치를 밀어내지 않고 말줄임한다 — 스위치는 오른쪽 끝 고정이다
+    let label_width = (rect.width() - TOGGLE_TRACK_W - FORM_GAP).max(0.0);
+    let mut job = egui::text::LayoutJob::simple(
+        label.to_owned(),
+        egui::FontId::proportional(FORM_FONT_PX),
+        theme::TEXT,
+        label_width,
+    );
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let text = ui.painter().layout_job(job);
+
+    let track = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.right() - TOGGLE_TRACK_W,
+            rect.center().y - TOGGLE_TRACK_H / 2.0,
+        ),
+        egui::vec2(TOGGLE_TRACK_W, TOGGLE_TRACK_H),
+    );
+    let painter = ui.painter();
+    painter.galley(
+        egui::pos2(rect.left(), rect.center().y - text.size().y / 2.0),
+        text,
+        theme::TEXT,
+    );
+    painter.rect_filled(
+        track,
+        TOGGLE_TRACK_H / 2.0,
+        if on { theme::ACCENT } else { TOGGLE_OFF_BG },
+    );
+    painter.circle_filled(
+        egui::pos2(toggle_knob_x(track.left(), on), track.center().y),
+        TOGGLE_KNOB_R,
+        egui::Color32::WHITE,
+    );
+
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
 /// 값을 ▲▼로 올리고 내리는 필드 (인벤토리 #81).
 ///
 /// 값은 **범위 안으로 클램프**해 돌려준다 — 화살표를 계속 눌러도 밖으로 나가지 않는다.
@@ -685,6 +763,55 @@ fn display_text(value: &str, masked: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 토글_손잡이는_켜짐_꺼짐에_따라_트랙_양끝에_붙는다() {
+        let left = 100.0;
+        let off = toggle_knob_x(left, false);
+        let on = toggle_knob_x(left, true);
+        assert!(off < on, "켜면 손잡이가 오른쪽으로 가야 한다");
+        // 양쪽 모두 트랙 안에 완전히 들어가야 한다 — 원이 테두리를 넘으면 잘려 보인다
+        assert!(
+            off - TOGGLE_KNOB_R >= left,
+            "꺼짐 손잡이가 트랙 왼쪽을 넘었다"
+        );
+        assert!(
+            on + TOGGLE_KNOB_R <= left + TOGGLE_TRACK_W,
+            "켜짐 손잡이가 트랙 오른쪽을 넘었다"
+        );
+        // 두 상태가 트랙 중심을 기준으로 대칭이어야 좌우 여백이 같아 보인다
+        let center = left + TOGGLE_TRACK_W / 2.0;
+        assert!(
+            ((center - off) - (on - center)).abs() < f32::EPSILON,
+            "좌우 여백이 다르다"
+        );
+    }
+
+    #[test]
+    fn 토글_손잡이는_트랙_두께_안에_들어간다() {
+        // 세로로도 넘치지 않아야 한다 — 트랙 반지름보다 손잡이가 크면 위아래가 잘린다
+        assert!(
+            TOGGLE_KNOB_R + TOGGLE_PAD <= TOGGLE_TRACK_H / 2.0 + f32::EPSILON,
+            "손잡이 반지름 {TOGGLE_KNOB_R} + 여백 {TOGGLE_PAD}이 트랙 반지름을 넘는다"
+        );
+    }
+
+    #[test]
+    fn 토글_줄은_폼_행_높이를_쓴다() {
+        // 같은 대화 안에서 드롭다운·체크박스와 줄 높이가 어긋나면 항목이 들쭉날쭉해 보인다
+        let ctx = egui::Context::default();
+        let mut allocated = 0.0;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            // `cursor()` 차이는 항목 사이 간격(`item_spacing`)까지 포함하므로
+            // 이 줄이 실제로 차지한 높이는 `min_rect`로 잰다
+            toggle_row(ui, "윈도우 시작 시 실행", false);
+            allocated = ui.min_rect().height();
+        });
+        assert_eq!(
+            allocated, FORM_FIELD_HEIGHT,
+            "토글 줄 높이가 폼 기준과 다르다"
+        );
+    }
 
     #[test]
     fn 마스킹은_글자_수만큼_원문자를_만든다() {
