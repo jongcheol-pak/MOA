@@ -521,6 +521,27 @@ pub trait ListRow {
     /// 표시용 이름
     fn name(&self) -> String;
 
+    /// 목록에 그릴 이름 — `show_extensions`가 꺼져 있으면 확장자를 뗀다 (FR-52).
+    ///
+    /// **`name()`을 대신하지 않는다**: 경로 조립(`dir.join(name)`)·정렬 키·선택 복원은
+    /// 여전히 원래 이름을 써야 한다. 잘린 이름으로 경로를 만들면 파일 실행과 셸 메뉴가
+    /// 통째로 깨진다 (D7). 그래서 **그리는 자리만** 이 메서드를 쓴다.
+    ///
+    /// 폴더·`..`·앞이 빈 이름(`.gitignore`)·끝이 점인 이름(`a.`)은 확장자 개념이
+    /// 없어 그대로 둔다
+    fn display_name(&self, show_extensions: bool) -> String {
+        let name = self.name();
+        if show_extensions || self.is_dir() || self.is_parent() {
+            return name;
+        }
+        match name.rsplit_once('.') {
+            // 앞이 비면 확장자가 아니라 이름 자체이고(`.gitignore`),
+            // 뒤가 비면 잘라도 얻는 게 없다(`a.`)
+            Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() => stem.to_owned(),
+            _ => name,
+        }
+    }
+
     /// **정렬용 널 종단 UTF-16 이름.**
     ///
     /// 이름 비교는 탐색기와 같은 `StrCmpLogicalW`로 한다("파일2" < "파일10") — 그 API가
@@ -925,6 +946,75 @@ mod tests {
         assert_eq!(
             compare_rows(&dir, "", &file, "", SortKey::Modified),
             std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn 확장자를_끄면_이름만_보인다() {
+        // 켜져 있으면 손대지 않는다
+        assert_eq!(
+            entry("보고서.hwp", false, 0, 0).display_name(true),
+            "보고서.hwp"
+        );
+        // 일반 파일만 확장자가 떨어진다
+        assert_eq!(
+            entry("보고서.hwp", false, 0, 0).display_name(false),
+            "보고서"
+        );
+        // 폴더는 점이 있어도 이름의 일부다
+        assert_eq!(entry("v1.2", true, 0, 0).display_name(false), "v1.2");
+        // 상위 이동 줄을 건드리면 목록 맨 위가 깨진다
+        assert_eq!(entry("..", true, 0, 0).display_name(false), "..");
+        // 확장자가 없으면 그대로
+        assert_eq!(entry("README", false, 0, 0).display_name(false), "README");
+        // 앞이 비면 확장자가 아니라 이름 자체다
+        assert_eq!(
+            entry(".gitignore", false, 0, 0).display_name(false),
+            ".gitignore"
+        );
+        // 점만 있는 이름·끝이 점인 이름은 잘라도 얻는 게 없다
+        assert_eq!(entry(".", false, 0, 0).display_name(false), ".");
+        assert_eq!(entry("a.", false, 0, 0).display_name(false), "a.");
+        // 확장자가 여러 겹이면 마지막 것만 뗀다
+        assert_eq!(entry("a.tar.gz", false, 0, 0).display_name(false), "a.tar");
+    }
+
+    #[test]
+    fn 원격_항목도_같은_규칙으로_확장자를_뗀다() {
+        // 화면이 프로토콜마다 다르면 안 된다 (FR-52)
+        assert_eq!(
+            remote("보고서.hwp", false, 0, None).display_name(true),
+            "보고서.hwp"
+        );
+        assert_eq!(
+            remote("보고서.hwp", false, 0, None).display_name(false),
+            "보고서"
+        );
+        assert_eq!(remote("v1.2", true, 0, None).display_name(false), "v1.2");
+        assert_eq!(remote("..", true, 0, None).display_name(false), "..");
+        assert_eq!(
+            remote("README", false, 0, None).display_name(false),
+            "README"
+        );
+        assert_eq!(
+            remote(".bashrc", false, 0, None).display_name(false),
+            ".bashrc"
+        );
+    }
+
+    #[test]
+    fn 확장자를_꺼도_정렬은_원래_이름으로_한다() {
+        // 표시만 바뀌어야 한다 — 정렬 키가 잘린 이름을 쓰면 순서가 달라진다 (D7)
+        let a = entry("파일2.txt", false, 0, 0);
+        let b = entry("파일10.txt", false, 0, 0);
+        assert_eq!(
+            compare_entries(&a, "", &b, "", SortKey::Name),
+            std::cmp::Ordering::Less
+        );
+        // 정렬 키는 확장자를 포함한 원본이다
+        assert_eq!(
+            a.name_sort_key().as_ref(),
+            "파일2.txt ".encode_utf16().collect::<Vec<u16>>().as_slice()
         );
     }
 }

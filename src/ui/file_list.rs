@@ -75,6 +75,8 @@ pub struct FileListView {
     file_count: usize,
     /// 보기 모드 — 패널마다 독립이며 세션에 저장된다 (FR-23)
     view_mode: ViewMode,
+    /// 이름 뒤 확장자를 보일지 (FR-52) — 앱 설정에서 매 프레임 받는다(패널마다 다르지 않다)
+    show_extensions: bool,
 }
 
 impl Default for FileListView {
@@ -99,10 +101,19 @@ impl FileListView {
             dir_count: 0,
             file_count: 0,
             view_mode: ViewMode::default(),
+            show_extensions: true,
         }
     }
 
     /// 지금 쓰는 보기 모드 — 메뉴의 현재 표시와 세션 저장에 쓴다
+    /// 앱 설정의 표시 규칙을 받는다 (FR-52) — 패널마다 다르지 않으므로 매 프레임 넘겨받는다.
+    ///
+    /// 목록이 스스로 설정을 읽지 않는 이유: `panel`·`ui::file_list`는 앱 설정을 모르는 층이고,
+    /// 여기서 읽게 하면 그 의존이 목록 전체로 번진다
+    pub fn set_show_extensions(&mut self, show: bool) {
+        self.show_extensions = show;
+    }
+
     pub fn view_mode(&self) -> ViewMode {
         self.view_mode
     }
@@ -342,6 +353,7 @@ impl FileListView {
             thumbnails,
             visible,
             local_paths: model.is_local(),
+            show_extensions: self.show_extensions,
         };
         let outcome = match model {
             ListModel::Local(rows) => render_rows(ui, rows, request, icons, textures),
@@ -539,6 +551,8 @@ struct RenderRequest<'a> {
     thumbnails: &'a ThumbnailTextures,
     visible: &'a mut Vec<PathBuf>,
     local_paths: bool,
+    /// 이름 뒤 확장자를 보일지 (FR-52)
+    show_extensions: bool,
 }
 
 /// 이번 프레임에 그리고 돌려받은 것 — 상태 반영은 호출부가 한다
@@ -579,6 +593,7 @@ fn render_rows<R: ListRow>(
                 is_remote: !request.local_paths,
                 column_flags: request.column_flags,
                 local_paths: request.local_paths,
+                show_extensions: request.show_extensions,
             },
             icons,
             textures,
@@ -604,6 +619,7 @@ fn render_rows<R: ListRow>(
                 thumbnails: request.thumbnails,
                 visible: request.visible,
                 local_paths: request.local_paths,
+                show_extensions: request.show_extensions,
             },
             icons,
             textures,
@@ -939,5 +955,28 @@ mod tests {
         assert!(v.selected_paths().is_empty());
         assert_eq!(v.counts(), (0, 0));
         assert_eq!(v.len(), 0);
+    }
+
+    #[test]
+    fn 경로_조립은_확장자를_뗀_이름을_쓰지_않는다() {
+        // **규약: `display_name()`은 그리는 자리에만** (D7). 경로를 잘린 이름으로 만들면
+        // 확장자를 끈 순간 파일 실행·셸 메뉴·끌어놓기가 통째로 깨진다.
+        // 소스를 훑어 경로 조립 줄에 그 메서드가 들어오는 것을 막는다
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut 발견 = Vec::new();
+        for name in ["list_details.rs", "list_grid.rs", "file_list.rs"] {
+            let source = std::fs::read_to_string(dir.join(name)).expect("소스");
+            // 시험 코드는 제외한다 — 이 검사 자신이 두 낱말을 한 줄에 담는다
+            let 본문 = match source.split_once("mod tests") {
+                Some((앞, _)) => 앞,
+                None => &source,
+            };
+            for (번호, 줄) in 본문.lines().enumerate() {
+                if 줄.contains(".join(") && 줄.contains("display_name") {
+                    발견.push(format!("{name}:{}: {}", 번호 + 1, 줄.trim()));
+                }
+            }
+        }
+        assert!(발견.is_empty(), "경로를 표시용 이름으로 만든다: {발견:?}");
     }
 }

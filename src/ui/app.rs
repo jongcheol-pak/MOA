@@ -31,7 +31,7 @@ use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::{self, DragItem, DropOutcome, DropTarget};
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
-use crate::ui::panel::{PanelState, RemoteAction};
+use crate::ui::panel::{DisplayRules, PanelState, RemoteAction};
 use crate::ui::queue_panel::{self, QueueAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
@@ -2313,6 +2313,10 @@ impl eframe::App for ExplorerApp {
                             sites: &self.sites,
                             connected: &connected,
                             tree: &self.tree_cache,
+                        },
+                        DisplayRules {
+                            show_extensions: self.settings.show_extensions,
+                            show_hidden: self.settings.show_hidden,
                         },
                     );
                     menu = outcome.menu;

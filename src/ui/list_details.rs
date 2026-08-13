@@ -253,6 +253,8 @@ pub struct DetailsInput<'a, R: ListRow> {
     /// 항목이 로컬 파일인가. 원격이면 **전체 경로로 하는 일**(셸 아이콘 정밀 조회)을 하지 않는다 —
     /// 원격 이름을 로컬 경로에 이어 붙이면 있지도 않은 파일을 셸에 묻게 된다 (D11)
     pub local_paths: bool,
+    /// 이름 뒤 확장자를 보일지 (FR-52) — 표시에만 쓴다(경로·정렬은 원래 이름)
+    pub show_extensions: bool,
 }
 
 /// 이번 프레임에 일어난 조작 — 목록 상태 변경은 호출부가 한다
@@ -288,6 +290,7 @@ pub fn show<R: ListRow>(
     let row_count = input.entries.len();
     let DetailsInput {
         dir,
+        show_extensions,
         entries,
         type_names,
         icon_indices,
@@ -419,7 +422,7 @@ pub fn show<R: ListRow>(
 
             let painter = ui.painter();
             for (slot, kind) in visible.iter().enumerate() {
-                let text = cell_text(entry, &type_names[index], *kind);
+                let text = cell_text(entry, &type_names[index], *kind, show_extensions);
                 // 이름 열만 아이콘 자리를 비켜 시작한다
                 let leading = if *kind == ColumnKind::Name {
                     NAME_X
@@ -470,11 +473,17 @@ pub fn show<R: ListRow>(
 ///
 /// **심볼릭 링크는 이름 뒤에 `→ 대상`이 붙는다** (FR-31·README §3) — 링크인지 아닌지가
 /// 목록에서 드러나야 지우거나 옮길 때 실수하지 않는다
-fn cell_text<R: ListRow>(entry: &R, type_name: &str, kind: ColumnKind) -> String {
+fn cell_text<R: ListRow>(
+    entry: &R,
+    type_name: &str,
+    kind: ColumnKind,
+    show_extensions: bool,
+) -> String {
     match kind {
         ColumnKind::Name => match entry.link_target() {
-            Some(target) => format!("{} → {target}", entry.name()),
-            None => entry.name(),
+            // 확장자를 뗀 이름 뒤에 링크 대상을 붙인다 — 대상은 서버가 준 경로라 그대로 둔다
+            Some(target) => format!("{} → {target}", entry.display_name(show_extensions)),
+            None => entry.display_name(show_extensions),
         },
         ColumnKind::Size => {
             if entry.is_dir() {
@@ -842,34 +851,40 @@ mod tests {
         link.is_symlink = true;
         link.link_target = Some("/releases/2026-08".to_owned());
         assert_eq!(
-            cell_text(&link, "링크", ColumnKind::Name),
+            cell_text(&link, "링크", ColumnKind::Name, true),
             "current → /releases/2026-08"
         );
 
         // 링크가 아니면 이름만 나온다
         let plain = remote_entry("app.log", None, None);
-        assert_eq!(cell_text(&plain, "로그", ColumnKind::Name), "app.log");
+        assert_eq!(cell_text(&plain, "로그", ColumnKind::Name, true), "app.log");
     }
 
     #[test]
     fn 권한을_주지_않는_서버의_칸은_비어_있다() {
         // plan Edge Case — `0o777` 같은 기본값을 지어내면 화면이 서버가 하지 않은 말을 한다
         let 없음 = remote_entry("a.txt", None, None);
-        assert_eq!(cell_text(&없음, "텍스트", ColumnKind::Permissions), "");
-        assert_eq!(cell_text(&없음, "텍스트", ColumnKind::Owner), "");
+        assert_eq!(
+            cell_text(&없음, "텍스트", ColumnKind::Permissions, true),
+            ""
+        );
+        assert_eq!(cell_text(&없음, "텍스트", ColumnKind::Owner, true), "");
 
         let 있음 = remote_entry("a.txt", Some(0o755), Some("deploy"));
         assert_eq!(
-            cell_text(&있음, "텍스트", ColumnKind::Permissions),
+            cell_text(&있음, "텍스트", ColumnKind::Permissions, true),
             "rwxr-xr-x"
         );
-        assert_eq!(cell_text(&있음, "텍스트", ColumnKind::Owner), "deploy");
+        assert_eq!(
+            cell_text(&있음, "텍스트", ColumnKind::Owner, true),
+            "deploy"
+        );
     }
 
     #[test]
     fn 소유자가_숫자_uid만_있어도_그대로_보인다() {
         // plan Edge Case — 서버가 이름을 안 주면 숫자가 곧 소유자다
         let entry = remote_entry("a.txt", None, Some("1000"));
-        assert_eq!(cell_text(&entry, "텍스트", ColumnKind::Owner), "1000");
+        assert_eq!(cell_text(&entry, "텍스트", ColumnKind::Owner, true), "1000");
     }
 }

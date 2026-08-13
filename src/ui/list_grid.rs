@@ -49,6 +49,8 @@ pub struct GridInput<'a, R: ListRow> {
     /// 항목이 로컬 파일인가. 원격이면 **전체 경로로 하는 일**(썸네일 요청·셸 아이콘 정밀 조회)을
     /// 하지 않는다 — 원격은 썸네일 비대상이고, 이름을 로컬 경로에 이어 붙이면 없는 파일을 묻게 된다 (D11)
     pub local_paths: bool,
+    /// 이름 뒤 확장자를 보일지 (FR-52)
+    pub show_extensions: bool,
 }
 
 /// 이번 프레임에 일어난 조작 — 목록 상태 변경은 호출부가 한다
@@ -74,6 +76,7 @@ pub fn show<R: ListRow>(
     let mut outcome = GridOutcome::default();
     let ctx = ui.ctx().clone();
     let GridInput {
+        show_extensions,
         dir,
         entries,
         icon_indices,
@@ -174,8 +177,11 @@ pub fn show<R: ListRow>(
                 ui,
                 cell,
                 mode,
-                entry,
-                &type_names[index],
+                CellItem {
+                    entry,
+                    type_name: &type_names[index],
+                    show_extensions,
+                },
                 texture,
                 font.clone(),
             );
@@ -223,6 +229,17 @@ fn resolve_icon<R: ListRow>(
     }
 }
 
+/// 칸 하나에 그릴 항목.
+///
+/// 낱개로 넘기면 그리기 함수의 인자가 계속 늘어난다 — 셋 다 "무엇을 그리나"에
+/// 속하므로 묶어 둔다 (배치는 `cell`·`mode`, 그리기 자원은 `texture`·`font`)
+struct CellItem<'a, R> {
+    entry: &'a R,
+    /// 형식 이름 — 셸에 물어 얻은 값이라 항목만으로는 알 수 없다
+    type_name: &'a str,
+    show_extensions: bool,
+}
+
 /// 칸 하나를 그린다 — 아이콘과 이름의 배치는 흐름에 따라 갈린다.
 ///
 /// 가로로 흐르는 큰 아이콘들은 **아이콘 위·이름 아래**(가운데 정렬)로 놓고,
@@ -231,17 +248,22 @@ fn draw_cell<R: ListRow>(
     ui: &mut egui::Ui,
     cell: egui::Rect,
     mode: ViewMode,
-    entry: &R,
-    type_name: &str,
+    item: CellItem<'_, R>,
     texture: Option<egui::TextureId>,
     font: egui::FontId,
 ) {
     let icon_px = mode.icon_px();
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     if matches!(mode, ViewMode::Tiles | ViewMode::Content) {
-        draw_multiline_cell(ui, cell, mode, entry, type_name, texture, font);
+        draw_multiline_cell(ui, cell, mode, item, texture, font);
         return;
     }
+    // 형식 이름은 여러 줄 칸에서만 쓴다 — 위에서 이미 넘겼다
+    let CellItem {
+        entry,
+        show_extensions,
+        ..
+    } = item;
     if is_single_row(mode) {
         let icon_rect = egui::Rect::from_min_size(
             egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
@@ -253,7 +275,7 @@ fn draw_cell<R: ListRow>(
         let text_left = icon_rect.right() + ROW_ICON_GAP;
         let galley = elided_galley_rows(
             ui.painter(),
-            entry.name(),
+            entry.display_name(show_extensions),
             font,
             (cell.right() - CELL_PAD_X - text_left).max(0.0),
             1,
@@ -276,7 +298,13 @@ fn draw_cell<R: ListRow>(
     }
     // 이름은 아이콘 아래, 두 줄까지 (plan 시각 속성 표)
     let text_width = (cell.width() - CELL_PAD_X * 2.0).max(0.0);
-    let galley = elided_galley_rows(ui.painter(), entry.name(), font, text_width, GRID_NAME_ROWS);
+    let galley = elided_galley_rows(
+        ui.painter(),
+        entry.display_name(show_extensions),
+        font,
+        text_width,
+        GRID_NAME_ROWS,
+    );
     let text_x = cell.center().x - galley.size().x / 2.0;
     ui.painter().galley(
         egui::pos2(text_x, icon_rect.bottom() + ICON_TEXT_GAP),
@@ -295,11 +323,15 @@ fn draw_multiline_cell<R: ListRow>(
     ui: &mut egui::Ui,
     cell: egui::Rect,
     mode: ViewMode,
-    entry: &R,
-    type_name: &str,
+    item: CellItem<'_, R>,
     texture: Option<egui::TextureId>,
     font: egui::FontId,
 ) {
+    let CellItem {
+        entry,
+        type_name,
+        show_extensions,
+    } = item;
     let icon_px = mode.icon_px();
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     let icon_rect = egui::Rect::from_min_size(
@@ -321,7 +353,7 @@ fn draw_multiline_cell<R: ListRow>(
         let meta_left = (cell.right() - CELL_PAD_X - CONTENT_META_WIDTH).max(text_left);
         let name = elided_galley_rows(
             ui.painter(),
-            entry.name(),
+            entry.display_name(show_extensions),
             font.clone(),
             (meta_left - ROW_ICON_GAP - text_left).max(0.0),
             1,
@@ -337,7 +369,11 @@ fn draw_multiline_cell<R: ListRow>(
     }
 
     // 타일 — 이름·종류·크기 세 줄
-    let lines = [entry.name(), type_name.to_owned(), size_text];
+    let lines = [
+        entry.display_name(show_extensions),
+        type_name.to_owned(),
+        size_text,
+    ];
     let width = (cell.right() - CELL_PAD_X - text_left).max(0.0);
     draw_stacked(ui, &lines, text_left, cell, font, width);
 }
@@ -442,6 +478,7 @@ mod tests {
                     icon_indices: &mut icon_indices,
                     selection: &selection,
                     type_names: &type_names,
+                    show_extensions: true,
                     mode,
                     thumbnails: &textures,
                     visible: &mut visible,
@@ -506,6 +543,7 @@ mod tests {
                     icon_indices: &mut icon_indices,
                     selection: &selection,
                     type_names: &type_names,
+                    show_extensions: true,
                     mode: ViewMode::MediumIcons,
                     thumbnails: &textures,
                     visible: &mut visible,
@@ -672,6 +710,7 @@ mod tests {
                     icon_indices: &mut icon_indices,
                     selection: &selection,
                     type_names: &type_names,
+                    show_extensions: true,
                     mode: ViewMode::LargeIcons,
                     thumbnails: &textures,
                     visible: &mut visible,
