@@ -145,16 +145,23 @@ pub unsafe fn uninit_com(com: ComStatus) {
 /// 보장하려면 `ctx.request_repaint()`를 함께 부른다
 pub fn install_fonts(ctx: &egui::Context, family: Option<&str>) -> bool {
     let mut fonts = egui::FontDefinitions::default();
+    // 고른 글꼴은 face 인덱스까지 함께 온다 — 모음 글꼴(굴림·바탕 등)은 파일 하나에
+    // 여러 글꼴이 들어 있어 인덱스가 없으면 언제나 첫 번째만 나온다
     let picked = family.and_then(crate::app::fonts::load_font);
-    let bytes = match picked {
-        Some(bytes) => Ok(bytes),
-        None => std::fs::read(KOREAN_FONT_PATH),
+    let loaded = match picked {
+        Some(font) => Some((font.bytes, font.index)),
+        // 기본 글꼴(맑은 고딕)은 단일 파일이라 인덱스가 0이다
+        None => std::fs::read(KOREAN_FONT_PATH).ok().map(|bytes| (bytes, 0)),
     };
-    let korean = match bytes {
-        Ok(bytes) => {
+    let korean = match loaded {
+        Some((bytes, index)) => {
             fonts.font_data.insert(
                 "malgun".to_owned(),
-                Arc::new(egui::FontData::from_owned(bytes)),
+                Arc::new(egui::FontData {
+                    font: bytes.into(),
+                    index,
+                    tweak: Default::default(),
+                }),
             );
             // 기본 폰트보다 앞에 두어 한글이 우선 매칭되게 한다
             fonts
@@ -169,7 +176,7 @@ pub fn install_fonts(ctx: &egui::Context, family: Option<&str>) -> bool {
                 .push("malgun".to_owned());
             true
         }
-        Err(_) => false,
+        None => false,
     };
     // 아이콘 글꼴은 exe에 정적으로 담겨 있어 실패 경로가 없다 — 한글 글꼴 성공 여부와 무관하게 등록한다
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);

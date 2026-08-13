@@ -83,10 +83,14 @@ impl FontScan {
 /// 등록 검증에 쓰는 `egui::Context`는 화면 것과 **별개**다 — 여기서 `set_fonts`를 아무리
 /// 불러도 사용자가 보는 글꼴은 바뀌지 않는다
 fn usable_fonts() -> Vec<String> {
+    // 카탈로그를 **한 번만** 만들어 돈다 — 글꼴마다 폴더를 다시 훑으면 파일 160여 개를
+    // 그 횟수만큼 읽어 1분이 넘는다(실측)
+    let catalog = fonts::FontCatalog::scan();
     let probe = egui::Context::default();
-    fonts::installed_korean_fonts()
+    catalog
+        .korean_names()
         .into_iter()
-        .filter(|name| draws_hangul(&probe, name))
+        .filter(|name| draws_hangul(&probe, &catalog, name))
         .collect()
 }
 
@@ -94,14 +98,18 @@ fn usable_fonts() -> Vec<String> {
 ///
 /// 폭이 0이면 글리프를 찾지 못한 것이다 — 바이트는 멀쩡한데 egui의 글꼴 파서가
 /// 읽지 못하는 경우가 실재한다(실측: `D2Coding`)
-fn draws_hangul(ctx: &egui::Context, name: &str) -> bool {
-    let Some(bytes) = fonts::load_font(name) else {
+fn draws_hangul(ctx: &egui::Context, catalog: &fonts::FontCatalog, name: &str) -> bool {
+    let Some(font) = catalog.load(name) else {
         return false;
     };
     let mut definitions = egui::FontDefinitions::empty();
     definitions.font_data.insert(
         PROBE_SLOT.to_owned(),
-        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        std::sync::Arc::new(egui::FontData {
+            font: font.bytes.into(),
+            index: font.index,
+            tweak: Default::default(),
+        }),
     );
     definitions
         .families
@@ -163,20 +171,25 @@ mod tests {
     fn 목록의_모든_글꼴은_한글을_그린다() {
         // T5 Acceptance — 목록에 있는데 고르면 두부(□)가 되는 글꼴이 없어야 한다.
         // `app::fonts`의 목록은 "읽히는 것"까지이고, 여기서 "그려지는 것"으로 좁힌다
+        let catalog = fonts::FontCatalog::scan();
         let probe = egui::Context::default();
         let usable = usable_fonts();
         assert!(!usable.is_empty(), "쓸 수 있는 글꼴이 하나도 없다");
         for name in &usable {
             assert!(
-                draws_hangul(&probe, name),
+                draws_hangul(&probe, &catalog, name),
                 "{name}으로 한글이 그려지지 않는다"
             );
         }
         // 읽히지만 그려지지 않는 글꼴은 걸러졌어야 한다
-        let readable = fonts::installed_korean_fonts();
         assert!(
-            usable.len() <= readable.len(),
+            usable.len() <= catalog.korean_names().len(),
             "거르고 났더니 오히려 늘었다"
+        );
+        // 모음 글꼴이 살아 있어야 한다 — 파일 직접 읽기로 바꾼 이유가 이것이다
+        assert!(
+            usable.iter().any(|name| name == "굴림"),
+            "모음 글꼴이 걸러졌다"
         );
     }
 

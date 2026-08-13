@@ -78,7 +78,7 @@
 | 3 | 트레이 우클릭 메뉴를 만들 수 있다 | 같은 crate `UI/WindowsAndMessaging/mod.rs:405 CreatePopupMenu`·`:35 AppendMenuW`·`:2377 TrackPopupMenu`·`:2142 SetForegroundWindow`. feature `Win32_UI_WindowsAndMessaging` 활성 | ✅ |
 | 4 | 자동 실행을 관리자 권한 없이 등록할 수 있다 | 같은 crate `System/Registry/mod.rs:84 RegCreateKeyExW`·`:626 RegSetValueExW`·`:211 RegDeleteValueW`·`:489 RegQueryValueExW`. feature `Win32_System_Registry`가 이미 켜져 있다(현재는 구조체 정의 용도로만 쓰인다는 주석 — `Cargo.toml`) | ✅ |
 | 5 | 설치된 글꼴 중 **한글 지원분만** 열거할 수 있다 | 같은 crate `Graphics/Gdi/mod.rs:614 EnumFontFamiliesExW`·`:5653 LOGFONTW`·`:4569 ENUMLOGFONTEXW`. `LOGFONTW.lfCharSet`에 `HANGUL_CHARSET`을 넣으면 그 문자셋을 가진 글꼴만 콜백된다. feature `Win32_Graphics_Gdi` 활성 | ✅ |
-| 6 | 글꼴 **이름만 알아도 바이트를 얻을 수 있다** (egui는 파일이 아니라 바이트를 요구) | 같은 crate `Graphics/Gdi/mod.rs:207 CreateCompatibleDC`·`:309 CreateFontIndirectW`·`:1756 SelectObject`·`:1000 GetFontData`. `GetFontData(hdc, 0, 0, None, 0)`로 크기를 얻고 다시 불러 버퍼를 채우면 TTF/OTF 원본 바이트가 나온다 — 레지스트리에서 파일 경로를 뒤질 필요가 없다. **단 GDI는 없는 이름을 조용히 대체하므로** `GetTextFaceW`(`:1293`)로 실제 선택된 이름을 확인하는 것이 함께 필요하다(T4 Edge Cases) | ✅ |
+| 6 | ~~글꼴 **이름만 알아도 바이트를 얻을 수 있다**~~ **→ 모음 글꼴에서 거짓 (2026-08-13 실측)** | 같은 crate `Graphics/Gdi/mod.rs:207 CreateCompatibleDC`·`:309 CreateFontIndirectW`·`:1756 SelectObject`·`:1000 GetFontData`. `GetFontData(hdc, 0, 0, None, 0)`로 크기를 얻고 다시 불러 버퍼를 채우면 TTF/OTF 원본 바이트가 나온다 — 레지스트리에서 파일 경로를 뒤질 필요가 없다. GDI가 준 바이트는 **단일 글꼴에서만** 유효하다 — 모음 글꼴(TTC)에서는 40바이트 어긋난 데이터가 와 파서가 읽지 못한다. 그래서 D3을 C(파일 직접 읽기)로 바꿨다 | ❌ 실측으로 부정됨 |
 | 7 | 글꼴을 런타임에 바꿀 수 있다 | `egui-0.35.0/src/context.rs:2038 set_fonts` — `&self`라 프레임 중에도 부를 수 있고, 기존 주석("두 번 부르면 뒤엣것이 앞엣것을 덮어쓴다", `ui/app.rs:135`)대로 **덮어쓰기가 곧 교체 수단**이다. **단 반영은 다음 pass부터다** — 같은 파일 `:2036` 문서주석이 "The new fonts will become active at the start of the next pass"라고 못박고, 구현(`:2049-2051`)도 `mem.new_font_definitions`에 넣어 둘 뿐이다 | ✅ (반영 시점 = 다음 프레임) |
 | 8 | 단일 인스턴스를 이름 있는 뮤텍스로 판정할 수 있다 | 같은 crate `System/Threading/mod.rs:301 CreateMutexW`. feature `Win32_System_Threading` 활성(변경 감시가 이미 쓴다) | ✅ |
 | 9 | 트레이 콜백 메시지를 받을 창 프로시저가 이미 있다 | `src/ui/shell_host.rs:91-104` `shell_menu_proc`가 서브클래스로 설치돼 있고 미처리 메시지를 `DefSubclassProc`에 넘긴다 — 메시지 번호를 하나 더 처리하면 된다. **번호는 `WM_APP+2` 이상을 쓴다** — `WM_APP+1`은 `fs/enumerate.rs:16 WM_APP_ENUM_DONE`이 이미 쓴다 | ✅ |
@@ -173,11 +173,13 @@
 - **Rationale**: `parse_session`은 버전이 다르면 **통째로 폴백**한다(워크스페이스·탭이 전부 날아간다). 필드 추가만으로는 기존 파일을 읽는 데 문제가 없어 종전 확장(열 폭·보기 모드)도 버전을 올리지 않았다. 올리면 승격 코드를 쓰는 값 없는 비용만 든다.
 - **Source**: `src/app/settings.rs:1-8`(모듈 주석), 전제 10
 
-### D3. 글꼴 바이트를 어떻게 얻는가
-- **Options**: A) `GetFontData`(GDI에 글꼴을 선택하고 원본 테이블을 뽑음) / B) 레지스트리 `HKLM\...\Fonts`에서 이름→파일명을 찾아 `C:\Windows\Fonts\<파일>`을 읽음 / C) 글꼴 폴더 전체를 훑어 이름을 파싱
-- **Chosen**: A
-- **Rationale**: B는 레지스트리 값 이름이 `맑은 고딕 & 맑은 고딕 Semilight (TrueType)`처럼 표시 이름과 다르게 적혀 매칭이 어긋나고, 사용자별 설치 글꼴(`HKCU`)과 패키지 글꼴은 경로 규칙이 또 다르다. C는 전 파일을 파싱해야 한다. A는 OS가 이미 해결한 이름→글꼴 해석을 그대로 쓴다.
-- **Source**: 전제 6
+### D3. 글꼴 바이트를 어떻게 얻는가 — **2026-08-13 실측으로 A → C 변경 (사용자 승인)**
+- **Options**: A) `GetFontData`(GDI에 글꼴을 선택하고 원본 테이블을 뽑음) / B) 레지스트리 `HKLM\...\Fonts`에서 이름→파일명을 찾아 읽음 / C) 글꼴 폴더를 훑어 파일 안의 `name` 테이블에서 이름을 읽음
+- **Chosen**: **C** (처음엔 A였다)
+- **Rationale**: **A는 모음 글꼴(TTC)에서 깨진 데이터를 준다** — 굴림은 파일이 13,533,424바이트인데 `GetFontData`는 13,533,384바이트(40바이트 적다)를 주고, 헤더만 단일 글꼴 모양으로 바꾸면서 내부 테이블 오프셋은 원본 기준으로 남겨 글꼴 파서가 읽지 못한다. 그 결과 **굴림·굴림체·돋움·돋움체·바탕·궁서가 전부 목록에서 빠졌다**(93개 중 58개만 남음). 매직 넘버(`0x00010000`)만 보고 파싱까지 확인하지 않은 것이 T4의 오판이었다.
+  **B는 여전히 불가**하다 — 레지스트리 값 이름이 실제로 **영문**(`Gulim & GulimChe & Dotum & DotumChe (TrueType)` → `gulim.ttc`)인데 화면에 보여야 하는 이름은 한글(`굴림`)이라 짝지을 수 없다(실측 확인).
+  **C를 택한다**: 글꼴 폴더(시스템 + 사용자)를 훑어 각 파일의 `name` 테이블에서 그 글꼴이 스스로 밝히는 한국어 이름(languageID 0x0412, 없으면 영어 0x0409)을 읽는다. 모음 글꼴은 face 인덱스를 함께 얻어 `egui::FontData.index`에 넣는다. 파일마다 이름표만 seek해 읽으므로 전체를 메모리에 올리지 않는다. **한글 지원 판정은 GDI 열거(`HANGUL_CHARSET`, 1ms)에 그대로 맡긴다** — OS가 이미 판정한 것을 다시 계산할 이유가 없다.
+- **Source**: 2026-08-13 실측(파일 크기 대조·레지스트리 값 확인), 사용자 승인
 
 ### D4. 닫기를 어떻게 가로채는가
 - **Options**: A) `close_requested()` 감지 → `CancelClose` + `Visible(false)` / B) 타이틀바 `✕` 핸들러에서 `ViewportCommand::Close`를 안 보내고 숨김만
