@@ -1385,10 +1385,12 @@ impl ExplorerApp {
             self.tray = None;
             return;
         }
-        let Some(shell) = self.shell.as_ref() else {
-            return;
-        };
-        self.tray = Tray::add(shell.hwnd());
+        // 창 핸들이 없으면(다른 백엔드·headless) 아이콘을 올릴 수 없다 —
+        // 조용히 넘기면 토글은 켜져 있는데 아이콘이 영영 뜨지 않는다
+        self.tray = self
+            .shell
+            .as_ref()
+            .and_then(|shell| Tray::add(shell.hwnd()));
         if self.tray.is_none() {
             // 아이콘을 못 올렸으면 토글을 되돌린다 — 켜져 있다고 보이는데 아이콘이
             // 없으면 닫기를 눌렀을 때 앱을 되살릴 방법이 사라진다
@@ -1407,6 +1409,8 @@ impl ExplorerApp {
                 // `Shown`에 할 일이 아직 없는 것은 창을 숨기는 기능(T8)이 들어오기
                 // 전이기 때문이다 — 그때 이 자리에서 숨김 상태를 내린다
                 TrayEvent::Shown => {}
+                // 탐색기가 되살아나 아이콘이 사라졌다 — 비워 두면 다음 `sync_tray`가 다시 올린다
+                TrayEvent::Recreated => self.tray = None,
                 // 메뉴 `종료` — 평소 닫기와 같은 길로 보낸다(세션 저장이 그 길에 있다)
                 TrayEvent::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }

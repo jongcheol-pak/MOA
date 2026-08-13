@@ -20,10 +20,11 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
-    HICON, ICONINFO, IsIconic, MF_STRING, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP, WM_LBUTTONDBLCLK, WM_RBUTTONUP,
+    HICON, ICONINFO, IsIconic, MF_STRING, RegisterWindowMessageW, SW_RESTORE, SW_SHOW,
+    SetForegroundWindow, ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP,
+    WM_LBUTTONDBLCLK, WM_RBUTTONUP,
 };
-use windows::core::HSTRING;
+use windows::core::{HSTRING, w};
 
 /// 트레이가 창에 보내는 메시지 — **`WM_APP + 1`은 `fs::enumerate`가 이미 쓴다**
 pub const TRAY_CALLBACK: u32 = WM_APP + 2;
@@ -48,6 +49,21 @@ pub enum TrayEvent {
     Shown,
     /// 앱을 끝내 달라 (메뉴 `종료`)
     Quit,
+    /// 알림 영역이 다시 만들어졌다 — 아이콘을 **다시 올려야 한다** (FR-50 Edge Case).
+    ///
+    /// 탐색기(`explorer.exe`)가 죽었다 살아나면 그때까지 올려 둔 아이콘이 전부 사라진다.
+    /// 다시 올리지 않으면 사용자는 재부팅 전까지 트레이로 앱을 부를 수 없다
+    Recreated,
+}
+
+/// 알림 영역이 새로 만들어졌음을 알리는 메시지 번호.
+///
+/// 이 번호는 고정값이 아니라 **시스템이 이름으로 배정**한다(`RegisterWindowMessageW`) —
+/// 한 번 얻어 두고 창 프로시저가 매 메시지마다 견준다
+fn taskbar_created_message() -> u32 {
+    static ID: OnceLock<u32> = OnceLock::new();
+    // 안전성: 문자열 상수로 메시지를 등록한다. 같은 이름이면 시스템이 같은 번호를 준다
+    *ID.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
 }
 
 /// 창 프로시저가 앱과 이어지는 통로.
@@ -176,6 +192,11 @@ fn load_icon() -> Option<HICON> {
 /// # 안전성
 /// 창 프로시저 안에서만 부른다 — `hwnd`가 우리 창이어야 한다
 pub(crate) unsafe fn handle_callback(hwnd: HWND, msg: u32, lparam: LPARAM) -> bool {
+    // 탐색기가 되살아났다 — 사라진 아이콘을 다시 올려야 한다
+    if msg != 0 && msg == taskbar_created_message() {
+        notify(TrayEvent::Recreated);
+        return false; // 다른 곳도 이 통지를 봐야 하므로 삼키지 않는다
+    }
     if msg != TRAY_CALLBACK {
         return false;
     }
@@ -289,6 +310,17 @@ mod tests {
         unsafe {
             let _ = DestroyIcon(icon);
         }
+    }
+
+    #[test]
+    fn 탐색기_재시작_메시지_번호를_얻는다() {
+        // 시스템이 이름으로 배정하는 번호다 — 0이면 등록에 실패한 것이고,
+        // 그러면 탐색기가 되살아나도 아이콘을 다시 올리지 못한다
+        let id = taskbar_created_message();
+        assert_ne!(id, 0, "TaskbarCreated 메시지를 등록하지 못했다");
+        // 같은 이름은 언제나 같은 번호를 받는다
+        assert_eq!(id, taskbar_created_message());
+        assert_ne!(id, TRAY_CALLBACK, "트레이 콜백과 번호가 겹친다");
     }
 
     #[test]

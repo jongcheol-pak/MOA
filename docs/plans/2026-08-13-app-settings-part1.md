@@ -330,7 +330,7 @@
   - **Acceptance**: Given `종료` 그룹의 토글이 켜진 상태, When 앱이 실행 중이면, Then 트레이에 MOA 아이콘이 **창이 떠 있는 동안에도** 보이고 마우스를 올리면 `MOA` 툴팁이 뜬다. 토글을 끄면 아이콘이 즉시 사라진다. **정상 종료 시** `Drop`이 `NIM_DELETE`를 보내 아이콘이 즉시 사라진다(강제 종료 시 남는 유령 아이콘은 OS가 마우스 접촉 때 정리하는 영역이라 이 task의 판정 대상이 아니다). 아이콘 우클릭 시 `실행`·`종료` 두 항목의 메뉴가 뜬다.
   - **Files**:
     - 주: `src/ui/tray.rs`(신규), `src/ui/mod.rs`
-    - 동반: `src/ui/shell_host.rs`(`shell_menu_proc:91` — 트레이 콜백 갈래 + `new:31`의 `dwRefData`에 `TrayContext` 싣기 + `Drop`에서 회수), `src/ui/app.rs`(`Tray` 소유·`Quit` 폴링)
+    - 동반: `src/ui/app_icon.rs`(`ICO_BYTES`를 `pub`으로 — 트레이가 같은 그림을 쓴다), `src/ui/shell_host.rs`(`shell_menu_proc:91` — 트레이 콜백 갈래 + `new:31`의 `dwRefData`에 `TrayContext` 싣기 + `Drop`에서 회수), `src/ui/app.rs`(`Tray` 소유·`Quit` 폴링)
     - 테스트: `src/ui/tray.rs`(`mod tests` — 마우스 메시지 코드(`WM_LBUTTONDBLCLK`·`WM_RBUTTONUP`)→동작 분류, 메뉴 항목 ID→`TrayEvent` 매핑. 실제 아이콘 등록은 HWND가 필요해 테스트 비대상)
   - **Edge Cases**: 탐색기(explorer.exe) 재시작 → `TaskbarCreated` 등록 메시지를 받아 아이콘을 다시 등록한다 / 프로세스가 비정상 종료해 유령 아이콘이 남음 → `NOTIFYICONDATAW`에 `uVersion`을 설정하고 `Drop`에서 `NIM_DELETE`, 그래도 남는 경우는 OS가 마우스 접촉 시 정리한다 / 우클릭 메뉴가 뜬 채 포커스를 잃음 → `SetForegroundWindow`를 메뉴 표시 전에 부른다(Win32 관례) / 아이콘 리소스를 못 읽음 → 트레이 기능을 조용히 끄지 말고 토글을 되돌린다
   - **Halt Forecast**:
