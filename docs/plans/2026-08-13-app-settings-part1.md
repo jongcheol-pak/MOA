@@ -246,7 +246,7 @@
     - (i) "버전을 올려야 하는가" → D2에서 확정(올리지 않는다)
   - **Depends on**: -
 
-- [ ] **T2. 토글 스위치 위젯**
+- [x] **T2. 토글 스위치 위젯**
   - **Type**: C
   - **Design**: ① `src/ui/widgets.rs`에 더한다(폼 부품이 모여 있는 곳). ② 신규 심볼 — `toggle_row(ui, label, on) -> bool`(라벨 + 우측 정렬 스위치 한 줄, 눌리면 `true`). ③ `theme`·기존 `FORM_*` 상수를 참조하고, 설정 화면이 이것을 쓴다. ④ 이번에 추상화하지 않을 것: 애니메이션 상태 머신·제네릭 값 바인딩을 두지 않는다(`check_row`와 같이 즉시 값·즉시 반환).
   - **Acceptance**: Given `toggle_row(ui, "라벨", false)`, When 스위치를 클릭하면, Then `true`를 반환한다. 높이는 `FORM_FIELD_HEIGHT`, 글꼴 크기는 `FORM_FONT_PX`, 글자색은 `theme::TEXT`로 `check_row`와 일치한다. 아이콘 글꼴 규약 테스트(`화면_코드에_원본_아이콘_기호가_남아_있지_않다`)가 그대로 통과한다.
@@ -445,6 +445,14 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T1-T2 완료 (커밋 cd9d661 + T2 완료 커밋): 앱 설정 스키마(`AppSettings`·`LanguageSetting`)를 세션에 더하고, 설정 화면이 쓸 on/off 토글 위젯(`widgets::toggle_row`)을 만들었다. 빌드·627 테스트·clippy·fmt 전부 통과.
+  - 결정: 세션 스키마 버전은 **v3 유지** — 올리면 `parse_session`이 통째로 폴백해 기존 워크스페이스가 초기화된다 (D2 그대로).
+  - 결정: 앱 설정은 `to_session`이 아니라 `ExplorerApp::collect_session`이 싣는다 — `to_session`에 인자를 더하면 그 함수의 책임이 흐려지고 테스트 호출부 7곳이 함께 바뀐다.
+  - **함정(spec 리뷰가 실험으로 잡음)**: `#[serde(default)]`는 **키가 없을 때만** 기본값을 준다. 값이 있는데 타입이 어긋나면(`"auto_start": "yes"`) 그 오류가 `Session` 전체로 번져 워크스페이스까지 잃는다 → `settings_or_default`가 그 자리에서만 흡수한다. 회귀 4케이스 고정.
+  - **함정(quality 리뷰가 잡음)**: 팔레트 색을 지역 상수로 다시 만들면 정본이 갈린다(`theme.rs`가 명시적으로 경계) → `theme::BORDER_CONTROL` 직접 참조.
+  - 규약: 상수끼리의 단언은 clippy `assertions_on_constants`에 걸리므로 시험이 아니라 `const _: () = assert!(..)`로 둔다.
+  - 규약: 접근자 이름을 필드와 같게 두면(`font_family` / `font_family()`) 정규화가 조용히 우회된다 → `selected_font()`처럼 구분되는 이름을 쓴다.
 
 ## Next Steps
 
