@@ -356,11 +356,11 @@
 
 - [ ] **T9. 중복 실행 방지와 기존 창 활성화**
   - **Type**: C
-  - **Design**: ① 판정은 `src/app/single_instance.rs` 신규(창 생성 **전**에 해야 해서 `main.rs`가 부른다), 기존 창을 깨우는 수신은 `ui/shell_host.rs`. ② 신규 심볼 — `acquire() -> Instance`(뮤텍스를 든 가드. `Instance::IsFirst`/`AlreadyRunning`), `WAKE_MESSAGE`(등록 메시지 이름 상수). ③ `main.rs`가 부르고, 수신은 `shell_menu_proc`가 **트레이 더블클릭과 같은 복원 루틴**(D5의 ⓐⓑⓒ)을 그대로 부른다 — 하는 일이 "창을 보이게 하고 최상위로 올린다"로 동일하므로 경로를 나누지 않는다. ④ 이번에 추상화하지 않을 것: IPC 계층·명령줄 전달(두 번째 인스턴스가 연 경로를 기존 창에 전달하는 등)을 만들지 않는다 — 이번 요구는 "창을 띄운다"뿐이다.
+  - **Design**: ① 판정은 `src/app/single_instance.rs` 신규(창 생성 **전**에 해야 해서 `main.rs`가 부른다), 기존 창을 깨우는 수신은 `ui/tray.rs`의 `handle_callback`에 둔다 — `shell_host.rs`의 창 프로시저가 커스텀 등록 메시지를 전부 그 함수에 위임하는 구조라(트레이 콜백·탐색기 재시작도 같은 자리), 여기만 따로 떼면 같은 성격의 분기가 두 파일로 갈린다. ② 신규 심볼 — `acquire() -> Instance`(뮤텍스를 든 가드. `Instance::IsFirst`/`AlreadyRunning`), `WAKE_MESSAGE`(등록 메시지 이름 상수). ③ `main.rs`가 부르고, 수신은 `shell_menu_proc`가 **트레이 더블클릭과 같은 복원 루틴**(D5의 ⓐⓑⓒ)을 그대로 부른다 — 하는 일이 "창을 보이게 하고 최상위로 올린다"로 동일하므로 경로를 나누지 않는다. ④ 이번에 추상화하지 않을 것: IPC 계층·명령줄 전달(두 번째 인스턴스가 연 경로를 기존 창에 전달하는 등)을 만들지 않는다 — 이번 요구는 "창을 띄운다"뿐이다.
   - **Acceptance**: Given 앱이 실행 중(창이 떠 있거나 트레이에 숨은 상태), When exe를 다시 실행하면, Then 새 프로세스는 **창을 만들지 않고** 끝나고 기존 창이 화면 최상위로 올라온다. 실행 중이 아니면 정상적으로 새 창이 뜬다.
   - **Files**:
     - 주: `src/app/single_instance.rs`(신규), `src/app/mod.rs`, `src/main.rs`
-    - 동반: `src/ui/shell_host.rs`(등록 메시지 수신 갈래 — D5 복원 루틴 재사용), `src/ui/app.rs`(`TrayEvent::Shown` 처리 — T8과 같은 경로)
+    - 동반: `src/ui/tray.rs`(깨우기 메시지 수신 갈래 — D5 복원 루틴 재사용), `src/ui/app.rs`(`TrayEvent::Shown` 처리 — T8과 같은 경로)
     - 테스트: `src/app/single_instance.rs`(`mod tests` — 같은 프로세스에서 두 번 `acquire` 시 두 번째가 `AlreadyRunning`)
   - **Edge Cases**: 앱이 죽어 뮤텍스가 해제됨 → OS가 핸들을 닫으면 자동 해제되므로 다음 실행이 정상 시작 / 다른 사용자 세션에서 실행 → 뮤텍스 이름에 `Local\` 접두를 붙여 세션 단위로 가른다 / 브로드캐스트를 받는 창이 아직 안 만들어짐(시작 경합) → 뮤텍스를 얻은 쪽만 창을 만드므로 경합해도 창은 하나다 / COM 초기화·세션 로드보다 **먼저** 판정해 불필요한 작업을 막는다
   - **Halt Forecast**:
