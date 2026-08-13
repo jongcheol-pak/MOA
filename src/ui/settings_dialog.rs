@@ -22,8 +22,14 @@ const SHADOW_OFFSET_Y: i8 = 18;
 const SHADOW_BLUR: u8 = 60;
 const SHADOW_ALPHA: u8 = 153;
 
+/// 헤더·푸터 높이 — 사이트 관리자와 같은 값이다. 같은 창 안의 대화 둘이 제목 줄·바닥 줄
+/// 높이를 다르게 쓰면 번갈아 열었을 때 판이 흔들려 보인다
 const HEADER_HEIGHT: f32 = 40.0;
 const FOOTER_HEIGHT: f32 = 58.0;
+/// 그룹을 가르는 선 — 제목 위에 그어 앞 그룹과 끊는다 (첫 그룹 위에는 긋지 않는다)
+const DIVIDER_THICKNESS: f32 = 1.0;
+/// 구분선과 그 아래 그룹 제목 사이 여백
+const DIVIDER_GAP: f32 = 10.0;
 /// 본문 좌우 여백
 const BODY_PAD_X: f32 = 20.0;
 /// 헤더 제목의 왼쪽 여백 — 본문과 같은 선에서 시작한다
@@ -155,38 +161,62 @@ fn show_header(ui: &egui::Ui, rect: egui::Rect) {
 /// **항목을 배열+반복으로 묶지 않는다**(plan 비추상화 선언) — 그룹마다 컨트롤 종류와
 /// 부수 효과(글꼴 재등록·레지스트리 쓰기·트레이 아이콘)가 달라, 묶으면 채우는 순간 다시 풀어야 한다
 fn show_body(ui: &mut egui::Ui, rect: egui::Rect, settings: &mut AppSettings) -> SettingsOutcome {
-    let mut outcome = SettingsOutcome::default();
     let mut body = ui.new_child(egui::UiBuilder::new().max_rect(rect));
 
     // 모양 — 글꼴 (T5가 드롭다운을 넣는다)
-    group_title(&mut body, GROUP_APPEARANCE);
+    group_title(&mut body, GROUP_APPEARANCE, Divider::Skip);
     pending_hint(&mut body);
 
     // 시작 — 자동 실행 (T6)
-    group_title(&mut body, GROUP_STARTUP);
+    group_title(&mut body, GROUP_STARTUP, Divider::Draw);
     pending_hint(&mut body);
 
     // 종료 — 트레이 전환 (T7)
-    group_title(&mut body, GROUP_EXIT);
+    group_title(&mut body, GROUP_EXIT, Divider::Draw);
     pending_hint(&mut body);
 
-    // 파일 보기 — 확장명·숨김 항목. 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
-    group_title(&mut body, GROUP_FILES);
-    if widgets::toggle_row(&mut body, LABEL_SHOW_EXTENSIONS, settings.show_extensions) {
+    // 파일 보기 — 확장명·숨김 항목
+    group_title(&mut body, GROUP_FILES, Divider::Draw);
+    show_file_group(&mut body, settings)
+}
+
+/// `파일 보기` 그룹의 두 토글 — 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
+/// (다른 그룹은 부수 효과가 있어 각자의 task가 채운다).
+///
+/// 그룹 하나를 따로 뗀 이유: 이 부분만 그려 시험할 수 있어야 **앞 그룹들이 채워질 때**
+/// 좌표가 밀려 시험이 엉뚱한 자리를 누르는 일이 없다
+fn show_file_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
+    let mut outcome = SettingsOutcome::default();
+    if widgets::toggle_row(ui, LABEL_SHOW_EXTENSIONS, settings.show_extensions) {
         settings.show_extensions = !settings.show_extensions;
         outcome.changed = true;
     }
-    if widgets::toggle_row(&mut body, LABEL_SHOW_HIDDEN, settings.show_hidden) {
+    if widgets::toggle_row(ui, LABEL_SHOW_HIDDEN, settings.show_hidden) {
         settings.show_hidden = !settings.show_hidden;
         outcome.changed = true;
     }
-
     outcome
 }
 
-/// 그룹 제목 한 줄 — 위에 여백을 두어 앞 그룹과 떨어뜨린다
-fn group_title(ui: &mut egui::Ui, text: &str) {
+/// 그룹 제목 위에 구분선을 그을지 — 첫 그룹은 위가 헤더라 긋지 않는다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Divider {
+    Draw,
+    Skip,
+}
+
+/// 그룹 제목 한 줄 — 앞 그룹과 구분선·여백으로 끊는다
+fn group_title(ui: &mut egui::Ui, text: &str, divider: Divider) {
     ui.add_space(GROUP_GAP_TOP);
+    if divider == Divider::Draw {
+        let y = ui.cursor().top();
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            y,
+            egui::Stroke::new(DIVIDER_THICKNESS, theme::BORDER_CONTROL),
+        );
+        ui.add_space(DIVIDER_THICKNESS + DIVIDER_GAP);
+    }
     ui.painter().text(
         egui::pos2(ui.cursor().left(), ui.cursor().top()),
         egui::Align2::LEFT_TOP,
@@ -259,6 +289,44 @@ mod tests {
     }
 
     #[test]
+    fn 그룹_사이에만_구분선을_긋는다() {
+        // Acceptance — "구분선과 그룹 제목으로 나뉘어". 첫 그룹 위에는 헤더가 있어 긋지 않는다.
+        // 그린 도형을 세어 확인한다: 구분선은 `hline`(=`Shape::LineSegment`)으로 그려진다
+        fn line_count(divider: Divider) -> usize {
+            let ctx = egui::Context::default();
+            let mut lines = 0;
+            let output = ctx.run_ui(Default::default(), |ui| {
+                group_title(ui, "묶음", divider);
+            });
+            for shape in output.shapes {
+                if matches!(shape.shape, egui::Shape::LineSegment { .. }) {
+                    lines += 1;
+                }
+            }
+            lines
+        }
+        assert_eq!(line_count(Divider::Skip), 0, "첫 그룹 위에 선을 그었다");
+        assert_eq!(line_count(Divider::Draw), 1, "그룹 사이 구분선이 없다");
+    }
+
+    #[test]
+    fn 본문은_네_그룹을_쌓고_구분선_셋을_긋는다() {
+        // 그룹이 넷이므로 그 사이 구분선은 셋이다 — 그룹이 늘거나 줄면 여기서 드러난다
+        let ctx = egui::Context::default();
+        let mut settings = AppSettings::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            let rect = ui.max_rect();
+            show_body(ui, rect, &mut settings);
+        });
+        let lines = output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(shape.shape, egui::Shape::LineSegment { .. }))
+            .count();
+        assert_eq!(lines, 3, "네 그룹 사이 구분선은 셋이어야 한다");
+    }
+
+    #[test]
     fn 파일_보기_토글을_누르면_값이_뒤집히고_저장을_알린다() {
         // 즉시 반영이 이 화면의 계약이다 — 누른 그 프레임에 값이 바뀌고 저장 신호가 서야 한다
         fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
@@ -270,24 +338,20 @@ mod tests {
             }
         }
 
-        // 모달은 화면 가운데에 떠서 자리가 화면 크기에 딸린다. 여기서 보려는 것은
-        // "토글이 눌리면 값이 뒤집히고 저장 신호가 서는가"이므로 본문만 떼어 그린다
+        // **그룹 하나만 떼어 그린다** — `show_body` 전체를 그리면 앞 그룹 셋의 높이에
+        // 좌표가 딸려, T5~T7이 그 그룹을 채우는 순간 이 시험이 엉뚱한 자리를 누르게 된다
         let ctx = egui::Context::default();
         let mut settings = AppSettings::default();
         assert!(settings.show_extensions, "기본값이 바뀌었다");
 
         let mut outcome = SettingsOutcome::default();
         let _ = ctx.run_ui(Default::default(), |ui| {
-            outcome = show_body(ui, ui.max_rect(), &mut settings);
+            outcome = show_file_group(ui, &mut settings);
         });
         assert!(!outcome.changed, "누르지도 않았는데 바뀌었다고 한다");
 
-        // `show_body`는 `max_rect` 왼쪽 위부터 그룹을 쌓는다 —
-        // 네 번째 그룹(`파일 보기`)의 첫 줄이 `파일 확장명` 토글이다
-        let y = 4.0 * (GROUP_GAP_TOP + GROUP_FONT_PX + GROUP_GAP_BOTTOM)
-            + 3.0 * widgets::FORM_FIELD_HEIGHT
-            + widgets::FORM_FIELD_HEIGHT / 2.0;
-        let spot = egui::pos2(40.0, y);
+        // 그룹의 첫 줄이 `파일 확장명` 토글이다
+        let spot = egui::pos2(40.0, widgets::FORM_FIELD_HEIGHT / 2.0);
         for (time, event) in [(0.05, press(spot, true)), (0.10, press(spot, false))] {
             let input = egui::RawInput {
                 time: Some(time),
@@ -295,7 +359,7 @@ mod tests {
                 ..Default::default()
             };
             let _ = ctx.run_ui(input, |ui| {
-                outcome = show_body(ui, ui.max_rect(), &mut settings);
+                outcome = show_file_group(ui, &mut settings);
             });
         }
         assert!(outcome.changed, "토글을 눌렀는데 저장 신호가 서지 않았다");
@@ -303,5 +367,6 @@ mod tests {
             !settings.show_extensions,
             "토글을 눌렀는데 값이 뒤집히지 않았다"
         );
+        assert!(settings.show_hidden, "누르지 않은 토글까지 바뀌었다");
     }
 }

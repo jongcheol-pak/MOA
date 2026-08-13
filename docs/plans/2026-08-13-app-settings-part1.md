@@ -48,6 +48,7 @@
 - **다음 분할 plan**: `docs/plans/2026-08-13-app-settings-part2.md` — T1~T8 (언어 전환 전면 적용, 미실행)
 - 트레이 아이콘의 상태 표시(전송 중 배지 등) — FR-36 전송 큐와 이어 붙일 여지가 있으나 이번 요구에 없다
 - 설정 화면에 키보드 단축키 배정(`Ctrl+,` 등) — 진입점은 타이틀바 메뉴 하나로 충분하고, 단축키 표를 손대는 작업이 따로 있다(대장의 `사이트 관리자 단축키 Ctrl+S` 항목과 같은 성격)
+- **[SUGGEST] 모달 크롬 상수가 두 파일에 같은 값으로 있다** (T3 quality 리뷰 m1) — `SCRIM_ALPHA`(140)·`SHADOW_OFFSET_Y/BLUR/ALPHA`(18/60/153)·`HEADER_HEIGHT`(40)·`FOOTER_HEIGHT`(58)가 `ui/site_manager.rs`와 `ui/settings_dialog.rs`에 소수점까지 같다. 대화 크기 자체는 다르므로(1080×680 vs 420×400) `DIALOG_*`는 해당 없다. 공통화 문턱(2회)에 닿았으나 `site_manager.rs`는 이 task의 Files 밖이라 이번엔 두었다 — 모달을 하나 더 만들거나 사이트 관리자를 손볼 때 `widgets.rs`로 모아 정본을 하나로 한다
 - 숨김 항목 토글의 원격 판정을 서버 종류별로 정교화 — 지금은 이름이 `.`으로 시작하는지만 본다. SFTP에서 서버가 주는 속성을 더 볼 여지가 있다
 
 ## Investigation Log
