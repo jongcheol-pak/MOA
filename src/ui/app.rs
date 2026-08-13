@@ -185,6 +185,18 @@ pub fn install_fonts(ctx: &egui::Context, family: Option<&str>) -> bool {
     korean
 }
 
+/// 닫기 요청을 창 숨김으로 바꿔야 하는가 (FR-50).
+///
+/// 셋 다 참일 때만 숨긴다:
+/// - 사용자가 `종료` 토글을 켰다
+/// - 트레이 아이콘이 **실제로** 올라가 있다 — 없는데 숨기면 창을 되부를 방법이 사라진다
+/// - 트레이 메뉴 `종료`로 끝내는 중이 아니다 (그건 진짜 종료다)
+///
+/// 판정만 떼어 둔 이유: `ViewportCommand` 전송은 시험할 수 없지만 이 판정은 할 수 있다
+fn should_hide_on_close(tray_on_close: bool, tray_present: bool, quitting: bool) -> bool {
+    tray_on_close && tray_present && !quitting
+}
+
 /// 워크스페이스 한 벌의 탐색 상태 — 분할 트리와 그 패널들 (FR-17).
 ///
 /// 워크스페이스마다 이것을 하나씩 갖고, **처음 선택될 때 비로소 만들어진다**(D1 지연 생성).
@@ -379,6 +391,13 @@ pub struct ExplorerApp {
     tray: Option<Tray>,
     /// 트레이 조작이 오는 통로 — 창 프로시저가 보낸다
     tray_rx: std::sync::mpsc::Receiver<TrayEvent>,
+    /// 창을 숨긴 상태인가 (FR-50) — 닫기를 눌렀지만 앱은 살아 있다.
+    ///
+    /// **`ctx.input(|i| i.viewport().visible())`로 파생시키지 않는다** — Windows에서 그 값은
+    /// 늘 `None`이라(winit이 `occluded`를 채우지 않는다) 숨김과 표시를 구분하지 못한다
+    hidden: bool,
+    /// 트레이 메뉴 `종료`로 끝내는 중인가 — 그때는 닫기를 가로채지 않는다
+    quitting: bool,
     /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
     /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
     manager: ConnectionManager,
@@ -493,6 +512,8 @@ impl ExplorerApp {
             font_scan: FontScan::new(),
             tray: None,
             tray_rx,
+            hidden: false,
+            quitting: false,
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
@@ -702,6 +723,11 @@ impl ExplorerApp {
     /// 세션이 최대화였다면 **여기서 비로소 최대화를 건다** — 창을 만들 때 걸면 아직 그리지
     /// 않은 창이 드러나 흰 사각형이 번쩍인다(`ui::window_start` 참조)
     fn track_window(&mut self, ctx: &egui::Context) {
+        // **숨긴 동안에는 관측하지 않는다** — 숨은 창의 viewport 정보로 위치·크기를 덮으면
+        // 숨기기 직전에 저장해 둔 좋은 값이 그것으로 밀리고, 종료 시 그 밀린 값이 저장된다
+        if self.hidden {
+            return;
+        }
         let (rect, maximized, monitor) = ctx.input(|input| {
             let viewport = input.viewport();
             (
@@ -1371,6 +1397,28 @@ impl ExplorerApp {
     ///
     /// 즉시 저장인 이유는 이 화면에 `취소`가 없기 때문이다(사용자 결정) — 닫기만 있는
     /// 화면에서 저장을 닫을 때로 미루면, 앱이 그 사이에 죽었을 때 바꾼 값이 사라진다
+    /// 닫기 요청을 가로채 창만 숨긴다 (FR-50).
+    ///
+    /// 타이틀바 `✕`뿐 아니라 `Alt+F4`·작업 표시줄 닫기·시스템 메뉴까지 **모든 종료 경로가
+    /// 이 한 지점으로 모인다** — 버튼 핸들러에서 막으면 나머지 길로 들어온 종료를 놓친다 (D4)
+    fn intercept_close(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|input| input.viewport().close_requested()) {
+            return;
+        }
+        if !should_hide_on_close(
+            self.settings.tray_on_close,
+            self.tray.is_some(),
+            self.quitting,
+        ) {
+            return;
+        }
+        // **숨기기 전에 저장한다** — 종료 때 도는 `on_exit`가 이번에는 오지 않는다
+        self.persist_session();
+        self.hidden = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
     /// `종료` 토글에 맞춰 트레이 아이콘을 올리거나 내린다 (FR-50).
     ///
     /// 매 프레임 확인하는 이유: 토글이 바뀌는 자리가 설정 대화 한 곳이지만, 그 값과
@@ -1406,13 +1454,23 @@ impl ExplorerApp {
     fn poll_tray(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.tray_rx.try_recv() {
             match event {
-                // `Shown`에 할 일이 아직 없는 것은 창을 숨기는 기능(T8)이 들어오기
-                // 전이기 때문이다 — 그때 이 자리에서 숨김 상태를 내린다
-                TrayEvent::Shown => {}
+                // 창은 프로시저가 이미 띄웠다. 여기서는 ⓐ 숨김 상태를 내리고
+                // ⓑ winit의 가시성 캐시를 맞춘다 — 그러지 않으면 이후 최대화 등
+                // 창 플래그가 바뀔 때 `apply_diff`가 `SW_HIDE`를 다시 적용해 창이 사라진다
+                TrayEvent::Shown => {
+                    if self.hidden {
+                        self.hidden = false;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    }
+                }
                 // 탐색기가 되살아나 아이콘이 사라졌다 — 비워 두면 다음 `sync_tray`가 다시 올린다
                 TrayEvent::Recreated => self.tray = None,
                 // 메뉴 `종료` — 평소 닫기와 같은 길로 보낸다(세션 저장이 그 길에 있다)
-                TrayEvent::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                TrayEvent::Quit => {
+                    // 이 닫기는 가로채지 않는다 — 트레이로 보내는 것이 아니라 실제 종료다
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         }
     }
@@ -2074,6 +2132,7 @@ impl eframe::App for ExplorerApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.intercept_close(ctx);
         self.track_window(ctx);
         self.textures.begin_frame();
         // 연결 소식은 **워크스페이스와 무관하게** 받는다 — 채널에 쌓인 것을 건너뛰면
@@ -2766,5 +2825,36 @@ mod tests {
             Some(0o755)
         );
         assert_eq!(dialog, None, "확인 뒤에도 대화가 남았다");
+    }
+
+    #[test]
+    fn 트레이가_켜져_있을_때만_닫기를_숨김으로_바꾼다() {
+        // Acceptance — 토글이 꺼져 있으면 `✕`는 종전대로 종료한다
+        assert!(
+            should_hide_on_close(true, true, false),
+            "숨겨야 하는데 종료한다"
+        );
+        assert!(
+            !should_hide_on_close(false, true, false),
+            "토글이 꺼졌는데 숨긴다"
+        );
+    }
+
+    #[test]
+    fn 아이콘이_없으면_숨기지_않는다() {
+        // 아이콘 없이 숨기면 창을 되부를 방법이 사라진다 — 작업 관리자로 죽여야 한다
+        assert!(
+            !should_hide_on_close(true, false, false),
+            "트레이 아이콘이 없는데 창을 숨긴다"
+        );
+    }
+
+    #[test]
+    fn 트레이_메뉴_종료는_가로채지_않는다() {
+        // 그 닫기는 트레이로 보내는 것이 아니라 진짜 종료다 — 가로채면 앱을 끌 수 없다
+        assert!(
+            !should_hide_on_close(true, true, true),
+            "종료 중인데 창만 숨긴다"
+        );
     }
 }
