@@ -10,8 +10,8 @@
 use std::io;
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-    RegCreateKeyExW, RegDeleteValueW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SAM_FLAGS, REG_SZ,
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
 };
 use windows::core::HSTRING;
 
@@ -109,17 +109,17 @@ unsafe fn open_run_key(access: u32, create: bool) -> Option<HKEY> {
                 None,
                 None,
                 REG_OPTION_NON_VOLATILE,
-                windows::Win32::System::Registry::REG_SAM_FLAGS(access),
+                REG_SAM_FLAGS(access),
                 None,
                 &mut key,
                 None,
             )
         } else {
-            windows::Win32::System::Registry::RegOpenKeyExW(
+            RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 &HSTRING::from(RUN_KEY),
                 None,
-                windows::Win32::System::Registry::REG_SAM_FLAGS(access),
+                REG_SAM_FLAGS(access),
                 &mut key,
             )
         };
