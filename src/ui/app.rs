@@ -45,6 +45,7 @@ use crate::ui::status_bar::{self, StatusAction, StatusView};
 use crate::ui::theme;
 use crate::ui::titlebar::{self, WindowRequest};
 use crate::ui::toast::{self, Toast};
+use crate::ui::tray::{Tray, TrayEvent};
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
@@ -374,6 +375,10 @@ pub struct ExplorerApp {
     settings_dialog: SettingsDialog,
     /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 대화를 처음 열 때 한 번만 읽는다
     font_scan: FontScan,
+    /// 알림 영역 아이콘 (FR-50) — `종료` 토글이 켜져 있을 때만 있다. 없애면 아이콘이 사라진다
+    tray: Option<Tray>,
+    /// 트레이 조작이 오는 통로 — 창 프로시저가 보낸다
+    tray_rx: std::sync::mpsc::Receiver<TrayEvent>,
     /// 열린 원격 연결 전부 — 워크스페이스가 아니라 앱이 쥔다.
     /// 연결은 탭보다 오래 살고 워크스페이스를 넘나들 수 있다 (FR-45·NFR-11)
     manager: ConnectionManager,
@@ -449,6 +454,10 @@ impl ExplorerApp {
             let ctx = cc.egui_ctx.clone();
             Arc::new(move || ctx.request_repaint())
         };
+        // 트레이 조작은 창 프로시저가 보낸다 — 창이 숨은 동안에도 오는 유일한 경로다 (FR-50)
+        let (tray_tx, tray_rx) = std::sync::mpsc::channel();
+        crate::ui::tray::install_channel(tray_tx, cc.egui_ctx.clone());
+
         let mut app = ExplorerApp {
             com,
             shell,
@@ -482,6 +491,8 @@ impl ExplorerApp {
             settings: AppSettings::default(),
             settings_dialog: SettingsDialog::new(),
             font_scan: FontScan::new(),
+            tray: None,
+            tray_rx,
             pending_clipboard: None,
             pending_trees: HashMap::new(),
             next_tree: 0,
@@ -1360,6 +1371,48 @@ impl ExplorerApp {
     ///
     /// 즉시 저장인 이유는 이 화면에 `취소`가 없기 때문이다(사용자 결정) — 닫기만 있는
     /// 화면에서 저장을 닫을 때로 미루면, 앱이 그 사이에 죽었을 때 바꾼 값이 사라진다
+    /// `종료` 토글에 맞춰 트레이 아이콘을 올리거나 내린다 (FR-50).
+    ///
+    /// 매 프레임 확인하는 이유: 토글이 바뀌는 자리가 설정 대화 한 곳이지만, 그 값과
+    /// 실제 아이콘 유무가 어긋나면 화면에서 그것을 알 길이 없다
+    fn sync_tray(&mut self, now: f64) {
+        let want = self.settings.tray_on_close;
+        if want == self.tray.is_some() {
+            return;
+        }
+        if !want {
+            // `Drop`이 아이콘을 거둔다
+            self.tray = None;
+            return;
+        }
+        let Some(shell) = self.shell.as_ref() else {
+            return;
+        };
+        self.tray = Tray::add(shell.hwnd());
+        if self.tray.is_none() {
+            // 아이콘을 못 올렸으면 토글을 되돌린다 — 켜져 있다고 보이는데 아이콘이
+            // 없으면 닫기를 눌렀을 때 앱을 되살릴 방법이 사라진다
+            self.settings.tray_on_close = false;
+            self.notice = Some((
+                "트레이 아이콘을 만들지 못했습니다".to_owned(),
+                now + NOTICE_SECS,
+            ));
+        }
+    }
+
+    /// 트레이에서 온 통지를 처리한다 — 창을 띄우는 일은 프로시저가 이미 끝냈다
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = self.tray_rx.try_recv() {
+            match event {
+                // `Shown`에 할 일이 아직 없는 것은 창을 숨기는 기능(T8)이 들어오기
+                // 전이기 때문이다 — 그때 이 자리에서 숨김 상태를 내린다
+                TrayEvent::Shown => {}
+                // 메뉴 `종료` — 평소 닫기와 같은 길로 보낸다(세션 저장이 그 길에 있다)
+                TrayEvent::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            }
+        }
+    }
+
     fn show_settings_dialog(&mut self, ctx: &egui::Context) {
         if !self.settings_dialog.is_open() {
             return;
@@ -2215,6 +2268,8 @@ impl eframe::App for ExplorerApp {
         self.hostkey.show(&ctx);
         // 사이트 관리자도 자체 레이어를 쓴다 (FR-27)
         self.show_site_manager(&ctx, layout_area);
+        self.sync_tray(ctx.input(|input| input.time));
+        self.poll_tray(&ctx);
         self.show_settings_dialog(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);

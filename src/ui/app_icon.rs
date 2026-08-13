@@ -9,7 +9,7 @@
 use eframe::egui;
 
 /// 아이콘 원본 — exe에 정적으로 담긴다(실행 시 파일을 찾지 않는다)
-const ICO_BYTES: &[u8] = include_bytes!("../../docs/AppIcon.ico");
+pub const ICO_BYTES: &[u8] = include_bytes!("../../docs/AppIcon.ico");
 
 /// ICO 디렉터리 항목 하나 (16바이트 고정)
 const DIR_ENTRY_SIZE: usize = 16;

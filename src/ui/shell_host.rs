@@ -96,6 +96,11 @@ unsafe extern "system" fn shell_menu_proc(
     _id: usize,
     _data: usize,
 ) -> LRESULT {
+    // 트레이 아이콘 조작이 먼저다 — 셸 메뉴와 메시지 번호가 겹치지 않으므로 순서는
+    // 성능 문제일 뿐이지만, 트레이는 창이 숨은 동안에도 와야 하는 유일한 경로다
+    if unsafe { crate::ui::tray::handle_callback(hwnd, msg, lparam) } {
+        return LRESULT(0);
+    }
     if let Some(result) = forward_menu_msg(msg, wparam, lparam) {
         return result;
     }

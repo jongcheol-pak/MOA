@@ -30,6 +30,7 @@ pub mod tabs;
 pub mod theme;
 pub mod titlebar;
 pub mod toast;
+pub mod tray;
 pub mod tree;
 pub mod view_mode;
 pub mod widgets;
