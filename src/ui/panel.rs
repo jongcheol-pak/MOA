@@ -131,6 +131,11 @@ pub enum RemoteAction {
     ViewLog,
     /// 연결 중인 것을 그만둔다 (인벤토리 #21)
     CancelConnect,
+    /// 세션에서 되살아난 탭을 그 사이트로 다시 연결한다 (사용자 보고 2026-08-13).
+    ///
+    /// `Retry`와 나누는 이유: 저쪽은 **살아 있는 워커**에 명령만 다시 보내는데, 이 탭에는
+    /// 워커가 아예 없다(재시작하면 자동으로 붙지 않는다) — 사이트부터 새로 열어야 한다
+    Reconnect,
 }
 
 /// 셸 컨텍스트 메뉴 요청 — 그리기가 모두 끝난 뒤 앱이 실행한다.
@@ -519,6 +524,15 @@ impl PanelState {
     pub fn active_conn(&self) -> Option<ConnectionId> {
         match &self.tabs.active().source {
             TabSource::Remote { conn, .. } => *conn,
+            TabSource::Local(_) => None,
+        }
+    }
+
+    /// 활성 탭이 가리키는 사이트 — 로컬 탭이면 `None`.
+    /// 연결이 없어도 알 수 있다(세션에서 되살아난 탭이 그렇다 — `다시 연결`이 이것을 쓴다)
+    pub fn active_site(&self) -> Option<SiteId> {
+        match &self.tabs.active().source {
+            TabSource::Remote { site, .. } => Some(*site),
             TabSource::Local(_) => None,
         }
     }
@@ -1042,7 +1056,7 @@ impl PanelState {
                 egui::UiBuilder::new().id_salt("content").max_rect(content),
                 |ui| {
                     ui.set_clip_rect(content);
-                    self.show_content(ui, icons, textures)
+                    self.show_content(ui, icons, textures, remote)
                 },
             )
             .inner;
@@ -1113,19 +1127,26 @@ impl PanelState {
     /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 본문.
     ///
     /// 원격 탭의 본문은 **연결 단계에 따라 통째로 달라진다**(README §4·§5) — 아직 연결하지
-    /// 않았으면 안내 문구, 연결 중이면 자리 표시 막대, 실패했으면 사유와 조치, 연결됐으면
-    /// 로컬과 같은 파일 목록이다
+    /// 않았으면 안내 문구(또는 `다시 연결`), 연결 중이면 자리 표시 막대, 실패했으면 사유와 조치,
+    /// 연결됐으면 로컬과 같은 파일 목록이다
     fn show_content(
         &mut self,
         ui: &mut egui::Ui,
         icons: &mut IconCache,
         textures: &mut IconTextures,
+        remote: RemoteView<'_>,
     ) -> ContentOutcome {
         // 단계를 먼저 떼어 둔다 — 아래에서 목록(`&mut self.list`)을 그리는 동안 탭을 빌릴 수 없다
         let phase = match &self.tabs.active().source {
             TabSource::Remote { phase, .. } => Some(phase.clone()),
             TabSource::Local(_) => None,
         };
+        // 붙을 곳을 아는 탭인가 — 세션에서 되살아난 탭은 사이트를 알고 연결만 없다.
+        // 사이트가 지워졌으면 알 수 없으므로 종전 안내를 그대로 보인다
+        let site_known = matches!(
+            &self.tabs.active().source,
+            TabSource::Remote { site, .. } if remote.sites.get(*site).is_some()
+        );
         let connected = !matches!(phase, Some(ref phase) if *phase != TabPhase::Ok);
         // 원격 패널에서는 트리 토글의 라벨이 갈린다 (인벤토리 #94).
         // 클로저 밖에서 정한다 — `Sides`의 클로저가 `self`를 통째로 빌린다
@@ -1167,8 +1188,13 @@ impl PanelState {
         ui.separator();
         match phase {
             Some(TabPhase::New) => {
-                remote_states::show_empty(ui);
-                (FileListAction::None, None, None, None)
+                let action = if site_known {
+                    remote_states::show_reconnect(ui).then_some(RemoteAction::Reconnect)
+                } else {
+                    remote_states::show_empty(ui);
+                    None
+                };
+                (FileListAction::None, action, None, None)
             }
             Some(TabPhase::Connecting) => {
                 // 취소는 자리 표시 막대 **위** 오른쪽에 둔다 (원본 `:223-228`의 상태 줄)

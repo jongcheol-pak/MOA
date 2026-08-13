@@ -68,6 +68,8 @@ const EMPTY_HINT_SCHEME: &str = "sftp://호스트";
 const EMPTY_HINT_TAIL: &str = " 를 입력해 연결하세요";
 /// 미연결 탭 안내 둘째 줄 (인벤토리 #15)
 const EMPTY_HINT_DRAG: &str = "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다";
+/// 사이트를 아는 미연결 탭의 버튼 — 재시작 뒤 복원된 탭이 이것을 보인다
+const RECONNECT_LABEL: &str = "다시 연결";
 /// 실패 화면 제목 (인벤토리 #16)
 const FAIL_TITLE: &str = "연결하지 못했습니다";
 /// 실패 화면 버튼·링크 (인벤토리 #18~20)
@@ -259,6 +261,29 @@ pub fn show_empty(ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.label(egui::RichText::new(EMPTY_HINT_DRAG).color(theme::TEXT_DIM));
     });
+}
+
+/// 어느 사이트인지 아는데 연결만 없는 탭의 화면 — `다시 연결` 버튼 하나. 눌렀으면 `true`.
+///
+/// 재시작하면 원격 탭은 사이트·경로를 되찾지만 **서버에 자동으로 붙지는 않는다**(README §3).
+/// 그 탭에 주소를 적으라는 안내(#14·#15)를 띄우는 것은 이미 아는 것을 다시 묻는 셈이라,
+/// 곧바로 누를 수 있는 버튼으로 바꿨다 (사용자 보고 2026-08-13).
+/// 사이트를 찾을 수 없는 탭(사이트가 지워진 뒤 남은 탭)에는 여전히 `show_empty`가 맞다 —
+/// 붙을 곳을 모르니 다시 알려 주어야 한다
+pub fn show_reconnect(ui: &mut egui::Ui) -> bool {
+    let mut clicked = false;
+    ui.vertical_centered(|ui| {
+        ui.add_space(FAIL_GAP * 2.0);
+        clicked = widgets::design_button(
+            ui,
+            RECONNECT_LABEL,
+            theme::TEXT_BUTTON,
+            FAIL_BUTTON_PAD_X,
+            egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
+        )
+        .clicked();
+    });
+    clicked
 }
 
 /// 실패 화면의 사유 문구 — 서버가 준 것에 안내를 덧붙인다 (인벤토리 #17).

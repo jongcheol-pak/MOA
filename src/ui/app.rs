@@ -612,7 +612,7 @@ impl ExplorerApp {
 
     /// 창 위치·크기를 따라간다. 최대화 중에는 갱신하지 않는다 —
     /// 그때의 사각형은 화면 전체라, 저장해 버리면 다음 실행에서 되돌릴 일반 크기가 사라진다.
-    /// 복원 위치가 화면 밖이면(모니터 구성 변경) 첫 프레임에 화면 안으로 옮긴다
+    /// 복원 위치가 화면 밖이면(모니터 구성 변경) 첫 프레임에 화면 안으로 옮긴다.
     fn track_window(&mut self, ctx: &egui::Context) {
         let (rect, maximized, monitor) = ctx.input(|input| {
             let viewport = input.viewport();
@@ -1637,6 +1637,11 @@ impl ExplorerApp {
 
     /// 원격 단계 화면에서 고른 조치를 실행한다 (인벤토리 #18~21)
     fn apply_remote_action(&mut self, target: PanelId, action: RemoteAction) {
+        // `다시 연결`만은 **연결이 없을 때** 누르는 것이라 아래 연결 가드보다 앞에 둔다
+        if action == RemoteAction::Reconnect {
+            self.reconnect_panel(target);
+            return;
+        }
         let Some(conn) = self
             .views
             .get(&self.workspaces.active().id)
@@ -1661,7 +1666,31 @@ impl ExplorerApp {
             }
             // 서버 로그 패널은 T20이 만든다 — 그때 이 자리에서 연다
             RemoteAction::ViewLog => {}
+            // 위에서 이미 처리하고 돌아갔다
+            RemoteAction::Reconnect => {}
         }
+    }
+
+    /// 세션에서 되살아난 원격 탭을 그 사이트로 다시 연결한다 (사용자 보고 2026-08-13).
+    ///
+    /// 사이트를 새로 여는 길(`connect_site`)을 그대로 탄다 — 재시작 뒤에는 워커가 없어
+    /// `Retry`처럼 명령만 보낼 상대가 없다. 연결이 서면 그 다음은 사이드바에서 사이트를 열
+    /// 때와 같은 흐름이다(단계가 `Ok`가 되면 앱이 목록을 청한다)
+    fn reconnect_panel(&mut self, target: PanelId) {
+        let Some(view) = self.views.get_mut(&self.workspaces.active().id) else {
+            return;
+        };
+        let Some(site) = view
+            .panels
+            .get(&target)
+            .and_then(|panel| panel.active_site())
+        else {
+            return;
+        };
+        // `connect_site`는 **활성 패널의 활성 탭**에 연결을 붙인다 — 버튼을 누른 패널이
+        // 활성이 아니면 엉뚱한 탭이 붙으므로 먼저 맞춘다(누른 패널이 활성이 되는 것이 자연스럽다)
+        view.active = target;
+        self.connect_site(site);
     }
 
     /// 주소창에 적은 원격 주소로 새 탭을 연다 (FR-34).

@@ -541,16 +541,52 @@ fn 원격_탭에는_사이트_이름과_단계_배지가_함께_보인다() {
 }
 
 #[test]
-fn 단계마다_본문이_통째로_달라진다() {
-    // README §4·§5 — 연결 전·중·실패에 목록 대신 그 단계의 화면이 보인다 (Acceptance ①③④)
-    let 빈_탭 = remote_screen_texts(TabPhase::New);
+fn 사이트를_아는_미연결_탭은_안내_대신_다시_연결을_보인다() {
+    // 사용자 보고(2026-08-13): 재시작하면 원격 탭이 사이트·경로를 되찾고도 "주소창에
+    // sftp://호스트 를 입력해 연결하세요"를 보였다 — 이미 아는 것을 다시 묻는 화면이다
+    let 화면 = remote_screen_texts(TabPhase::New);
     assert!(
-        빈_탭.iter().any(|t| t.contains("sftp://호스트")),
-        "미연결 안내가 없다: {빈_탭:?}"
+        화면.iter().any(|t| t == "다시 연결"),
+        "다시 연결 버튼이 없다: {화면:?}"
+    );
+    for 사라져야_할_문구 in ["sftp://호스트", "끌어다 놓아도 됩니다"] {
+        assert!(
+            !화면.iter().any(|t| t.contains(사라져야_할_문구)),
+            "'{사라져야_할_문구}'가 남아 있다: {화면:?}"
+        );
+    }
+    // 붙을 사이트를 화면 밖(앱)이 알아낼 수 있어야 버튼이 일을 한다
+    let (panel, _) = remote_panel_in(TabPhase::New);
+    assert!(panel.active_site().is_some(), "탭이 사이트를 잃었다");
+}
+
+#[test]
+fn 사이트를_찾을_수_없는_탭에는_주소_안내가_남는다() {
+    // 사이트를 지운 뒤 남은 탭은 붙을 곳을 모른다 — 그 탭에는 다시 알려 주어야 한다
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+    panel.tabs.add(crate::panel::tabs::TabState::remote(
+        SiteId(999),
+        RemotePath::new("/var/www"),
+    ));
+    let 화면 = drawn_texts(&draw_once(&mut panel, &SiteStore::new()));
+    assert!(
+        화면.iter().any(|t| t.contains("sftp://호스트")),
+        "주소 안내가 사라졌다: {화면:?}"
     );
     assert!(
-        빈_탭.iter().any(|t| t.contains("끌어다 놓아도 됩니다")),
-        "드래그 안내가 없다: {빈_탭:?}"
+        !화면.iter().any(|t| t == "다시 연결"),
+        "붙을 곳을 모르는데 다시 연결을 보인다: {화면:?}"
+    );
+}
+
+#[test]
+fn 단계마다_본문이_통째로_달라진다() {
+    // README §4·§5 — 연결 전·중·실패에 목록 대신 그 단계의 화면이 보인다 (Acceptance ①③④)
+    // 사이트를 아는 미연결 탭에는 `다시 연결` 버튼이 선다 (아래 두 테스트가 자세히 본다)
+    let 미연결 = remote_screen_texts(TabPhase::New);
+    assert!(
+        미연결.iter().any(|t| t == "다시 연결"),
+        "미연결 화면에 다시 연결이 없다: {미연결:?}"
     );
 
     let 연결_중 = remote_screen_texts(TabPhase::Connecting);
