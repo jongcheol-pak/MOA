@@ -114,9 +114,7 @@ const FOOTER_GAP: f32 = 10.0;
 const FOOTER_BUTTON_HEIGHT: f32 = 30.0;
 const FOOTER_BUTTON_PAD_X: f32 = 24.0;
 
-// ── 문구 (인벤토리 #60~75·#88~90 — 원문 그대로다) ──
-// 전송 설정 탭 (인벤토리 #76~81)
-// 문자셋 탭 (인벤토리 #82~87)
+// ── 선택지 목록 — 문구는 카탈로그가 정하고 여기서는 값과 짝짓기만 한다 ──
 /// 프로토콜 선택지 — 첫 항목의 문구는 원본 그대로다 (인벤토리 #69, `:1011`).
 /// 나머지 둘은 원본에 없어 같은 말투로 새로 적었다
 fn protocol_options() -> [(Protocol, &'static str); 3] {
@@ -1324,6 +1322,8 @@ mod tests {
 
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 인벤토리 #60~75·#88~90 — 여기서 한 글자라도 다듬으면 화면과 명세가 갈린다
         assert_eq!(crate::i18n::site_title(), "사이트 관리자");
         assert_eq!(crate::i18n::site_list_label(), "항목 선택(S):");
@@ -1515,6 +1515,8 @@ mod tests {
 
     #[test]
     fn 호스트가_비면_등록을_거부하고_까닭을_남긴다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // plan Edge Case — 조용히 실패하면 사용자는 등록된 줄 안다
         let mut store = SiteStore::new();
         let mut manager = SiteManager::new();
@@ -1604,6 +1606,8 @@ mod tests {
 
     #[test]
     fn 두_번째_세_번째_탭_문구도_인벤토리_원문_그대로다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 인벤토리 #76~87 (원본 `:442`·`:852`·`:454`·`:457`·`:471-472`·`:867`·`:481`·`:484`)
         assert_eq!(crate::i18n::site_label_transfer_mode(), "전송 모드(T):");
         assert_eq!(transfer_options()[0].1, "기본(E)");
@@ -1696,6 +1700,8 @@ mod tests {
 
     #[test]
     fn 연결된_서버의_전송_모드를_바꾸면_안내가_뜬다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // plan Edge Case — 지금 연결에 바로 듣지 않는다는 것을 알리지 않으면
         // 사용자는 바꾼 설정이 곧바로 듣는 줄 알고 같은 실패를 다시 겪는다
         assert_eq!(

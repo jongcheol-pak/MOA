@@ -860,6 +860,8 @@ mod tests {
 
     #[test]
     fn 연결_섹션은_사이트를_이름과_프로토콜로_보인다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // Acceptance ① — 등록된 사이트가 헤더 아래에 줄로 선다
         let mut sites = SiteStore::new();
         sites.add("배포 서버");

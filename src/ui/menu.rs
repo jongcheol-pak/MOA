@@ -491,6 +491,8 @@ mod tests {
 
     #[test]
     fn 패널_메뉴는_요청한_순서와_문구를_그린다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // plan `## 시각 요소 분해`의 인벤토리 표 13행 중 글자가 있는 항목들.
         // 메뉴 바를 없앤 뒤 이 메뉴가 유일한 마우스 진입점이라, 항목이 빠지면 그 기능에
         // 마우스로 닿을 수 없게 된다

@@ -543,18 +543,19 @@ mod tests {
 
     #[test]
     fn 배지_문구는_단계별로_정해져_있다() {
-        // 인벤토리 #11~13 — 문구가 바뀌면 화면과 명세가 갈린다
+        // 인벤토리 #11~13 — 문구가 바뀌면 화면과 명세가 갈린다.
+        // `badge_label`이 카탈로그를 그대로 돌려주므로 **원문 리터럴**과 견줘야 한다 —
+        // 같은 함수끼리 견주면 문구가 무엇으로 바뀌어도 통과한다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         assert_eq!(badge_label(&TabPhase::Ok, Protocol::Sftp), "sftp");
         assert_eq!(badge_label(&TabPhase::Ok, Protocol::Ftps), "ftps");
         assert_eq!(badge_label(&TabPhase::Ok, Protocol::Ftp), "ftp");
         assert_eq!(
             badge_label(&TabPhase::Connecting, Protocol::Sftp),
-            crate::i18n::remote_connecting()
+            "연결 중…"
         );
-        assert_eq!(
-            badge_label(&TabPhase::New, Protocol::Sftp),
-            crate::i18n::remote_not_connected()
-        );
+        assert_eq!(badge_label(&TabPhase::New, Protocol::Sftp), "연결 없음");
         // 실패한 탭도 연결이 없는 상태다 — 사유는 본문이 보인다
         assert_eq!(
             badge_label(
@@ -563,7 +564,7 @@ mod tests {
                 },
                 Protocol::Sftp
             ),
-            crate::i18n::remote_not_connected()
+            "연결 없음"
         );
     }
 
@@ -601,6 +602,8 @@ mod tests {
 
     #[test]
     fn 실패_화면과_취소_문구는_원문_그대로다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 인벤토리 #16~21 — 다듬으면 화면과 명세가 갈린다
         assert_eq!(crate::i18n::remote_fail_title(), "연결하지 못했습니다");
         assert_eq!(

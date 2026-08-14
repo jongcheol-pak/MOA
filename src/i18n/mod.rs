@@ -211,7 +211,8 @@ strings! {
     tabs_missing_site => "알 수 없는 사이트" / "Unknown site";
 
     // ── 사이트 관리자 (FR-27) ──
-    /// 접근 키 알파벳은 **영어에서도 그대로 둔다** — 키 배정이 바뀌면 익힌 조작이 깨진다
+    // 라벨 뒤 `(S)`·`(R)` 같은 접근 키 알파벳은 **영어에서도 그대로 둔다**
+    // — 키 배정이 바뀌면 사용자가 익힌 조작이 깨진다
     site_title => "사이트 관리자" / "Site Manager";
     site_list_label => "항목 선택(S):" / "Select entry(S):";
     site_rename => "이름 바꾸기(R)" / "Rename(R)";
@@ -523,8 +524,30 @@ mod tests {
         );
         assert_eq!(dynamic::item_counts(3, 12), "폴더 3 파일 12");
         assert_eq!(
+            dynamic::remote_delete_count(3),
+            "3개 항목을 서버에서 지웁니다."
+        );
+        // 한국어는 하나여도 문장이 같다 — 영어만 단수형으로 갈린다
+        assert_eq!(
+            dynamic::remote_delete_count(1),
+            "1개 항목을 서버에서 지웁니다."
+        );
+        assert_eq!(
             dynamic::site_registered("example.test"),
             "example.test 등록됨 · 더블클릭하여 연결"
+        );
+    }
+
+    #[test]
+    fn 영어_삭제_확인은_하나일_때_단수형이다() {
+        let _guard = LanguageGuard::lock(LanguageSetting::English);
+        assert_eq!(
+            dynamic::remote_delete_count(1),
+            "1 item will be deleted from the server."
+        );
+        assert_eq!(
+            dynamic::remote_delete_count(3),
+            "3 items will be deleted from the server."
         );
     }
 
