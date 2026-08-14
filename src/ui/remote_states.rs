@@ -32,13 +32,13 @@ const BADGE_GAP: f32 = 4.0;
 const BADGE_DOT: f32 = 5.0;
 
 /// 연결 중 자리 표시 막대 수 (README §4)
-const SKELETON_BARS: usize = 8;
+pub(crate) const SKELETON_BARS: usize = 8;
 /// 막대 하나의 높이
 const SKELETON_BAR_HEIGHT: f32 = 12.0;
 /// 막대 사이 간격
 const SKELETON_GAP: f32 = 6.0;
 /// 막대 색
-const SKELETON_FILL: egui::Color32 = egui::Color32::from_rgb(0x26, 0x26, 0x26);
+pub(crate) const SKELETON_FILL: egui::Color32 = egui::Color32::from_rgb(0x26, 0x26, 0x26);
 /// 막대 묶음 위 여백
 const SKELETON_TOP: f32 = 14.0;
 
@@ -188,10 +188,13 @@ pub fn show_badge(ui: &egui::Ui, rect: egui::Rect, phase: &TabPhase, protocol: P
     );
 }
 
-/// 연결 중 자리 표시 — 막대 8개 (README §4).
+/// 목록을 기다리는 동안의 자리 표시 — 막대 8개 (README §4).
 ///
 /// 진짜 목록이 오기 전까지 **자리만 잡아 둔다** — 빈 화면을 보이면 멈춘 것처럼 보이고,
-/// 회전 표시만 두면 곧 무엇이 올지 알 수 없다
+/// 회전 표시만 두면 곧 무엇이 올지 알 수 없다.
+///
+/// 원격 연결 중(`TabPhase::Connecting`)과 로컬 폴더를 처음 읽는 중이 같은 처지라
+/// 둘이 함께 쓴다
 pub fn show_skeleton(ui: &mut egui::Ui) {
     let width = ui.available_width();
     ui.add_space(SKELETON_TOP);

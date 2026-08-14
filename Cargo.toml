@@ -31,6 +31,9 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_UI_Controls",
+    # GetDpiForMonitor — 창을 만들기 전 그 모니터의 배율을 알아야 작업 영역(물리 픽셀)을
+    # 논리 픽셀로 옮길 수 있다 (`ui::window_start`)
+    "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     # ITEMIDLIST(PIDL) 정의 — 셸 컨텍스트 메뉴(IContextMenu)가 요구

@@ -63,8 +63,7 @@ fn main() -> eframe::Result {
             // `ShowWindow(SW_MAXIMIZE)`로 이어져 아직 아무것도 그리지 않은 창을 드러내고,
             // 그 흰 사각형이 번쩍인다(`ui::window_start` 참조). 최대화는 첫 프레임을 그린 뒤
             // `ui::app`이 건다. 대신 처음부터 그 자리의 작업 영역만 하게 띄워 크기가 튀지 않게 한다
-            let rect =
-                window_start::start_rect(window, window_start::work_area_at(window.x, window.y));
+            let rect = window_start::start_rect(window, window_start::work_area_for(window));
             viewport = viewport
                 .with_position([rect.x as f32, rect.y as f32])
                 .with_inner_size([rect.w as f32, rect.h as f32]);

@@ -40,6 +40,29 @@ fn drawn_texts(output: &eframe::egui::FullOutput) -> Vec<String> {
     found
 }
 
+/// 한 프레임에 그려진 자리표시 막대 수 — 목록 자리에 자리표시가 섰는지 판정한다.
+/// 막대는 글자가 아니라 사각형이라 `drawn_texts`로는 보이지 않는다
+fn skeleton_bars(output: &eframe::egui::FullOutput) -> usize {
+    fn count(shape: &egui::Shape, found: &mut usize) {
+        match shape {
+            egui::Shape::Rect(rect) if rect.fill == crate::ui::remote_states::SKELETON_FILL => {
+                *found += 1;
+            }
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    count(shape, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = 0;
+    for clipped in &output.shapes {
+        count(&clipped.shape, &mut found);
+    }
+    found
+}
+
 /// egui는 같은 ID가 한 프레임에 두 번 쓰이면 화면에 경고 텍스트를 그린다.
 /// 그 텍스트를 그려진 글자에서 찾아 ID 충돌 여부를 판정한다
 fn id_clash_warnings(output: &eframe::egui::FullOutput) -> Vec<String> {
@@ -1188,4 +1211,76 @@ fn 원격_폴더를_더블클릭하면_그_안으로_들어간다() {
         "파일을 눌렀는데 위치가 바뀌었다"
     );
     assert!(!panel.take_remote_dirty());
+}
+
+#[test]
+fn 처음_읽는_중에는_목록_자리에_자리표시를_세운다() {
+    let _언어 = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let ctx = egui::Context::default();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.start_load(
+        std::path::PathBuf::from(r"C:\Users"),
+        PendingNav::None,
+        &ctx,
+    );
+    assert!(
+        panel.shows_loading_placeholder(),
+        "아직 아무것도 못 읽었는데 자리표시를 세우지 않는다"
+    );
+
+    let 프레임 = draw_once(&mut panel, &SiteStore::new());
+    let 화면 = drawn_texts(&프레임);
+    assert!(
+        화면.iter().any(|t| t == "읽는 중…"),
+        "읽는 중이라는 것이 화면에 없다: {화면:?}"
+    );
+    assert_eq!(
+        skeleton_bars(&프레임),
+        crate::ui::remote_states::SKELETON_BARS,
+        "목록 자리가 빈칸이다 — 자리표시가 서지 않았다"
+    );
+}
+
+#[test]
+fn 목록이_있는_폴더에서_옮기는_중에는_이전_목록을_둔다() {
+    let _언어 = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let ctx = egui::Context::default();
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.apply_enumerated(
+        EnumOutcome::Ok(vec![local_entry("Documents", true)]),
+        &mut icons,
+    );
+    panel.start_load(
+        std::path::PathBuf::from(r"C:\Users\Public"),
+        PendingNav::Push,
+        &ctx,
+    );
+    assert!(
+        !panel.shows_loading_placeholder(),
+        "보여줄 목록이 있는데 자리표시로 덮었다 — 옮길 때마다 화면이 한 번 더 깜빡인다"
+    );
+
+    let 프레임 = draw_once(&mut panel, &SiteStore::new());
+    let 화면 = drawn_texts(&프레임);
+    assert!(
+        화면.iter().any(|t| t == "Documents"),
+        "이전 폴더의 목록이 사라졌다: {화면:?}"
+    );
+    assert_eq!(
+        skeleton_bars(&프레임),
+        0,
+        "보여줄 목록이 있는데 자리표시로 덮었다"
+    );
+}
+
+#[test]
+fn 다_읽고_나면_자리표시를_거둔다() {
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), &mut icons);
+    assert!(
+        !panel.shows_loading_placeholder(),
+        "다 읽었는데 자리표시가 남았다"
+    );
 }

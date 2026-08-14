@@ -282,6 +282,15 @@ impl PanelState {
         self.tabs.active().committed()
     }
 
+    /// 목록 자리에 자리표시를 세울 때 — **읽는 중인데 아직 보여줄 것이 없을 때**만이다.
+    ///
+    /// 이미 목록이 있는 폴더에서 다른 폴더로 옮기는 중이라면 종전대로 이전 목록을 둔다
+    /// (열거가 실패하면 그 자리에 그대로 머무는 것이 이 앱의 규칙이다) — 그때마다 자리를
+    /// 비우면 폴더를 옮길 때마다 화면이 한 번 더 깜빡인다
+    pub fn shows_loading_placeholder(&self) -> bool {
+        self.load.is_loading() && self.list.is_empty()
+    }
+
     /// 세션 저장용 — 탭들이 가리키는 곳(탭 순서). 원격 탭은 사이트와 원격 경로로 담긴다
     pub fn tab_specs(&self) -> Vec<TabSpec> {
         self.tabs
@@ -1253,6 +1262,13 @@ impl PanelState {
                     FailedAction::ViewLog => RemoteAction::ViewLog,
                 });
                 (FileListAction::None, action, None, None)
+            }
+            // 아직 아무것도 읽지 못한 채 읽는 중이면 목록 자리에 자리표시를 세운다 —
+            // 빈칸을 보이면 "빈 폴더"라는 없는 말을 하게 되고, 시작 직후에는 그 빈칸이
+            // 목록으로 바뀌는 것이 깜빡임으로 보인다(2026-08-14 사용자 보고)
+            Some(TabPhase::Ok) | None if self.shows_loading_placeholder() => {
+                remote_states::show_skeleton(ui);
+                (FileListAction::None, None, None, None)
             }
             // 연결된 원격 탭은 로컬과 **같은 목록 부품**으로 그린다 (T8)
             Some(TabPhase::Ok) | None => {

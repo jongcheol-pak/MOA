@@ -244,25 +244,6 @@ pub fn restore_queue(session: &Session) -> TransferQueue {
 const DIRECTION_UPLOAD: &str = "upload";
 const DIRECTION_DOWNLOAD: &str = "download";
 
-/// 저장된 창 위치를 화면 안으로 끌어온다.
-///
-/// 모니터를 떼거나 배치를 바꾸면 지난번 좌표가 화면 밖일 수 있고, 그대로 띄우면
-/// 창이 보이지 않는다. 크기가 화면보다 크면 화면에 맞춰 줄인다
-pub fn clamp_window(window: WindowState, monitor_w: i32, monitor_h: i32) -> WindowState {
-    if monitor_w <= 0 || monitor_h <= 0 {
-        return window; // 모니터 크기를 모르면(조회 실패) 저장값을 그대로 믿는다
-    }
-    let w = window.w.min(monitor_w);
-    let h = window.h.min(monitor_h);
-    WindowState {
-        x: window.x.clamp(0, (monitor_w - w).max(0)),
-        y: window.y.clamp(0, (monitor_h - h).max(0)),
-        w,
-        h,
-        maximized: window.maximized,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,38 +448,6 @@ mod tests {
             ViewMode::from_key(&restored[0].panels[1].view_mode),
             ViewMode::Details
         );
-    }
-
-    #[test]
-    fn 화면_밖_창은_안으로_들어온다() {
-        let far = WindowState {
-            x: 5000,
-            y: -300,
-            ..window()
-        };
-        let fixed = clamp_window(far, 1920, 1080);
-        assert_eq!(fixed.x, 1920 - 1200);
-        assert_eq!(fixed.y, 0);
-        assert_eq!((fixed.w, fixed.h), (1200, 800));
-    }
-
-    #[test]
-    fn 화면보다_큰_창은_화면_크기로_줄인다() {
-        let huge = WindowState {
-            x: 0,
-            y: 0,
-            w: 4000,
-            h: 3000,
-            maximized: false,
-        };
-        let fixed = clamp_window(huge, 1920, 1080);
-        assert_eq!((fixed.x, fixed.y, fixed.w, fixed.h), (0, 0, 1920, 1080));
-    }
-
-    #[test]
-    fn 모니터_크기를_모르면_저장값을_그대로_쓴다() {
-        let w = window();
-        assert_eq!(clamp_window(w.clone(), 0, 0), w);
     }
 
     /// 사이트 하나를 등록한 저장본 — 원격 탭·큐가 가리킬 곳이 있어야 한다

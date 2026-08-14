@@ -538,7 +538,9 @@ impl ExplorerApp {
     }
 
     /// 불러온 세션을 상태에 반영한다. 워크스페이스 **뷰는 만들지 않는다** —
-    /// 활성 워크스페이스도 첫 프레임의 `ensure_active_view`에서 비로소 만들어진다(D1)
+    /// 활성 워크스페이스도 첫 프레임의 `ensure_active_view`에서 비로소 만들어진다(D1).
+    /// 그 확보는 프레임의 **`logic`에서** 한다 — 그리기 때 만들면 폴더 열거를 거는
+    /// `panel.poll`이 이미 지나간 뒤라 목록이 한 프레임 늦게 시작된다
     fn apply_session(&mut self, session: Session) {
         let states = session::restore(&session);
         let names: Vec<String> = states.iter().map(|state| state.name.clone()).collect();
@@ -732,13 +734,12 @@ impl ExplorerApp {
         if self.hidden {
             return;
         }
-        let (rect, maximized, monitor) = ctx.input(|input| {
+        // 화면 크기(`viewport.monitor_size`)는 보지 않는다 — 그것은 **창이 있는 화면 하나**의
+        // 크기라, 화면이 여럿이면 옆 화면에 둔 창이 늘 화면 밖으로 읽힌다.
+        // 화면 밖 판정은 아래에서 붙어 있는 화면 전부를 보고 한다(`ui::window_start`)
+        let (rect, maximized) = ctx.input(|input| {
             let viewport = input.viewport();
-            (
-                viewport.outer_rect,
-                viewport.maximized.unwrap_or(false),
-                viewport.monitor_size,
-            )
+            (viewport.outer_rect, viewport.maximized.unwrap_or(false))
         });
         // 최대화가 실제로 걸릴 때까지는 관측한 사각형도, 최대화 여부도 반영하지 않는다 —
         // 그 사이의 창은 "작업 영역만 한 일반 창"이라, 그대로 받으면 되돌릴 일반 크기가 덮인다
@@ -765,24 +766,30 @@ impl ExplorerApp {
             self.window.w = rect.width() as i32;
             self.window.h = rect.height() as i32;
         }
-        // 모니터 크기를 아직 모르면 보정을 다음 프레임으로 미룬다 —
-        // 여기서 소비해 버리면 값이 채워진 뒤에도 다시 시도하지 않는다
-        if let Some(size) = monitor
-            && let Some(saved) = self.restore_window.take()
+        // 저장된 자리가 지금 붙어 있는 화면 어디에도 없으면 안으로 끌어온다 (화면을 떼거나
+        // 배치를 바꾼 경우). 화면 목록은 Win32에서 바로 읽으므로 첫 프레임부터 판정할 수 있다.
+        //
+        // **최대화 상태에서는 건드리지 않는다** — 저장된 사각형은 최대화를 풀었을 때 돌아갈
+        // 자리라, 그것으로 위치·크기 명령을 보내면 방금 건 최대화가 그 자리에서 풀린다
+        if let Some(saved) = self.restore_window.take()
+            && !self.window.maximized
+            && let Some(fixed) = crate::ui::window_start::rescue_offscreen(&saved)
         {
-            let (monitor_w, monitor_h) = (size.x as i32, size.y as i32);
-            let fixed = session::clamp_window(saved.clone(), monitor_w, monitor_h);
-            if fixed != saved {
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-                    fixed.x as f32,
-                    fixed.y as f32,
-                )));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                    fixed.w as f32,
-                    fixed.h as f32,
-                )));
-                self.window = fixed;
-            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                fixed.x as f32,
+                fixed.y as f32,
+            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                fixed.w as f32,
+                fixed.h as f32,
+            )));
+            self.window = WindowState {
+                x: fixed.x,
+                y: fixed.y,
+                w: fixed.w,
+                h: fixed.h,
+                maximized: saved.maximized,
+            };
         }
     }
 
@@ -2191,6 +2198,10 @@ impl eframe::App for ExplorerApp {
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
         self.runner
             .start_ready(&mut self.queue, &self.manager, &self.sites, now);
+        // 활성 뷰를 **여기서** 확보한다 — 그리기(`ui`)의 `ensure_active_view`에만 맡기면
+        // 첫 프레임의 이 자리는 뷰가 없어 빈손으로 지나가고, 폴더 열거가 다음 프레임에야
+        // 시작된다. 그 한 프레임 사이에 창이 이미 표시돼 **빈 목록**이 보인다(2026-08-14 실측)
+        self.ensure_active_view();
         // 화면에 없는 워크스페이스는 폴링하지 않는다 — 전환하면 그때 밀린 결과가 반영된다
         let id = self.workspaces.active().id;
         if let Some(view) = self.views.get_mut(&id) {
@@ -2293,6 +2304,9 @@ impl eframe::App for ExplorerApp {
                 let id = self.workspaces.active().id;
                 // 탭 배지·드롭다운이 상태 점을 그리는 데 쓴다 — 빌림이 겹치지 않게 미리 모은다
                 let connected = self.connected_sites();
+                // `logic`에서 이미 확보했지만 여기서 한 번 더 확인한다 — 사이드바 조작이
+                // 이 프레임 안에서 활성 워크스페이스를 바꿀 수 있고, 그 워크스페이스는
+                // 아직 뷰가 없을 수 있다
                 self.ensure_active_view();
                 if let Some(view) = self.views.get_mut(&id) {
                     let outcome = splitter::show_layout(
