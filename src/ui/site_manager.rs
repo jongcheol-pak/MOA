@@ -115,78 +115,58 @@ const FOOTER_BUTTON_HEIGHT: f32 = 30.0;
 const FOOTER_BUTTON_PAD_X: f32 = 24.0;
 
 // ── 문구 (인벤토리 #60~75·#88~90 — 원문 그대로다) ──
-const TITLE: &str = "사이트 관리자";
-const LIST_LABEL: &str = "항목 선택(S):";
-const BUTTON_RENAME: &str = "이름 바꾸기(R)";
-const BUTTON_DELETE: &str = "삭제(D)";
-const BUTTON_DUPLICATE: &str = "복제(I)";
-const TAB_GENERAL: &str = "일반";
-const TAB_TRANSFER: &str = "전송 설정";
-const TAB_CHARSET: &str = "문자셋";
-const LABEL_PROTOCOL: &str = "프로토콜(T):";
-const LABEL_HOST: &str = "호스트(H):";
-const LABEL_PORT: &str = "포트(P):";
-const LABEL_ENCRYPTION: &str = "암호화(E):";
-const LABEL_LOGON: &str = "로그온 유형(L):";
-const LABEL_USER: &str = "사용자(U):";
-const LABEL_PASSWORD: &str = "비밀번호(W):";
-const FOOTER_CONNECT: &str = "연결(C)";
-const FOOTER_OK: &str = "확인(O)";
-const FOOTER_CANCEL: &str = "취소";
 // 전송 설정 탭 (인벤토리 #76~81)
-const LABEL_TRANSFER_MODE: &str = "전송 모드(T):";
-const LABEL_LIMIT: &str = "동시 연결 수 제한(L)";
-const LABEL_LIMIT_VALUE: &str = "최대 동시 연결 수(M):";
 // 문자셋 탭 (인벤토리 #82~87)
-const CHARSET_HEADING: &str = "서버에서 파일명에 사용하는 문자셋";
-const CHARSET_LABEL: &str = "인코딩:";
-const LABEL_ENCODING: &str = "인코딩(E):";
-const CHARSET_FOOTNOTE: &str =
-    "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다.";
-/// 이미 연결된 서버의 전송 모드를 바꿨을 때 (plan Edge Case) — 지금 연결에 바로 듣지 않는다는
-/// 것을 알리지 않으면, 사용자는 바꾼 설정이 곧바로 듣는 줄 알고 같은 실패를 다시 겪는다
-const TRANSFER_APPLY_HINT: &str =
-    "이미 연결된 서버입니다. 바꾼 전송 모드는 다음 연결부터 적용됩니다.";
-/// 알아듣지 못하는 인코딩 이름을 적었을 때 (plan Edge Case) — 조용히 UTF-8로 처리하면
-/// 파일명이 깨진 채로 굳는다. 상태 표시줄은 아직 없어(T21) 이 자리에서 알린다
-const CHARSET_UNKNOWN_HINT: &str = "이 이름은 알지 못해 UTF-8로 처리합니다.";
-/// 호스트를 비운 채 등록하려 할 때 (plan Edge Case) — 무엇을 해야 하는지까지 알린다
-const ERROR_NO_HOST: &str = "호스트 주소를 입력해야 등록할 수 있습니다.";
-/// 비밀번호 봉인이 실패했을 때 — 평문으로 대신 담지 않는다 (FR-28)
-const ERROR_PASSWORD: &str = "비밀번호를 저장하지 못했습니다. 연결할 때 다시 입력해 주세요.";
-
 /// 프로토콜 선택지 — 첫 항목의 문구는 원본 그대로다 (인벤토리 #69, `:1011`).
 /// 나머지 둘은 원본에 없어 같은 말투로 새로 적었다
-const PROTOCOL_OPTIONS: [(Protocol, &str); 3] = [
-    (Protocol::Ftp, "FTP - 파일 전송 프로토콜"),
-    (Protocol::Ftps, "FTPS - TLS로 보호되는 파일 전송 프로토콜"),
-    (Protocol::Sftp, "SFTP - SSH 파일 전송 프로토콜"),
-];
+fn protocol_options() -> [(Protocol, &'static str); 3] {
+    [
+        (Protocol::Ftp, crate::i18n::site_protocol_ftp()),
+        (Protocol::Ftps, crate::i18n::site_protocol_ftps()),
+        (Protocol::Sftp, crate::i18n::site_protocol_sftp()),
+    ]
+}
 
 /// 암호화 선택지 — 기본값 문구는 원본 그대로다 (인벤토리 #72, `:1013`)
-const ENCRYPTION_OPTIONS: [(Encryption, &str); 4] = [
-    (Encryption::Plain, "일반 FTP 사용 (안전하지 않음)"),
-    (
-        Encryption::ExplicitIfAvailable,
-        "TLS를 통한 명시적 FTP가 가능한 경우 사용",
-    ),
-    (Encryption::ExplicitRequired, "TLS를 통한 명시적 FTP 필요"),
-    (Encryption::Implicit, "TLS를 통한 묵시적 FTP 필요"),
-];
+fn encryption_options() -> [(Encryption, &'static str); 4] {
+    [
+        (Encryption::Plain, crate::i18n::site_encryption_plain()),
+        (
+            Encryption::ExplicitIfAvailable,
+            crate::i18n::site_encryption_explicit_optional(),
+        ),
+        (
+            Encryption::ExplicitRequired,
+            crate::i18n::site_encryption_explicit(),
+        ),
+        (
+            Encryption::Implicit,
+            crate::i18n::site_encryption_implicit(),
+        ),
+    ]
+}
 
 /// 로그온 유형 선택지 (인벤토리 #73, `:1014`) — 키 파일은 이번 범위 밖이라 둘뿐이다
-const LOGON_OPTIONS: [(LogonType, &str); 2] =
-    [(LogonType::Normal, "일반"), (LogonType::Anonymous, "익명")];
+fn logon_options() -> [(LogonType, &'static str); 2] {
+    [
+        (LogonType::Normal, crate::i18n::site_logon_normal()),
+        (LogonType::Anonymous, crate::i18n::site_logon_anonymous()),
+    ]
+}
 
 /// 전송 모드 라디오 3종 (인벤토리 #77~79, `:852`)
-const TRANSFER_OPTIONS: [(TransferMode, &str); 3] = [
-    (TransferMode::Default, "기본(E)"),
-    (TransferMode::Active, "능동형(A)"),
-    (TransferMode::Passive, "수동형(P)"),
-];
+fn transfer_options() -> [(TransferMode, &'static str); 3] {
+    [
+        (TransferMode::Default, crate::i18n::site_mode_default()),
+        (TransferMode::Active, crate::i18n::site_mode_active()),
+        (TransferMode::Passive, crate::i18n::site_mode_passive()),
+    ]
+}
 
 /// 문자셋 라디오 2종 (인벤토리 #84·#85, `:867`)
-const CHARSET_OPTIONS: [&str; 2] = ["UTF-8(U)", "문자셋 직접 설정(C)"];
+fn charset_options() -> [&'static str; 2] {
+    ["UTF-8(U)", crate::i18n::site_charset_custom()]
+}
 
 /// 포트가 가질 수 있는 범위 — 0은 실제 포트가 아니다
 const PORT_RANGE: std::ops::RangeInclusive<u32> = 1..=65535;
@@ -446,7 +426,7 @@ impl SiteManager {
     /// 등록하지 못하면 까닭을 남기고 `None`이다 (plan Edge Case: 호스트가 빈 값)
     fn commit(&mut self, store: &mut SiteStore) -> Option<SiteId> {
         if self.draft.host.trim().is_empty() {
-            self.error = Some(ERROR_NO_HOST.to_owned());
+            self.error = Some(crate::i18n::site_error_no_host().to_owned());
             return None;
         }
         let id = match self.selected.filter(|id| store.get(*id).is_some()) {
@@ -475,7 +455,7 @@ impl SiteManager {
             ""
         };
         if !store.set_password(id, password) {
-            self.error = Some(ERROR_PASSWORD.to_owned());
+            self.error = Some(crate::i18n::site_error_password().to_owned());
         }
         // 등록한 사이트는 사이드바에도 보여야 한다 — 주소창으로 한 번 열어 숨겨 둔 것을
         // 관리자에서 등록하면 그때부터는 사용자가 목록에 두겠다는 뜻이다
@@ -593,7 +573,7 @@ impl SiteManager {
         ui.painter().text(
             egui::pos2(rect.left() + HEADER_PAD_LEFT, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            TITLE,
+            crate::i18n::site_title(),
             egui::FontId::proportional(TITLE_FONT_PX),
             theme::TEXT,
         );
@@ -663,7 +643,7 @@ impl SiteManager {
         ui.painter().text(
             egui::pos2(column.left(), column.top() + LIST_LABEL_HEIGHT / 2.0),
             egui::Align2::LEFT_CENTER,
-            LIST_LABEL,
+            crate::i18n::site_list_label(),
             egui::FontId::proportional(widgets::FORM_FONT_PX),
             theme::HEADER_TEXT,
         );
@@ -738,9 +718,9 @@ impl SiteManager {
         let enabled = self.selected.is_some();
         let mut action = None;
         for (label, candidate) in [
-            (BUTTON_RENAME, ListAction::StartRename),
-            (BUTTON_DELETE, ListAction::Delete),
-            (BUTTON_DUPLICATE, ListAction::Duplicate),
+            (crate::i18n::site_rename(), ListAction::StartRename),
+            (crate::i18n::site_delete(), ListAction::Delete),
+            (crate::i18n::site_duplicate(), ListAction::Duplicate),
         ] {
             let clicked = child
                 .add_enabled_ui(enabled, |ui| {
@@ -779,9 +759,9 @@ impl SiteManager {
         );
         let mut left = strip.left();
         for (tab, label) in [
-            (ManagerTab::General, TAB_GENERAL),
-            (ManagerTab::Transfer, TAB_TRANSFER),
-            (ManagerTab::Charset, TAB_CHARSET),
+            (ManagerTab::General, crate::i18n::site_tab_general()),
+            (ManagerTab::Transfer, crate::i18n::site_tab_transfer()),
+            (ManagerTab::Charset, crate::i18n::site_tab_charset()),
         ] {
             let text = ui.painter().layout_no_wrap(
                 label.to_owned(),
@@ -863,7 +843,7 @@ impl SiteManager {
             left,
             top,
             form.width(),
-            LABEL_TRANSFER_MODE,
+            crate::i18n::site_label_transfer_mode(),
             theme::HEADER_TEXT,
         );
         top += TEXT_ROW_HEIGHT + TRANSFER_GAP;
@@ -878,7 +858,7 @@ impl SiteManager {
         );
         row.spacing_mut().item_spacing.x = RADIO_GAP;
         let mut picked_mode = None;
-        for (mode, label) in TRANSFER_OPTIONS {
+        for (mode, label) in transfer_options() {
             if widgets::radio_row(&mut row, label, self.draft.transfer_mode == mode) {
                 picked_mode = Some(mode);
             }
@@ -896,7 +876,11 @@ impl SiteManager {
                 egui::vec2(form.width() - MARK_INDENT, widgets::FORM_FIELD_HEIGHT),
             ),
         );
-        if widgets::check_row(&mut row, LABEL_LIMIT, self.draft.limit_on) {
+        if widgets::check_row(
+            &mut row,
+            crate::i18n::site_label_limit(),
+            self.draft.limit_on,
+        ) {
             self.draft.limit_on = !self.draft.limit_on;
         }
         top += widgets::FORM_FIELD_HEIGHT + TRANSFER_GAP;
@@ -909,7 +893,7 @@ impl SiteManager {
                 egui::vec2(form.width() - SPINNER_INDENT, widgets::SPINNER_HEIGHT),
             ),
         );
-        widgets::form_inline_label(&mut row, LABEL_LIMIT_VALUE, limit_on);
+        widgets::form_inline_label(&mut row, crate::i18n::site_label_limit_value(), limit_on);
         self.draft.limit =
             widgets::spinner_field(&mut row, self.draft.limit, CONNECTION_LIMIT_RANGE, limit_on);
 
@@ -920,7 +904,7 @@ impl SiteManager {
                 left,
                 top,
                 form.width(),
-                TRANSFER_APPLY_HINT,
+                crate::i18n::site_transfer_mode_notice(),
                 theme::WARN,
             );
         }
@@ -931,13 +915,16 @@ impl SiteManager {
         let left = form.left() + TAB_BODY_PAD;
         let mut top = form.top() + TAB_BODY_PAD;
 
-        for text in [CHARSET_HEADING, CHARSET_LABEL] {
+        for text in [
+            crate::i18n::site_charset_heading(),
+            crate::i18n::site_charset_label(),
+        ] {
             text_row(ui, left, top, form.width(), text, theme::HEADER_TEXT);
             top += TEXT_ROW_HEIGHT + CHARSET_GAP;
         }
 
         // 라디오 2개 — 세로로 쌓인다 (`:473-479`)
-        for (index, label) in CHARSET_OPTIONS.into_iter().enumerate() {
+        for (index, label) in charset_options().into_iter().enumerate() {
             let custom = index == 1;
             let mut row = self.row(
                 ui,
@@ -961,7 +948,7 @@ impl SiteManager {
                 egui::vec2(form.width() - ENCODING_INDENT, ENCODING_HEIGHT),
             ),
         );
-        widgets::form_inline_label(&mut row, LABEL_ENCODING, custom);
+        widgets::form_inline_label(&mut row, crate::i18n::site_label_encoding(), custom);
         widgets::text_field(
             &mut row,
             "encoding",
@@ -979,7 +966,7 @@ impl SiteManager {
                 left,
                 top,
                 form.width(),
-                CHARSET_UNKNOWN_HINT,
+                crate::i18n::site_charset_unknown_hint(),
                 theme::WARN,
             );
             top += TEXT_ROW_HEIGHT + CHARSET_GAP;
@@ -989,7 +976,7 @@ impl SiteManager {
             left,
             top,
             form.width(),
-            CHARSET_FOOTNOTE,
+            crate::i18n::site_charset_warning(),
             theme::TEXT_MUTED,
         );
     }
@@ -1017,26 +1004,26 @@ impl SiteManager {
 
         // 프로토콜 — 바꾸면 포트 기본값이 따라온다 (Acceptance ③)
         let mut row = self.row(ui, row_rect(0));
-        widgets::form_label(&mut row, LABEL_PROTOCOL, true);
-        let labels: Vec<&str> = PROTOCOL_OPTIONS.iter().map(|(_, label)| *label).collect();
+        widgets::form_label(&mut row, crate::i18n::site_label_protocol(), true);
+        let labels: Vec<&str> = protocol_options().iter().map(|(_, label)| *label).collect();
         if let Some(index) = widgets::dropdown_field(
             &mut row,
             "protocol",
-            option_label(&PROTOCOL_OPTIONS, self.draft.protocol),
+            option_label(&protocol_options(), self.draft.protocol),
             field_width,
             true,
             &labels,
         ) {
-            self.draft.set_protocol(PROTOCOL_OPTIONS[index].0);
+            self.draft.set_protocol(protocol_options()[index].0);
         }
 
         // 호스트 + 포트 — 한 행에 둘이 온다 (`:430-435`)
         let mut row = self.row(ui, row_rect(1));
-        widgets::form_label(&mut row, LABEL_HOST, true);
+        widgets::form_label(&mut row, crate::i18n::site_label_host(), true);
         let port_label_width = row
             .painter()
             .layout_no_wrap(
-                LABEL_PORT.to_owned(),
+                crate::i18n::site_label_port().to_owned(),
                 egui::FontId::proportional(widgets::FORM_FONT_PX),
                 theme::HEADER_TEXT,
             )
@@ -1057,7 +1044,7 @@ impl SiteManager {
             false,
         );
         row.add_space(PORT_LABEL_MARGIN);
-        widgets::form_inline_label(&mut row, LABEL_PORT, true);
+        widgets::form_inline_label(&mut row, crate::i18n::site_label_port(), true);
         if widgets::text_field(
             &mut row,
             "port",
@@ -1074,38 +1061,45 @@ impl SiteManager {
         // 암호화 — FTP 계열에만 뜻이 있다 (인벤토리 #72)
         let mut row = self.row(ui, row_rect(2));
         let encryption_enabled = self.draft.encryption_enabled();
-        widgets::form_label(&mut row, LABEL_ENCRYPTION, encryption_enabled);
-        let labels: Vec<&str> = ENCRYPTION_OPTIONS.iter().map(|(_, label)| *label).collect();
+        widgets::form_label(
+            &mut row,
+            crate::i18n::site_label_encryption(),
+            encryption_enabled,
+        );
+        let labels: Vec<&str> = encryption_options()
+            .iter()
+            .map(|(_, label)| *label)
+            .collect();
         if let Some(index) = widgets::dropdown_field(
             &mut row,
             "encryption",
-            option_label(&ENCRYPTION_OPTIONS, self.draft.encryption),
+            option_label(&encryption_options(), self.draft.encryption),
             field_width,
             encryption_enabled,
             &labels,
         ) {
-            self.draft.encryption = ENCRYPTION_OPTIONS[index].0;
+            self.draft.encryption = encryption_options()[index].0;
         }
 
         // 로그온 유형
         let mut row = self.row(ui, row_rect(3));
-        widgets::form_label(&mut row, LABEL_LOGON, true);
-        let labels: Vec<&str> = LOGON_OPTIONS.iter().map(|(_, label)| *label).collect();
+        widgets::form_label(&mut row, crate::i18n::site_label_logon(), true);
+        let labels: Vec<&str> = logon_options().iter().map(|(_, label)| *label).collect();
         if let Some(index) = widgets::dropdown_field(
             &mut row,
             "logon",
-            option_label(&LOGON_OPTIONS, self.draft.logon),
+            option_label(&logon_options(), self.draft.logon),
             field_width,
             true,
             &labels,
         ) {
-            self.draft.logon = LOGON_OPTIONS[index].0;
+            self.draft.logon = logon_options()[index].0;
         }
 
         // 사용자·비밀번호 — 익명이면 둘 다 비활성이다 (Acceptance ④)
         let credentials = self.draft.credentials_enabled();
         let mut row = self.row(ui, row_rect(4));
-        widgets::form_label(&mut row, LABEL_USER, credentials);
+        widgets::form_label(&mut row, crate::i18n::site_label_user(), credentials);
         widgets::text_field(
             &mut row,
             "user",
@@ -1116,7 +1110,7 @@ impl SiteManager {
         );
 
         let mut row = self.row(ui, row_rect(5));
-        widgets::form_label(&mut row, LABEL_PASSWORD, credentials);
+        widgets::form_label(&mut row, crate::i18n::site_label_password(), credentials);
         widgets::text_field(
             &mut row,
             "password",
@@ -1173,7 +1167,7 @@ impl SiteManager {
         // 오른쪽부터 그린다 — 원본의 배치 순서(연결·확인·취소)를 뒤집어 넣는다
         let cancel = widgets::design_button(
             &mut child,
-            FOOTER_CANCEL,
+            crate::i18n::cancel(),
             theme::TEXT_BUTTON,
             FOOTER_BUTTON_PAD_X,
             egui::vec2(0.0, FOOTER_BUTTON_HEIGHT),
@@ -1181,7 +1175,7 @@ impl SiteManager {
         .clicked();
         let confirm = widgets::design_button(
             &mut child,
-            FOOTER_OK,
+            crate::i18n::site_ok(),
             theme::TEXT_BUTTON,
             FOOTER_BUTTON_PAD_X,
             egui::vec2(0.0, FOOTER_BUTTON_HEIGHT),
@@ -1189,7 +1183,7 @@ impl SiteManager {
         .clicked();
         let connect = widgets::primary_button(
             &mut child,
-            FOOTER_CONNECT,
+            crate::i18n::site_connect(),
             FOOTER_BUTTON_PAD_X,
             egui::vec2(0.0, FOOTER_BUTTON_HEIGHT),
         )
@@ -1331,32 +1325,32 @@ mod tests {
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
         // 인벤토리 #60~75·#88~90 — 여기서 한 글자라도 다듬으면 화면과 명세가 갈린다
-        assert_eq!(TITLE, "사이트 관리자");
-        assert_eq!(LIST_LABEL, "항목 선택(S):");
-        assert_eq!(BUTTON_RENAME, "이름 바꾸기(R)");
-        assert_eq!(BUTTON_DELETE, "삭제(D)");
-        assert_eq!(BUTTON_DUPLICATE, "복제(I)");
-        assert_eq!(TAB_GENERAL, "일반");
-        assert_eq!(TAB_TRANSFER, "전송 설정");
-        assert_eq!(TAB_CHARSET, "문자셋");
-        assert_eq!(LABEL_PROTOCOL, "프로토콜(T):");
-        assert_eq!(LABEL_HOST, "호스트(H):");
-        assert_eq!(LABEL_PORT, "포트(P):");
-        assert_eq!(LABEL_ENCRYPTION, "암호화(E):");
-        assert_eq!(LABEL_LOGON, "로그온 유형(L):");
-        assert_eq!(LABEL_USER, "사용자(U):");
-        assert_eq!(LABEL_PASSWORD, "비밀번호(W):");
-        assert_eq!(FOOTER_CONNECT, "연결(C)");
-        assert_eq!(FOOTER_OK, "확인(O)");
-        assert_eq!(FOOTER_CANCEL, "취소");
+        assert_eq!(crate::i18n::site_title(), "사이트 관리자");
+        assert_eq!(crate::i18n::site_list_label(), "항목 선택(S):");
+        assert_eq!(crate::i18n::site_rename(), "이름 바꾸기(R)");
+        assert_eq!(crate::i18n::site_delete(), "삭제(D)");
+        assert_eq!(crate::i18n::site_duplicate(), "복제(I)");
+        assert_eq!(crate::i18n::site_tab_general(), "일반");
+        assert_eq!(crate::i18n::site_tab_transfer(), "전송 설정");
+        assert_eq!(crate::i18n::site_tab_charset(), "문자셋");
+        assert_eq!(crate::i18n::site_label_protocol(), "프로토콜(T):");
+        assert_eq!(crate::i18n::site_label_host(), "호스트(H):");
+        assert_eq!(crate::i18n::site_label_port(), "포트(P):");
+        assert_eq!(crate::i18n::site_label_encryption(), "암호화(E):");
+        assert_eq!(crate::i18n::site_label_logon(), "로그온 유형(L):");
+        assert_eq!(crate::i18n::site_label_user(), "사용자(U):");
+        assert_eq!(crate::i18n::site_label_password(), "비밀번호(W):");
+        assert_eq!(crate::i18n::site_connect(), "연결(C)");
+        assert_eq!(crate::i18n::site_ok(), "확인(O)");
+        assert_eq!(crate::i18n::cancel(), "취소");
         // 드롭다운의 기본값 문구도 원본에 적힌 그대로다 (`:1011`·`:1013`·`:1014`)
-        assert_eq!(PROTOCOL_OPTIONS[0].1, "FTP - 파일 전송 프로토콜");
+        assert_eq!(protocol_options()[0].1, "FTP - 파일 전송 프로토콜");
         assert_eq!(
-            ENCRYPTION_OPTIONS[1].1,
+            encryption_options()[1].1,
             "TLS를 통한 명시적 FTP가 가능한 경우 사용"
         );
-        assert_eq!(LOGON_OPTIONS[0].1, "일반");
-        assert_eq!(LOGON_OPTIONS[1].1, "익명");
+        assert_eq!(logon_options()[0].1, "일반");
+        assert_eq!(logon_options()[1].1, "익명");
     }
 
     #[test]
@@ -1527,7 +1521,10 @@ mod tests {
         manager.open_new();
         manager.draft.host = "   ".to_owned();
         assert_eq!(manager.commit(&mut store), None);
-        assert_eq!(manager.error.as_deref(), Some(ERROR_NO_HOST));
+        assert_eq!(
+            manager.error.as_deref(),
+            Some(crate::i18n::site_error_no_host())
+        );
         assert!(store.is_empty(), "거부했는데 사이트가 생겼다");
     }
 
@@ -1608,19 +1605,25 @@ mod tests {
     #[test]
     fn 두_번째_세_번째_탭_문구도_인벤토리_원문_그대로다() {
         // 인벤토리 #76~87 (원본 `:442`·`:852`·`:454`·`:457`·`:471-472`·`:867`·`:481`·`:484`)
-        assert_eq!(LABEL_TRANSFER_MODE, "전송 모드(T):");
-        assert_eq!(TRANSFER_OPTIONS[0].1, "기본(E)");
-        assert_eq!(TRANSFER_OPTIONS[1].1, "능동형(A)");
-        assert_eq!(TRANSFER_OPTIONS[2].1, "수동형(P)");
-        assert_eq!(LABEL_LIMIT, "동시 연결 수 제한(L)");
-        assert_eq!(LABEL_LIMIT_VALUE, "최대 동시 연결 수(M):");
-        assert_eq!(CHARSET_HEADING, "서버에서 파일명에 사용하는 문자셋");
-        assert_eq!(CHARSET_LABEL, "인코딩:");
-        assert_eq!(CHARSET_OPTIONS[0], "UTF-8(U)");
-        assert_eq!(CHARSET_OPTIONS[1], "문자셋 직접 설정(C)");
-        assert_eq!(LABEL_ENCODING, "인코딩(E):");
+        assert_eq!(crate::i18n::site_label_transfer_mode(), "전송 모드(T):");
+        assert_eq!(transfer_options()[0].1, "기본(E)");
+        assert_eq!(transfer_options()[1].1, "능동형(A)");
+        assert_eq!(transfer_options()[2].1, "수동형(P)");
+        assert_eq!(crate::i18n::site_label_limit(), "동시 연결 수 제한(L)");
         assert_eq!(
-            CHARSET_FOOTNOTE,
+            crate::i18n::site_label_limit_value(),
+            "최대 동시 연결 수(M):"
+        );
+        assert_eq!(
+            crate::i18n::site_charset_heading(),
+            "서버에서 파일명에 사용하는 문자셋"
+        );
+        assert_eq!(crate::i18n::site_charset_label(), "인코딩:");
+        assert_eq!(charset_options()[0], "UTF-8(U)");
+        assert_eq!(charset_options()[1], "문자셋 직접 설정(C)");
+        assert_eq!(crate::i18n::site_label_encoding(), "인코딩(E):");
+        assert_eq!(
+            crate::i18n::site_charset_warning(),
             "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다."
         );
         // 인코딩 필드 폭·높이도 원본 값이다 (`:482`)
@@ -1696,7 +1699,7 @@ mod tests {
         // plan Edge Case — 지금 연결에 바로 듣지 않는다는 것을 알리지 않으면
         // 사용자는 바꾼 설정이 곧바로 듣는 줄 알고 같은 실패를 다시 겪는다
         assert_eq!(
-            TRANSFER_APPLY_HINT,
+            crate::i18n::site_transfer_mode_notice(),
             "이미 연결된 서버입니다. 바꾼 전송 모드는 다음 연결부터 적용됩니다."
         );
         let (mut manager, mut store, id) = manager_with_site();

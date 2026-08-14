@@ -63,26 +63,7 @@ pub const UNKNOWN_COUNT: &str = "—";
 
 // ── 화면 문구 (인벤토리 원문 그대로 — 여기서 다듬으면 화면과 명세가 갈린다) ──
 /// 미연결 탭 안내 첫 줄 (인벤토리 #14). `sftp://호스트`만 다른 색이라 셋으로 나눠 든다
-const EMPTY_HINT_HEAD: &str = "주소창에 ";
 const EMPTY_HINT_SCHEME: &str = "sftp://호스트";
-const EMPTY_HINT_TAIL: &str = " 를 입력해 연결하세요";
-/// 미연결 탭 안내 둘째 줄 (인벤토리 #15)
-const EMPTY_HINT_DRAG: &str = "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다";
-/// 사이트를 아는 미연결 탭의 버튼 — 재시작 뒤 복원된 탭이 이것을 보인다
-const RECONNECT_LABEL: &str = "다시 연결";
-/// 실패 화면 제목 (인벤토리 #16)
-const FAIL_TITLE: &str = "연결하지 못했습니다";
-/// 실패 화면 버튼·링크 (인벤토리 #18~20)
-const FAIL_RETRY: &str = "재시도";
-const FAIL_SETTINGS: &str = "설정 열기";
-const FAIL_VIEW_LOG: &str = "서버 로그 보기";
-/// 연결 중 취소 (인벤토리 #21)
-const CANCEL_LABEL: &str = "취소";
-
-/// 서버가 사유를 주지 않았을 때 보일 문구
-const FAIL_REASON_FALLBACK: &str = "서버가 응답하지 않았습니다.";
-/// 실패 사유 뒤에 늘 붙는 안내 (인벤토리 #17)
-const FAIL_REASON_HINT: &str = "암호화 설정이 서버와 다를 수도 있습니다.";
 
 /// 원격 화면이 함께 보는 읽기 전용 상태 — 사이트 목록과 **지금 연결된 사이트들**.
 ///
@@ -121,9 +102,9 @@ pub enum FailedAction {
 pub fn badge_label(phase: &TabPhase, protocol: Protocol) -> &'static str {
     match phase {
         TabPhase::Ok => protocol.label(),
-        TabPhase::Connecting => "연결 중…",
+        TabPhase::Connecting => crate::i18n::remote_connecting(),
         // 실패한 탭도 "연결이 없는" 상태다 — 사유는 본문이 보인다
-        TabPhase::New | TabPhase::Error { .. } => "연결 없음",
+        TabPhase::New | TabPhase::Error { .. } => crate::i18n::remote_not_connected(),
     }
 }
 
@@ -237,7 +218,7 @@ pub fn show_skeleton(ui: &mut egui::Ui) {
 pub fn show_cancel(ui: &mut egui::Ui) -> bool {
     widgets::design_button(
         ui,
-        CANCEL_LABEL,
+        crate::i18n::cancel(),
         theme::HEADER_TEXT,
         CANCEL_PAD_X,
         egui::vec2(0.0, CANCEL_BUTTON_HEIGHT),
@@ -254,12 +235,12 @@ pub fn show_empty(ui: &mut egui::Ui) {
         // `sftp://` 부분만 초록으로 — 사용자가 무엇을 적어야 하는지 눈에 들어오게
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            ui.label(egui::RichText::new(EMPTY_HINT_HEAD).color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new(crate::i18n::remote_hint_head()).color(theme::TEXT_MUTED));
             ui.label(egui::RichText::new(EMPTY_HINT_SCHEME).color(theme::OK_TEXT));
-            ui.label(egui::RichText::new(EMPTY_HINT_TAIL).color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new(crate::i18n::remote_hint_tail()).color(theme::TEXT_MUTED));
         });
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(EMPTY_HINT_DRAG).color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new(crate::i18n::remote_hint_drag()).color(theme::TEXT_DIM));
     });
 }
 
@@ -276,7 +257,7 @@ pub fn show_reconnect(ui: &mut egui::Ui) -> bool {
         ui.add_space(FAIL_GAP * 2.0);
         clicked = widgets::design_button(
             ui,
-            RECONNECT_LABEL,
+            crate::i18n::remote_reconnect(),
             theme::TEXT_BUTTON,
             FAIL_BUTTON_PAD_X,
             egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
@@ -292,9 +273,13 @@ pub fn show_reconnect(ui: &mut egui::Ui) -> bool {
 pub fn failure_reason(detail: &str) -> String {
     let detail = detail.trim();
     if detail.is_empty() {
-        format!("{FAIL_REASON_FALLBACK} {FAIL_REASON_HINT}")
+        format!(
+            "{} {}",
+            crate::i18n::remote_fail_reason_fallback(),
+            crate::i18n::remote_fail_reason_hint()
+        )
     } else {
-        format!("{detail} {FAIL_REASON_HINT}")
+        format!("{detail} {}", crate::i18n::remote_fail_reason_hint())
     }
 }
 
@@ -325,7 +310,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
 
         ui.add_space(FAIL_GAP);
         ui.label(
-            egui::RichText::new(FAIL_TITLE)
+            egui::RichText::new(crate::i18n::remote_fail_title())
                 .size(14.0)
                 .color(theme::TEXT),
         );
@@ -350,15 +335,18 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
         ui.horizontal(|ui| {
             // 가운데 정렬 — `vertical_centered` 안이라도 가로 묶음은 스스로 맞춰야 한다.
             // 버튼 폭이 글자에 맞춰지므로 미리 재어 둔다
-            let buttons: f32 = [FAIL_RETRY, FAIL_SETTINGS]
-                .iter()
-                .map(|label| widgets::design_button_width(ui, label, FAIL_BUTTON_PAD_X))
-                .sum::<f32>()
+            let buttons: f32 = [
+                crate::i18n::remote_fail_retry(),
+                crate::i18n::remote_fail_settings(),
+            ]
+            .iter()
+            .map(|label| widgets::design_button_width(ui, label, FAIL_BUTTON_PAD_X))
+            .sum::<f32>()
                 + ui.spacing().item_spacing.x;
             ui.add_space(((ui.available_width() - buttons) / 2.0).max(0.0));
             if widgets::design_button(
                 ui,
-                FAIL_RETRY,
+                crate::i18n::remote_fail_retry(),
                 theme::TEXT_BUTTON,
                 FAIL_BUTTON_PAD_X,
                 egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
@@ -369,7 +357,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
             }
             if widgets::design_button(
                 ui,
-                FAIL_SETTINGS,
+                crate::i18n::remote_fail_settings(),
                 theme::TEXT_BUTTON,
                 FAIL_BUTTON_PAD_X,
                 egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
@@ -384,7 +372,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
         if ui
             .add(
                 egui::Label::new(
-                    egui::RichText::new(FAIL_VIEW_LOG)
+                    egui::RichText::new(crate::i18n::remote_fail_view_log())
                         .size(12.0)
                         .color(theme::TEXT_DIM),
                 )
@@ -412,11 +400,13 @@ pub fn show_hostkey_dialog(
     let (title, fingerprint, warning) = match check {
         // 물어볼 것이 없다 — 호출부가 이 경우엔 대화를 띄우지 않는다
         HostKeyCheck::Match => return Some(HostKeyDecision::Accept),
-        HostKeyCheck::Unknown { fingerprint } => {
-            ("이 서버를 처음 연결합니다", fingerprint.as_str(), None)
-        }
+        HostKeyCheck::Unknown { fingerprint } => (
+            crate::i18n::remote_hostkey_first(),
+            fingerprint.as_str(),
+            None,
+        ),
         HostKeyCheck::Changed { old, new } => (
-            "서버 지문이 전과 다릅니다",
+            crate::i18n::remote_hostkey_changed(),
             new.as_str(),
             Some(format!(
                 "전에 저장한 지문은 {old} 였습니다. 서버를 다시 설치했거나, \
@@ -445,10 +435,10 @@ pub fn show_hostkey_dialog(
 
         ui.add_space(14.0);
         ui.horizontal(|ui| {
-            if ui.button("수락하고 연결").clicked() {
+            if ui.button(crate::i18n::remote_hostkey_accept()).clicked() {
                 decision = Some(HostKeyDecision::Accept);
             }
-            if ui.button("취소").clicked() {
+            if ui.button(crate::i18n::cancel()).clicked() {
                 decision = Some(HostKeyDecision::Reject);
             }
         });
@@ -559,9 +549,12 @@ mod tests {
         assert_eq!(badge_label(&TabPhase::Ok, Protocol::Ftp), "ftp");
         assert_eq!(
             badge_label(&TabPhase::Connecting, Protocol::Sftp),
-            "연결 중…"
+            crate::i18n::remote_connecting()
         );
-        assert_eq!(badge_label(&TabPhase::New, Protocol::Sftp), "연결 없음");
+        assert_eq!(
+            badge_label(&TabPhase::New, Protocol::Sftp),
+            crate::i18n::remote_not_connected()
+        );
         // 실패한 탭도 연결이 없는 상태다 — 사유는 본문이 보인다
         assert_eq!(
             badge_label(
@@ -570,7 +563,7 @@ mod tests {
                 },
                 Protocol::Sftp
             ),
-            "연결 없음"
+            crate::i18n::remote_not_connected()
         );
     }
 
@@ -590,11 +583,18 @@ mod tests {
 
     #[test]
     fn 미연결_안내_문구는_원문_그대로다() {
-        // 인벤토리 #14·#15 — 색을 나누느라 셋으로 쪼갠 첫 줄도 이어 붙이면 원문과 같아야 한다
-        let first = format!("{EMPTY_HINT_HEAD}{EMPTY_HINT_SCHEME}{EMPTY_HINT_TAIL}");
+        // 인벤토리 #14·#15 — 색을 나누느라 셋으로 쪼갠 첫 줄도 이어 붙이면 원문과 같아야 한다.
+        // 카탈로그를 거쳐도 한국어 값은 원문이어야 하므로 언어를 고정한다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let first = format!(
+            "{}{EMPTY_HINT_SCHEME}{}",
+            crate::i18n::remote_hint_head(),
+            crate::i18n::remote_hint_tail()
+        );
         assert_eq!(first, "주소창에 sftp://호스트 를 입력해 연결하세요");
         assert_eq!(
-            EMPTY_HINT_DRAG,
+            crate::i18n::remote_hint_drag(),
             "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다"
         );
     }
@@ -602,25 +602,31 @@ mod tests {
     #[test]
     fn 실패_화면과_취소_문구는_원문_그대로다() {
         // 인벤토리 #16~21 — 다듬으면 화면과 명세가 갈린다
-        assert_eq!(FAIL_TITLE, "연결하지 못했습니다");
-        assert_eq!(FAIL_REASON_HINT, "암호화 설정이 서버와 다를 수도 있습니다.");
-        assert_eq!(FAIL_RETRY, "재시도");
-        assert_eq!(FAIL_SETTINGS, "설정 열기");
-        assert_eq!(FAIL_VIEW_LOG, "서버 로그 보기");
-        assert_eq!(CANCEL_LABEL, "취소");
+        assert_eq!(crate::i18n::remote_fail_title(), "연결하지 못했습니다");
+        assert_eq!(
+            crate::i18n::remote_fail_reason_hint(),
+            "암호화 설정이 서버와 다를 수도 있습니다."
+        );
+        assert_eq!(crate::i18n::remote_fail_retry(), "재시도");
+        assert_eq!(crate::i18n::remote_fail_settings(), "설정 열기");
+        assert_eq!(crate::i18n::remote_fail_view_log(), "서버 로그 보기");
+        assert_eq!(crate::i18n::cancel(), "취소");
     }
 
     #[test]
     fn 실패_사유가_비면_일반_문구로_메운다() {
         // 서버가 아무 말도 하지 않으면 빈 줄만 남는다 (plan Edge Case)
         let empty = failure_reason("   ");
-        assert!(empty.starts_with(FAIL_REASON_FALLBACK), "{empty}");
-        assert!(empty.ends_with(FAIL_REASON_HINT));
+        assert!(
+            empty.starts_with(crate::i18n::remote_fail_reason_fallback()),
+            "{empty}"
+        );
+        assert!(empty.ends_with(crate::i18n::remote_fail_reason_hint()));
 
         // 사유가 있으면 그대로 두고 안내만 덧붙인다
         let given = failure_reason("530 Login incorrect");
         assert!(given.starts_with("530 Login incorrect"));
-        assert!(given.ends_with(FAIL_REASON_HINT));
+        assert!(given.ends_with(crate::i18n::remote_fail_reason_hint()));
     }
 
     #[test]

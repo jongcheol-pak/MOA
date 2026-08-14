@@ -210,6 +210,123 @@ strings! {
     /// 사이트를 찾을 수 없을 때 탭에 보일 이름 (사이트가 지워진 뒤 남은 탭)
     tabs_missing_site => "알 수 없는 사이트" / "Unknown site";
 
+    // ── 사이트 관리자 (FR-27) ──
+    /// 접근 키 알파벳은 **영어에서도 그대로 둔다** — 키 배정이 바뀌면 익힌 조작이 깨진다
+    site_title => "사이트 관리자" / "Site Manager";
+    site_list_label => "항목 선택(S):" / "Select entry(S):";
+    site_rename => "이름 바꾸기(R)" / "Rename(R)";
+    site_delete => "삭제(D)" / "Delete(D)";
+    site_duplicate => "복제(I)" / "Duplicate(I)";
+    site_tab_general => "일반" / "General";
+    site_tab_transfer => "전송 설정" / "Transfer";
+    site_tab_charset => "문자셋" / "Charset";
+    site_label_protocol => "프로토콜(T):" / "Protocol(T):";
+    site_label_host => "호스트(H):" / "Host(H):";
+    site_label_port => "포트(P):" / "Port(P):";
+    site_label_encryption => "암호화(E):" / "Encryption(E):";
+    site_label_logon => "로그온 유형(L):" / "Logon type(L):";
+    site_label_user => "사용자(U):" / "User(U):";
+    site_label_password => "비밀번호(W):" / "Password(W):";
+    site_connect => "연결(C)" / "Connect(C)";
+    site_ok => "확인(O)" / "OK(O)";
+    site_label_transfer_mode => "전송 모드(T):" / "Transfer mode(T):";
+    site_label_limit => "동시 연결 수 제한(L)" / "Limit simultaneous connections(L)";
+    site_label_limit_value => "최대 동시 연결 수(M):" / "Maximum connections(M):";
+    site_charset_heading
+        => "서버에서 파일명에 사용하는 문자셋"
+        / "Character set the server uses for file names";
+    site_charset_label => "인코딩:" / "Encoding:";
+    site_label_encoding => "인코딩(E):" / "Encoding(E):";
+    /// 알아듣지 못하는 인코딩 이름을 적었을 때 — 조용히 UTF-8로 처리하면 파일명이 깨진 채로 굳는다
+    site_charset_unknown_hint
+        => "이 이름은 알지 못해 UTF-8로 처리합니다."
+        / "This name is not recognized, so UTF-8 is used.";
+    site_charset_warning
+        => "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다."
+        / "A wrong character set can make file names display incorrectly.";
+    /// 이미 연결된 서버의 전송 모드를 바꿨을 때 — 지금 연결에 바로 듣지 않는다는 것을
+    /// 알리지 않으면 사용자는 같은 실패를 다시 겪는다
+    site_transfer_mode_notice
+        => "이미 연결된 서버입니다. 바꾼 전송 모드는 다음 연결부터 적용됩니다."
+        / "Already connected. The new transfer mode applies from the next connection.";
+    /// 호스트를 비운 채 등록하려 할 때 — 무엇을 해야 하는지까지 알린다
+    site_error_no_host
+        => "호스트 주소를 입력해야 등록할 수 있습니다."
+        / "Enter a host address to save this site.";
+    /// 비밀번호 봉인이 실패했을 때 — 평문으로 대신 담지 않는다 (FR-28)
+    site_error_password
+        => "비밀번호를 저장하지 못했습니다. 연결할 때 다시 입력해 주세요."
+        / "Could not save the password. Enter it again when connecting.";
+    site_protocol_ftp => "FTP - 파일 전송 프로토콜" / "FTP - File Transfer Protocol";
+    site_protocol_ftps
+        => "FTPS - TLS로 보호되는 파일 전송 프로토콜"
+        / "FTPS - File Transfer Protocol over TLS";
+    site_protocol_sftp => "SFTP - SSH 파일 전송 프로토콜" / "SFTP - SSH File Transfer Protocol";
+    site_encryption_plain => "일반 FTP 사용 (안전하지 않음)" / "Use plain FTP (insecure)";
+    site_encryption_explicit_optional
+        => "TLS를 통한 명시적 FTP가 가능한 경우 사용"
+        / "Use explicit FTP over TLS if available";
+    site_encryption_explicit => "TLS를 통한 명시적 FTP 필요" / "Require explicit FTP over TLS";
+    site_encryption_implicit => "TLS를 통한 묵시적 FTP 필요" / "Require implicit FTP over TLS";
+    site_logon_normal => "일반" / "Normal";
+    site_logon_anonymous => "익명" / "Anonymous";
+    site_mode_default => "기본(E)" / "Default(E)";
+    site_mode_active => "능동형(A)" / "Active(A)";
+    site_mode_passive => "수동형(P)" / "Passive(P)";
+    site_charset_custom => "문자셋 직접 설정(C)" / "Set character set manually(C)";
+
+    // ── 원격 메뉴 (FR-31) ──
+    remote_download => "받기" / "Download";
+    remote_upload => "올리기" / "Upload";
+    remote_rename => "이름 바꾸기…" / "Rename…";
+    remote_new_folder => "새 폴더…" / "New folder…";
+    remote_chmod => "권한 변경…" / "Change permissions…";
+    remote_delete => "삭제…" / "Delete…";
+    /// 이름에 쓸 수 없는 글자를 적었을 때
+    remote_error_slash => "이름에 / 는 쓸 수 없습니다." / "A name cannot contain /.";
+    remote_error_empty => "이름을 입력해 주세요." / "Enter a name.";
+    remote_ok => "확인" / "OK";
+    cancel => "취소" / "Cancel";
+    remote_chmod_title => "권한 변경" / "Change permissions";
+    remote_chmod_octal => "숫자(8진):" / "Octal:";
+    remote_apply => "적용" / "Apply";
+    remote_owner => "소유자" / "Owner";
+    remote_group => "그룹" / "Group";
+    remote_others => "기타" / "Others";
+    remote_read => "읽기" / "Read";
+    remote_write => "쓰기" / "Write";
+    remote_execute => "실행" / "Execute";
+    remote_delete_title => "원격 항목 삭제" / "Delete remote items";
+    remote_delete_irreversible => "되돌릴 수 없습니다." / "This cannot be undone.";
+    remote_delete_recursive => "폴더 안에 든 것까지 지웁니다" / "Also delete folder contents";
+
+    // ── 원격 탭 상태 (FR-31) ──
+    remote_hint_head => "주소창에 " / "Type ";
+    remote_hint_tail => " 를 입력해 연결하세요" / " in the address bar to connect";
+    /// 미연결 탭 안내 둘째 줄 (인벤토리 #15)
+    remote_hint_drag
+        => "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다"
+        / "You can also drag a site from the sidebar onto this tab";
+    /// 사이트를 아는 미연결 탭의 버튼 — 재시작 뒤 복원된 탭이 이것을 보인다
+    remote_reconnect => "다시 연결" / "Reconnect";
+    /// 실패 화면 제목 (인벤토리 #16)
+    remote_fail_title => "연결하지 못했습니다" / "Could not connect";
+    /// 실패 화면 버튼·링크 (인벤토리 #18~20)
+    remote_fail_retry => "재시도" / "Retry";
+    remote_fail_settings => "설정 열기" / "Open settings";
+    remote_fail_view_log => "서버 로그 보기" / "View server log";
+    /// 서버가 사유를 주지 않았을 때 보일 문구
+    remote_fail_reason_fallback => "서버가 응답하지 않았습니다." / "The server did not respond.";
+    /// 실패 사유 뒤에 늘 붙는 안내 (인벤토리 #17)
+    remote_fail_reason_hint
+        => "암호화 설정이 서버와 다를 수도 있습니다."
+        / "The encryption setting may not match the server.";
+    remote_connecting => "연결 중…" / "Connecting…";
+    remote_not_connected => "연결 없음" / "Not connected";
+    remote_hostkey_first => "이 서버를 처음 연결합니다" / "Connecting to this server for the first time";
+    remote_hostkey_changed => "서버 지문이 전과 다릅니다" / "The server fingerprint has changed";
+    remote_hostkey_accept => "수락하고 연결" / "Accept and connect";
+
     // ── 트레이 메뉴 (FR-50) ──
     /// 우클릭 메뉴 항목 — 요청 문구 그대로다
     tray_show => "실행" / "Open";
@@ -295,6 +412,15 @@ pub mod dynamic {
             None => out.push_str(unknown),
         }
         out
+    }
+
+    /// 원격 삭제 확인 — 영어는 하나일 때 단수형이다
+    pub fn remote_delete_count(count: usize) -> String {
+        match current() {
+            Language::Korean => format!("{count}개 항목을 서버에서 지웁니다."),
+            Language::English if count == 1 => "1 item will be deleted from the server.".to_owned(),
+            Language::English => format!("{count} items will be deleted from the server."),
+        }
     }
 
     /// 사이트를 등록한 뒤 뜨는 알림 (FR-27)

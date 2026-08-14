@@ -9,18 +9,6 @@ use crate::remote::types::RemotePath;
 use crate::ui::theme;
 use eframe::egui;
 
-// ── 문구 (디자인 미제공 — 이 구현이 정한 신규 문구다) ──
-const MENU_DOWNLOAD: &str = "받기";
-const MENU_UPLOAD: &str = "올리기";
-const MENU_RENAME: &str = "이름 바꾸기…";
-const MENU_NEW_FOLDER: &str = "새 폴더…";
-const MENU_CHMOD: &str = "권한 변경…";
-const MENU_DELETE: &str = "삭제…";
-const MENU_REFRESH: &str = "새로 고침";
-/// 이름에 쓸 수 없는 글자를 적었을 때
-const ERROR_SLASH: &str = "이름에 / 는 쓸 수 없습니다.";
-const ERROR_EMPTY: &str = "이름을 입력해 주세요.";
-
 /// 메뉴 폭 — 일반 메뉴와 같은 값 (`FileExplorer-FTP.dc.html:355` 계열)
 const MENU_WIDTH: f32 = 180.0;
 const ROW_HEIGHT: f32 = 28.0;
@@ -112,22 +100,47 @@ pub fn menu_rows(selected: usize, connected: bool) -> Vec<MenuRow> {
     }
     [
         (
-            MENU_DOWNLOAD,
+            crate::i18n::remote_download(),
             RemoteMenuAction::Download,
             Needs::Some,
             false,
         ),
-        (MENU_UPLOAD, RemoteMenuAction::Upload, Needs::Any, false),
-        (MENU_RENAME, RemoteMenuAction::Rename, Needs::One, false),
-        (MENU_CHMOD, RemoteMenuAction::Chmod, Needs::Some, false),
-        (MENU_DELETE, RemoteMenuAction::Delete, Needs::Some, false),
         (
-            MENU_NEW_FOLDER,
+            crate::i18n::remote_upload(),
+            RemoteMenuAction::Upload,
+            Needs::Any,
+            false,
+        ),
+        (
+            crate::i18n::remote_rename(),
+            RemoteMenuAction::Rename,
+            Needs::One,
+            false,
+        ),
+        (
+            crate::i18n::remote_chmod(),
+            RemoteMenuAction::Chmod,
+            Needs::Some,
+            false,
+        ),
+        (
+            crate::i18n::remote_delete(),
+            RemoteMenuAction::Delete,
+            Needs::Some,
+            false,
+        ),
+        (
+            crate::i18n::remote_new_folder(),
             RemoteMenuAction::NewFolder,
             Needs::Any,
             true,
         ),
-        (MENU_REFRESH, RemoteMenuAction::Refresh, Needs::Any, false),
+        (
+            crate::i18n::menu_refresh(),
+            RemoteMenuAction::Refresh,
+            Needs::Any,
+            false,
+        ),
     ]
     .into_iter()
     .map(|(label, action, needs, separator_before)| MenuRow {
@@ -193,10 +206,10 @@ fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
 pub fn validate_name(name: &str) -> Result<&str, &'static str> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(ERROR_EMPTY);
+        return Err(crate::i18n::remote_error_empty());
     }
     if trimmed.contains('/') {
-        return Err(ERROR_SLASH);
+        return Err(crate::i18n::remote_error_slash());
     }
     Ok(trimmed)
 }
@@ -285,13 +298,13 @@ pub fn show_name_dialog(
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("확인").clicked() {
+            if ui.button(crate::i18n::remote_ok()).clicked() {
                 match validate_name(name) {
                     Ok(valid) => confirmed = Some(valid.to_owned()),
                     Err(message) => *error = Some(message.to_owned()),
                 }
             }
-            if ui.button("취소").clicked() {
+            if ui.button(crate::i18n::cancel()).clicked() {
                 closed = true;
             }
         });
@@ -315,22 +328,31 @@ pub fn show_chmod_dialog(
     permissions: &mut Permissions,
     octal: &mut String,
 ) -> DialogOutcome<u32> {
-    const GROUPS: [&str; 3] = ["소유자", "그룹", "기타"];
-    const BITS: [&str; 3] = ["읽기", "쓰기", "실행"];
+    // 문구가 언어를 따르므로 상수가 아니라 그때그때 만든다
+    let groups = [
+        crate::i18n::remote_owner(),
+        crate::i18n::remote_group(),
+        crate::i18n::remote_others(),
+    ];
+    let bits = [
+        crate::i18n::remote_read(),
+        crate::i18n::remote_write(),
+        crate::i18n::remote_execute(),
+    ];
     let mut confirmed = None;
     let mut closed = false;
     let response = egui::Modal::new(egui::Id::new("원격 권한 변경")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(
-            egui::RichText::new("권한 변경")
+            egui::RichText::new(crate::i18n::remote_chmod_title())
                 .size(16.0)
                 .color(theme::TEXT),
         );
         ui.add_space(10.0);
-        for (group, label) in GROUPS.iter().enumerate() {
+        for (group, label) in groups.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(*label).color(theme::HEADER_TEXT));
-                for (bit, name) in BITS.iter().enumerate() {
+                for (bit, name) in bits.iter().enumerate() {
                     if ui
                         .checkbox(&mut permissions.bits[group][bit], *name)
                         .changed()
@@ -343,7 +365,9 @@ pub fn show_chmod_dialog(
         }
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("숫자(8진):").color(theme::HEADER_TEXT));
+            ui.label(
+                egui::RichText::new(crate::i18n::remote_chmod_octal()).color(theme::HEADER_TEXT),
+            );
             if ui
                 .add(egui::TextEdit::singleline(octal).desired_width(80.0))
                 .changed()
@@ -355,10 +379,10 @@ pub fn show_chmod_dialog(
         });
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("적용").clicked() {
+            if ui.button(crate::i18n::remote_apply()).clicked() {
                 confirmed = Some(permissions.to_mode());
             }
-            if ui.button("취소").clicked() {
+            if ui.button(crate::i18n::cancel()).clicked() {
                 closed = true;
             }
         });
@@ -391,12 +415,12 @@ pub fn show_delete_confirm(
     let response = egui::Modal::new(egui::Id::new("원격 삭제 확인")).show(ctx, |ui| {
         ui.set_width(420.0);
         ui.label(
-            egui::RichText::new("원격 항목 삭제")
+            egui::RichText::new(crate::i18n::remote_delete_title())
                 .size(16.0)
                 .color(theme::TEXT),
         );
         ui.add_space(8.0);
-        ui.label(format!("{}개 항목을 서버에서 지웁니다.", targets.len()));
+        ui.label(crate::i18n::dynamic::remote_delete_count(targets.len()));
         for path in targets.iter().take(5) {
             ui.label(egui::RichText::new(path.as_str()).color(theme::TEXT_MUTED));
         }
@@ -404,15 +428,17 @@ pub fn show_delete_confirm(
             ui.label(egui::RichText::new("…").color(theme::TEXT_MUTED));
         }
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("되돌릴 수 없습니다.").color(theme::ERROR_TEXT));
+        ui.label(
+            egui::RichText::new(crate::i18n::remote_delete_irreversible()).color(theme::ERROR_TEXT),
+        );
         ui.add_space(8.0);
-        ui.checkbox(recursive, "폴더 안에 든 것까지 지웁니다");
+        ui.checkbox(recursive, crate::i18n::remote_delete_recursive());
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("삭제").clicked() {
+            if ui.button(crate::i18n::delete()).clicked() {
                 confirmed = Some(*recursive);
             }
-            if ui.button("취소").clicked() {
+            if ui.button(crate::i18n::cancel()).clicked() {
                 closed = true;
             }
         });
@@ -471,12 +497,15 @@ mod tests {
 
     #[test]
     fn 이름에_구분자를_넣으면_거부한다() {
-        // plan Edge Case — `/`가 들어가면 다른 폴더를 가리키게 된다
+        // plan Edge Case — `/`가 들어가면 다른 폴더를 가리키게 된다.
+        // 사유 문구는 카탈로그가 정하므로 언어를 고정하고 원문과 견준다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         assert_eq!(validate_name("보고서.txt"), Ok("보고서.txt"));
         assert_eq!(validate_name("  여백  "), Ok("여백"));
-        assert_eq!(validate_name(""), Err(ERROR_EMPTY));
-        assert_eq!(validate_name("   "), Err(ERROR_EMPTY));
-        assert_eq!(validate_name("위/아래"), Err(ERROR_SLASH));
+        assert_eq!(validate_name(""), Err("이름을 입력해 주세요."));
+        assert_eq!(validate_name("   "), Err("이름을 입력해 주세요."));
+        assert_eq!(validate_name("위/아래"), Err("이름에 / 는 쓸 수 없습니다."));
     }
 
     #[test]
