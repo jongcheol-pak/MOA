@@ -700,6 +700,30 @@ pub mod dynamic {
         }
     }
 
+    /// 저장해 둔 지문과 다를 때 — 두 값을 함께 보인다 (FR-30)
+    pub fn hostkey_changed_detail(old: &str) -> String {
+        match current() {
+            Language::Korean => format!(
+                "전에 저장한 지문은 {old} 였습니다. 서버를 다시 설치했거나,                  중간에 다른 서버가 끼어든 것일 수 있습니다."
+            ),
+            Language::English => format!(
+                "The stored fingerprint was {old}. The server may have been reinstalled,                  or another server may be in the middle."
+            ),
+        }
+    }
+
+    /// 원격 계층이 거절 사유로 남기는 같은 뜻의 문장 (화면이 아니라 오류에 실린다)
+    pub fn hostkey_changed_reason(old: &str, new: &str) -> String {
+        match current() {
+            Language::Korean => format!(
+                "서버 지문이 전에 저장해 둔 것과 다릅니다 (저장된 값 {old}, 이번 값 {new}) —                  서버를 다시 설치했거나 중간에 다른 서버가 끼어든 것일 수 있습니다"
+            ),
+            Language::English => format!(
+                "The server fingerprint differs from the stored one (stored {old}, now {new}) —                  the server may have been reinstalled, or another server may be in the middle"
+            ),
+        }
+    }
+
     /// 지문을 확인할 수단이 없을 때 사유 뒤에 붙인다
     pub fn hostkey_unverifiable(detail: &str) -> String {
         match current() {
@@ -816,6 +840,170 @@ impl Drop for LanguageGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 소스를 훑어 **카탈로그를 거치지 않은 한글 UI 문구**를 찾는다 (FR-53·NFR-6).
+    ///
+    /// 이 파일에 사는 이유: 지키는 규약이 이 모듈의 것이다. 같은 기법을 `ui::widgets`의
+    /// 아이콘 규약 시험이 이미 쓴다.
+    ///
+    /// **찾지 못하는 것**: 이 검사는 리터럴만 본다 — 문구를 변수에 담아 옮기거나
+    /// 바깥에서 받아 그리면 걸리지 않는다. 그런 우회를 막는 장치는 없고, 리뷰가 본다
+    #[test]
+    fn 화면_문구가_카탈로그를_거치지_않은_곳이_없다() {
+        use std::path::Path;
+
+        /// 훑을 곳 — 화면에 닿는 계층
+        const ROOTS: [&str; 5] = [
+            "src/ui",
+            "src/remote",
+            "src/fs",
+            "src/panel/tabs.rs",
+            "src/app/workspace.rs",
+        ];
+
+        /// **파일 단위 예외** — 리터럴로 하나씩 적을 수 없는 것만.
+        ///
+        /// 앞의 넷은 egui 이식 이전 Win32 구현이라 **실행 경로에서 쓰이지 않는다**
+        /// (`lib.rs`가 선언하지만 `main.rs`가 부르지 않는다). `panel/file_list.rs`는
+        /// 살아 있는 순수 모델(`ListRow`·정렬)과 죽은 Win32 래퍼가 한 파일에 있고,
+        /// 남은 한글은 후자의 열 머리글뿐이다. `remote/testing.rs`는 가짜 서버라
+        /// 화면에 나오지 않는다.
+        ///
+        /// **이 파일들이 다시 실행 경로에 들어오면 이 예외를 지운다** — 그러지 않으면
+        /// 되살아난 화면의 문구를 검사가 조용히 놓친다.
+        const EXEMPT_FILES: [&str; 6] = [
+            "src/app/menu.rs",
+            "src/app/window.rs",
+            "src/app/sidebar.rs",
+            "src/panel/panel.rs",
+            "src/panel/file_list.rs",
+            "src/remote/testing.rs",
+        ];
+
+        /// **리터럴 단위 예외** — 화면 문구가 아닌 것들.
+        ///
+        /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
+        /// 나머지는 화면에 나오지 않는 내부 값이다
+        const EXEMPT_LITERALS: [&str; 14] = [
+            // 위젯 ID
+            "앱 설정",
+            "설정 글꼴",
+            "설정 언어",
+            "원격 메뉴",
+            "원격 이름 대화",
+            "원격 권한 변경",
+            "원격 삭제 확인",
+            "원격 호스트 키 확인",
+            "사이트 관리자",
+            "사이트 이름 바꾸기",
+            "원격 알림",
+            // 글꼴 검증에 쓰는 내부 값 (`ui::font_scan`)
+            "한글",
+            "글꼴 검증",
+            // 서버가 보낸 응답을 살피는 낱말 (`remote::ftp::mentions_permission`) —
+            // 화면 언어를 따르면 안 되는 자리다
+            "권한",
+        ];
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        for entry in ROOTS {
+            collect_rs(&root.join(entry), &mut files);
+        }
+        assert!(files.len() > 30, "훑을 파일을 찾지 못했다: {}", files.len());
+
+        let mut 발견 = Vec::new();
+        for path in files {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if EXEMPT_FILES.contains(&rel.as_str()) {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");
+            // 인라인 시험 모듈부터는 화면이 아니다. `*/tests.rs`는 파일 전체가 시험이다
+            if rel.ends_with("/tests.rs") {
+                continue;
+            }
+            let body = match source.find("\nmod tests {") {
+                Some(cut) => &source[..cut],
+                None => &source[..],
+            };
+            let 줄들: Vec<&str> = body.lines().collect();
+            for (번호, 줄) in 줄들.iter().enumerate() {
+                let 코드 = 줄.split("//").next().unwrap_or("");
+                // 개발자에게만 보이는 문구 — 화면에 나오지 않는다.
+                // 단언·`expect`는 여러 줄에 걸치므로 **앞 세 줄까지** 함께 본다
+                let 앞 = &줄들[번호.saturating_sub(3)..=번호];
+                if 앞.iter().any(|line| {
+                    line.contains("assert")
+                        || line.contains("expect(")
+                        || line.contains("panic!")
+                        || line.contains("must_use")
+                        || line.contains("Error::other")
+                }) {
+                    continue;
+                }
+                for literal in string_literals(코드) {
+                    if !literal.chars().any(|c| ('가'..='힣').contains(&c)) {
+                        continue;
+                    }
+                    if EXEMPT_LITERALS.contains(&literal.as_str()) {
+                        continue;
+                    }
+                    발견.push(format!("{rel}:{}: \"{literal}\"", 번호 + 1));
+                }
+            }
+        }
+        assert!(
+            발견.is_empty(),
+            "카탈로그를 거치지 않은 화면 문구가 있다 — `i18n`에 키를 만들어 쓴다: {발견:#?}"
+        );
+    }
+
+    /// `.rs` 파일을 모은다 (하위 폴더까지)
+    fn collect_rs(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        if path.is_file() {
+            out.push(path.to_path_buf());
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let child = entry.path();
+            if child.is_dir() {
+                collect_rs(&child, out);
+            } else if child.extension().is_some_and(|ext| ext == "rs") {
+                out.push(child);
+            }
+        }
+    }
+
+    /// 한 줄에서 문자열 리터럴만 뽑는다 (이스케이프는 건너뛴다)
+    fn string_literals(line: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '"' {
+                continue;
+            }
+            let mut lit = String::new();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => {
+                        chars.next();
+                    }
+                    '"' => break,
+                    _ => lit.push(c),
+                }
+            }
+            out.push(lit);
+        }
+        out
+    }
 
     #[test]
     fn 언어에_따라_다른_문구를_돌려준다() {

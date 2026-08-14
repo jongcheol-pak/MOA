@@ -408,10 +408,7 @@ pub fn show_hostkey_dialog(
         HostKeyCheck::Changed { old, new } => (
             crate::i18n::remote_hostkey_changed(),
             new.as_str(),
-            Some(format!(
-                "전에 저장한 지문은 {old} 였습니다. 서버를 다시 설치했거나, \
-                 중간에 다른 서버가 끼어든 것일 수 있습니다."
-            )),
+            Some(crate::i18n::dynamic::hostkey_changed_detail(old.as_str())),
         ),
     };
 

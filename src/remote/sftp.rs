@@ -349,10 +349,7 @@ fn resolve_host_key<'prompt>(
         ),
         HostKeyCheck::Changed { old, new } => (
             new.clone(),
-            format!(
-                "서버 지문이 전에 저장해 둔 것과 다릅니다 (저장된 값 {old}, 이번 값 {new}) — \
-                 서버를 다시 설치했거나 중간에 다른 서버가 끼어든 것일 수 있습니다"
-            ),
+            crate::i18n::dynamic::hostkey_changed_reason(old.as_str(), new.as_str()),
         ),
     };
 
