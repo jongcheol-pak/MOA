@@ -1526,6 +1526,11 @@ impl ExplorerApp {
                 names: self.font_scan.names(),
             },
         );
+        if outcome.language_changed {
+            // 이 프레임은 이미 옛 언어로 그려졌다 — 다음 프레임이 오도록 청한다 (전제 3-b)
+            crate::i18n::set_language(self.settings.language);
+            ctx.request_repaint();
+        }
         if outcome.font_changed {
             // 글꼴은 다음 pass부터 적용된다 — 그 프레임이 오도록 다시 그리기를 요청한다
             self.korean_font = install_fonts(ctx, self.settings.selected_font());

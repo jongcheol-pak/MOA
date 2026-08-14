@@ -120,50 +120,60 @@ strings! {
     close => "닫기" / "Close";
 }
 
+/// 전역 언어를 건드리는 시험끼리 겹치지 않게 한다.
+///
+/// `cargo test`는 시험을 **여러 스레드에서 동시에** 돌린다 — 값을 끝에 되돌리는
+/// 것만으로는 부족하다: 한 시험이 영어로 두고 단언하는 그 찰나에 다른 시험이
+/// 값을 바꾸면 엉뚱한 언어를 읽는다. 그래서 **본문이 도는 동안 잠근다**
+#[cfg(test)]
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 언어를 바꾸는 시험이 드는 가드 — 들고 있는 동안 다른 시험이 끼어들지 못하고,
+/// 떨어질 때 시험 전의 언어로 되돌아간다.
+///
+/// **문구를 쓰는 모든 모듈의 시험이 이것을 쓴다** — `ui`·`remote`의 시험도 화면 문구를
+/// 단언하려면 언어를 정해야 하고, 그때 잠그지 않으면 서로를 흔든다.
+///
+/// 둘째 자리를 읽는 코드는 없다 — **들고 있는 것 자체가 하는 일**이다
+#[cfg(test)]
+pub struct LanguageGuard(
+    Language,
+    #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
+);
+
+#[cfg(test)]
+impl LanguageGuard {
+    /// 언어를 고정하고 가드를 든다. 가드가 떨어지면 원래 언어로 돌아간다
+    pub fn lock(setting: LanguageSetting) -> LanguageGuard {
+        // 앞선 시험이 단언에 실패해 잠금이 오염됐어도 이어서 돈다 —
+        // 우리가 지키는 것은 `AtomicU8` 하나이고 그 값은 곧 덮인다
+        let guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let before = current();
+        set_language(setting);
+        LanguageGuard(before, guard)
+    }
+}
+
+#[cfg(test)]
+impl Drop for LanguageGuard {
+    fn drop(&mut self) {
+        let setting = match self.0 {
+            Language::Korean => LanguageSetting::Korean,
+            Language::English => LanguageSetting::English,
+        };
+        set_language(setting);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, MutexGuard};
-
     use super::*;
-
-    /// 전역 언어를 건드리는 시험끼리 겹치지 않게 한다.
-    ///
-    /// `cargo test`는 시험을 **여러 스레드에서 동시에** 돌린다 — 값을 끝에 되돌리는
-    /// 것만으로는 부족하다: 한 시험이 영어로 두고 단언하는 그 찰나에 다른 시험이
-    /// 값을 바꾸면 엉뚱한 언어를 읽는다. 그래서 **본문이 도는 동안 잠근다**
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    /// 잠금을 쥐고 있다가 놓을 때 시험 전의 언어로 되돌린다.
-    ///
-    /// 둘째 자리를 읽는 코드는 없다 — **들고 있는 것 자체가 하는 일**이고,
-    /// 떨어질 때 잠금이 풀린다
-    struct Restore(Language, #[allow(dead_code)] MutexGuard<'static, ()>);
-
-    impl Restore {
-        fn now() -> Restore {
-            // 앞선 시험이 단언에 실패해 잠금이 오염됐어도 이어서 돈다 —
-            // 우리가 지키는 것은 `AtomicU8` 하나이고 그 값은 아래에서 곧 덮인다
-            let guard = TEST_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            Restore(current(), guard)
-        }
-    }
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            let setting = match self.0 {
-                Language::Korean => LanguageSetting::Korean,
-                Language::English => LanguageSetting::English,
-            };
-            set_language(setting);
-        }
-    }
 
     #[test]
     fn 언어에_따라_다른_문구를_돌려준다() {
-        let _restore = Restore::now();
-        set_language(LanguageSetting::Korean);
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
         assert_eq!(settings_title(), "설정");
         set_language(LanguageSetting::English);
         assert_eq!(settings_title(), "Settings");
@@ -171,8 +181,7 @@ mod tests {
 
     #[test]
     fn 시스템_기본은_윈도우_ui_언어를_따른다() {
-        let _restore = Restore::now();
-        set_language(LanguageSetting::System);
+        let _guard = LanguageGuard::lock(LanguageSetting::System);
         assert_eq!(
             current(),
             system_language(),
@@ -183,7 +192,7 @@ mod tests {
     #[test]
     fn 알_수_없는_값은_한국어로_읽는다() {
         // 이 앱의 화면이 원래 한국어다 — 모르는 값에 영어를 주면 갑자기 화면이 바뀐다
-        let _restore = Restore::now();
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
         CURRENT.store(99, Ordering::Relaxed);
         assert_eq!(current(), Language::Korean);
     }

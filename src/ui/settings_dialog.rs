@@ -8,7 +8,8 @@
 //! 서로 엮어 검증할 것이 없고, 글꼴·언어는 바뀌는 결과를 보며 고르는 편이 확실하다.
 //! 그래서 바닥 버튼은 `닫기` 하나이고 `취소`가 없다.
 use crate::app::autostart;
-use crate::app::settings::AppSettings;
+use crate::app::settings::{AppSettings, LanguageSetting};
+use crate::i18n;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -47,6 +48,8 @@ const CLOSE_PAD_X: f32 = 16.0;
 const CLOSE_MIN_WIDTH: f32 = 72.0;
 /// 글꼴 드롭다운 폭 — 라벨(96px) 뒤 남는 자리에 맞춘다
 const FONT_FIELD_WIDTH: f32 = 240.0;
+/// 언어 드롭다운 폭 — 항목이 짧아 글꼴 목록만큼 넓을 이유가 없다
+const LANGUAGE_FIELD_WIDTH: f32 = 160.0;
 
 // ── 문구 ──
 const TITLE: &str = "설정";
@@ -54,6 +57,8 @@ const GROUP_APPEARANCE: &str = "모양";
 const GROUP_STARTUP: &str = "시작";
 const GROUP_EXIT: &str = "종료";
 const GROUP_FILES: &str = "파일 보기";
+const GROUP_LANGUAGE: &str = "언어";
+const LABEL_LANGUAGE: &str = "앱 언어";
 const LABEL_FONT: &str = "글꼴";
 /// 아무 글꼴도 고르지 않은 상태의 표시 — 목록 맨 앞 항목이기도 하다
 const DEFAULT_FONT_LABEL: &str = "기본값 (맑은 고딕)";
@@ -78,6 +83,8 @@ pub struct SettingsOutcome {
     pub changed: bool,
     /// 글꼴이 바뀌었다 — `install_fonts`를 다시 불러야 화면에 반영된다 (FR-48)
     pub font_changed: bool,
+    /// 언어가 바뀌었다 — `i18n::set_language`를 다시 불러야 화면에 반영된다 (FR-53)
+    pub language_changed: bool,
     /// 사용자에게 알릴 것이 생겼다 — 지금은 자동 실행 등록 실패뿐이다 (FR-49)
     pub notice: Option<&'static str>,
 }
@@ -212,9 +219,18 @@ fn show_body(
     group_title(&mut body, GROUP_FILES, Divider::Draw);
     let files = show_file_group(&mut body, settings);
 
+    // 언어 — 앱 문구 전환
+    group_title(&mut body, GROUP_LANGUAGE, Divider::Draw);
+    let language = show_language_group(&mut body, settings);
+
     SettingsOutcome {
-        changed: font.changed || startup.changed || exit.changed || files.changed,
+        changed: font.changed
+            || startup.changed
+            || exit.changed
+            || files.changed
+            || language.changed,
         font_changed: font.font_changed,
+        language_changed: language.language_changed,
         notice: startup.notice,
     }
 }
@@ -301,6 +317,51 @@ fn show_exit_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOut
         settings.tray_on_close = !settings.tray_on_close;
         outcome.changed = true;
     }
+    outcome
+}
+
+/// 드롭다운에 실리는 순서 — **번호가 곧 이 배열의 자리**다.
+///
+/// 항목 이름과 따로 두는 이유: 이름은 언어에 따라 바뀌지만 순서는 고정이다
+const LANGUAGE_CHOICES: [LanguageSetting; 3] = [
+    LanguageSetting::System,
+    LanguageSetting::Korean,
+    LanguageSetting::English,
+];
+
+/// 지금 언어로 쓴 항목 이름 — `LANGUAGE_CHOICES`와 같은 순서다
+fn language_names() -> [&'static str; 3] {
+    [
+        i18n::settings_language_system(),
+        i18n::settings_language_korean(),
+        i18n::settings_language_english(),
+    ]
+}
+
+/// `언어` 그룹 — 앱 문구를 한국어·영어로 바꾼다 (FR-53).
+///
+/// 항목 이름은 **지금 언어를 따른다** — 영어로 두면 `System default`·`Korean`·`English`가
+/// 된다. `English`만 두 언어에서 같은 글자다
+fn show_language_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
+    let mut outcome = SettingsOutcome::default();
+    let choices = LANGUAGE_CHOICES;
+    let names = language_names();
+    let current = names[choices
+        .iter()
+        .position(|choice| *choice == settings.language)
+        .unwrap_or(0)];
+
+    ui.horizontal(|ui| {
+        widgets::form_label(ui, LABEL_LANGUAGE, true);
+        if let Some(index) =
+            widgets::dropdown_field(ui, "설정 언어", current, LANGUAGE_FIELD_WIDTH, true, &names)
+            && choices[index] != settings.language
+        {
+            settings.language = choices[index];
+            outcome.changed = true;
+            outcome.language_changed = true;
+        }
+    });
     outcome
 }
 
@@ -427,8 +488,8 @@ mod tests {
     }
 
     #[test]
-    fn 본문은_네_그룹을_쌓고_구분선_셋을_긋는다() {
-        // 그룹이 넷이므로 그 사이 구분선은 셋이다 — 그룹이 늘거나 줄면 여기서 드러난다
+    fn 본문은_다섯_그룹을_쌓고_구분선_넷을_긋는다() {
+        // 그룹이 다섯이므로 그 사이 구분선은 넷이다 — 그룹이 늘거나 줄면 여기서 드러난다
         let ctx = egui::Context::default();
         let mut settings = AppSettings::default();
         let output = ctx.run_ui(Default::default(), |ui| {
@@ -440,7 +501,7 @@ mod tests {
             .iter()
             .filter(|shape| matches!(shape.shape, egui::Shape::LineSegment { .. }))
             .count();
-        assert_eq!(lines, 3, "네 그룹 사이 구분선은 셋이어야 한다");
+        assert_eq!(lines, 4, "다섯 그룹 사이 구분선은 넷이어야 한다");
     }
 
     #[test]
@@ -485,6 +546,26 @@ mod tests {
             "토글을 눌렀는데 값이 뒤집히지 않았다"
         );
         assert!(settings.show_hidden, "누르지 않은 토글까지 바뀌었다");
+    }
+
+    #[test]
+    fn 드롭다운_번호가_언어_설정에_그대로_대응한다() {
+        // 번호와 설정 값이 어긋나면 `한국어`를 골랐는데 영어가 되는 식으로 조용히 틀어진다
+        assert_eq!(LANGUAGE_CHOICES[0], LanguageSetting::System);
+        assert_eq!(LANGUAGE_CHOICES[1], LanguageSetting::Korean);
+        assert_eq!(LANGUAGE_CHOICES[2], LanguageSetting::English);
+        // 이름도 같은 순서여야 한다 — 하나만 어긋나도 화면과 값이 갈린다
+        assert_eq!(LANGUAGE_CHOICES.len(), language_names().len());
+    }
+
+    #[test]
+    fn 항목_이름은_지금_언어를_따른다() {
+        // FR-53 — 영어로 두면 드롭다운 자신도 영어로 보여야 한다.
+        // 가드가 다른 시험과 겹치지 않게 막고, 떨어질 때 언어를 되돌린다
+        let _guard = i18n::LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(language_names(), ["시스템 기본", "한국어", "English"]);
+        i18n::set_language(LanguageSetting::English);
+        assert_eq!(language_names(), ["System default", "Korean", "English"]);
     }
 
     #[test]
