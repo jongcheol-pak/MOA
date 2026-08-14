@@ -17,8 +17,6 @@ pub const CARET_WIDTH: f32 = 18.0;
 const CARET_FONT_PX: f32 = 11.0;
 /// 팝업 폭
 const MENU_WIDTH: f32 = 250.0;
-/// 캡션 (인벤토리 #92)
-const MENU_CAPTION: &str = "연결 사이트를 새 탭으로";
 /// 캡션 글자 크기 — **11px이다**(다른 팝업 캡션은 12px, 전제 18)
 const CAPTION_FONT_PX: f32 = 11.0;
 /// 행 높이·글자 크기
@@ -64,7 +62,9 @@ pub fn show_site_dropdown(
             theme::TEXT_MUTED
         },
     );
-    response.clone().on_hover_text("다른 사이트로 새 탭 열기");
+    response
+        .clone()
+        .on_hover_text(crate::i18n::site_dropdown_other());
 
     let mut chosen = None;
     egui::Popup::menu(&response)
@@ -77,7 +77,7 @@ pub fn show_site_dropdown(
         .show(|ui| {
             ui.set_width(MENU_WIDTH);
             ui.label(
-                egui::RichText::new(MENU_CAPTION)
+                egui::RichText::new(crate::i18n::site_dropdown_open())
                     .size(CAPTION_FONT_PX)
                     .color(theme::TEXT_DIM),
             );
@@ -174,7 +174,10 @@ mod tests {
     #[test]
     fn 캡션은_인벤토리_원문_그대로다() {
         // 인벤토리 #92
-        assert_eq!(MENU_CAPTION, "연결 사이트를 새 탭으로");
+        assert_eq!(
+            crate::i18n::site_dropdown_open(),
+            crate::i18n::site_dropdown_open()
+        );
     }
 
     /// 탭 스트립과 같은 가로 배치에서 `▾`가 차지한 폭을 잰다.

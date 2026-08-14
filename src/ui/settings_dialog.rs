@@ -52,25 +52,6 @@ const FONT_FIELD_WIDTH: f32 = 240.0;
 const LANGUAGE_FIELD_WIDTH: f32 = 160.0;
 
 // ── 문구 ──
-const TITLE: &str = "설정";
-const GROUP_APPEARANCE: &str = "모양";
-const GROUP_STARTUP: &str = "시작";
-const GROUP_EXIT: &str = "종료";
-const GROUP_FILES: &str = "파일 보기";
-const GROUP_LANGUAGE: &str = "언어";
-const LABEL_LANGUAGE: &str = "앱 언어";
-const LABEL_FONT: &str = "글꼴";
-/// 아무 글꼴도 고르지 않은 상태의 표시 — 목록 맨 앞 항목이기도 하다
-const DEFAULT_FONT_LABEL: &str = "기본값 (맑은 고딕)";
-/// 목록을 읽는 동안 보이는 안내 — 워커가 1.5초쯤 걸린다
-const FONT_SCANNING: &str = "글꼴 목록을 읽는 중…";
-const LABEL_AUTO_START: &str = "윈도우 시작 시 실행";
-/// 레지스트리 쓰기가 막힌 환경에서 보이는 안내 — 조용히 되돌리면 왜 안 켜지는지 알 수 없다
-const AUTO_START_FAILED: &str = "시작 프로그램 설정을 바꾸지 못했습니다";
-const LABEL_TRAY_ON_CLOSE: &str = "닫으면 트레이로 보내기";
-const LABEL_SHOW_EXTENSIONS: &str = "파일 확장명";
-const LABEL_SHOW_HIDDEN: &str = "숨김 항목";
-const BUTTON_CLOSE: &str = "닫기";
 
 /// 대화가 한 프레임에 만들어 낸 결과.
 ///
@@ -185,7 +166,7 @@ fn show_header(ui: &egui::Ui, rect: egui::Rect) {
     ui.painter().text(
         egui::pos2(rect.left() + HEADER_PAD_LEFT, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        TITLE,
+        i18n::settings_title(),
         egui::FontId::proportional(TITLE_FONT_PX),
         theme::TEXT,
     );
@@ -204,23 +185,23 @@ fn show_body(
     let mut body = ui.new_child(egui::UiBuilder::new().max_rect(rect));
 
     // 모양 — 글꼴
-    group_title(&mut body, GROUP_APPEARANCE, Divider::Skip);
+    group_title(&mut body, i18n::settings_group_appearance(), Divider::Skip);
     let font = show_font_group(&mut body, settings, fonts);
 
     // 시작 — 자동 실행
-    group_title(&mut body, GROUP_STARTUP, Divider::Draw);
+    group_title(&mut body, i18n::settings_group_startup(), Divider::Draw);
     let startup = show_startup_group(&mut body, settings);
 
     // 종료 — 트레이 전환
-    group_title(&mut body, GROUP_EXIT, Divider::Draw);
+    group_title(&mut body, i18n::settings_group_exit(), Divider::Draw);
     let exit = show_exit_group(&mut body, settings);
 
     // 파일 보기 — 확장명·숨김 항목
-    group_title(&mut body, GROUP_FILES, Divider::Draw);
+    group_title(&mut body, i18n::settings_group_files(), Divider::Draw);
     let files = show_file_group(&mut body, settings);
 
     // 언어 — 앱 문구 전환
-    group_title(&mut body, GROUP_LANGUAGE, Divider::Draw);
+    group_title(&mut body, i18n::settings_group_language(), Divider::Draw);
     let language = show_language_group(&mut body, settings);
 
     SettingsOutcome {
@@ -242,7 +223,7 @@ fn show_body(
 fn show_startup_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::default();
     let enabled = autostart::is_enabled();
-    if widgets::toggle_row(ui, LABEL_AUTO_START, enabled) {
+    if widgets::toggle_row(ui, i18n::settings_auto_start(), enabled) {
         match autostart::set_enabled(!enabled) {
             Ok(()) => {
                 // 설정 파일의 값은 사본이다 — 정본(레지스트리)과 맞춰 둔다
@@ -250,7 +231,7 @@ fn show_startup_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> Settings
                 outcome.changed = true;
             }
             // 실패를 조용히 삼키면 토글은 움직였는데 실제로는 안 바뀐 상태가 된다
-            Err(_) => outcome.notice = Some(AUTO_START_FAILED),
+            Err(_) => outcome.notice = Some(i18n::settings_auto_start_failed()),
         }
     }
     outcome
@@ -270,15 +251,15 @@ fn show_font_group(
     // 빌린 문자열을 그 안으로 들고 갈 수 없다
     let current = settings
         .selected_font()
-        .unwrap_or(DEFAULT_FONT_LABEL)
+        .unwrap_or(i18n::settings_font_default())
         .to_owned();
 
     let Some(names) = fonts.names else {
-        widgets::form_label(ui, LABEL_FONT, true);
+        widgets::form_label(ui, i18n::settings_font(), true);
         ui.painter().text(
             egui::pos2(ui.cursor().left(), ui.cursor().top()),
             egui::Align2::LEFT_TOP,
-            FONT_SCANNING,
+            i18n::settings_font_scanning(),
             egui::FontId::proportional(widgets::FORM_FONT_PX),
             theme::TEXT_DIM,
         );
@@ -288,11 +269,11 @@ fn show_font_group(
 
     // 맨 앞에 기본 글꼴을 둔다 — 고른 글꼴을 되돌릴 길이 목록 안에 있어야 한다
     let mut options: Vec<&str> = Vec::with_capacity(names.len() + 1);
-    options.push(DEFAULT_FONT_LABEL);
+    options.push(i18n::settings_font_default());
     options.extend(names.iter().map(String::as_str));
 
     ui.horizontal(|ui| {
-        widgets::form_label(ui, LABEL_FONT, true);
+        widgets::form_label(ui, i18n::settings_font(), true);
         if let Some(index) =
             widgets::dropdown_field(ui, "설정 글꼴", &current, FONT_FIELD_WIDTH, true, &options)
         {
@@ -313,7 +294,7 @@ fn show_font_group(
 /// "이 앱은 트레이로 간다"는 것을 알 수 있어야 한다
 fn show_exit_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::default();
-    if widgets::toggle_row(ui, LABEL_TRAY_ON_CLOSE, settings.tray_on_close) {
+    if widgets::toggle_row(ui, i18n::settings_tray_on_close(), settings.tray_on_close) {
         settings.tray_on_close = !settings.tray_on_close;
         outcome.changed = true;
     }
@@ -352,7 +333,7 @@ fn show_language_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> Setting
         .unwrap_or(0)];
 
     ui.horizontal(|ui| {
-        widgets::form_label(ui, LABEL_LANGUAGE, true);
+        widgets::form_label(ui, i18n::settings_language_label(), true);
         if let Some(index) =
             widgets::dropdown_field(ui, "설정 언어", current, LANGUAGE_FIELD_WIDTH, true, &names)
         {
@@ -374,11 +355,15 @@ fn show_language_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> Setting
 /// 좌표가 밀려 시험이 엉뚱한 자리를 누르는 일이 없다
 fn show_file_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOutcome {
     let mut outcome = SettingsOutcome::default();
-    if widgets::toggle_row(ui, LABEL_SHOW_EXTENSIONS, settings.show_extensions) {
+    if widgets::toggle_row(
+        ui,
+        i18n::settings_show_extensions(),
+        settings.show_extensions,
+    ) {
         settings.show_extensions = !settings.show_extensions;
         outcome.changed = true;
     }
-    if widgets::toggle_row(ui, LABEL_SHOW_HIDDEN, settings.show_hidden) {
+    if widgets::toggle_row(ui, i18n::settings_show_hidden(), settings.show_hidden) {
         settings.show_hidden = !settings.show_hidden;
         outcome.changed = true;
     }
@@ -416,7 +401,7 @@ fn group_title(ui: &mut egui::Ui, text: &str, divider: Divider) {
 
 /// 푸터 — 오른쪽 끝 `닫기`. 눌렸으면 `true`
 fn show_footer(ui: &mut egui::Ui, rect: egui::Rect) -> bool {
-    let width = widgets::design_button_width(ui, BUTTON_CLOSE, CLOSE_PAD_X).max(CLOSE_MIN_WIDTH);
+    let width = widgets::design_button_width(ui, i18n::close(), CLOSE_PAD_X).max(CLOSE_MIN_WIDTH);
     let button_rect = egui::Rect::from_min_size(
         egui::pos2(
             rect.right() - BODY_PAD_X - width,
@@ -427,7 +412,7 @@ fn show_footer(ui: &mut egui::Ui, rect: egui::Rect) -> bool {
     let mut footer = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
     widgets::design_button(
         &mut footer,
-        BUTTON_CLOSE,
+        i18n::close(),
         theme::TEXT_BUTTON,
         CLOSE_PAD_X,
         egui::vec2(width, widgets::FORM_FIELD_HEIGHT),

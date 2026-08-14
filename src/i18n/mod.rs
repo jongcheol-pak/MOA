@@ -118,6 +118,90 @@ strings! {
     settings_language_korean => "한국어" / "Korean";
     settings_language_english => "English" / "English";
     close => "닫기" / "Close";
+    delete => "삭제" / "Delete";
+    rename => "이름 바꾸기" / "Rename";
+    connect => "연결" / "Connect";
+
+    // ── 타이틀바 (FR-22) ──
+    titlebar_show_workspaces => "워크스페이스 목록 보이기" / "Show workspace list";
+    titlebar_hide_workspaces => "워크스페이스 목록 숨기기" / "Hide workspace list";
+    titlebar_restore => "이전 크기로" / "Restore";
+    titlebar_maximize => "최대화" / "Maximize";
+    titlebar_minimize => "최소화" / "Minimize";
+    /// 설정 메뉴의 나머지 넷 — 아직 비활성이다
+    titlebar_updates => "업데이트" / "Updates";
+    titlebar_release_notes => "릴리즈 노트" / "Release notes";
+    titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
+    titlebar_about => "정보" / "About";
+
+    // ── 패널 메뉴 (FR-23) ──
+    /// 열 메뉴 캡션 (인벤토리 #22)
+    menu_columns => "표시할 컬럼" / "Columns";
+    menu_view => "보기" / "View";
+    menu_refresh => "새로 고침" / "Refresh";
+    menu_new_file => "새 파일" / "New file";
+    menu_new_folder => "새 폴더" / "New folder";
+    menu_split_right => "오른쪽 분할" / "Split right";
+    menu_split_left => "왼쪽 분할" / "Split left";
+    menu_split_up => "위쪽 분할" / "Split up";
+    menu_split_down => "아래쪽 분할" / "Split down";
+
+    // ── 보기 모드 8종 (FR-23) ──
+    view_extra_large_icons => "아주 큰 아이콘" / "Extra large icons";
+    view_large_icons => "큰 아이콘" / "Large icons";
+    view_medium_icons => "보통 아이콘" / "Medium icons";
+    view_small_icons => "작은 아이콘" / "Small icons";
+    view_list => "목록" / "List";
+    view_details => "자세히" / "Details";
+    view_tiles => "타일" / "Tiles";
+    view_content => "내용" / "Content";
+
+    // ── 워크스페이스 사이드바 (FR-20) ──
+    sidebar_workspaces => "워크스페이스" / "Workspaces";
+    sidebar_saved_sites => "등록된 사이트" / "Saved sites";
+    sidebar_add_site => "새 사이트 추가…" / "Add site…";
+    sidebar_new_workspace => "새 워크스페이스" / "New workspace";
+    sidebar_refresh_sites => "사이트 목록 새로 고침" / "Refresh site list";
+
+    // ── 탭 스트립·주소창 ──
+    tabs_new => "새 탭" / "New tab";
+    tabs_close => "탭 닫기" / "Close tab";
+    tabs_menu => "메뉴" / "Menu";
+    address_back => "뒤로" / "Back";
+    address_forward => "앞으로" / "Forward";
+    address_up => "상위 폴더" / "Up";
+
+    // ── 사이트 드롭다운 (FR-27) ──
+    /// 사이트 드롭다운 캡션 (인벤토리 #92)
+    site_dropdown_open => "연결 사이트를 새 탭으로" / "Open site in a new tab";
+    site_dropdown_other => "다른 사이트로 새 탭 열기" / "Open another site in a new tab";
+
+    // ── 폴더 트리 (FR-9) ──
+    /// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격 트리가 같은 문구를 쓴다
+    tree_loading => "읽는 중…" / "Loading…";
+
+    // ── 트레이 메뉴 (FR-50) ──
+    tray_show => "실행" / "Open";
+    tray_quit => "종료" / "Quit";
+
+    /// 설정 대화의 언어 항목 라벨
+    settings_language_label => "앱 언어" / "App language";
+}
+
+/// 값이 끼어드는 문구 — 조사·어순이 언어마다 달라 자리표시자로 담기지 않는다 (D2).
+///
+/// 정적 문구와 달리 매크로로 펼치지 않는다: 인자 개수·순서를 컴파일러가 검사해야 하고,
+/// 언어마다 문장을 통째로 다시 쓸 수 있어야 한다
+pub mod dynamic {
+    use super::{Language, current};
+
+    /// 사이트를 등록한 뒤 뜨는 알림 (FR-27)
+    pub fn site_registered(host: &str) -> String {
+        match current() {
+            Language::Korean => format!("{host} 등록됨 · 더블클릭하여 연결"),
+            Language::English => format!("{host} added · double-click to connect"),
+        }
+    }
 }
 
 /// 전역 언어를 건드리는 시험끼리 겹치지 않게 한다.

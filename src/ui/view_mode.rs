@@ -53,14 +53,14 @@ impl ViewMode {
     /// 메뉴에 표시할 문구 (인벤토리 표 원문)
     pub fn label(self) -> &'static str {
         match self {
-            ViewMode::ExtraLargeIcons => "아주 큰 아이콘",
-            ViewMode::LargeIcons => "큰 아이콘",
-            ViewMode::MediumIcons => "보통 아이콘",
-            ViewMode::SmallIcons => "작은 아이콘",
-            ViewMode::List => "목록",
-            ViewMode::Details => "자세히",
-            ViewMode::Tiles => "타일",
-            ViewMode::Content => "내용",
+            ViewMode::ExtraLargeIcons => crate::i18n::view_extra_large_icons(),
+            ViewMode::LargeIcons => crate::i18n::view_large_icons(),
+            ViewMode::MediumIcons => crate::i18n::view_medium_icons(),
+            ViewMode::SmallIcons => crate::i18n::view_small_icons(),
+            ViewMode::List => crate::i18n::view_list(),
+            ViewMode::Details => crate::i18n::view_details(),
+            ViewMode::Tiles => crate::i18n::view_tiles(),
+            ViewMode::Content => crate::i18n::view_content(),
         }
     }
 
@@ -288,14 +288,14 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "아주 큰 아이콘",
-                "큰 아이콘",
-                "보통 아이콘",
-                "작은 아이콘",
-                "목록",
-                "자세히",
-                "타일",
-                "내용",
+                crate::i18n::view_extra_large_icons(),
+                crate::i18n::view_large_icons(),
+                crate::i18n::view_medium_icons(),
+                crate::i18n::view_small_icons(),
+                crate::i18n::view_list(),
+                crate::i18n::view_details(),
+                crate::i18n::view_tiles(),
+                crate::i18n::view_content(),
             ]
         );
     }

@@ -179,9 +179,9 @@ fn show_left(
     ui.add_space(LEFT_MARGIN);
     show_app_icon(ui, icon);
     let hint = if state.sidebar_collapsed {
-        "워크스페이스 목록 보이기"
+        crate::i18n::titlebar_show_workspaces()
     } else {
-        "워크스페이스 목록 숨기기"
+        crate::i18n::titlebar_hide_workspaces()
     };
     icon_button(
         ui,
@@ -204,16 +204,22 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>
     let mut request = None;
     let mut command = None;
     if caption_button(ui, egui_phosphor::regular::X, theme::CLOSE_HOT)
-        .on_hover_text("닫기")
+        .on_hover_text(crate::i18n::close())
         .clicked()
     {
         request = Some(WindowRequest::Close);
     }
     // 최대화된 창에서는 되돌리기가 다음 동작이므로 아이콘·안내를 함께 바꾼다
     let (restore_icon, restore_hint) = if state.maximized {
-        (egui_phosphor::regular::CORNERS_IN, "이전 크기로")
+        (
+            egui_phosphor::regular::CORNERS_IN,
+            crate::i18n::titlebar_restore(),
+        )
     } else {
-        (egui_phosphor::regular::SQUARE, "최대화")
+        (
+            egui_phosphor::regular::SQUARE,
+            crate::i18n::titlebar_maximize(),
+        )
     };
     if caption_button(ui, restore_icon, theme::CONTROL_HOT)
         .on_hover_text(restore_hint)
@@ -222,7 +228,7 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>
         request = Some(WindowRequest::ToggleMaximize);
     }
     if caption_button(ui, egui_phosphor::regular::MINUS, theme::CONTROL_HOT)
-        .on_hover_text("최소화")
+        .on_hover_text(crate::i18n::titlebar_minimize())
         .clicked()
     {
         request = Some(WindowRequest::Minimize);
@@ -242,17 +248,17 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
         egui::vec2(BUTTON_SIZE, TITLEBAR_HEIGHT),
         theme::CONTROL_HOT,
     )
-    .on_hover_text("설정");
+    .on_hover_text(crate::i18n::settings_title());
     egui::Popup::menu(&response).show(|ui| {
-        if ui.button("설정").clicked() {
+        if ui.button(crate::i18n::settings_title()).clicked() {
             *out = Some(Command::OpenAppSettings);
             ui.close();
         }
-        pending_item(ui, "업데이트");
-        pending_item(ui, "릴리즈 노트");
+        pending_item(ui, crate::i18n::titlebar_updates());
+        pending_item(ui, crate::i18n::titlebar_release_notes());
         ui.separator();
-        pending_item(ui, "오픈소스 라이선스");
-        pending_item(ui, "정보");
+        pending_item(ui, crate::i18n::titlebar_licenses());
+        pending_item(ui, crate::i18n::titlebar_about());
     });
 }
 

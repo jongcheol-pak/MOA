@@ -203,7 +203,7 @@ fn show_tabs(
                     theme::TEXT,
                     NEW_TAB_ICON_PX,
                 )
-                .on_hover_text("새 탭")
+                .on_hover_text(crate::i18n::tabs_new())
                 .clicked()
                 {
                     *action = Some(TabAction::New);
@@ -298,7 +298,7 @@ fn show_tab(
         theme::TEXT,
     );
     let close_clicked = close.clicked();
-    close.on_hover_text("탭 닫기");
+    close.on_hover_text(crate::i18n::tabs_close());
 
     // 닫기 자리를 누른 클릭은 전환으로 세지 않는다. 위 `interact`가 이미 가로채지만,
     // 히트 우선순위가 아니라 좌표로도 한 번 더 막는다 — 이 규칙이 깨지면
@@ -406,7 +406,7 @@ fn show_menu_button(ui: &mut egui::Ui, state: PanelMenuState, command: &mut Opti
         egui::vec2(STRIP_HEIGHT, STRIP_HEIGHT),
         theme::CONTROL_HOT,
     )
-    .on_hover_text("메뉴");
+    .on_hover_text(crate::i18n::tabs_menu());
     draw_split_icon(ui.painter(), response.rect);
     egui::Popup::menu(&response).show(|ui| {
         menu::panel_menu_items(ui, state, command);

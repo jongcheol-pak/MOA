@@ -22,8 +22,6 @@ const COLUMN_MENU_ROW: f32 = 26.0;
 const COLUMN_MENU_CAPTION_PX: f32 = 12.0;
 /// 체크 글리프가 차지하는 폭 — 켜짐/꺼짐이 섞여도 라벨이 흔들리지 않게 자리를 고정한다
 const COLUMN_CHECK_WIDTH: f32 = 12.0;
-/// 열 메뉴 캡션 (인벤토리 #22)
-const COLUMN_MENU_CAPTION: &str = "표시할 컬럼";
 
 /// 분할 방향 — 새 패널이 놓일 자리를 사용자 관점으로 나타낸다.
 ///
@@ -116,20 +114,41 @@ pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Opti
     // 화살표를 egui 기본값(`⏵` U+23F5) 대신 아이콘 글꼴에서 가져오는 이유: 이 앱은 egui 내장
     // 글꼴을 끄고 맑은 고딕만 쓰는데 맑은 고딕에 U+23F5가 없어 두부(`?`)로 보였다
     egui::containers::menu::SubMenuButton::from_button(
-        egui::Button::new("보기").right_text(egui_phosphor::regular::CARET_RIGHT),
+        egui::Button::new(crate::i18n::menu_view()).right_text(egui_phosphor::regular::CARET_RIGHT),
     )
     .ui(ui, |ui| view_items(ui, state.view_mode, out));
     ui.separator();
     split_items(ui, out);
     ui.separator();
-    item(ui, "새로 고침", "F5", true, Command::Refresh, out);
-    ui.separator();
-    item(ui, "새 파일", "", true, Command::NewFile, out);
-    item(ui, "새 폴더", "", true, Command::NewFolder, out);
+    item(
+        ui,
+        crate::i18n::menu_refresh(),
+        "F5",
+        true,
+        Command::Refresh,
+        out,
+    );
     ui.separator();
     item(
         ui,
-        "닫기",
+        crate::i18n::menu_new_file(),
+        "",
+        true,
+        Command::NewFile,
+        out,
+    );
+    item(
+        ui,
+        crate::i18n::menu_new_folder(),
+        "",
+        true,
+        Command::NewFolder,
+        out,
+    );
+    ui.separator();
+    item(
+        ui,
+        crate::i18n::close(),
         "Ctrl+Shift+W",
         state.can_close_panel,
         Command::ClosePanel,
@@ -146,7 +165,7 @@ pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Opti
 pub fn column_menu_items(ui: &mut egui::Ui, flags: ColumnFlags, out: &mut Option<ColumnKind>) {
     ui.set_width(COLUMN_MENU_WIDTH);
     ui.label(
-        egui::RichText::new(COLUMN_MENU_CAPTION)
+        egui::RichText::new(crate::i18n::menu_columns())
             .size(COLUMN_MENU_CAPTION_PX)
             .color(theme::TEXT_DIM),
     );
@@ -225,10 +244,14 @@ fn view_items(ui: &mut egui::Ui, current: ViewMode, out: &mut Option<Command>) {
 /// 네 방향 분할 항목 (FR-1) — 패널 메뉴 안에 놓인다
 fn split_items(ui: &mut egui::Ui, out: &mut Option<Command>) {
     for (label, shortcut, to) in [
-        ("오른쪽 분할", "Ctrl+Alt+→", SplitTo::Right),
-        ("왼쪽 분할", "Ctrl+Alt+←", SplitTo::Left),
-        ("위쪽 분할", "Ctrl+Alt+↑", SplitTo::Up),
-        ("아래쪽 분할", "Ctrl+Alt+↓", SplitTo::Down),
+        (
+            crate::i18n::menu_split_right(),
+            "Ctrl+Alt+→",
+            SplitTo::Right,
+        ),
+        (crate::i18n::menu_split_left(), "Ctrl+Alt+←", SplitTo::Left),
+        (crate::i18n::menu_split_up(), "Ctrl+Alt+↑", SplitTo::Up),
+        (crate::i18n::menu_split_down(), "Ctrl+Alt+↓", SplitTo::Down),
     ] {
         item(ui, label, shortcut, true, Command::Split(to), out);
     }
@@ -327,7 +350,7 @@ mod tests {
 
     #[test]
     fn 네_방향은_축과_배치로_정확히_갈린다() {
-        // 이 매핑이 틀리면 "왼쪽 분할"이 오른쪽에 패널을 만드는 식으로 조용히 어긋난다
+        // 이 매핑이 틀리면 `왼쪽 분할`이 오른쪽에 패널을 만드는 식으로 조용히 어긋난다
         assert_eq!(
             SplitTo::Right.to_layout(),
             (SplitDir::Horizontal, SplitPlace::After)
@@ -473,15 +496,15 @@ mod tests {
         // 마우스로 닿을 수 없게 된다
         let labels = menu_labels(PanelMenuState::for_panes(2, ViewMode::Details));
         let expected = [
-            "보기",
-            "오른쪽 분할",
-            "왼쪽 분할",
-            "위쪽 분할",
-            "아래쪽 분할",
-            "새로 고침",
-            "새 파일",
-            "새 폴더",
-            "닫기",
+            crate::i18n::menu_view(),
+            crate::i18n::menu_split_right(),
+            crate::i18n::menu_split_left(),
+            crate::i18n::menu_split_up(),
+            crate::i18n::menu_split_down(),
+            crate::i18n::menu_refresh(),
+            crate::i18n::menu_new_file(),
+            crate::i18n::menu_new_folder(),
+            crate::i18n::close(),
         ];
         let found: Vec<&String> = labels
             .iter()

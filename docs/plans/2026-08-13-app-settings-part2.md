@@ -123,12 +123,12 @@
 | task | 대상 파일 | 개수(추정) |
 |---|---|---|
 | T3 | `ui/titlebar.rs` 12, `ui/menu.rs` 10, `ui/sidebar.rs` 10, `ui/view_mode.rs` 8, `ui/tabs.rs` 3, `ui/address_bar.rs` 3, `ui/site_dropdown.rs` 2, `ui/tree.rs` 1, `ui/toast.rs` 1 | 50 |
-| T3 (part1 신규분) | **`ui/settings_dialog.rs`**(그룹 제목 5·항목 라벨 7·`닫기`·언어 선택지 3 등), **`ui/tray.rs`**(툴팁 `MOA`·메뉴 `실행`·`종료`), `ui/widgets.rs`(T2 `toggle_row`에 문구가 생기면) | part1 완료 후 실측해 채운다 |
+| T3 (part1 신규분) | `ui/settings_dialog.rs` 16(그룹 제목 5·라벨 7·안내 2·`닫기`·언어 선택지는 T2가 카탈로그에 이미 넣음), `ui/tray.rs` 2(`실행`·`종료`). **비대상 8** — 위젯 ID 3(`앱 설정`·`설정 글꼴`·`설정 언어`), `app/autostart.rs` 2·`app/single_instance.rs` 1(개발자용 오류·`must_use` 문구, 화면에 안 나옴), `ui/font_scan.rs` 2(폭 측정용 글자·내부 슬롯 이름). `ui/widgets.rs`·`app/fonts.rs`는 0 | **18** |
 | T4 | `ui/panel.rs` 10, `ui/list_details.rs` 6, `ui/status_bar.rs` 5, `fs/create.rs` 3, `app/workspace.rs` 1, `panel/tabs.rs` 1 | 26 |
 | T5 | `ui/site_manager.rs` 42, `ui/remote_menu.rs` 27, `ui/remote_states.rs` 18 | 87 |
 | T6 | `ui/app.rs` 17, `ui/queue_panel.rs` 15, `ui/dock.rs` 4, `remote/sites.rs` 1, `remote/transfer.rs` 1 | 38 |
 | T7 | `remote/sftp.rs` 29, `remote/ftp.rs` 12, `remote/connection.rs` 11, `remote/types.rs` 9, `remote/log.rs` 4 | 65 |
-| — | 합계 | **266 + part1 신규분** |
+| — | 합계 | **266 + 18 = 284** |
 
 > **배정표는 part1 착수 *전* 코드 기준이다.** part1이 새로 만드는 `ui/settings_dialog.rs`·`ui/tray.rs`(그리고 `app/fonts.rs`·`app/autostart.rs`·`app/single_instance.rs`에 사용자 노출 문구가 생기면 그것까지)의 문구는 이 표에 수치로 잡혀 있지 않다. **T3 착수 시점에 그 파일들의 실제 한글 리터럴 수를 세어 위 행을 채우고 합계를 다시 닫는다** — 그러지 않으면 T8의 소스 훑기 테스트가 `ui/tray.rs`에서 잔여 문구를 잡았을 때 「불가피한 Halt」의 "배정표에 없는 파일" 조항이 발동해 자율 루프가 선다. part1의 신규 파일은 **배정표에 이미 등재된 대상**이므로 그 Halt 조항의 대상이 아니다.
 
@@ -214,7 +214,7 @@
 
 <!-- T3~T7 (문구 이관 — 배정표 순서) -->
 
-- [ ] **T3. 문구 이관 ① 창 껍데기 (50개 + 설정 화면)**
+- [x] **T3. 문구 이관 ① 창 껍데기 (50개 + 설정 화면)**
   - **Type**: C
   - **Acceptance**: 배정표 T3 두 행의 파일들(**part1 신규 파일 포함**)에 UI 한글 문자열 리터럴이 **0개** 남는다(위젯 ID 예외는 아래 Edge Cases). 한국어로 두고 실행하면 타이틀바·메뉴·사이드바·탭·주소창·보기 모드·토스트·설정 화면·**트레이 메뉴와 툴팁**의 문구가 이관 전과 **글자 그대로 같다**. `English`로 바꾸면 전부 영어로 바뀐다. **배정표의 `part1 신규분` 칸이 실측 수치로 채워져 합계가 닫힌다**. `cargo test`가 통과한다.
   - **Files**:
@@ -331,6 +331,12 @@
   - 설계: 선택지 순서는 `LANGUAGE_CHOICES` 상수, 이름은 `language_names()` 함수로 나눴다 — 순서는 고정이고 이름만 언어를 따르기 때문이다. 둘이 어긋나면 화면과 값이 갈리므로 시험이 자리별로 대조한다.
   - **관측(spec 리뷰 M1)**: `Popup::menu` 드롭다운은 **버튼 클릭 → 팝업 → 항목 클릭**의 두 단계라 `ctx.run_ui` 좌표 흉내가 성립하지 않는다. 이 레포의 다른 드롭다운(글꼴·프로토콜)도 전부 클릭 시험이 없다 — 이번에도 매핑·이름·스모크 세 갈래로 덮고 팝업 클릭은 수동 검증(T8)에 맡긴다.
   - **규약(직전 리뷰에서 이어짐)**: 전역 언어를 건드리는 시험은 `i18n::LanguageGuard::lock`을 든다. 가드가 잠금과 되돌리기를 함께 하므로 다른 모듈의 시험도 같은 것을 쓴다.
+
+- T3 완료: 창 껍데기 68개 이관(배정표 50 + part1 신규분 18). 대상 11개 파일에 UI 한글 리터럴 **0개**가 남았다(위젯 ID 4곳 제외 — 번역 금지 목록).
+  - 배정표를 실측으로 닫았다: part1 신규분은 **이관 18 · 비대상 8**이다. 비대상은 위젯 ID 3, 개발자용 오류 문구 3(`autostart`·`single_instance` — 화면에는 대화상자 문구가 대신 나간다), 내부 상수 2(`font_scan`의 폭 측정 글자·슬롯 이름).
+  - **함정(직접 겪음)**: 문자열을 일괄 치환하면 **주석 안의 문구까지 바뀐다**. `/// "워크스페이스" 제목과 추가 버튼`이 `/// crate::i18n::sidebar_workspaces() 제목과…`가 됐다. 세 곳을 되돌렸다 — 치환 전에 주석 줄을 걸러야 한다.
+  - **함정**: 상수를 지우면 **그 위 doc이 다음 선언에 붙거나 함께 사라진다**. `HIDE_SITE_SHORTCUT`의 설명이 통째로 없어진 것을 diff에서 잡아 되돌렸다. 상수와 함께 사라진 설명 중 살릴 값이 있는 것(인벤토리 번호·"로컬·원격이 같은 문구")은 카탈로그 키의 doc으로 옮겼다.
+  - 검증: 이관으로 사라진 한글 리터럴 61개가 **전부 카탈로그에 글자 그대로** 있음을 대조했다(의역·오타 0건).
 
 ## Next Steps
 

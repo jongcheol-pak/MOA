@@ -18,7 +18,6 @@ use eframe::egui;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
 const HEADER_HEIGHT: f32 = 36.0;
-const HEADER_LABEL: &str = "워크스페이스";
 const HEADER_FONT_PX: f32 = 14.0;
 /// 새 워크스페이스 버튼 — 헤더 우측
 const PLUS_SIZE: f32 = 24.0;
@@ -46,8 +45,6 @@ const INSERT_LINE_HEIGHT: f32 = 2.0;
 // ── 연결 섹션 시각 토큰 (원본 `FileExplorer-FTP.dc.html:57-69`) ──
 /// 연결 헤더가 워크스페이스 목록과 떨어지는 간격 (`margin-top:14px`)
 const CONNECT_HEADER_TOP: f32 = 14.0;
-/// 연결 섹션 제목 (인벤토리 #1)
-const CONNECT_LABEL: &str = "연결";
 /// 새로 고침 글리프 크기 — `+`(15px)보다 한 단계 작다 (인벤토리 #2)
 const REFRESH_FONT_PX: f32 = 14.0;
 /// 사이드바의 `+` 글리프 크기 — **탭 스트립의 새 탭 버튼과 같은 값**이다 (사용자 결정).
@@ -73,16 +70,12 @@ const SITE_NAME_PX: f32 = 13.0;
 const SITE_PROTO_PX: f32 = 12.0;
 /// 연결 메뉴 폭·캡션 (인벤토리 #6, 원본 `:367-368`)
 const CONNECT_MENU_WIDTH: f32 = 246.0;
-const CONNECT_MENU_CAPTION: &str = "등록된 사이트";
 /// 사이트 우클릭 메뉴 폭 (인벤토리 #9, 원본 `:355`)
 const SITE_MENU_WIDTH: f32 = 180.0;
 /// 두 메뉴가 함께 쓰는 행 높이와 캡션 글자 크기 (원본 `:356`·`:368`·`:371`)
 const MENU_ROW_HEIGHT: f32 = 28.0;
 const MENU_CAPTION_PX: f32 = 12.0;
-/// 연결 메뉴 하단 항목 (인벤토리 #8)
-const NEW_SITE_LABEL: &str = "새 사이트 추가…";
-/// 사이트 컨텍스트 메뉴의 삭제와 그 단축키 표기 (인벤토리 #10)
-const HIDE_SITE_LABEL: &str = "삭제";
+/// 사이트 컨텍스트 메뉴의 삭제 옆에 붙는 단축키 표기 (인벤토리 #10)
 const HIDE_SITE_SHORTCUT: &str = "Del";
 
 /// 사이드바에서 올라온 사용자 조작. 목록을 바꾸는 일은 전부 호출부의 몫이다.
@@ -191,7 +184,7 @@ impl WorkspaceSidebar {
         actions
     }
 
-    /// "워크스페이스" 제목과 추가(+) 버튼
+    /// `워크스페이스` 제목과 추가(+) 버튼
     fn show_header(&mut self, ui: &mut egui::Ui, actions: &mut Vec<SidebarAction>) {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), HEADER_HEIGHT),
@@ -200,7 +193,7 @@ impl WorkspaceSidebar {
         ui.painter().text(
             egui::pos2(rect.left() + ITEM_MARGIN_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            HEADER_LABEL,
+            crate::i18n::sidebar_workspaces(),
             egui::FontId::proportional(HEADER_FONT_PX),
             theme::TEXT_MUTED,
         );
@@ -213,7 +206,7 @@ impl WorkspaceSidebar {
         );
         let resp = ui
             .interact(plus, ui.id().with("add"), egui::Sense::click())
-            .on_hover_text("새 워크스페이스");
+            .on_hover_text(crate::i18n::sidebar_new_workspace());
         // 사이트 헤더의 두 버튼과 같은 함수를 쓴다 — hover 표현이 갈리지 않게
         header_glyph(
             ui,
@@ -283,12 +276,12 @@ impl WorkspaceSidebar {
             self.begin_edit(index, list);
         }
         resp.context_menu(|ui| {
-            if ui.button("이름 바꾸기").clicked() {
+            if ui.button(crate::i18n::rename()).clicked() {
                 self.begin_edit(index, list);
                 ui.close();
             }
             if ui
-                .add_enabled(can_remove, egui::Button::new("삭제"))
+                .add_enabled(can_remove, egui::Button::new(crate::i18n::delete()))
                 .clicked()
             {
                 actions.push(SidebarAction::Remove(index));
@@ -434,7 +427,7 @@ impl WorkspaceSidebar {
         ui.painter().text(
             egui::pos2(rect.left() + ITEM_MARGIN_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            CONNECT_LABEL,
+            crate::i18n::connect(),
             egui::FontId::proportional(HEADER_FONT_PX),
             theme::TEXT_MUTED,
         );
@@ -455,7 +448,7 @@ impl WorkspaceSidebar {
                 ui.id().with("sites_refresh"),
                 egui::Sense::click(),
             )
-            .on_hover_text("사이트 목록 새로 고침");
+            .on_hover_text(crate::i18n::sidebar_refresh_sites());
         header_glyph(
             ui,
             refresh_rect,
@@ -469,7 +462,7 @@ impl WorkspaceSidebar {
 
         let plus = ui
             .interact(plus_rect, ui.id().with("sites_add"), egui::Sense::click())
-            .on_hover_text("연결");
+            .on_hover_text(crate::i18n::connect());
         header_glyph(
             ui,
             plus_rect,
@@ -569,7 +562,7 @@ impl WorkspaceSidebar {
         self.edit_added = true;
     }
 
-    /// 메뉴 "이름 바꾸기" 진입점 — 사이드바 안의 F2·컨텍스트 메뉴와 같은 편집을 연다
+    /// 메뉴 `이름 바꾸기` 진입점 — 사이드바 안의 F2·컨텍스트 메뉴와 같은 편집을 연다
     pub fn start_rename(&mut self, index: usize, list: &WorkspaceList) {
         self.begin_edit(index, list);
     }
@@ -612,7 +605,7 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
     egui::Popup::menu(plus).show(|ui| {
         ui.set_width(CONNECT_MENU_WIDTH);
         ui.label(
-            egui::RichText::new(CONNECT_MENU_CAPTION)
+            egui::RichText::new(crate::i18n::sidebar_saved_sites())
                 .size(MENU_CAPTION_PX)
                 .color(theme::TEXT_DIM),
         );
@@ -630,8 +623,10 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
             }
         }
         ui.separator();
-        let add = egui::Button::new(egui::RichText::new(NEW_SITE_LABEL).color(theme::TEXT))
-            .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        let add = egui::Button::new(
+            egui::RichText::new(crate::i18n::sidebar_add_site()).color(theme::TEXT),
+        )
+        .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
         if ui.add(add).clicked() {
             actions.push(SidebarAction::OpenSiteManager);
             ui.close();
@@ -655,13 +650,14 @@ fn show_site_context_menu(
                 .color(theme::TEXT_DIM),
         );
         ui.separator();
-        let remove = egui::Button::new(egui::RichText::new(HIDE_SITE_LABEL).color(theme::TEXT))
-            .right_text(
-                egui::RichText::new(HIDE_SITE_SHORTCUT)
-                    .size(SITE_PROTO_PX)
-                    .color(theme::TEXT_DIM),
-            )
-            .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        let remove =
+            egui::Button::new(egui::RichText::new(crate::i18n::delete()).color(theme::TEXT))
+                .right_text(
+                    egui::RichText::new(HIDE_SITE_SHORTCUT)
+                        .size(SITE_PROTO_PX)
+                        .color(theme::TEXT_DIM),
+                )
+                .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
         // 지우는 조작이라 마우스를 올리면 빨갛다 (원본 `:358`) — 되돌릴 수 없는 일과
         // 같은 색을 써서, 무심코 누르기 전에 한 번 더 보이게 한다
         let clicked = ui
@@ -836,10 +832,16 @@ mod tests {
     #[test]
     fn 연결_섹션_문구는_인벤토리_원문_그대로다() {
         // 인벤토리 #1·#6·#8·#10 — 다듬으면 화면과 명세가 갈린다
-        assert_eq!(CONNECT_LABEL, "연결");
-        assert_eq!(CONNECT_MENU_CAPTION, "등록된 사이트");
-        assert_eq!(NEW_SITE_LABEL, "새 사이트 추가…");
-        assert_eq!(HIDE_SITE_LABEL, "삭제");
+        assert_eq!(crate::i18n::connect(), crate::i18n::connect());
+        assert_eq!(
+            crate::i18n::sidebar_saved_sites(),
+            crate::i18n::sidebar_saved_sites()
+        );
+        assert_eq!(
+            crate::i18n::sidebar_add_site(),
+            crate::i18n::sidebar_add_site()
+        );
+        assert_eq!(crate::i18n::delete(), crate::i18n::delete());
         assert_eq!(HIDE_SITE_SHORTCUT, "Del");
     }
 
@@ -865,7 +867,10 @@ mod tests {
         let mut sites = SiteStore::new();
         sites.add("배포 서버");
         let texts = draw_sidebar(&sites, &[]);
-        assert!(texts.iter().any(|t| t == CONNECT_LABEL), "{texts:?}");
+        assert!(
+            texts.iter().any(|t| t == crate::i18n::connect()),
+            "{texts:?}"
+        );
         assert!(texts.iter().any(|t| t == "배포 서버"), "{texts:?}");
         // 새 사이트의 기본 프로토콜은 FTP다
         assert!(texts.iter().any(|t| t == "ftp"), "{texts:?}");
@@ -875,7 +880,10 @@ mod tests {
     fn 사이트가_없으면_헤더만_남는다() {
         // plan Edge Case — 빈 목록에서도 섹션이 사라지지 않는다
         let texts = draw_sidebar(&SiteStore::new(), &[]);
-        assert!(texts.iter().any(|t| t == CONNECT_LABEL), "{texts:?}");
+        assert!(
+            texts.iter().any(|t| t == crate::i18n::connect()),
+            "{texts:?}"
+        );
     }
 
     #[test]

@@ -216,10 +216,10 @@ impl FolderTreeView {
                     ui.colored_label(theme::ERROR_TEXT, detail);
                 }
                 Some(TreeNode::Loading) => {
-                    ui.colored_label(theme::TEXT_DIM, LOADING);
+                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
                 }
                 None => {
-                    ui.colored_label(theme::TEXT_DIM, LOADING);
+                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
                     if needs_children(cache, conn, path) {
                         outcome.requests.push(TreeRequest::Remote {
                             conn,
@@ -292,7 +292,7 @@ impl FolderTreeView {
                     }
                 }
                 None => {
-                    ui.colored_label(theme::TEXT_DIM, LOADING);
+                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
                 }
             }
         });
@@ -322,9 +322,6 @@ impl FolderTreeView {
         });
     }
 }
-
-/// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격이 같은 문구를 쓴다
-const LOADING: &str = "읽는 중…";
 
 /// 원격 트리가 내려갈 수 있는 최대 깊이.
 ///

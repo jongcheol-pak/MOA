@@ -35,9 +35,6 @@ const TRAY_ICON_PX: u32 = 16;
 /// 마우스를 올렸을 때 뜨는 이름
 const TOOLTIP: &str = "MOA";
 
-/// 우클릭 메뉴 항목 — 요청 문구 그대로다
-const MENU_SHOW: &str = "실행";
-const MENU_QUIT: &str = "종료";
 /// `TrackPopupMenu`가 돌려주는 항목 번호 (0은 "고르지 않음"이라 1부터 쓴다)
 const CMD_SHOW: usize = 1;
 const CMD_QUIT: usize = 2;
@@ -292,8 +289,18 @@ unsafe fn restore_window(hwnd: HWND) {
 unsafe fn popup_menu(hwnd: HWND) -> Option<usize> {
     unsafe {
         let menu = CreatePopupMenu().ok()?;
-        let _ = AppendMenuW(menu, MF_STRING, CMD_SHOW, &HSTRING::from(MENU_SHOW));
-        let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, &HSTRING::from(MENU_QUIT));
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_SHOW,
+            &HSTRING::from(crate::i18n::tray_show()),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_QUIT,
+            &HSTRING::from(crate::i18n::tray_quit()),
+        );
         let mut point = Default::default();
         let _ = GetCursorPos(&mut point);
         // 메뉴를 띄우기 전에 창을 앞으로 — Win32 관례다. 그러지 않으면 다른 곳을 눌렀을 때

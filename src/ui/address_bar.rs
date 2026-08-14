@@ -76,7 +76,7 @@ impl AddressBar {
                     ui,
                     egui_phosphor::regular::ARROW_LEFT,
                     history.can_back(),
-                    "뒤로",
+                    crate::i18n::address_back(),
                 ) {
                     action = Some(NavAction::Back);
                 }
@@ -84,7 +84,7 @@ impl AddressBar {
                     ui,
                     egui_phosphor::regular::ARROW_RIGHT,
                     history.can_forward(),
-                    "앞으로",
+                    crate::i18n::address_forward(),
                 ) {
                     action = Some(NavAction::Forward);
                 }
@@ -92,7 +92,7 @@ impl AddressBar {
                     ui,
                     egui_phosphor::regular::ARROW_UP,
                     current.parent().is_some(),
-                    "상위 폴더",
+                    crate::i18n::address_up(),
                 ) {
                     action = Some(NavAction::Up);
                 }

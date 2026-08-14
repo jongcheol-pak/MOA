@@ -24,7 +24,7 @@ pub const LIFETIME_SECS: f64 = 3.2;
 
 /// 등록 알림 문구 (인벤토리 #91) — `<host>` 자리에 사이트 호스트가 들어간다
 pub fn registered_text(host: &str) -> String {
-    format!("{host} 등록됨 · 더블클릭하여 연결")
+    crate::i18n::dynamic::site_registered(host)
 }
 
 /// 지금 떠 있는 알림 하나.
