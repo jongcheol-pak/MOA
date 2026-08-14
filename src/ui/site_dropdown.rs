@@ -173,11 +173,10 @@ mod tests {
 
     #[test]
     fn 캡션은_인벤토리_원문_그대로다() {
-        // 인벤토리 #92
-        assert_eq!(
-            crate::i18n::site_dropdown_open(),
-            crate::i18n::site_dropdown_open()
-        );
+        // 인벤토리 #92 — 카탈로그를 거쳐도 한국어 값은 원문 그대로여야 한다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        assert_eq!(crate::i18n::site_dropdown_open(), "연결 사이트를 새 탭으로");
     }
 
     /// 탭 스트립과 같은 가로 배치에서 `▾`가 차지한 폭을 잰다.

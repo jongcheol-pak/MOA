@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn 네_방향은_축과_배치로_정확히_갈린다() {
-        // 이 매핑이 틀리면 `왼쪽 분할`이 오른쪽에 패널을 만드는 식으로 조용히 어긋난다
+        // 이 매핑이 틀리면 "왼쪽 분할"이 오른쪽에 패널을 만드는 식으로 조용히 어긋난다
         assert_eq!(
             SplitTo::Right.to_layout(),
             (SplitDir::Horizontal, SplitPlace::After)

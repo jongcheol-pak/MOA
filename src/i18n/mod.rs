@@ -105,8 +105,10 @@ strings! {
     settings_font => "글꼴" / "Font";
     /// 글꼴을 고르지 않은 상태 — 목록 맨 앞 항목이기도 하다
     settings_font_default => "기본값 (맑은 고딕)" / "Default (Malgun Gothic)";
+    /// 목록을 읽는 동안 보이는 안내 — 워커가 1.5초쯤 걸린다
     settings_font_scanning => "글꼴 목록을 읽는 중…" / "Reading font list…";
     settings_auto_start => "윈도우 시작 시 실행" / "Run at Windows startup";
+    /// 레지스트리 쓰기가 막힌 환경에서 보이는 안내 — 조용히 되돌리면 왜 안 켜지는지 알 수 없다
     settings_auto_start_failed
         => "시작 프로그램 설정을 바꾸지 못했습니다"
         / "Could not change the startup setting";
@@ -181,6 +183,7 @@ strings! {
     tree_loading => "읽는 중…" / "Loading…";
 
     // ── 트레이 메뉴 (FR-50) ──
+    /// 우클릭 메뉴 항목 — 요청 문구 그대로다
     tray_show => "실행" / "Open";
     tray_quit => "종료" / "Quit";
 

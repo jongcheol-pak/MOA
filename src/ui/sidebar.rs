@@ -184,7 +184,7 @@ impl WorkspaceSidebar {
         actions
     }
 
-    /// `워크스페이스` 제목과 추가(+) 버튼
+    /// "워크스페이스" 제목과 추가(+) 버튼
     fn show_header(&mut self, ui: &mut egui::Ui, actions: &mut Vec<SidebarAction>) {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), HEADER_HEIGHT),
@@ -562,7 +562,7 @@ impl WorkspaceSidebar {
         self.edit_added = true;
     }
 
-    /// 메뉴 `이름 바꾸기` 진입점 — 사이드바 안의 F2·컨텍스트 메뉴와 같은 편집을 연다
+    /// 메뉴 "이름 바꾸기" 진입점 — 사이드바 안의 F2·컨텍스트 메뉴와 같은 편집을 연다
     pub fn start_rename(&mut self, index: usize, list: &WorkspaceList) {
         self.begin_edit(index, list);
     }
@@ -831,17 +831,14 @@ mod tests {
 
     #[test]
     fn 연결_섹션_문구는_인벤토리_원문_그대로다() {
-        // 인벤토리 #1·#6·#8·#10 — 다듬으면 화면과 명세가 갈린다
-        assert_eq!(crate::i18n::connect(), crate::i18n::connect());
-        assert_eq!(
-            crate::i18n::sidebar_saved_sites(),
-            crate::i18n::sidebar_saved_sites()
-        );
-        assert_eq!(
-            crate::i18n::sidebar_add_site(),
-            crate::i18n::sidebar_add_site()
-        );
-        assert_eq!(crate::i18n::delete(), crate::i18n::delete());
+        // 인벤토리 #1·#6·#8·#10 — 다듬으면 화면과 명세가 갈린다.
+        // **카탈로그를 거쳐도 한국어 값은 원문이어야 한다** — 그것을 여기서 잡는다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        assert_eq!(crate::i18n::connect(), "연결");
+        assert_eq!(crate::i18n::sidebar_saved_sites(), "등록된 사이트");
+        assert_eq!(crate::i18n::sidebar_add_site(), "새 사이트 추가…");
+        assert_eq!(crate::i18n::delete(), "삭제");
         assert_eq!(HIDE_SITE_SHORTCUT, "Del");
     }
 
