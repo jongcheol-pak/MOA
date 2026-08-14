@@ -282,20 +282,24 @@ mod tests {
 
     #[test]
     fn 여덟_모드가_모두_들어_있다() {
-        // 인벤토리 표 8행과 1:1 — 하나라도 빠지면 메뉴에서 고를 수 없다
+        // 인벤토리 표 8행과 1:1 — 하나라도 빠지면 메뉴에서 고를 수 없다.
+        // 문구는 카탈로그가 정하므로 언어를 고정하고 **원문**과 견준다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+
         assert_eq!(ViewMode::ALL.len(), 8);
         let labels: Vec<&str> = ViewMode::ALL.iter().map(|m| m.label()).collect();
         assert_eq!(
             labels,
             [
-                crate::i18n::view_extra_large_icons(),
-                crate::i18n::view_large_icons(),
-                crate::i18n::view_medium_icons(),
-                crate::i18n::view_small_icons(),
-                crate::i18n::view_list(),
-                crate::i18n::view_details(),
-                crate::i18n::view_tiles(),
-                crate::i18n::view_content(),
+                "아주 큰 아이콘",
+                "큰 아이콘",
+                "보통 아이콘",
+                "작은 아이콘",
+                "목록",
+                "자세히",
+                "타일",
+                "내용",
             ]
         );
     }

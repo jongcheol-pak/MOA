@@ -541,13 +541,13 @@ mod tests {
         assert_eq!(
             headers(),
             [
-                crate::i18n::queue_column_direction(),
-                crate::i18n::queue_column_local(),
-                crate::i18n::queue_column_remote(),
-                crate::i18n::queue_column_server(),
-                crate::i18n::queue_column_size(),
-                crate::i18n::queue_column_progress(),
-                crate::i18n::queue_column_state()
+                "방향",
+                "로컬 파일",
+                "원격 파일",
+                "서버",
+                "크기",
+                "진행률",
+                "상태"
             ]
         );
         assert_eq!(crate::i18n::queue_filter_all(), "전체");
@@ -575,7 +575,7 @@ mod tests {
             crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // Acceptance ⑦ (인벤토리 #45~#48)
         let (text, color) = state_text(&TransferState::Wait);
-        assert_eq!(text, crate::i18n::queue_state_pending());
+        assert_eq!(text, "대기 중");
         assert_eq!(color, theme::TEXT_MUTED);
 
         let (text, color) = state_text(&TransferState::Active {
@@ -587,10 +587,10 @@ mod tests {
 
         // 속도를 아직 못 쟀으면 군더더기를 붙이지 않는다
         let (text, _) = state_text(&TransferState::Active { sent: 0, speed: 0 });
-        assert_eq!(text, crate::i18n::queue_state_active());
+        assert_eq!(text, "전송 중");
 
         let (text, color) = state_text(&TransferState::Done);
-        assert_eq!(text, crate::i18n::queue_state_done());
+        assert_eq!(text, "완료");
         assert_eq!(color, theme::OK_TEXT);
 
         // 실패는 서버가 준 사유를 그대로 보인다

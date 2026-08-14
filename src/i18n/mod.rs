@@ -344,10 +344,8 @@ strings! {
     app_font_fallback
         => "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다"
         / "Could not load a Korean font, so the default font is used";
-    /// 원격 작업 이름 — 실패 문구에 끼워 넣는다
-    op_new_folder => "새 폴더" / "New folder";
-    op_delete => "삭제" / "Delete";
-    op_rename => "이름 바꾸기" / "Rename";
+    /// 원격 작업 이름 — 실패 문구에 끼워 넣는다.
+    /// 나머지 셋(새 폴더·삭제·이름 바꾸기)은 메뉴 문구와 같은 말이라 그 키를 그대로 쓴다
     op_chmod => "권한 바꾸기" / "Change permissions";
 
     // ── 전송 큐 (FR-35) ──
@@ -639,6 +637,59 @@ mod tests {
         assert_eq!(
             dynamic::site_registered("example.test"),
             "example.test 등록됨 · 더블클릭하여 연결"
+        );
+        assert_eq!(
+            dynamic::workspace_delete_confirm("작업"),
+            "'작업' 워크스페이스를 삭제할까요?"
+        );
+        assert_eq!(
+            dynamic::remote_open_failed("550 Denied"),
+            "폴더를 열지 못했습니다 — 550 Denied"
+        );
+        assert_eq!(
+            dynamic::remote_list_failed("timeout"),
+            "목록을 읽지 못했습니다 — timeout"
+        );
+        assert_eq!(
+            dynamic::skipped_folders(2),
+            "읽을 수 없는 폴더 2개는 건너뛰었습니다"
+        );
+        assert_eq!(
+            dynamic::remote_op_failed("삭제", "550 Denied"),
+            "삭제 실패 — 550 Denied"
+        );
+        assert_eq!(dynamic::queue_site_fallback(3), "사이트 3");
+        assert_eq!(
+            dynamic::transfer_finalize_failed("access denied"),
+            "받은 파일을 제자리에 두지 못했습니다: access denied"
+        );
+    }
+
+    #[test]
+    fn 영어_문구도_값을_제자리에_끼운다() {
+        // 자리표시자가 빠지거나 뒤바뀌면 영어에서만 조용히 틀어진다
+        let _guard = LanguageGuard::lock(LanguageSetting::English);
+        assert_eq!(
+            dynamic::workspace_delete_confirm("Work"),
+            "Delete the workspace 'Work'?"
+        );
+        assert_eq!(
+            dynamic::remote_open_failed("550 Denied"),
+            "Could not open the folder — 550 Denied"
+        );
+        assert_eq!(
+            dynamic::remote_op_failed("Delete", "550 Denied"),
+            "Delete failed — 550 Denied"
+        );
+        assert_eq!(dynamic::queue_site_fallback(3), "Site 3");
+        // 영어는 하나일 때 단수형이다
+        assert_eq!(
+            dynamic::skipped_folders(1),
+            "Skipped 1 folder that could not be read"
+        );
+        assert_eq!(
+            dynamic::skipped_folders(2),
+            "Skipped 2 folders that could not be read"
         );
     }
 

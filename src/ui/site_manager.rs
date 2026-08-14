@@ -1525,7 +1525,7 @@ mod tests {
         assert_eq!(manager.commit(&mut store), None);
         assert_eq!(
             manager.error.as_deref(),
-            Some(crate::i18n::site_error_no_host())
+            Some("호스트 주소를 입력해야 등록할 수 있습니다.")
         );
         assert!(store.is_empty(), "거부했는데 사이트가 생겼다");
     }
