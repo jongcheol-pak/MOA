@@ -14,9 +14,12 @@ use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
 
-/// 대화 크기 — 사이트 관리자(1080×680)보다 훨씬 작다. 항목이 적어 그만한 판이 필요 없다
-const DIALOG_WIDTH: f32 = 420.0;
-const DIALOG_HEIGHT: f32 = 400.0;
+/// 대화 크기 — 사이트 관리자(1080×680)보다 작지만 **다섯 그룹이 다 들어갈 만큼**은 된다.
+///
+/// 처음 잡은 420×400은 `언어` 그룹이 잘리고 바닥의 `닫기`와 겹쳤다(2026-08-14 화면 확인).
+/// 그래도 창이 작으면 넘칠 수 있어 본문은 스크롤한다
+const DIALOG_WIDTH: f32 = 480.0;
+const DIALOG_HEIGHT: f32 = 560.0;
 
 /// 뒤 화면을 덮는 어둠 — 사이트 관리자와 같은 값을 쓴다(대화가 둘로 보이지 않게)
 const SCRIM_ALPHA: u8 = 140;
@@ -148,7 +151,16 @@ impl SettingsDialog {
                     egui::pos2(rect.right() - BODY_PAD_X, footer.top()),
                 );
                 show_header(ui, header);
-                outcome = show_body(ui, body, settings, fonts);
+                // **본문만 스크롤한다** — 제목과 `닫기`는 늘 제자리에 있어야 한다.
+                // 스크롤 영역이 자기 자리(`body`) 밖으로 그리지 않으므로 바닥 버튼과
+                // 겹치지도 않는다(겹침이 바로 이 영역을 두지 않아 생겼다)
+                let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(&mut body_ui, |ui| {
+                        let inner = ui.max_rect();
+                        outcome = show_body(ui, inner, settings, fonts);
+                    });
                 if show_footer(ui, footer) {
                     close_requested = true;
                 }
@@ -472,6 +484,33 @@ mod tests {
         }
         assert_eq!(line_count(Divider::Skip), 0, "첫 그룹 위에 선을 그었다");
         assert_eq!(line_count(Divider::Draw), 1, "그룹 사이 구분선이 없다");
+    }
+
+    #[test]
+    fn 본문이_바닥_버튼_자리를_넘지_않는다() {
+        // 2026-08-14 화면 확인 — 처음 잡은 420×400에서는 `언어` 그룹이 잘리고
+        // 바닥의 `닫기`와 겹쳤다. 다섯 그룹이 **스크롤 없이** 들어가는지 재 둔다
+        let ctx = egui::Context::default();
+        let mut settings = AppSettings::default();
+        let 자리 = egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(DIALOG_WIDTH - BODY_PAD_X * 2.0, 10_000.0),
+        );
+        let output = ctx.run_ui(Default::default(), |ui| {
+            show_body(ui, 자리, &mut settings, no_fonts());
+        });
+        // 그린 것 중 가장 아래가 본문이 실제로 쓴 높이다
+        let 쓴_높이 = output
+            .shapes
+            .iter()
+            .map(|clipped| clipped.shape.visual_bounding_rect().max.y)
+            .filter(|y| y.is_finite())
+            .fold(0.0_f32, f32::max);
+        let 남은_자리 = DIALOG_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT;
+        assert!(
+            쓴_높이 <= 남은_자리,
+            "본문이 {쓴_높이}px를 써 남은 자리 {남은_자리}px를 넘는다 — 바닥 버튼과 겹친다"
+        );
     }
 
     #[test]

@@ -376,17 +376,31 @@ pub fn dropdown_field(
         )
         .show(|ui| {
             ui.set_width(width);
-            for (index, option) in options.iter().enumerate() {
-                if menu_row(ui, option) {
-                    chosen = Some(index);
-                    ui.close();
-                }
-            }
+            // 항목이 많으면(글꼴은 수십 개다) 목록이 화면 위아래를 넘어 끝을 볼 수 없다.
+            // 여기서 높이를 끊고 스크롤을 붙인다 — 항목이 적은 드롭다운은 이 상한에
+            // 닿지 않으므로 종전과 같이 보인다
+            egui::ScrollArea::vertical()
+                .max_height(MENU_MAX_HEIGHT)
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    for (index, option) in options.iter().enumerate() {
+                        if menu_row(ui, option) {
+                            chosen = Some(index);
+                            ui.close();
+                        }
+                    }
+                });
         });
     chosen
 }
 
 // ── 라디오·체크·스피너 (원본 `FileExplorer-FTP.dc.html:446-447`·`:453`·`:458-463`) ──
+
+/// 드롭다운 목록의 높이 상한 — 이 높이를 넘으면 스크롤한다.
+///
+/// 글꼴 목록은 PC에 따라 수십 개라 상한이 없으면 화면 위아래로 넘쳐 끝을 볼 수 없다.
+/// 값은 행 높이(28px)의 열 줄 남짓 — 한눈에 훑을 만하면서 화면을 다 먹지 않는다
+const MENU_MAX_HEIGHT: f32 = 280.0;
 
 /// 라디오 원 지름과 안쪽 점 (`:446-447`)
 const RADIO_SIZE: f32 = 14.0;
