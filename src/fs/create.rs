@@ -102,6 +102,8 @@ mod tests {
 
     #[test]
     fn 첫_이름에는_번호가_없다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         assert_eq!(candidate_name("새 폴더", None, 1), "새 폴더");
         assert_eq!(
             candidate_name("새 텍스트 문서", Some("txt"), 1),
@@ -111,6 +113,8 @@ mod tests {
 
     #[test]
     fn 번호는_확장자_앞에_붙는다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // "새 텍스트 문서.txt (2)"가 되면 확장자가 사라져 연결 프로그램으로 열 수 없다
         assert_eq!(
             candidate_name("새 텍스트 문서", Some("txt"), 2),
@@ -121,6 +125,8 @@ mod tests {
 
     #[test]
     fn 같은_폴더에_거듭_만들면_번호가_늘어난다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let dir = temp_dir("folder_seq");
         let first = new_folder(&dir).unwrap();
         let second = new_folder(&dir).unwrap();
@@ -137,6 +143,8 @@ mod tests {
 
     #[test]
     fn 새_파일은_빈_텍스트_문서다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let dir = temp_dir("file_new");
         let path = new_text_file(&dir).unwrap();
         assert!(path.ends_with("새 텍스트 문서.txt"));
@@ -148,6 +156,8 @@ mod tests {
 
     #[test]
     fn 기존_파일을_덮어쓰지_않는다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 같은 이름이 이미 있으면 번호를 붙여 비켜간다 — 내용이 보존돼야 한다
         let dir = temp_dir("no_overwrite");
         let existing = dir.join("새 텍스트 문서.txt");

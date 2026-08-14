@@ -62,7 +62,12 @@ pub fn format_queue_summary(queue: &TransferQueue) -> String {
     // 조각 순서가 달라 여기서 붙이면 어순이 깨진다 (D2)
     let speed = (summary.speed > 0).then(|| format_speed(summary.speed));
     let eta = summary.eta_secs.map(format_duration);
-    crate::i18n::dynamic::queue_summary(summary.pending, speed.as_deref(), eta.as_deref())
+    crate::i18n::dynamic::queue_summary(
+        summary.pending,
+        speed.as_deref(),
+        eta.as_deref(),
+        crate::remote::queue::UNKNOWN,
+    )
 }
 
 /// 남은 시간 — 한 시간을 넘으면 `HH:MM:SS`, 아니면 `MM:SS` (plan Edge Case)
@@ -338,6 +343,8 @@ mod tests {
 
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 인벤토리 #53·#57
         assert_eq!(crate::i18n::status_queue(), "전송 큐");
         // 캐럿은 **아이콘 글꼴의 것**이어야 한다 — 원본 기호(U+25B2·U+25BC)를 그대로 쓰면

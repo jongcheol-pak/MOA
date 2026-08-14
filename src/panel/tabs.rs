@@ -605,7 +605,7 @@ mod tests {
         };
         assert_eq!(remote.title(Some("배포 서버")), "배포 서버");
         // 사이트가 지워진 뒤 남은 탭
-        assert_eq!(remote.title(None), crate::i18n::tabs_missing_site());
+        assert_eq!(remote.title(None), "알 수 없는 사이트");
     }
 
     #[test]

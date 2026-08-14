@@ -222,6 +222,8 @@ mod tests {
 
     #[test]
     fn 새_목록은_워크스페이스_1개로_시작한다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let list = WorkspaceList::new();
         assert_eq!(list.len(), 1);
         assert_eq!(list.active_index(), 0);
@@ -230,6 +232,8 @@ mod tests {
 
     #[test]
     fn 자동_이름은_사용중이지_않은_최소_번호다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let mut list = WorkspaceList::new();
         list.add(); // 워크스페이스 2
         list.add(); // 워크스페이스 3
@@ -300,6 +304,8 @@ mod tests {
 
     #[test]
     fn 빈_이름이나_공백만으로는_이름을_바꿀_수_없다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let mut list = WorkspaceList::new();
         assert!(!list.rename(0, ""));
         assert!(!list.rename(0, "   "));

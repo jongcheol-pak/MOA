@@ -264,11 +264,21 @@ pub mod dynamic {
         }
     }
 
-    /// 전송 큐 요약 — 한국어는 `3건 대기 · 12MB/s · 1분 남음`,
-    /// 영어는 `3 pending · 12MB/s · 1 min left`처럼 **조각 순서가 다르다**.
-    /// 그래서 조각을 이어 붙이지 않고 문장을 통째로 만든다
-    pub fn queue_summary(pending: usize, speed: Option<&str>, eta: Option<&str>) -> String {
-        let mut out = match current() {
+    /// 전송 큐 요약 — `3건 대기 · 12.4 MB/s · 00:41 남음` / `3 pending · 12.4 MB/s · 00:41 left`.
+    ///
+    /// **개수와 남은 시간은 언어마다 붙는 자리가 다르다**(한국어는 뒤에 `남음`, 영어는 `left`)
+    /// — 그 두 조각만 언어별로 만들고, 사이에 끼는 속도·구분점은 순서가 같아 이어 붙인다.
+    ///
+    /// 남은 시간을 모를 때 쓸 값(`unknown`)은 **호출부가 준다** — 그 값의 정본은 전송 큐 쪽에
+    /// 있고, 여기서 그것을 참조하면 문구 카탈로그가 원격 계층을 거꾸로 참조하게 된다
+    pub fn queue_summary(
+        pending: usize,
+        speed: Option<&str>,
+        eta: Option<&str>,
+        unknown: &str,
+    ) -> String {
+        let language = current();
+        let mut out = match language {
             Language::Korean => format!("{pending}건 대기"),
             Language::English => format!("{pending} pending"),
         };
@@ -276,24 +286,13 @@ pub mod dynamic {
             out.push_str(" · ");
             out.push_str(speed);
         }
+        out.push_str(" · ");
         match eta {
-            Some(eta) => {
-                out.push_str(" · ");
-                match current() {
-                    Language::Korean => {
-                        out.push_str(eta);
-                        out.push_str(" 남음");
-                    }
-                    Language::English => {
-                        out.push_str(eta);
-                        out.push_str(" left");
-                    }
-                }
-            }
-            None => {
-                out.push_str(" · ");
-                out.push_str(crate::remote::queue::UNKNOWN);
-            }
+            Some(eta) => match language {
+                Language::Korean => out.push_str(&format!("{eta} 남음")),
+                Language::English => out.push_str(&format!("{eta} left")),
+            },
+            None => out.push_str(unknown),
         }
         out
     }
@@ -408,12 +407,14 @@ mod tests {
         // 한국어는 `남음`이 뒤에, 영어는 `left`가 뒤에 온다 — 조각을 이어 붙이면 어순이 깨진다
         let _guard = LanguageGuard::lock(LanguageSetting::Korean);
         assert_eq!(
-            dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41")),
+            dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41"), "—"),
             "3건 대기 · 12.4 MB/s · 00:41 남음"
         );
+        // 남은 시간을 모르면 호출부가 준 값이 그 자리에 들어간다
+        assert_eq!(dynamic::queue_summary(3, None, None, "—"), "3건 대기 · —");
         set_language(LanguageSetting::English);
         assert_eq!(
-            dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41")),
+            dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41"), "—"),
             "3 pending · 12.4 MB/s · 00:41 left"
         );
     }
