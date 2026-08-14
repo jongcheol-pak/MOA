@@ -182,6 +182,34 @@ strings! {
     /// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격 트리가 같은 문구를 쓴다
     tree_loading => "읽는 중…" / "Loading…";
 
+    // ── 패널·목록·상태 줄 ──
+    panel_folder_tree => "폴더 트리" / "Folder tree";
+    panel_remote_tree => "원격 트리" / "Remote tree";
+    /// 새로 만들 대상 — 실패 문구에 끼워 넣는다
+    panel_kind_folder => "폴더" / "folder";
+    panel_kind_file => "파일" / "file";
+    column_name => "이름" / "Name";
+    column_size => "크기" / "Size";
+    column_type => "종류" / "Type";
+    column_modified => "수정한 날짜" / "Date modified";
+    column_permissions => "권한" / "Permissions";
+    column_owner => "소유자" / "Owner";
+    /// 상태 표시줄의 큐 토글 (인벤토리 #53)
+    status_queue => "전송 큐" / "Transfer queue";
+    /// 실패 알약 (인벤토리 #57)
+    status_failed => "실패" / "Failed";
+    /// 폴더를 펼치는 중임을 알리는 문구
+    status_expanding => "펼치는 중…" / "Expanding…";
+    /// 새로 만드는 폴더·파일의 기본 이름 — 화면 언어를 따라 실제 이름이 정해진다.
+    /// 파일 쪽은 Windows 탐색기의 `새로 만들기 > 텍스트 문서`와 같은 이름이다 (사용자 확정)
+    create_folder_base => "새 폴더" / "New folder";
+    create_file_base => "새 텍스트 문서" / "New Text Document";
+    create_no_name => "쓸 수 있는 이름을 찾지 못했습니다" / "Could not find a usable name";
+    /// 자동 워크스페이스 이름의 앞부분 — `워크스페이스 3`처럼 뒤에 번호가 붙는다 (D7)
+    workspace_auto_prefix => "워크스페이스 " / "Workspace ";
+    /// 사이트를 찾을 수 없을 때 탭에 보일 이름 (사이트가 지워진 뒤 남은 탭)
+    tabs_missing_site => "알 수 없는 사이트" / "Unknown site";
+
     // ── 트레이 메뉴 (FR-50) ──
     /// 우클릭 메뉴 항목 — 요청 문구 그대로다
     tray_show => "실행" / "Open";
@@ -197,6 +225,78 @@ strings! {
 /// 언어마다 문장을 통째로 다시 쓸 수 있어야 한다
 pub mod dynamic {
     use super::{Language, current};
+
+    /// 폴더를 열지 못한 사유 — 경로 이름이 문장 안에 들어간다
+    pub fn open_denied(name: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{name}' 폴더를 열 권한이 없습니다"),
+            Language::English => format!("You do not have permission to open '{name}'"),
+        }
+    }
+
+    pub fn open_not_found(name: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{name}' 폴더를 찾을 수 없습니다"),
+            Language::English => format!("Could not find '{name}'"),
+        }
+    }
+
+    pub fn open_failed(name: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{name}' 폴더를 여는 중 문제가 발생했습니다"),
+            Language::English => format!("Something went wrong while opening '{name}'"),
+        }
+    }
+
+    /// 새로 만들기 실패 — 한국어는 조사가 붙고 영어는 관사가 붙는다 (D2)
+    pub fn create_failed(kind: &str, error: &str) -> String {
+        match current() {
+            Language::Korean => format!("새 {kind}을(를) 만들지 못했습니다 — {error}"),
+            Language::English => format!("Could not create the new {kind} — {error}"),
+        }
+    }
+
+    /// 상태 줄의 폴더·파일 개수 — 어순이 언어마다 다르다
+    pub fn item_counts(dirs: usize, files: usize) -> String {
+        match current() {
+            Language::Korean => format!("폴더 {dirs} 파일 {files}"),
+            Language::English => format!("{dirs} folders, {files} files"),
+        }
+    }
+
+    /// 전송 큐 요약 — 한국어는 `3건 대기 · 12MB/s · 1분 남음`,
+    /// 영어는 `3 pending · 12MB/s · 1 min left`처럼 **조각 순서가 다르다**.
+    /// 그래서 조각을 이어 붙이지 않고 문장을 통째로 만든다
+    pub fn queue_summary(pending: usize, speed: Option<&str>, eta: Option<&str>) -> String {
+        let mut out = match current() {
+            Language::Korean => format!("{pending}건 대기"),
+            Language::English => format!("{pending} pending"),
+        };
+        if let Some(speed) = speed {
+            out.push_str(" · ");
+            out.push_str(speed);
+        }
+        match eta {
+            Some(eta) => {
+                out.push_str(" · ");
+                match current() {
+                    Language::Korean => {
+                        out.push_str(eta);
+                        out.push_str(" 남음");
+                    }
+                    Language::English => {
+                        out.push_str(eta);
+                        out.push_str(" left");
+                    }
+                }
+            }
+            None => {
+                out.push_str(" · ");
+                out.push_str(crate::remote::queue::UNKNOWN);
+            }
+        }
+        out
+    }
 
     /// 사이트를 등록한 뒤 뜨는 알림 (FR-27)
     pub fn site_registered(host: &str) -> String {
@@ -273,6 +373,48 @@ mod tests {
             current(),
             system_language(),
             "시스템 기본인데 시스템 언어와 다르다"
+        );
+    }
+
+    #[test]
+    fn 값이_끼어드는_문구의_한국어는_이관_전_그대로다() {
+        // 이관하며 조사·어순이 바뀌면 화면이 조용히 달라진다 — 문장 전체를 고정한다
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::open_denied("문서"),
+            "'문서' 폴더를 열 권한이 없습니다"
+        );
+        assert_eq!(
+            dynamic::open_not_found("문서"),
+            "'문서' 폴더를 찾을 수 없습니다"
+        );
+        assert_eq!(
+            dynamic::open_failed("문서"),
+            "'문서' 폴더를 여는 중 문제가 발생했습니다"
+        );
+        assert_eq!(
+            dynamic::create_failed("폴더", "접근 거부"),
+            "새 폴더을(를) 만들지 못했습니다 — 접근 거부"
+        );
+        assert_eq!(dynamic::item_counts(3, 12), "폴더 3 파일 12");
+        assert_eq!(
+            dynamic::site_registered("example.test"),
+            "example.test 등록됨 · 더블클릭하여 연결"
+        );
+    }
+
+    #[test]
+    fn 큐_요약은_언어마다_조각_순서가_다르다() {
+        // 한국어는 `남음`이 뒤에, 영어는 `left`가 뒤에 온다 — 조각을 이어 붙이면 어순이 깨진다
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41")),
+            "3건 대기 · 12.4 MB/s · 00:41 남음"
+        );
+        set_language(LanguageSetting::English);
+        assert_eq!(
+            dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41")),
+            "3 pending · 12.4 MB/s · 00:41 left"
         );
     }
 

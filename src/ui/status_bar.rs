@@ -35,14 +35,11 @@ const PILL_GAP: f32 = 6.0;
 const DOT: f32 = 7.0;
 
 // ── 문구 (인벤토리 #53~#59) ──
-const QUEUE_LABEL: &str = "전송 큐";
+
 /// 접힘·열림 캐럿 (인벤토리 #53) — **아이콘은 아이콘 글꼴(phosphor)에서만 가져온다**
 /// (프로젝트 규약, AGENTS 참조). 원본 HTML의 문자를 그대로 쓰면 글꼴에 없을 때 두부가 된다
 const CARET_CLOSED: &str = egui_phosphor::regular::CARET_UP;
 const CARET_OPEN: &str = egui_phosphor::regular::CARET_DOWN;
-/// 실패 알약 (인벤토리 #57)
-const FAIL_LABEL: &str = "실패";
-
 /// 사용자가 상태 표시줄에서 고른 것 — 지금은 큐 토글 하나뿐이다.
 ///
 /// 열거형으로 남겨 둔다: 이 줄이 도크를 여는 문이라 나중에 다른 화면이 붙을 자리다
@@ -61,23 +58,11 @@ pub fn format_queue_summary(queue: &TransferQueue) -> String {
     if summary.pending == 0 {
         return String::new();
     }
-    let mut out = format!("{}건 대기", summary.pending);
-    if summary.speed > 0 {
-        out.push_str(" · ");
-        out.push_str(&format_speed(summary.speed));
-    }
-    match summary.eta_secs {
-        Some(secs) => {
-            out.push_str(" · ");
-            out.push_str(&format_duration(secs));
-            out.push_str(" 남음");
-        }
-        None => {
-            out.push_str(" · ");
-            out.push_str(crate::remote::queue::UNKNOWN);
-        }
-    }
-    out
+    // 조각을 이어 붙이지 않고 문장을 통째로 만든다 — 영어는 `3 pending · 1분 left`처럼
+    // 조각 순서가 달라 여기서 붙이면 어순이 깨진다 (D2)
+    let speed = (summary.speed > 0).then(|| format_speed(summary.speed));
+    let eta = summary.eta_secs.map(format_duration);
+    crate::i18n::dynamic::queue_summary(summary.pending, speed.as_deref(), eta.as_deref())
 }
 
 /// 남은 시간 — 한 시간을 넘으면 `HH:MM:SS`, 아니면 `MM:SS` (plan Edge Case)
@@ -134,13 +119,13 @@ pub fn status_message(view: &StatusView<'_>) -> (String, egui::Color32) {
     // **건수를 적지 않는다** — 셀 수 있는 것은 끌어다 놓은 묶음 수이지 파일 수가 아니라,
     // `1건`이 1만 개를 뜻할 수 있어 오해를 부른다 (F-7 2라운드 m1)
     if view.expanding > 0 {
-        return (EXPANDING_LABEL.to_owned(), theme::TEXT_MUTED);
+        return (
+            crate::i18n::status_expanding().to_owned(),
+            theme::TEXT_MUTED,
+        );
     }
     (format_current(view.queue), theme::HEADER_TEXT)
 }
-
-/// 폴더를 펼치는 중임을 알리는 문구 (T22 Edge Case)
-const EXPANDING_LABEL: &str = "펼치는 중…";
 
 /// 상태 표시줄이 그릴 값 — 화면은 여기 담긴 것만 안다
 pub struct StatusView<'a> {
@@ -185,7 +170,7 @@ pub fn show_status_bar(
     } else {
         CARET_CLOSED
     };
-    let toggle = format!("{queue_caret} {QUEUE_LABEL}");
+    let toggle = format!("{queue_caret} {}", crate::i18n::status_queue());
     let width = text_width(ui, &toggle, &font);
     if toggle_text(
         ui,
@@ -237,7 +222,7 @@ pub fn show_status_bar(
     // 실패 알약 — **실패가 있을 때만** (인벤토리 #57)
     let failures = view.queue.count(crate::remote::queue::QueueFilter::Error);
     if failures > 0 {
-        let text = format!("{FAIL_LABEL} {failures}");
+        let text = format!("{} {failures}", crate::i18n::status_failed());
         let width = PILL_PAD_X * 2.0 + DOT + PILL_GAP + text_width(ui, &text, &font);
         right -= width;
         let pill = egui::Rect::from_min_size(
@@ -354,12 +339,12 @@ mod tests {
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
         // 인벤토리 #53·#57
-        assert_eq!(QUEUE_LABEL, "전송 큐");
+        assert_eq!(crate::i18n::status_queue(), "전송 큐");
         // 캐럿은 **아이콘 글꼴의 것**이어야 한다 — 원본 기호(U+25B2·U+25BC)를 그대로 쓰면
         // 이 앱 글꼴에 없어 두부가 된다 (프로젝트 규약)
         assert!(widgets::is_icon_font(CARET_OPEN) && widgets::is_icon_font(CARET_CLOSED));
         assert_ne!(CARET_OPEN, CARET_CLOSED, "여닫힘이 같은 글리프다");
-        assert_eq!(FAIL_LABEL, "실패");
+        assert_eq!(crate::i18n::status_failed(), "실패");
     }
 
     fn queue_with(states: &[TransferState]) -> TransferQueue {

@@ -46,12 +46,12 @@ impl ColumnKind {
     /// 열 머리글과 열 메뉴에 쓰는 이름 (인벤토리 #23~28 원문 그대로)
     pub fn label(self) -> &'static str {
         match self {
-            ColumnKind::Name => "이름",
-            ColumnKind::Size => "크기",
-            ColumnKind::Type => "종류",
-            ColumnKind::Modified => "수정한 날짜",
-            ColumnKind::Permissions => "권한",
-            ColumnKind::Owner => "소유자",
+            ColumnKind::Name => crate::i18n::column_name(),
+            ColumnKind::Size => crate::i18n::column_size(),
+            ColumnKind::Type => crate::i18n::column_type(),
+            ColumnKind::Modified => crate::i18n::column_modified(),
+            ColumnKind::Permissions => crate::i18n::column_permissions(),
+            ColumnKind::Owner => crate::i18n::column_owner(),
         }
     }
 

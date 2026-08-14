@@ -7,10 +7,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// 새 폴더의 기본 이름
-const FOLDER_BASE: &str = "새 폴더";
-/// 새 파일의 기본 이름과 확장자 — Windows 탐색기의 "새로 만들기 > 텍스트 문서"와 같다 (사용자 확정)
-const FILE_BASE: &str = "새 텍스트 문서";
+/// 새로 만드는 파일의 확장자 — 이름은 카탈로그가 정한다(`i18n::create_file_base`)
 const FILE_EXT: &str = "txt";
 
 /// 번호를 붙여 볼 최대 횟수. 이 한도가 없으면 쓰기 권한이 없는 폴더처럼
@@ -19,15 +16,22 @@ const MAX_ATTEMPTS: usize = 1000;
 
 /// 표시 중인 폴더에 새 폴더를 만든다. 성공하면 만들어진 경로
 pub fn new_folder(dir: &Path) -> io::Result<PathBuf> {
-    create_unique(dir, FOLDER_BASE, None, |path| std::fs::create_dir(path))
+    create_unique(dir, crate::i18n::create_folder_base(), None, |path| {
+        std::fs::create_dir(path)
+    })
 }
 
 /// 표시 중인 폴더에 빈 텍스트 문서를 만든다. 성공하면 만들어진 경로
 pub fn new_text_file(dir: &Path) -> io::Result<PathBuf> {
-    create_unique(dir, FILE_BASE, Some(FILE_EXT), |path| {
-        // `create_new`는 이미 있으면 실패한다 — 기존 파일을 잘라내는 `create`와 다르다
-        std::fs::File::create_new(path).map(|_| ())
-    })
+    create_unique(
+        dir,
+        crate::i18n::create_file_base(),
+        Some(FILE_EXT),
+        |path| {
+            // `create_new`는 이미 있으면 실패한다 — 기존 파일을 잘라내는 `create`와 다르다
+            std::fs::File::create_new(path).map(|_| ())
+        },
+    )
 }
 
 /// 겹치지 않는 이름을 찾을 때까지 `make`를 반복한다.
@@ -51,10 +55,7 @@ fn create_unique(
         }
     }
     Err(last.unwrap_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "쓸 수 있는 이름을 찾지 못했습니다",
-        )
+        io::Error::new(io::ErrorKind::AlreadyExists, crate::i18n::create_no_name())
     }))
 }
 

@@ -109,9 +109,6 @@ pub enum TabSource {
     },
 }
 
-/// 사이트를 찾을 수 없을 때 탭에 보일 이름 (사이트가 지워진 뒤 남은 탭)
-const MISSING_SITE: &str = "알 수 없는 사이트";
-
 impl TabSource {
     /// 탭에 보일 이름.
     ///
@@ -120,7 +117,9 @@ impl TabSource {
     pub fn title(&self, site_name: Option<&str>) -> String {
         match self {
             TabSource::Local(path) => tab_title(path),
-            TabSource::Remote { .. } => site_name.unwrap_or(MISSING_SITE).to_owned(),
+            TabSource::Remote { .. } => site_name
+                .unwrap_or(crate::i18n::tabs_missing_site())
+                .to_owned(),
         }
     }
 
@@ -606,7 +605,7 @@ mod tests {
         };
         assert_eq!(remote.title(Some("배포 서버")), "배포 서버");
         // 사이트가 지워진 뒤 남은 탭
-        assert_eq!(remote.title(None), MISSING_SITE);
+        assert_eq!(remote.title(None), crate::i18n::tabs_missing_site());
     }
 
     #[test]

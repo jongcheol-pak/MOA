@@ -7,9 +7,6 @@ use std::path::Path;
 
 /// 이름 길이 상한(문자 수) — 사이드바 한 줄 표시와 저장 파일 오염 방지
 const NAME_MAX_CHARS: usize = 128;
-/// 자동 이름 접두 — "워크스페이스 3"처럼 뒤에 번호가 붙는다 (D7)
-const AUTO_NAME_PREFIX: &str = "워크스페이스 ";
-
 /// 워크스페이스 식별자 — 생성 순서 증가, 재사용 없음 (`PanelId` 관례)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorkspaceId(pub u32);
@@ -177,14 +174,14 @@ impl WorkspaceList {
         let used: Vec<u32> = self
             .items
             .iter()
-            .filter_map(|w| w.name.strip_prefix(AUTO_NAME_PREFIX))
+            .filter_map(|w| w.name.strip_prefix(crate::i18n::workspace_auto_prefix()))
             .filter_map(|n| n.parse::<u32>().ok())
             .collect();
         let mut candidate = 1;
         while used.contains(&candidate) {
             candidate += 1;
         }
-        format!("{AUTO_NAME_PREFIX}{candidate}")
+        format!("{}{candidate}", crate::i18n::workspace_auto_prefix())
     }
 }
 

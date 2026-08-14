@@ -907,22 +907,24 @@ fn 가장자리에서_연_메뉴는_화면_안으로_당겨진다() {
 
 #[test]
 fn 원격_패널의_트리_토글은_원격_트리다() {
-    // Acceptance ① (인벤토리 #94) — 같은 자리의 라벨이 소스에 따라 갈린다
+    // Acceptance ① (인벤토리 #94) — 같은 자리의 라벨이 소스에 따라 갈린다.
+    // 문구는 카탈로그가 정하므로 한국어로 고정하고 원문과 견준다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
     let 로컬 = drawn_texts(&draw_once(
         &mut PanelState::new(std::path::PathBuf::from(r"C:\")),
         &SiteStore::new(),
     ));
     assert!(
-        로컬.iter().any(|text| text == LOCAL_TREE_LABEL),
+        로컬.iter().any(|text| text == "폴더 트리"),
         "로컬 패널의 토글이 `폴더 트리`가 아니다: {로컬:?}"
     );
     let 원격 = remote_screen_texts(TabPhase::Ok);
     assert!(
-        원격.iter().any(|text| text == REMOTE_TREE_LABEL),
+        원격.iter().any(|text| text == "원격 트리"),
         "원격 패널의 토글이 `원격 트리`가 아니다: {원격:?}"
     );
     assert!(
-        !원격.iter().any(|text| text == LOCAL_TREE_LABEL),
+        !원격.iter().any(|text| text == "폴더 트리"),
         "원격 패널에 `폴더 트리`가 남아 있다"
     );
 }

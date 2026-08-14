@@ -43,10 +43,6 @@ mod workers;
 mod tests;
 
 /// 트리와 목록을 가르는 세로 선 두께 — 현행 판 트리의 테두리(`WS_EX_CLIENTEDGE`)를 대신한다
-/// 트리 토글 라벨 — 원격 패널에서는 갈린다 (인벤토리 #94)
-const LOCAL_TREE_LABEL: &str = "폴더 트리";
-const REMOTE_TREE_LABEL: &str = "원격 트리";
-
 const TREE_BORDER: f32 = 1.0;
 
 /// 트리 영역 안쪽 여백 — 항목이 패널 가장자리에 붙지 않게 한다
@@ -432,16 +428,13 @@ impl PanelState {
             }
             // 실패해도 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋)
             EnumOutcome::AccessDenied => {
-                self.status = format!("'{}' 폴더를 열 권한이 없습니다", self.pending_name());
+                self.status = crate::i18n::dynamic::open_denied(&self.pending_name());
             }
             EnumOutcome::NotFound => {
-                self.status = format!("'{}' 폴더를 찾을 수 없습니다", self.pending_name());
+                self.status = crate::i18n::dynamic::open_not_found(&self.pending_name());
             }
             EnumOutcome::Error => {
-                self.status = format!(
-                    "'{}' 폴더를 여는 중 문제가 발생했습니다",
-                    self.pending_name()
-                );
+                self.status = crate::i18n::dynamic::open_failed(&self.pending_name());
             }
         }
         self.pending_nav = PendingNav::None;
@@ -666,7 +659,12 @@ impl PanelState {
             return;
         }
         let dir = self.dir().to_path_buf();
-        self.create.start(dir, "폴더", create::new_folder, ctx);
+        self.create.start(
+            dir,
+            crate::i18n::panel_kind_folder(),
+            create::new_folder,
+            ctx,
+        );
     }
 
     /// 표시 중인 폴더에 빈 텍스트 문서를 만든다 (FR-25). 원격 탭에서는 하지 않는다
@@ -675,7 +673,12 @@ impl PanelState {
             return;
         }
         let dir = self.dir().to_path_buf();
-        self.create.start(dir, "파일", create::new_text_file, ctx);
+        self.create.start(
+            dir,
+            crate::i18n::panel_kind_file(),
+            create::new_text_file,
+            ctx,
+        );
     }
 
     /// 활성 원격 탭이 가리키는 위치를 옮긴다. 연결·단계는 그대로 둔다.
@@ -852,7 +855,7 @@ impl PanelState {
                 }
             }
             Err(error) => {
-                self.status = format!("새 {kind}을(를) 만들지 못했습니다 — {error}");
+                self.status = crate::i18n::dynamic::create_failed(kind, &error.to_string());
             }
         }
     }
@@ -1180,9 +1183,9 @@ impl PanelState {
         // 원격 패널에서는 트리 토글의 라벨이 갈린다 (인벤토리 #94).
         // 클로저 밖에서 정한다 — `Sides`의 클로저가 `self`를 통째로 빌린다
         let tree_label = if self.is_remote() {
-            REMOTE_TREE_LABEL
+            crate::i18n::panel_remote_tree()
         } else {
-            LOCAL_TREE_LABEL
+            crate::i18n::panel_folder_tree()
         };
         // 왼쪽에 트리 토글·진행 상황, 오른쪽 끝에 항목 수를 둔다 (사용자 요청 7).
         // `Sides`는 오른쪽 것을 먼저 자리잡게 하므로, 오류 문구가 길어져도 항목 수가 밀리지 않는다
@@ -1196,7 +1199,7 @@ impl PanelState {
                 }
                 if self.load.is_loading() {
                     ui.spinner();
-                    ui.colored_label(theme::TEXT_DIM, "읽는 중…");
+                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
                 }
                 if !self.status.is_empty() {
                     ui.colored_label(theme::TEXT_DIM, &self.status);
@@ -1210,7 +1213,10 @@ impl PanelState {
                 } else if !self.load.is_loading() {
                     // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
                     let (dirs, files) = self.list.counts();
-                    ui.colored_label(theme::TEXT_DIM, format!("폴더 {dirs} 파일 {files}"));
+                    ui.colored_label(
+                        theme::TEXT_DIM,
+                        crate::i18n::dynamic::item_counts(dirs, files),
+                    );
                 }
             },
         );
