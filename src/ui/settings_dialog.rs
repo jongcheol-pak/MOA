@@ -46,6 +46,8 @@ const GROUP_FONT_PX: f32 = 12.0;
 const GROUP_GAP_TOP: f32 = 14.0;
 /// 그룹 제목과 첫 항목 사이
 const GROUP_GAP_BOTTOM: f32 = 6.0;
+/// 대화 모서리 — 창 자체는 각지지만(FR-22) 이 판은 살짝 둥글게 해 떠 있는 것으로 보인다
+const CORNER_RADIUS: u8 = 6;
 /// 닫기 버튼 좌우 여백
 const CLOSE_PAD_X: f32 = 16.0;
 const CLOSE_MIN_WIDTH: f32 = 72.0;
@@ -127,7 +129,7 @@ impl SettingsDialog {
                 egui::Frame::new()
                     .fill(theme::SURFACE_BG)
                     .stroke(egui::Stroke::new(1.0, theme::BORDER_CONTROL))
-                    .corner_radius(0)
+                    .corner_radius(CORNER_RADIUS)
                     .shadow(egui::epaint::Shadow {
                         offset: [0, SHADOW_OFFSET_Y],
                         blur: SHADOW_BLUR,
@@ -413,6 +415,13 @@ fn group_title(ui: &mut egui::Ui, text: &str, divider: Divider) {
 
 /// 푸터 — 오른쪽 끝 `닫기`. 눌렸으면 `true`
 fn show_footer(ui: &mut egui::Ui, rect: egui::Rect) -> bool {
+    // 바닥 줄과 본문을 가르는 선 — 그룹 사이 선과 같은 두께·색이라 판이 한 벌로 보인다.
+    // 좌우로 대화 끝까지 긋는다(그룹 선은 본문 여백 안에서만 긋는다)
+    ui.painter().hline(
+        rect.x_range(),
+        rect.top(),
+        egui::Stroke::new(DIVIDER_THICKNESS, theme::BORDER_CONTROL),
+    );
     let width = widgets::design_button_width(ui, i18n::close(), CLOSE_PAD_X).max(CLOSE_MIN_WIDTH);
     let button_rect = egui::Rect::from_min_size(
         egui::pos2(
@@ -484,6 +493,25 @@ mod tests {
         }
         assert_eq!(line_count(Divider::Skip), 0, "첫 그룹 위에 선을 그었다");
         assert_eq!(line_count(Divider::Draw), 1, "그룹 사이 구분선이 없다");
+    }
+
+    #[test]
+    fn 바닥_줄_위에_구분선을_긋는다() {
+        // 2026-08-14 사용자 요청 — 닫기 버튼이 본문과 붙어 보이지 않게 가른다
+        let ctx = egui::Context::default();
+        let 자리 = egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(DIALOG_WIDTH, FOOTER_HEIGHT),
+        );
+        let output = ctx.run_ui(Default::default(), |ui| {
+            show_footer(ui, 자리);
+        });
+        let 선 = output
+            .shapes
+            .iter()
+            .filter(|clipped| matches!(clipped.shape, egui::Shape::LineSegment { .. }))
+            .count();
+        assert_eq!(선, 1, "바닥 줄 위 구분선이 없다");
     }
 
     #[test]
