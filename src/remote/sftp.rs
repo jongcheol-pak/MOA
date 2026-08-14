@@ -15,7 +15,8 @@ use ssh2::{Error as Ssh2Error, ErrorCode, FileStat, HashType, OpenFlags, OpenTyp
 
 use crate::remote::hostkey::{HostKeyCheck, HostKeyDecision, KnownHosts, fingerprint_sha256};
 use crate::remote::types::{
-    Progress, RemoteEntry, RemoteError, RemotePath, RemoteResult, RemoteSession, SiteRecord,
+    Progress, RemoteEntry, RemoteError, RemoteOp, RemotePath, RemoteResult, RemoteSession,
+    SiteRecord,
 };
 use crate::remote::{Pumped, pump};
 
@@ -73,13 +74,13 @@ impl SftpSession {
 
     fn session(&mut self) -> RemoteResult<&mut Session> {
         self.session.as_mut().ok_or_else(|| RemoteError::Protocol {
-            detail: "서버에 연결되어 있지 않습니다".to_owned(),
+            detail: crate::i18n::remote_not_connected_err().to_owned(),
         })
     }
 
     fn sftp(&self) -> RemoteResult<&Sftp> {
         self.sftp.as_ref().ok_or_else(|| RemoteError::Protocol {
-            detail: "아직 로그인하지 않았습니다".to_owned(),
+            detail: crate::i18n::remote_not_logged_in().to_owned(),
         })
     }
 
@@ -103,26 +104,26 @@ impl RemoteSession for SftpSession {
     fn connect(&mut self, site: &SiteRecord) -> RemoteResult<()> {
         if !site.protocol.is_ssh() {
             return Err(RemoteError::Protocol {
-                detail: "FTP 사이트는 SFTP 세션으로 연결할 수 없습니다".to_owned(),
+                detail: crate::i18n::remote_ftp_site_on_sftp().to_owned(),
             });
         }
         let tcp = TcpStream::connect(site.address()).map_err(|e| RemoteError::Connect {
             detail: e.to_string(),
         })?;
 
-        let mut session = Session::new().map_err(|e| classify(e, "세션 준비", None))?;
+        let mut session = Session::new().map_err(|e| classify(e, RemoteOp::SessionSetup, None))?;
         // 이 세션은 워커 스레드가 독점하므로 동기(블로킹) 호출로 쓴다 (NFR-10)
         session.set_blocking(true);
         session.set_tcp_stream(tcp);
         session
             .handshake()
-            .map_err(|e| classify(e, "SSH 협상", None))?;
+            .map_err(|e| classify(e, RemoteOp::SshHandshake, None))?;
 
         let fingerprint = session
             .host_key_hash(HashType::Sha256)
             .map(fingerprint_sha256)
             .ok_or_else(|| RemoteError::HostKey {
-                detail: "서버가 지문을 알려 주지 않아 서버를 확인할 수 없습니다".to_owned(),
+                detail: crate::i18n::remote_no_fingerprint().to_owned(),
             })?;
         self.verify_host_key(&site.host, site.port, &fingerprint)?;
 
@@ -138,10 +139,12 @@ impl RemoteSession for SftpSession {
         }
         if !session.authenticated() {
             return Err(RemoteError::Auth {
-                detail: "서버가 로그인을 받아들이지 않았습니다".to_owned(),
+                detail: crate::i18n::remote_login_rejected().to_owned(),
             });
         }
-        let sftp = session.sftp().map_err(|e| classify(e, "SFTP 시작", None))?;
+        let sftp = session
+            .sftp()
+            .map_err(|e| classify(e, RemoteOp::SftpStart, None))?;
         self.sftp = Some(sftp);
         Ok(())
     }
@@ -150,17 +153,19 @@ impl RemoteSession for SftpSession {
         let sftp = self.sftp()?;
         // SFTP에는 작업 디렉터리가 없다 — `.`의 실제 경로가 서버가 정한 홈이다.
         // `realpath`도 아래 `list`와 같은 경로 변환을 거치므로 같은 방어막이 필요하다
-        guard_path_panic("서버의 시작 폴더 이름", || {
+        guard_path_panic(crate::i18n::remote_subject_home(), || {
             let home = sftp
                 .realpath(Path::new("."))
-                .map_err(|e| classify(e, "홈 확인", None))?;
+                .map_err(|e| classify(e, RemoteOp::Home, None))?;
             Ok(RemotePath::new(&home.to_string_lossy()))
         })
     }
 
     fn list(&mut self, path: &RemotePath) -> RemoteResult<Vec<RemoteEntry>> {
         let sftp = self.sftp()?;
-        guard_path_panic("이 폴더의 파일 이름", || read_directory(sftp, path))
+        guard_path_panic(crate::i18n::remote_subject_names(), || {
+            read_directory(sftp, path)
+        })
     }
 
     fn cwd(&mut self, path: &RemotePath) -> RemoteResult<()> {
@@ -168,13 +173,13 @@ impl RemoteSession for SftpSession {
         let stat = self
             .sftp()?
             .stat(Path::new(path.as_str()))
-            .map_err(|e| classify(e, "이동", Some(path.as_str())))?;
+            .map_err(|e| classify(e, RemoteOp::Move, Some(path.as_str())))?;
         if stat.is_dir() {
             Ok(())
         } else {
             Err(RemoteError::NotFound {
                 path: path.as_str().to_owned(),
-                detail: "폴더가 아닙니다".to_owned(),
+                detail: crate::i18n::remote_not_a_folder().to_owned(),
             })
         }
     }
@@ -182,26 +187,26 @@ impl RemoteSession for SftpSession {
     fn mkdir(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.sftp()?
             .mkdir(Path::new(path.as_str()), NEW_DIR_MODE)
-            .map_err(|e| classify(e, "폴더 만들기", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Mkdir, Some(path.as_str())))
     }
 
     fn remove(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.sftp()?
             .unlink(Path::new(path.as_str()))
-            .map_err(|e| classify(e, "삭제", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Remove, Some(path.as_str())))
     }
 
     fn rmdir(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.sftp()?
             .rmdir(Path::new(path.as_str()))
-            .map_err(|e| classify(e, "폴더 삭제", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Rmdir, Some(path.as_str())))
     }
 
     fn rename(&mut self, from: &RemotePath, to: &RemotePath) -> RemoteResult<()> {
         // 덮어쓰기 플래그를 주지 않는다 — 이미 있는 이름이면 서버가 거절하고, 덮어쓸지는 사용자가 정한다
         self.sftp()?
             .rename(Path::new(from.as_str()), Path::new(to.as_str()), None)
-            .map_err(|e| classify(e, "이름 바꾸기", Some(from.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Rename, Some(from.as_str())))
     }
 
     fn chmod(&mut self, path: &RemotePath, mode: u32) -> RemoteResult<()> {
@@ -216,7 +221,7 @@ impl RemoteSession for SftpSession {
         };
         self.sftp()?
             .setstat(Path::new(path.as_str()), stat)
-            .map_err(|e| classify(e, "권한 바꾸기", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Chmod, Some(path.as_str())))
     }
 
     fn download(
@@ -230,7 +235,7 @@ impl RemoteSession for SftpSession {
         let mut file = self
             .sftp()?
             .open(Path::new(name))
-            .map_err(|e| classify(e, "열기", Some(name)))?;
+            .map_err(|e| classify(e, RemoteOp::Open, Some(name)))?;
         if offset > 0 {
             file.seek(SeekFrom::Start(offset))
                 .map_err(|e| RemoteError::Transfer {
@@ -268,10 +273,10 @@ impl RemoteSession for SftpSession {
                 NEW_FILE_MODE,
                 OpenType::File,
             )
-            .map_err(|e| classify(e, "이어 올리기", Some(name)))?
+            .map_err(|e| classify(e, RemoteOp::Resume, Some(name)))?
         } else {
             sftp.create(Path::new(name))
-                .map_err(|e| classify(e, "만들기", Some(name)))?
+                .map_err(|e| classify(e, RemoteOp::Create, Some(name)))?
         };
         if offset > 0 {
             file.seek(SeekFrom::Start(offset))
@@ -296,7 +301,8 @@ impl RemoteSession for SftpSession {
             }
         };
         // 닫을 때 서버가 실패를 알려 주는 일이 있다 — 여기서 버리면 "성공했는데 파일이 없는" 일이 생긴다
-        file.close().map_err(|e| classify(e, "닫기", Some(name)))?;
+        file.close()
+            .map_err(|e| classify(e, RemoteOp::Close, Some(name)))?;
         Ok(total)
     }
 
@@ -304,7 +310,7 @@ impl RemoteSession for SftpSession {
         self.session()?
             .keepalive_send()
             .map(|_| ())
-            .map_err(|e| classify(e, "연결 유지", None))
+            .map_err(|e| classify(e, RemoteOp::KeepAlive, None))
     }
 
     fn is_secure(&self) -> bool {
@@ -319,7 +325,7 @@ impl RemoteSession for SftpSession {
         };
         session
             .disconnect(None, "bye", None)
-            .map_err(|e| classify(e, "종료", None))
+            .map_err(|e| classify(e, RemoteOp::Quit, None))
     }
 }
 
@@ -339,7 +345,7 @@ fn resolve_host_key<'prompt>(
         HostKeyCheck::Match => return Ok(false),
         HostKeyCheck::Unknown { fingerprint } => (
             fingerprint.clone(),
-            "처음 보는 서버라 연결하지 않았습니다".to_owned(),
+            crate::i18n::remote_unknown_server().to_owned(),
         ),
         HostKeyCheck::Changed { old, new } => (
             new.clone(),
@@ -353,7 +359,7 @@ fn resolve_host_key<'prompt>(
     let Some(prompt) = prompt else {
         // 물어볼 수단이 없으면 거절한다 — 조용히 수락하는 경로는 만들지 않는다 (D15)
         return Err(RemoteError::HostKey {
-            detail: format!("{rejected_detail} (확인할 수단이 없습니다)"),
+            detail: crate::i18n::dynamic::hostkey_unverifiable(&rejected_detail),
         });
     };
     match prompt(check) {
@@ -376,9 +382,7 @@ fn resolve_host_key<'prompt>(
 fn guard_path_panic<T>(subject: &str, call: impl FnOnce() -> RemoteResult<T>) -> RemoteResult<T> {
     std::panic::catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
         Err(RemoteError::Protocol {
-            detail: format!(
-                "{subject}을(를) 읽지 못했습니다 (서버가 UTF-8이 아닌 이름을 쓰는 것 같습니다)"
-            ),
+            detail: crate::i18n::dynamic::name_decode_failed(subject),
         })
     })
 }
@@ -387,7 +391,7 @@ fn guard_path_panic<T>(subject: &str, call: impl FnOnce() -> RemoteResult<T>) ->
 fn read_directory(sftp: &Sftp, path: &RemotePath) -> RemoteResult<Vec<RemoteEntry>> {
     let items = sftp
         .readdir(Path::new(path.as_str()))
-        .map_err(|e| classify(e, "목록", Some(path.as_str())))?;
+        .map_err(|e| classify(e, RemoteOp::List, Some(path.as_str())))?;
     // 라이브러리는 항목 경로를 `dirname`과 이어 붙여 주는데, Windows에서는 그 이음매가 `\`가 된다.
     // 우리에게 필요한 것은 마지막 이름뿐이므로 거기만 떼어 쓴다 (D9 — 원격 경로는 우리가 조립한다)
     let named: Vec<(String, FileStat)> = items
@@ -468,7 +472,7 @@ fn auth_error(session: &Session, user: &str, err: Ssh2Error) -> RemoteError {
     let methods = session.auth_methods(user).ok().map(|list| list.to_owned());
     let detail = match methods {
         Some(list) if !list.split(',').any(|method| method.trim() == "password") => {
-            format!("{err} — 이 서버는 비밀번호 인증을 받지 않습니다 (받는 방식: {list})")
+            crate::i18n::dynamic::auth_no_password(&err.to_string(), &list)
         }
         _ => err.to_string(),
     };
@@ -476,8 +480,8 @@ fn auth_error(session: &Session, user: &str, err: Ssh2Error) -> RemoteError {
 }
 
 /// 라이브러리 오류를 도메인 오류로 옮긴다. 서버가 준 사유를 그대로 담는다
-fn classify(err: Ssh2Error, operation: &str, path: Option<&str>) -> RemoteError {
-    let detail = format!("{operation}: {err}");
+fn classify(err: Ssh2Error, operation: RemoteOp, path: Option<&str>) -> RemoteError {
+    let detail = format!("{}: {err}", operation.label());
     let path_of = || path.unwrap_or_default().to_owned();
     match err.code() {
         ErrorCode::SFTP(FX_NO_SUCH_FILE) => RemoteError::NotFound {
@@ -489,7 +493,7 @@ fn classify(err: Ssh2Error, operation: &str, path: Option<&str>) -> RemoteError 
             detail,
         },
         ErrorCode::SFTP(FX_OP_UNSUPPORTED) => RemoteError::Unsupported {
-            operation: operation.to_owned(),
+            operation: operation.label().to_owned(),
             detail,
         },
         _ => RemoteError::Protocol { detail },
@@ -708,23 +712,26 @@ mod tests {
 
     #[test]
     fn sftp_상태_코드가_오류_갈래를_가른다() {
+        // 작업 이름이 문구에 섞이므로 언어를 고정한다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let missing = classify(
             Ssh2Error::new(ErrorCode::SFTP(FX_NO_SUCH_FILE), "no such file"),
-            "목록",
+            RemoteOp::List,
             Some("/none"),
         );
         assert!(matches!(&missing, RemoteError::NotFound { path, .. } if path == "/none"));
 
         let denied = classify(
             Ssh2Error::new(ErrorCode::SFTP(FX_PERMISSION_DENIED), "permission denied"),
-            "삭제",
+            RemoteOp::Remove,
             Some("/etc/passwd"),
         );
         assert!(matches!(&denied, RemoteError::PermissionDenied { .. }));
 
         let unsupported = classify(
             Ssh2Error::new(ErrorCode::SFTP(FX_OP_UNSUPPORTED), "op unsupported"),
-            "권한 바꾸기",
+            RemoteOp::Chmod,
             Some("/a"),
         );
         assert!(
@@ -734,7 +741,7 @@ mod tests {
         // 그 밖의 실패는 프로토콜 오류로 모으되 원문을 잃지 않는다
         let other = classify(
             Ssh2Error::new(ErrorCode::Session(-18), "authentication failed"),
-            "로그인",
+            RemoteOp::Login,
             None,
         );
         assert!(matches!(&other, RemoteError::Protocol { .. }));

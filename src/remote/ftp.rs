@@ -18,8 +18,8 @@ use suppaftp::{FtpError, Mode, NativeTlsConnector, NativeTlsFtpStream, Status};
 
 use crate::remote::charset;
 use crate::remote::types::{
-    Charset, Encryption, LogonType, Progress, Protocol, RemoteEntry, RemoteError, RemotePath,
-    RemoteResult, RemoteSession, SiteRecord, TransferMode,
+    Charset, Encryption, LogonType, Progress, Protocol, RemoteEntry, RemoteError, RemoteOp,
+    RemotePath, RemoteResult, RemoteSession, SiteRecord, TransferMode,
 };
 use crate::remote::{Pumped, pump};
 
@@ -61,7 +61,7 @@ impl FtpSession {
 
     fn stream(&mut self) -> RemoteResult<&mut NativeTlsFtpStream> {
         self.stream.as_mut().ok_or_else(|| RemoteError::Protocol {
-            detail: "서버에 연결되어 있지 않습니다".to_owned(),
+            detail: crate::i18n::remote_not_connected_err().to_owned(),
         })
     }
 
@@ -91,9 +91,9 @@ impl FtpSession {
                 self.active_fallback_pending = false;
                 self.stream()?.set_mode(Mode::Active);
                 self.raw_list(path)
-                    .map_err(|e| classify(e, "LIST", Some(path)))
+                    .map_err(|e| classify(e, RemoteOp::Raw("LIST"), Some(path)))
             }
-            Err(err) => Err(classify(err, "LIST", Some(path))),
+            Err(err) => Err(classify(err, RemoteOp::Raw("LIST"), Some(path))),
         }
     }
 
@@ -132,7 +132,7 @@ impl RemoteSession for FtpSession {
     fn connect(&mut self, site: &SiteRecord) -> RemoteResult<()> {
         if site.protocol.is_ssh() {
             return Err(RemoteError::Protocol {
-                detail: "SFTP 사이트는 FTP 세션으로 연결할 수 없습니다".to_owned(),
+                detail: crate::i18n::remote_sftp_site_on_ftp().to_owned(),
             });
         }
         let addr = site.address();
@@ -142,19 +142,18 @@ impl RemoteSession for FtpSession {
         // 협상 결과를 여기서 정한다 — 아래 분기 중 **실제로 TLS가 선 길**만 참이다
         self.secure = false;
         let stream = match effective_encryption(site) {
-            Encryption::Plain => {
-                NativeTlsFtpStream::connect(&addr).map_err(|e| classify(e, "연결", None))?
-            }
+            Encryption::Plain => NativeTlsFtpStream::connect(&addr)
+                .map_err(|e| classify(e, RemoteOp::Connect, None))?,
             Encryption::Implicit => {
                 let stream =
                     NativeTlsFtpStream::connect_secure_implicit(&addr, tls_connector()?, domain)
-                        .map_err(|e| classify(e, "묵시적 TLS 연결", None))?;
+                        .map_err(|e| classify(e, RemoteOp::ConnectImplicit, None))?;
                 self.secure = true;
                 stream
             }
             explicit => {
-                let plain =
-                    NativeTlsFtpStream::connect(&addr).map_err(|e| classify(e, "연결", None))?;
+                let plain = NativeTlsFtpStream::connect(&addr)
+                    .map_err(|e| classify(e, RemoteOp::Connect, None))?;
                 match plain.into_secure(tls_connector()?, domain) {
                     Ok(secure) => {
                         self.secure = true;
@@ -163,9 +162,10 @@ impl RemoteSession for FtpSession {
                     Err(_) if explicit == Encryption::ExplicitIfAvailable => {
                         // 서버가 AUTH TLS를 거부했다. 승격이 스트림을 소비했으므로 평문으로 다시
                         // 연결한다 — 이때 이 연결은 **암호화되지 않았다**(`secure`는 거짓 그대로)
-                        NativeTlsFtpStream::connect(&addr).map_err(|e| classify(e, "연결", None))?
+                        NativeTlsFtpStream::connect(&addr)
+                            .map_err(|e| classify(e, RemoteOp::Connect, None))?
                     }
-                    Err(err) => return Err(classify(err, "TLS 승격", None)),
+                    Err(err) => return Err(classify(err, RemoteOp::TlsUpgrade, None)),
                 }
             }
         };
@@ -203,15 +203,18 @@ impl RemoteSession for FtpSession {
         let stream = self.stream()?;
         stream
             .login(site.effective_user(), password)
-            .map_err(|e| classify(e, "로그인", None))?;
+            .map_err(|e| classify(e, RemoteOp::Login, None))?;
         // 이 앱은 모든 파일을 있는 그대로 옮긴다 — ASCII 모드는 줄바꿈을 바꿔 파일을 손상시킨다
         stream
             .transfer_type(TransferType::Binary)
-            .map_err(|e| classify(e, "TYPE", None))
+            .map_err(|e| classify(e, RemoteOp::Raw("TYPE"), None))
     }
 
     fn pwd(&mut self) -> RemoteResult<RemotePath> {
-        let raw = self.stream()?.pwd().map_err(|e| classify(e, "PWD", None))?;
+        let raw = self
+            .stream()?
+            .pwd()
+            .map_err(|e| classify(e, RemoteOp::Raw("PWD"), None))?;
         Ok(RemotePath::new(&raw))
     }
 
@@ -235,31 +238,31 @@ impl RemoteSession for FtpSession {
     fn cwd(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.stream()?
             .cwd(path.as_str())
-            .map_err(|e| classify(e, "CWD", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Raw("CWD"), Some(path.as_str())))
     }
 
     fn mkdir(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.stream()?
             .mkdir(path.as_str())
-            .map_err(|e| classify(e, "MKD", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Raw("MKD"), Some(path.as_str())))
     }
 
     fn remove(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.stream()?
             .rm(path.as_str())
-            .map_err(|e| classify(e, "DELE", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Raw("DELE"), Some(path.as_str())))
     }
 
     fn rmdir(&mut self, path: &RemotePath) -> RemoteResult<()> {
         self.stream()?
             .rmdir(path.as_str())
-            .map_err(|e| classify(e, "RMD", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Raw("RMD"), Some(path.as_str())))
     }
 
     fn rename(&mut self, from: &RemotePath, to: &RemotePath) -> RemoteResult<()> {
         self.stream()?
             .rename(from.as_str(), to.as_str())
-            .map_err(|e| classify(e, "RNFR/RNTO", Some(from.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Raw("RNFR/RNTO"), Some(from.as_str())))
     }
 
     fn chmod(&mut self, path: &RemotePath, mode: u32) -> RemoteResult<()> {
@@ -268,7 +271,7 @@ impl RemoteSession for FtpSession {
         self.stream()?
             .custom_command(command, &[Status::CommandOk, Status::RequestedFileActionOk])
             .map(|_| ())
-            .map_err(|e| classify(e, "SITE CHMOD", Some(path.as_str())))
+            .map_err(|e| classify(e, RemoteOp::Raw("SITE CHMOD"), Some(path.as_str())))
     }
 
     fn download(
@@ -283,17 +286,17 @@ impl RemoteSession for FtpSession {
         if offset > 0 {
             stream
                 .resume_transfer(offset as usize)
-                .map_err(|e| classify(e, "REST", Some(name)))?;
+                .map_err(|e| classify(e, RemoteOp::Raw("REST"), Some(name)))?;
         }
         let mut data = stream
             .retr_as_stream(name)
-            .map_err(|e| classify(e, "RETR", Some(name)))?;
+            .map_err(|e| classify(e, RemoteOp::Raw("RETR"), Some(name)))?;
 
         match pump(&mut data, dest, progress) {
             Pumped::Done(total) => {
                 stream
                     .finalize_retr_stream(data)
-                    .map_err(|e| classify(e, "RETR", Some(name)))?;
+                    .map_err(|e| classify(e, RemoteOp::Raw("RETR"), Some(name)))?;
                 Ok(total)
             }
             Pumped::Cancelled => {
@@ -328,18 +331,18 @@ impl RemoteSession for FtpSession {
         let mut data = if offset > 0 {
             stream
                 .append_with_stream(name)
-                .map_err(|e| classify(e, "APPE", Some(name)))?
+                .map_err(|e| classify(e, RemoteOp::Raw("APPE"), Some(name)))?
         } else {
             stream
                 .put_with_stream(name)
-                .map_err(|e| classify(e, "STOR", Some(name)))?
+                .map_err(|e| classify(e, RemoteOp::Raw("STOR"), Some(name)))?
         };
 
         match pump(src, &mut data, progress) {
             Pumped::Done(total) => {
                 stream
                     .finalize_put_stream(data)
-                    .map_err(|e| classify(e, "STOR", Some(name)))?;
+                    .map_err(|e| classify(e, RemoteOp::Raw("STOR"), Some(name)))?;
                 Ok(total)
             }
             Pumped::Cancelled => {
@@ -360,7 +363,9 @@ impl RemoteSession for FtpSession {
     }
 
     fn noop(&mut self) -> RemoteResult<()> {
-        self.stream()?.noop().map_err(|e| classify(e, "NOOP", None))
+        self.stream()?
+            .noop()
+            .map_err(|e| classify(e, RemoteOp::Raw("NOOP"), None))
     }
 
     fn is_secure(&self) -> bool {
@@ -372,7 +377,9 @@ impl RemoteSession for FtpSession {
         let Some(mut stream) = self.stream.take() else {
             return Ok(());
         };
-        stream.quit().map_err(|e| classify(e, "QUIT", None))
+        stream
+            .quit()
+            .map_err(|e| classify(e, RemoteOp::Raw("QUIT"), None))
     }
 }
 
@@ -419,7 +426,7 @@ fn tls_connector() -> RemoteResult<NativeTlsConnector> {
     TlsConnector::new()
         .map(NativeTlsConnector::from)
         .map_err(|e| RemoteError::Connect {
-            detail: format!("TLS 설정을 준비하지 못했습니다 — {e}"),
+            detail: crate::i18n::dynamic::tls_setup_failed(&e.to_string()),
         })
 }
 
@@ -594,7 +601,7 @@ fn decode_lines(raw: &[u8], charset: &Charset, utf8_mode: bool) -> Vec<String> {
         .collect()
 }
 
-fn classify(err: FtpError, operation: &str, path: Option<&str>) -> RemoteError {
+fn classify(err: FtpError, operation: RemoteOp, path: Option<&str>) -> RemoteError {
     match err {
         FtpError::ConnectionError(e) => RemoteError::Connect {
             detail: e.to_string(),
@@ -604,16 +611,16 @@ fn classify(err: FtpError, operation: &str, path: Option<&str>) -> RemoteError {
             detail: e.to_string(),
         },
         FtpError::BadResponse => RemoteError::Protocol {
-            detail: format!("{operation}: 서버 응답을 해석하지 못했습니다"),
+            detail: crate::i18n::dynamic::reply_unreadable(operation.label()),
         },
         FtpError::DataConnectionAlreadyOpen => RemoteError::Protocol {
-            detail: format!("{operation}: 데이터 연결이 이미 열려 있습니다"),
+            detail: crate::i18n::dynamic::data_connection_open(operation.label()),
         },
         FtpError::UnexpectedResponse(response) => classify_response(response, operation, path),
     }
 }
 
-fn classify_response(response: Response, operation: &str, path: Option<&str>) -> RemoteError {
+fn classify_response(response: Response, operation: RemoteOp, path: Option<&str>) -> RemoteError {
     let code = response.status.code();
     let detail = response.to_string();
     let path_of = || path.unwrap_or_default().to_owned();
@@ -622,7 +629,7 @@ fn classify_response(response: Response, operation: &str, path: Option<&str>) ->
         421 => RemoteError::Connect { detail },
         530 | 532 => RemoteError::Auth { detail },
         500 | 502 | 504 => RemoteError::Unsupported {
-            operation: operation.to_owned(),
+            operation: operation.label().to_owned(),
             detail,
         },
         // 550은 "없음"과 "권한 없음"에 함께 쓰인다 — 서버 문구로만 갈린다
@@ -652,7 +659,7 @@ fn mentions_permission(detail: &str) -> bool {
     ["permission", "denied", "access", "forbidden"]
         .iter()
         .any(|word| lowered.contains(word))
-        || detail.contains("권한")
+        || detail.contains(crate::i18n::op_permissions())
 }
 
 #[cfg(test)]
@@ -860,13 +867,17 @@ mod tests {
 
     #[test]
     fn 응답_코드가_오류_갈래를_가른다() {
-        let auth = classify(response_error(530, "530 Login incorrect"), "로그인", None);
+        let auth = classify(
+            response_error(530, "530 Login incorrect"),
+            RemoteOp::Login,
+            None,
+        );
         assert!(matches!(auth, RemoteError::Auth { .. }));
         assert!(auth.detail().contains("530 Login incorrect"));
 
         let denied = classify(
             response_error(550, "550 Permission denied"),
-            "DELE",
+            RemoteOp::Raw("DELE"),
             Some("/var/www/sw.js"),
         );
         assert!(
@@ -875,14 +886,14 @@ mod tests {
 
         let missing = classify(
             response_error(550, "550 No such file or directory"),
-            "CWD",
+            RemoteOp::Raw("CWD"),
             Some("/none"),
         );
         assert!(matches!(&missing, RemoteError::NotFound { path, .. } if path == "/none"));
 
         let unsupported = classify(
             response_error(502, "502 Command not implemented"),
-            "MLSD",
+            RemoteOp::Raw("MLSD"),
             None,
         );
         assert!(
@@ -893,7 +904,7 @@ mod tests {
         assert!(matches!(
             classify(
                 response_error(421, "421 Too many connections"),
-                "연결",
+                RemoteOp::Connect,
                 None
             ),
             RemoteError::Connect { .. }

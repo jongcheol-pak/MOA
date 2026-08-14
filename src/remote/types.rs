@@ -376,32 +376,90 @@ impl RemoteError {
     }
 }
 
+/// 오류 문구 앞에 붙는 작업 이름 — **언어 중립**이다.
+///
+/// 문자열 조각을 그대로 넘기면 그 자리에서 언어가 정해져 버린다. 무엇을 하다 실패했는지만
+/// 이 열거형이 나르고, 사람이 읽을 말은 문구를 만드는 순간 카탈로그가 정한다 (D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteOp {
+    SessionSetup,
+    SshHandshake,
+    SftpStart,
+    Home,
+    Move,
+    List,
+    Mkdir,
+    Remove,
+    Rmdir,
+    Rename,
+    Chmod,
+    Open,
+    Resume,
+    Create,
+    Close,
+    KeepAlive,
+    Quit,
+    Connect,
+    ConnectImplicit,
+    TlsUpgrade,
+    Login,
+    /// FTP 프로토콜 명령어(`LIST`·`CWD`…) — **번역 대상이 아니다**.
+    /// 서버에 그대로 보낸 말이라 사용자가 서버 관리자에게 전할 때도 원문이 쓸모 있다
+    Raw(&'static str),
+}
+
+impl RemoteOp {
+    /// 지금 언어로 쓴 작업 이름
+    pub fn label(self) -> &'static str {
+        use crate::i18n;
+        match self {
+            RemoteOp::SessionSetup => i18n::op_session_setup(),
+            RemoteOp::SshHandshake => i18n::op_ssh_handshake(),
+            RemoteOp::SftpStart => i18n::op_sftp_start(),
+            RemoteOp::Home => i18n::op_home(),
+            RemoteOp::Move => i18n::op_move(),
+            RemoteOp::List => i18n::op_list(),
+            RemoteOp::Mkdir => i18n::op_mkdir(),
+            RemoteOp::Remove => i18n::op_remove(),
+            RemoteOp::Rmdir => i18n::op_rmdir(),
+            RemoteOp::Rename => i18n::op_rename_op(),
+            RemoteOp::Chmod => i18n::op_chmod(),
+            RemoteOp::Open => i18n::op_open(),
+            RemoteOp::Resume => i18n::op_resume(),
+            RemoteOp::Create => i18n::op_create(),
+            RemoteOp::Close => i18n::op_close(),
+            RemoteOp::KeepAlive => i18n::op_keepalive(),
+            RemoteOp::Quit => i18n::op_quit(),
+            RemoteOp::Connect => i18n::op_connect(),
+            RemoteOp::ConnectImplicit => i18n::op_connect_implicit(),
+            RemoteOp::TlsUpgrade => i18n::op_tls_upgrade(),
+            RemoteOp::Login => i18n::op_login(),
+            RemoteOp::Raw(name) => name,
+        }
+    }
+}
+
 impl std::fmt::Display for RemoteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::dynamic as t;
+        // 문장은 언어별로 통째로 만든다 — 조사(`을(를)`)가 영어에 없어 틀 자체가 갈린다 (D2)
         match self {
-            RemoteError::Connect { detail } => write!(f, "연결하지 못했습니다 — {detail}"),
-            RemoteError::Auth { detail } => write!(f, "로그인하지 못했습니다 — {detail}"),
-            RemoteError::HostKey { detail } => {
-                write!(f, "호스트 키를 확인하지 못했습니다 — {detail}")
-            }
-            RemoteError::NotFound { path, detail } => {
-                write!(f, "'{path}'을(를) 찾을 수 없습니다 — {detail}")
-            }
+            RemoteError::Connect { detail } => f.write_str(&t::err_connect(detail)),
+            RemoteError::Auth { detail } => f.write_str(&t::err_login(detail)),
+            RemoteError::HostKey { detail } => f.write_str(&t::err_host_key(detail)),
+            RemoteError::NotFound { path, detail } => f.write_str(&t::err_not_found(path, detail)),
             RemoteError::PermissionDenied { path, detail } => {
-                write!(f, "'{path}'에 접근할 권한이 없습니다 — {detail}")
+                f.write_str(&t::err_permission(path, detail))
             }
             RemoteError::Transfer {
                 detail,
                 transferred,
-            } => write!(
-                f,
-                "전송이 중단됐습니다 ({transferred}바이트 진행) — {detail}"
-            ),
+            } => f.write_str(&t::err_interrupted(*transferred, detail)),
             RemoteError::Unsupported { operation, detail } => {
-                write!(f, "서버가 '{operation}'을(를) 지원하지 않습니다 — {detail}")
+                f.write_str(&t::err_unsupported(operation, detail))
             }
-            RemoteError::Protocol { detail } => write!(f, "서버와 통신하지 못했습니다 — {detail}"),
-            RemoteError::Cancelled => f.write_str("취소했습니다"),
+            RemoteError::Protocol { detail } => f.write_str(&t::err_protocol(detail)),
+            RemoteError::Cancelled => f.write_str(crate::i18n::remote_cancelled()),
         }
     }
 }

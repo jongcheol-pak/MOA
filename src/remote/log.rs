@@ -27,10 +27,10 @@ impl LogKind {
     /// 화면과 복사본에 쓰이는 표기 (디자인 원문)
     pub fn label(self) -> &'static str {
         match self {
-            LogKind::Status => "상태:",
-            LogKind::Command => "명령:",
-            LogKind::Response => "응답:",
-            LogKind::Error => "오류:",
+            LogKind::Status => crate::i18n::log_kind_status(),
+            LogKind::Command => crate::i18n::log_kind_command(),
+            LogKind::Response => crate::i18n::log_kind_response(),
+            LogKind::Error => crate::i18n::log_kind_error(),
         }
     }
 }

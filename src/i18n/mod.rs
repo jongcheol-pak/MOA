@@ -372,6 +372,70 @@ strings! {
     /// 새로 만드는 사이트의 기본 이름 (FR-27)
     site_default_name => "새 사이트" / "New site";
 
+    // ── 원격 계층: 작업 이름 (오류 문구 앞에 붙는 동사 조각) ──
+    /// `RemoteOp`가 이 함수들로 풀린다 — 조각과 문장 틀을 함께 옮겨야 뜻이 통한다
+    op_session_setup => "세션 준비" / "Session setup";
+    op_ssh_handshake => "SSH 협상" / "SSH handshake";
+    op_sftp_start => "SFTP 시작" / "SFTP startup";
+    op_home => "홈 확인" / "Home lookup";
+    op_move => "이동" / "Change directory";
+    op_list => "목록" / "Listing";
+    op_mkdir => "폴더 만들기" / "Create folder";
+    op_remove => "삭제" / "Delete";
+    op_rmdir => "폴더 삭제" / "Delete folder";
+    op_rename_op => "이름 바꾸기" / "Rename";
+    op_open => "열기" / "Open";
+    op_resume => "이어 올리기" / "Resume upload";
+    op_create => "만들기" / "Create";
+    op_close => "닫기" / "Close";
+    op_keepalive => "연결 유지" / "Keep-alive";
+    op_quit => "종료" / "Quit";
+    op_connect => "연결" / "Connect";
+    op_connect_implicit => "묵시적 TLS 연결" / "Implicit TLS connect";
+    op_tls_upgrade => "TLS 승격" / "TLS upgrade";
+    op_login => "로그인" / "Log in";
+    op_permissions => "권한" / "Permissions";
+
+    // ── 원격 계층: 상태·오류 ──
+    remote_not_connected_err => "서버에 연결되어 있지 않습니다" / "Not connected to the server";
+    remote_not_logged_in => "아직 로그인하지 않았습니다" / "Not logged in yet";
+    remote_ftp_site_on_sftp
+        => "FTP 사이트는 SFTP 세션으로 연결할 수 없습니다"
+        / "An FTP site cannot be opened with an SFTP session";
+    remote_sftp_site_on_ftp
+        => "SFTP 사이트는 FTP 세션으로 연결할 수 없습니다"
+        / "An SFTP site cannot be opened with an FTP session";
+    remote_no_fingerprint
+        => "서버가 지문을 알려 주지 않아 서버를 확인할 수 없습니다"
+        / "The server gave no fingerprint, so it cannot be verified";
+    remote_login_rejected
+        => "서버가 로그인을 받아들이지 않았습니다"
+        / "The server did not accept the login";
+    remote_not_a_folder => "폴더가 아닙니다" / "Not a folder";
+    remote_unknown_server
+        => "처음 보는 서버라 연결하지 않았습니다"
+        / "Did not connect — this server has not been seen before";
+    /// `classify`가 조각으로 쓰는 이름 — 조사와 함께 조립된다
+    remote_subject_home => "서버의 시작 폴더 이름" / "the name of the server's home folder";
+    remote_subject_names => "이 폴더의 파일 이름" / "the file names in this folder";
+    /// 연결 진행 로그 (FR-40)
+    remote_log_connected
+        => "연결 수립, 환영 메시지를 기다림…"
+        / "Connected, waiting for the welcome message…";
+    remote_log_tls => "TLS로 암호화된 연결입니다." / "The connection is encrypted with TLS.";
+    remote_log_plain
+        => "보안되지 않은 서버입니다. TLS를 통한 연결을 지원하지 않습니다."
+        / "This server is not secured. It does not support connecting over TLS.";
+    remote_log_login => "로그인…" / "Logging in…";
+    remote_log_login_done => "로그인 완료" / "Logged in";
+    /// 서버 로그의 줄 종류 접두 (FR-40)
+    log_kind_status => "상태:" / "Status:";
+    log_kind_command => "명령:" / "Command:";
+    log_kind_response => "응답:" / "Response:";
+    log_kind_error => "오류:" / "Error:";
+    /// 사용자가 그만둔 것 — 실패가 아니다
+    remote_cancelled => "취소했습니다" / "Cancelled";
+
     // ── 트레이 메뉴 (FR-50) ──
     /// 우클릭 메뉴 항목 — 요청 문구 그대로다
     tray_show => "실행" / "Open";
@@ -523,6 +587,173 @@ pub mod dynamic {
         match current() {
             Language::Korean => format!("받은 파일을 제자리에 두지 못했습니다: {error}"),
             Language::English => format!("Could not move the downloaded file into place: {error}"),
+        }
+    }
+
+    // ── 원격 오류 문장 (조사·어순이 언어마다 갈린다) ──
+    pub fn err_connect(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("연결하지 못했습니다 — {detail}"),
+            Language::English => format!("Could not connect — {detail}"),
+        }
+    }
+
+    pub fn err_login(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("로그인하지 못했습니다 — {detail}"),
+            Language::English => format!("Could not log in — {detail}"),
+        }
+    }
+
+    pub fn err_host_key(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("호스트 키를 확인하지 못했습니다 — {detail}"),
+            Language::English => format!("Could not verify the host key — {detail}"),
+        }
+    }
+
+    pub fn err_not_found(path: &str, detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{path}'을(를) 찾을 수 없습니다 — {detail}"),
+            Language::English => format!("Could not find '{path}' — {detail}"),
+        }
+    }
+
+    pub fn err_permission(path: &str, detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{path}'에 접근할 권한이 없습니다 — {detail}"),
+            Language::English => format!("No permission to access '{path}' — {detail}"),
+        }
+    }
+
+    pub fn err_interrupted(transferred: u64, detail: &str) -> String {
+        match current() {
+            Language::Korean => {
+                format!("전송이 중단됐습니다 ({transferred}바이트 진행) — {detail}")
+            }
+            Language::English => {
+                format!("The transfer was interrupted ({transferred} bytes done) — {detail}")
+            }
+        }
+    }
+
+    pub fn err_unsupported(operation: &str, detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("서버가 '{operation}'을(를) 지원하지 않습니다 — {detail}"),
+            Language::English => format!("The server does not support '{operation}' — {detail}"),
+        }
+    }
+
+    pub fn err_protocol(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("서버와 통신하지 못했습니다 — {detail}"),
+            Language::English => format!("Could not talk to the server — {detail}"),
+        }
+    }
+
+    /// 목록 조회 로그 — 경로가 따옴표 안에 들어간다 (FR-40)
+    pub fn log_list_start(path: &str) -> String {
+        match current() {
+            Language::Korean => format!("\"{path}\" 디렉터리 목록 조회…"),
+            Language::English => format!("Listing directory \"{path}\"…"),
+        }
+    }
+
+    pub fn log_list_done(path: &str) -> String {
+        match current() {
+            Language::Korean => format!("\"{path}\" 디렉터리 목록 조회 성공"),
+            Language::English => format!("Listed directory \"{path}\""),
+        }
+    }
+
+    pub fn log_connecting(target: &str) -> String {
+        match current() {
+            Language::Korean => format!("{target}에 연결…"),
+            Language::English => format!("Connecting to {target}…"),
+        }
+    }
+
+    /// 재시도 안내 — 영어는 1초일 때 단수형이다
+    pub fn log_retry(secs: u64, error: &str) -> String {
+        match current() {
+            Language::Korean => format!("연결에 실패해 {secs}초 뒤 다시 시도합니다 — {error}"),
+            Language::English if secs == 1 => {
+                format!("Connection failed, retrying in 1 second — {error}")
+            }
+            Language::English => {
+                format!("Connection failed, retrying in {secs} seconds — {error}")
+            }
+        }
+    }
+
+    pub fn log_too_deep(path: &str) -> String {
+        match current() {
+            Language::Korean => format!("{path} 아래는 너무 깊어 건너뜁니다"),
+            Language::English => format!("Skipping below {path} — too deep"),
+        }
+    }
+
+    pub fn log_read_failed(path: &str, error: &str) -> String {
+        match current() {
+            Language::Korean => format!("{path} 를 읽지 못했습니다: {error}"),
+            Language::English => format!("Could not read {path}: {error}"),
+        }
+    }
+
+    /// 지문을 확인할 수단이 없을 때 사유 뒤에 붙인다
+    pub fn hostkey_unverifiable(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("{detail} (확인할 수단이 없습니다)"),
+            Language::English => format!("{detail} (no way to verify)"),
+        }
+    }
+
+    /// 서버가 UTF-8이 아닌 이름을 쓸 때 — `subject`가 조사와 함께 조립된다
+    pub fn name_decode_failed(subject: &str) -> String {
+        match current() {
+            Language::Korean => {
+                format!(
+                    "{subject}을(를) 읽지 못했습니다 (서버가 UTF-8이 아닌 이름을 쓰는 것 같습니다)"
+                )
+            }
+            Language::English => {
+                format!("Could not read {subject} (the server seems to use non-UTF-8 names)")
+            }
+        }
+    }
+
+    /// 비밀번호 인증을 받지 않는 서버 — 받는 방식 목록은 프로토콜 식별자라 번역하지 않는다
+    pub fn auth_no_password(error: &str, list: &str) -> String {
+        match current() {
+            Language::Korean => {
+                format!("{error} — 이 서버는 비밀번호 인증을 받지 않습니다 (받는 방식: {list})")
+            }
+            Language::English => {
+                format!(
+                    "{error} — this server does not accept password authentication (accepted: {list})"
+                )
+            }
+        }
+    }
+
+    pub fn tls_setup_failed(error: &str) -> String {
+        match current() {
+            Language::Korean => format!("TLS 설정을 준비하지 못했습니다 — {error}"),
+            Language::English => format!("Could not prepare the TLS setting — {error}"),
+        }
+    }
+
+    pub fn reply_unreadable(operation: &str) -> String {
+        match current() {
+            Language::Korean => format!("{operation}: 서버 응답을 해석하지 못했습니다"),
+            Language::English => format!("{operation}: could not read the server reply"),
+        }
+    }
+
+    pub fn data_connection_open(operation: &str) -> String {
+        match current() {
+            Language::Korean => format!("{operation}: 데이터 연결이 이미 열려 있습니다"),
+            Language::English => format!("{operation}: the data connection is already open"),
         }
     }
 
@@ -690,6 +921,105 @@ mod tests {
         assert_eq!(
             dynamic::skipped_folders(2),
             "Skipped 2 folders that could not be read"
+        );
+    }
+
+    #[test]
+    fn 원격_오류_여덟_종의_한국어는_이관_전_그대로다() {
+        // 조사(`을(를)`)까지 원문 그대로여야 한다 — 다듬으면 사용자가 보던 문구가 달라진다
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::err_connect("timeout"),
+            "연결하지 못했습니다 — timeout"
+        );
+        assert_eq!(dynamic::err_login("530"), "로그인하지 못했습니다 — 530");
+        assert_eq!(
+            dynamic::err_host_key("mismatch"),
+            "호스트 키를 확인하지 못했습니다 — mismatch"
+        );
+        assert_eq!(
+            dynamic::err_not_found("/none", "550"),
+            "'/none'을(를) 찾을 수 없습니다 — 550"
+        );
+        assert_eq!(
+            dynamic::err_permission("/etc", "550"),
+            "'/etc'에 접근할 권한이 없습니다 — 550"
+        );
+        assert_eq!(
+            dynamic::err_interrupted(1024, "reset"),
+            "전송이 중단됐습니다 (1024바이트 진행) — reset"
+        );
+        assert_eq!(
+            dynamic::err_unsupported("SITE CHMOD", "502"),
+            "서버가 'SITE CHMOD'을(를) 지원하지 않습니다 — 502"
+        );
+        assert_eq!(
+            dynamic::err_protocol("bad reply"),
+            "서버와 통신하지 못했습니다 — bad reply"
+        );
+        assert_eq!(remote_cancelled(), "취소했습니다");
+    }
+
+    #[test]
+    fn 원격_로그_문구의_한국어도_이관_전_그대로다() {
+        // 서버 로그는 사용자가 그대로 읽는 화면이다 (FR-40)
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::log_list_start("/var"),
+            "\"/var\" 디렉터리 목록 조회…"
+        );
+        assert_eq!(
+            dynamic::log_list_done("/var"),
+            "\"/var\" 디렉터리 목록 조회 성공"
+        );
+        assert_eq!(dynamic::log_connecting("host:21"), "host:21에 연결…");
+        assert_eq!(
+            dynamic::log_retry(5, "timeout"),
+            "연결에 실패해 5초 뒤 다시 시도합니다 — timeout"
+        );
+        assert_eq!(
+            dynamic::log_too_deep("/deep"),
+            "/deep 아래는 너무 깊어 건너뜁니다"
+        );
+        assert_eq!(
+            dynamic::log_read_failed("/x", "denied"),
+            "/x 를 읽지 못했습니다: denied"
+        );
+        assert_eq!(
+            dynamic::hostkey_unverifiable("바뀜"),
+            "바뀜 (확인할 수단이 없습니다)"
+        );
+        assert_eq!(
+            dynamic::tls_setup_failed("bad cert"),
+            "TLS 설정을 준비하지 못했습니다 — bad cert"
+        );
+        assert_eq!(
+            dynamic::auth_no_password("denied", "publickey"),
+            "denied — 이 서버는 비밀번호 인증을 받지 않습니다 (받는 방식: publickey)"
+        );
+    }
+
+    #[test]
+    fn 영어_오류도_서버_원문을_그대로_싣는다() {
+        // 서버가 준 말(`530 Login incorrect`)은 번역하지 않는다 — 사용자가 서버 관리자에게
+        // 전할 값이라 원문이 오히려 쓸모 있다
+        let _guard = LanguageGuard::lock(LanguageSetting::English);
+        assert_eq!(
+            dynamic::err_login("530 Login incorrect"),
+            "Could not log in — 530 Login incorrect"
+        );
+        assert_eq!(
+            dynamic::err_not_found("/none", "550 No such file"),
+            "Could not find '/none' — 550 No such file"
+        );
+        // 재시도 안내는 1초일 때 단수형이다
+        assert_eq!(
+            dynamic::log_retry(1, "timeout"),
+            "Connection failed, retrying in 1 second — timeout"
+        );
+        assert_eq!(
+            dynamic::log_retry(5, "timeout"),
+            "Connection failed, retrying in 5 seconds — timeout"
         );
     }
 
