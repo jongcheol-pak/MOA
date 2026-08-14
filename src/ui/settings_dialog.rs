@@ -355,11 +355,13 @@ fn show_language_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> Setting
         widgets::form_label(ui, LABEL_LANGUAGE, true);
         if let Some(index) =
             widgets::dropdown_field(ui, "설정 언어", current, LANGUAGE_FIELD_WIDTH, true, &names)
-            && choices[index] != settings.language
         {
-            settings.language = choices[index];
-            outcome.changed = true;
-            outcome.language_changed = true;
+            // 같은 항목을 다시 고르면 아무 일도 하지 않는다 — 저장·다시 그리기를 부를 이유가 없다
+            if choices[index] != settings.language {
+                settings.language = choices[index];
+                outcome.changed = true;
+                outcome.language_changed = true;
+            }
         }
     });
     outcome
@@ -556,6 +558,23 @@ mod tests {
         assert_eq!(LANGUAGE_CHOICES[2], LanguageSetting::English);
         // 이름도 같은 순서여야 한다 — 하나만 어긋나도 화면과 값이 갈린다
         assert_eq!(LANGUAGE_CHOICES.len(), language_names().len());
+    }
+
+    #[test]
+    fn 언어_그룹은_고르기_전까지_아무것도_바꾸지_않는다() {
+        // 그리기만 하고 값을 건드리면 설정을 열어 보는 것만으로 저장이 돈다.
+        // 팝업 항목까지 눌러 보는 시험은 이 레포의 다른 드롭다운에도 없다
+        // (`Popup::menu`는 두 단계 상호작용이라 좌표 흉내가 성립하지 않는다)
+        let _guard = i18n::LanguageGuard::lock(LanguageSetting::Korean);
+        let ctx = egui::Context::default();
+        let mut settings = AppSettings::default();
+        let mut outcome = SettingsOutcome::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            outcome = show_language_group(ui, &mut settings);
+        });
+        assert!(!outcome.changed, "고르지도 않았는데 바뀌었다고 한다");
+        assert!(!outcome.language_changed, "언어 반영 신호가 먼저 섰다");
+        assert_eq!(settings.language, LanguageSetting::System, "값이 바뀌었다");
     }
 
     #[test]
