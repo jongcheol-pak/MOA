@@ -394,7 +394,6 @@ strings! {
     op_connect_implicit => "묵시적 TLS 연결" / "Implicit TLS connect";
     op_tls_upgrade => "TLS 승격" / "TLS upgrade";
     op_login => "로그인" / "Log in";
-    op_permissions => "권한" / "Permissions";
 
     // ── 원격 계층: 상태·오류 ──
     remote_not_connected_err => "서버에 연결되어 있지 않습니다" / "Not connected to the server";
@@ -846,8 +845,10 @@ mod tests {
     /// 이 파일에 사는 이유: 지키는 규약이 이 모듈의 것이다. 같은 기법을 `ui::widgets`의
     /// 아이콘 규약 시험이 이미 쓴다.
     ///
-    /// **찾지 못하는 것**: 이 검사는 리터럴만 본다 — 문구를 변수에 담아 옮기거나
-    /// 바깥에서 받아 그리면 걸리지 않는다. 그런 우회를 막는 장치는 없고, 리뷰가 본다
+    /// **찾지 못하는 것** 셋: ① 리터럴만 본다 — 문구를 변수에 담아 옮기거나 바깥에서
+    /// 받아 그리면 걸리지 않는다 ② `mod tests` **뒤**의 코드는 통째로 뺀다(이 레포는
+    /// 시험 모듈이 파일 끝에 있다는 전제) ③ 단언·`expect`가 있는 **그 줄**의 리터럴은
+    /// 개발자용으로 보고 건너뛴다. 그런 우회를 막는 장치는 없고, 리뷰가 본다
     #[test]
     fn 화면_문구가_카탈로그를_거치지_않은_곳이_없다() {
         use std::path::Path;
@@ -882,7 +883,7 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 17] = [
+        const EXEMPT_LITERALS: [&str; 21] = [
             // 위젯 ID
             "앱 설정",
             "설정 글꼴",
@@ -905,6 +906,11 @@ mod tests {
             "연결되어 있지 않습니다",
             "가짜 서버 상태가 오염됐습니다",
             "없는 폴더",
+            // 여러 줄에 걸친 단언·`expect`의 메시지 — 개발자에게만 보인다
+            "직렬화",
+            "성공한 블롭은 널일 수 없다",
+            "items_menu는 항목이 하나 이상이어야 한다 (빈 목록은 background_menu 담당)",
+            "원격 탭에 로컬 경로를 커밋하려 했다",
         ];
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -933,19 +939,17 @@ mod tests {
                 Some(cut) => &source[..cut],
                 None => &source[..],
             };
-            let 줄들: Vec<&str> = body.lines().collect();
-            for (번호, 줄) in 줄들.iter().enumerate() {
+            for (번호, 줄) in body.lines().enumerate() {
                 let 코드 = 줄.split("//").next().unwrap_or("");
                 // 개발자에게만 보이는 문구 — 화면에 나오지 않는다.
-                // 단언·`expect`는 여러 줄에 걸치므로 **앞 세 줄까지** 함께 본다
-                let 앞 = &줄들[번호.saturating_sub(3)..=번호];
-                if 앞.iter().any(|line| {
-                    line.contains("assert")
-                        || line.contains("expect(")
-                        || line.contains("panic!")
-                        || line.contains("must_use")
-                        || line.contains("Error::other")
-                }) {
+                // **같은 줄만 본다** — 앞 몇 줄까지 넓히면 단언 근처에 놓인 화면 문구가
+                // 통째로 빠져나간다. 여러 줄에 걸친 단언의 문구는 아래 리터럴 예외로 가린다
+                if 코드.contains("assert")
+                    || 코드.contains("expect(")
+                    || 코드.contains("panic!")
+                    || 코드.contains("must_use")
+                    || 코드.contains("Error::other")
+                {
                     continue;
                 }
                 for literal in string_literals(코드) {
