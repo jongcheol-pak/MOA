@@ -704,10 +704,10 @@ pub mod dynamic {
     pub fn hostkey_changed_detail(old: &str) -> String {
         match current() {
             Language::Korean => format!(
-                "전에 저장한 지문은 {old} 였습니다. 서버를 다시 설치했거나,                  중간에 다른 서버가 끼어든 것일 수 있습니다."
+                "전에 저장한 지문은 {old} 였습니다. 서버를 다시 설치했거나, 중간에 다른 서버가 끼어든 것일 수 있습니다."
             ),
             Language::English => format!(
-                "The stored fingerprint was {old}. The server may have been reinstalled,                  or another server may be in the middle."
+                "The stored fingerprint was {old}. The server may have been reinstalled, or another server may be in the middle."
             ),
         }
     }
@@ -716,10 +716,10 @@ pub mod dynamic {
     pub fn hostkey_changed_reason(old: &str, new: &str) -> String {
         match current() {
             Language::Korean => format!(
-                "서버 지문이 전에 저장해 둔 것과 다릅니다 (저장된 값 {old}, 이번 값 {new}) —                  서버를 다시 설치했거나 중간에 다른 서버가 끼어든 것일 수 있습니다"
+                "서버 지문이 전에 저장해 둔 것과 다릅니다 (저장된 값 {old}, 이번 값 {new}) — 서버를 다시 설치했거나 중간에 다른 서버가 끼어든 것일 수 있습니다"
             ),
             Language::English => format!(
-                "The server fingerprint differs from the stored one (stored {old}, now {new}) —                  the server may have been reinstalled, or another server may be in the middle"
+                "The server fingerprint differs from the stored one (stored {old}, now {new}) — the server may have been reinstalled, or another server may be in the middle"
             ),
         }
     }
@@ -866,25 +866,23 @@ mod tests {
         /// 앞의 넷은 egui 이식 이전 Win32 구현이라 **실행 경로에서 쓰이지 않는다**
         /// (`lib.rs`가 선언하지만 `main.rs`가 부르지 않는다). `panel/file_list.rs`는
         /// 살아 있는 순수 모델(`ListRow`·정렬)과 죽은 Win32 래퍼가 한 파일에 있고,
-        /// 남은 한글은 후자의 열 머리글뿐이다. `remote/testing.rs`는 가짜 서버라
-        /// 화면에 나오지 않는다.
+        /// 남은 한글은 후자의 열 머리글 넷뿐이라 리터럴로 가려낼 수 없다.
         ///
         /// **이 파일들이 다시 실행 경로에 들어오면 이 예외를 지운다** — 그러지 않으면
         /// 되살아난 화면의 문구를 검사가 조용히 놓친다.
-        const EXEMPT_FILES: [&str; 6] = [
+        const EXEMPT_FILES: [&str; 5] = [
             "src/app/menu.rs",
             "src/app/window.rs",
             "src/app/sidebar.rs",
             "src/panel/panel.rs",
             "src/panel/file_list.rs",
-            "src/remote/testing.rs",
         ];
 
         /// **리터럴 단위 예외** — 화면 문구가 아닌 것들.
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 14] = [
+        const EXEMPT_LITERALS: [&str; 17] = [
             // 위젯 ID
             "앱 설정",
             "설정 글꼴",
@@ -903,6 +901,10 @@ mod tests {
             // 서버가 보낸 응답을 살피는 낱말 (`remote::ftp::mentions_permission`) —
             // 화면 언어를 따르면 안 되는 자리다
             "권한",
+            // 가짜 서버(`remote::testing`)가 쓰는 값 — 화면에 나오지 않는다
+            "연결되어 있지 않습니다",
+            "가짜 서버 상태가 오염됐습니다",
+            "없는 폴더",
         ];
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1184,6 +1186,15 @@ mod tests {
         assert_eq!(
             dynamic::auth_no_password("denied", "publickey"),
             "denied — 이 서버는 비밀번호 인증을 받지 않습니다 (받는 방식: publickey)"
+        );
+        // 줄을 이어 붙인 문장은 **공백이 접히는 자리**가 어긋나기 쉽다 — 한 칸인지 본다
+        assert_eq!(
+            dynamic::hostkey_changed_detail("ab:cd"),
+            "전에 저장한 지문은 ab:cd 였습니다. 서버를 다시 설치했거나, 중간에 다른 서버가 끼어든 것일 수 있습니다."
+        );
+        assert_eq!(
+            dynamic::hostkey_changed_reason("ab:cd", "ef:gh"),
+            "서버 지문이 전에 저장해 둔 것과 다릅니다 (저장된 값 ab:cd, 이번 값 ef:gh) — 서버를 다시 설치했거나 중간에 다른 서버가 끼어든 것일 수 있습니다"
         );
     }
 
