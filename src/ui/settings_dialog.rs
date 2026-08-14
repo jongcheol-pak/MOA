@@ -218,6 +218,11 @@ fn show_body(
     group_title(&mut body, i18n::settings_group_language(), Divider::Draw);
     let language = show_language_group(&mut body, settings);
 
+    // **쓴 자리를 부모에게 알린다** — `new_child`는 부모의 `min_rect`를 넓히지 않아,
+    // 이 함수를 감싸는 `ScrollArea`가 내용 높이를 0으로 재고 만다. 그러면 스크롤바도 뜨지 않고
+    // 휠도 먹지 않은 채 넘친 부분이 잘리기만 한다 (2026-08-14 리뷰 지적)
+    ui.advance_cursor_after_rect(body.min_rect());
+
     SettingsOutcome {
         changed: font.changed
             || startup.changed
@@ -538,6 +543,30 @@ mod tests {
         assert!(
             쓴_높이 <= 남은_자리,
             "본문이 {쓴_높이}px를 써 남은 자리 {남은_자리}px를 넘는다 — 바닥 버튼과 겹친다"
+        );
+    }
+
+    #[test]
+    fn 본문이_넘치면_스크롤할_수_있다() {
+        // 2026-08-14 리뷰 지적 — `show_body`가 부모의 `min_rect`를 넓히지 않으면
+        // `ScrollArea`는 내용 높이를 0으로 재고, 넘친 부분이 스크롤 없이 잘리기만 한다.
+        // 위 `본문이_바닥_버튼_자리를_넘지_않는다`는 고정 배치만 재므로 이 결함을 잡지 못한다
+        let ctx = egui::Context::default();
+        let mut settings = AppSettings::default();
+        let mut 내용_높이 = 0.0;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            내용_높이 = egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let inner = ui.max_rect();
+                    show_body(ui, inner, &mut settings, no_fonts());
+                })
+                .content_size
+                .y;
+        });
+        assert!(
+            내용_높이 > 0.0,
+            "스크롤 영역이 본문 높이를 {내용_높이}px로 재고 있다 — 넘쳐도 스크롤되지 않는다"
         );
     }
 
