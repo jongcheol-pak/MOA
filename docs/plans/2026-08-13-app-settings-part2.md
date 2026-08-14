@@ -185,13 +185,13 @@
 
 <!-- T1~T2 (기반) -->
 
-- [ ] **T1. i18n 카탈로그 기반과 언어 전환**
+- [x] **T1. i18n 카탈로그 기반과 언어 전환**
   - **Type**: D
-  - **Design**: ① `src/i18n/mod.rs` 신규. **모듈 선언은 `src/lib.rs`에만 둔다** — 이 crate는 bin+lib 구성이고 `lib.rs:5-9`가 모든 모듈을 선언하며 `main.rs:11-15`는 `moa::`로 쓰기만 한다(`main.rs`에 `mod` 선언 0건). `main.rs`에도 `mod i18n;`을 두면 **같은 파일이 두 모듈로 컴파일되어 전역 `AtomicU8`이 둘이 되고**, main이 부른 `set_language`가 lib 쪽 화면에 반영되지 않는 무증상 결함이 된다. `main.rs`는 `moa::i18n::set_language`를 호출만 한다. `ui`·`remote`·`fs` 어디서나 부르므로 최상위에 둔다 — `i18n`은 **아무 모듈도 참조하지 않는다**(단방향 유지). ② 신규 심볼 — `Language`(`Korean`/`English` — 실제로 쓰이는 값), `set_language(LanguageSetting)`(part1의 설정 값을 받아 `System`을 풀어 저장), `current() -> Language`, `system_language() -> Language`, `strings!` 매크로와 그것이 펼치는 정적 문구 함수들. ③ 설정을 읽는 `ui::app`이 `set_language`를 부르고, 문구를 쓰는 모든 모듈이 `i18n::*`를 부른다. ④ 이번에 추상화하지 않을 것: 언어별 리소스 로더·복수형 규칙 엔진·서식 지역화를 두지 않는다. 매크로도 조건·분기 없이 선언을 함수로 펼치는 것만 한다.
+  - **Design**: ① `src/i18n/mod.rs` 신규. **모듈 선언은 `src/lib.rs`에만 둔다** — 이 crate는 bin+lib 구성이고 `lib.rs:5-9`가 모든 모듈을 선언하며 `main.rs:11-15`는 `moa::`로 쓰기만 한다(`main.rs`에 `mod` 선언 0건). `main.rs`에도 `mod i18n;`을 두면 **같은 파일이 두 모듈로 컴파일되어 전역 `AtomicU8`이 둘이 되고**, main이 부른 `set_language`가 lib 쪽 화면에 반영되지 않는 무증상 결함이 된다. `main.rs`는 `moa::i18n::set_language`를 호출만 한다. `ui`·`remote`·`fs` 어디서나 부르므로 최상위에 둔다 — `i18n`은 **화면 계층(`ui`·`remote`·`fs`)을 참조하지 않는다**(단방향 유지 — 저장 값 타입 `app::settings::LanguageSetting`만 받는다). ② 신규 심볼 — `Language`(`Korean`/`English` — 실제로 쓰이는 값), `set_language(LanguageSetting)`(part1의 설정 값을 받아 `System`을 풀어 저장), `current() -> Language`, `system_language() -> Language`, `strings!` 매크로와 그것이 펼치는 정적 문구 함수들. ③ 설정을 읽는 `ui::app`이 `set_language`를 부르고, 문구를 쓰는 모든 모듈이 `i18n::*`를 부른다. ④ 이번에 추상화하지 않을 것: 언어별 리소스 로더·복수형 규칙 엔진·서식 지역화를 두지 않는다. 매크로도 조건·분기 없이 선언을 함수로 펼치는 것만 한다.
   - **Acceptance**: Given `strings!`에 `settings => "설정" / "Settings"`를 선언, When `set_language(Korean)` 후 `i18n::settings()`를 부르면 `"설정"`, `English`면 `"Settings"`를 반환한다. 한쪽 값을 빠뜨린 선언은 **컴파일되지 않는다**. `LanguageSetting::System`은 Windows UI 언어가 한국어면 `Korean`, 아니면 `English`로 풀린다. `set_language`를 부르지 않은 초기 상태의 기본값은 `Korean`이다(이관 중간에도 화면이 지금과 같게 보인다).
   - **Files**:
     - 주: `src/i18n/mod.rs`(신규), `src/lib.rs`(모듈 선언 — 여기에만), `src/main.rs`(시작 시 `moa::i18n::set_language` 호출)
-    - 동반: `src/ui/app.rs`(설정 변경 시 `set_language`)
+    - 동반: (없음 — 설정 변경 시 `set_language` 배선은 드롭다운과 함께 T2가 넣는다)
     - 테스트: `src/i18n/mod.rs`(`mod tests` — 두 언어 반환값, `System` 판정, 초기 기본값)
   - **Edge Cases**: `GetUserDefaultUILanguage`가 0을 반환(실패) → `English`가 아니라 `Korean`으로 폴백(이 앱의 기존 화면이 한국어다) / 한국어 변종(`ko-KR` 외) → 하위 10비트가 `LANG_KOREAN`이면 전부 한국어 / `AtomicU8`에 알 수 없는 값 → `Korean`
   - **Halt Forecast**:
@@ -320,6 +320,12 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T1 완료: `src/i18n/mod.rs` 신설. `strings!` 매크로가 `키 => "한국어" / "English"` 한 줄을 함수 하나로 펼치고, 현재 언어는 `AtomicU8` 하나로 든다.
+  - 설계: 모듈 선언은 **`lib.rs`에만** 뒀다. `main.rs`에도 두면 같은 파일이 두 모듈로 컴파일돼 전역 언어가 둘이 되고, main이 부른 `set_language`가 화면에 반영되지 않는 무증상 결함이 된다.
+  - **규약(quality 리뷰 M2)**: 전역 상태를 건드리는 시험은 값을 되돌리는 것만으로 부족하다 — `cargo test`가 여러 스레드로 돌리므로 **본문이 도는 동안 잠가야** 한다. 되돌리기만 하면 한 시험이 단언하는 찰나에 다른 시험이 값을 바꾼다. `Mutex` 가드를 `Restore`가 함께 든다.
+  - 규약: 주석이 **아직 없는 것**을 가리키지 않게 한다. "아래 `mod dynamic`"이 T7에서야 생길 모듈을 현재형으로 가리켜 리뷰가 잡았다.
+  - 정정: 모듈 doc의 "아무 모듈도 참조하지 않는다"는 실제와 달랐다(`app::settings::LanguageSetting`을 받는다). plan Design ①의 같은 표현도 함께 고쳤다.
 
 ## Next Steps
 
