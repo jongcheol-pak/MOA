@@ -659,7 +659,10 @@ fn mentions_permission(detail: &str) -> bool {
     ["permission", "denied", "access", "forbidden"]
         .iter()
         .any(|word| lowered.contains(word))
-        || detail.contains(crate::i18n::op_permissions())
+        // **화면 언어를 따르지 않는다** — 여기서 보는 것은 서버가 보낸 응답 원문이라,
+        // 앱을 영어로 두었다고 서버 문구가 영어가 되지는 않는다. 한국어로 답하는 서버를
+        // 위해 그 낱말을 그대로 둔다
+        || detail.contains("권한")
 }
 
 #[cfg(test)]

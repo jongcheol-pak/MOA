@@ -866,10 +866,7 @@ mod tests {
         let mut sites = SiteStore::new();
         sites.add("배포 서버");
         let texts = draw_sidebar(&sites, &[]);
-        assert!(
-            texts.iter().any(|t| t == crate::i18n::connect()),
-            "{texts:?}"
-        );
+        assert!(texts.iter().any(|t| t == "연결"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "배포 서버"), "{texts:?}");
         // 새 사이트의 기본 프로토콜은 FTP다
         assert!(texts.iter().any(|t| t == "ftp"), "{texts:?}");
@@ -877,12 +874,11 @@ mod tests {
 
     #[test]
     fn 사이트가_없으면_헤더만_남는다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // plan Edge Case — 빈 목록에서도 섹션이 사라지지 않는다
         let texts = draw_sidebar(&SiteStore::new(), &[]);
-        assert!(
-            texts.iter().any(|t| t == crate::i18n::connect()),
-            "{texts:?}"
-        );
+        assert!(texts.iter().any(|t| t == "연결"), "{texts:?}");
     }
 
     #[test]

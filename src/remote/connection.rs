@@ -1506,19 +1506,15 @@ mod tests {
             lines.iter().any(|line| line.ends_with("에 연결…")),
             "연결 시도가 남지 않았다: {lines:?}"
         );
+        // 기대값은 **원문 리터럴**이다 — 카탈로그를 다시 부르면 그 값이 무엇으로
+        // 바뀌어도 통과해, 문구를 지키라고 있는 시험이 아무것도 지키지 못한다
         assert!(
-            lines.contains(&crate::i18n::remote_log_connected()),
+            lines.contains(&"연결 수립, 환영 메시지를 기다림…"),
             "{lines:?}"
         );
-        assert!(lines.contains(&crate::i18n::remote_log_tls()), "{lines:?}");
-        assert!(
-            lines.contains(&crate::i18n::remote_log_login()),
-            "{lines:?}"
-        );
-        assert!(
-            lines.contains(&crate::i18n::remote_log_login_done()),
-            "{lines:?}"
-        );
+        assert!(lines.contains(&"TLS로 암호화된 연결입니다."), "{lines:?}");
+        assert!(lines.contains(&"로그인…"), "{lines:?}");
+        assert!(lines.contains(&"로그인 완료"), "{lines:?}");
         assert!(
             lines.iter().any(|line| line.contains("목록 조회…")),
             "조회 시작이 남지 않았다: {lines:?}"
@@ -1547,9 +1543,9 @@ mod tests {
             })
             .collect();
         assert!(
-            lines.contains(&crate::i18n::remote_log_plain()),
+            lines.contains(&"보안되지 않은 서버입니다. TLS를 통한 연결을 지원하지 않습니다."),
             "{lines:?}"
         );
-        assert!(!lines.contains(&crate::i18n::remote_log_tls()), "{lines:?}");
+        assert!(!lines.contains(&"TLS로 암호화된 연결입니다."), "{lines:?}");
     }
 }

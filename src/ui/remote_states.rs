@@ -618,18 +618,17 @@ mod tests {
 
     #[test]
     fn 실패_사유가_비면_일반_문구로_메운다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 서버가 아무 말도 하지 않으면 빈 줄만 남는다 (plan Edge Case)
         let empty = failure_reason("   ");
-        assert!(
-            empty.starts_with(crate::i18n::remote_fail_reason_fallback()),
-            "{empty}"
-        );
-        assert!(empty.ends_with(crate::i18n::remote_fail_reason_hint()));
+        assert!(empty.starts_with("서버가 응답하지 않았습니다."), "{empty}");
+        assert!(empty.ends_with("암호화 설정이 서버와 다를 수도 있습니다."));
 
         // 사유가 있으면 그대로 두고 안내만 덧붙인다
         let given = failure_reason("530 Login incorrect");
         assert!(given.starts_with("530 Login incorrect"));
-        assert!(given.ends_with(crate::i18n::remote_fail_reason_hint()));
+        assert!(given.ends_with("암호화 설정이 서버와 다를 수도 있습니다."));
     }
 
     #[test]

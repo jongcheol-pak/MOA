@@ -212,6 +212,8 @@ mod tests {
 
     #[test]
     fn 종류_표기는_디자인_원문과_같다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         assert_eq!(LogKind::Status.label(), "상태:");
         assert_eq!(LogKind::Command.label(), "명령:");
         assert_eq!(LogKind::Response.label(), "응답:");
