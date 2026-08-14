@@ -12,9 +12,6 @@ use serde::{Deserialize, Serialize};
 use crate::remote::secret;
 use crate::remote::types::{SiteId, SiteRecord};
 
-/// 이름을 비워 둔 사이트에 붙는 이름
-const UNNAMED: &str = "새 사이트";
-
 /// 등록된 사이트 전부
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SiteStore {
@@ -161,7 +158,7 @@ impl SiteStore {
     /// `exclude`는 자기 자신이다(이름을 바꾸지 않고 저장할 때 자기 이름에 걸려 `(2)`가 붙는 것을 막는다).
     fn unique_name(&self, desired: &str, exclude: Option<SiteId>) -> String {
         let base = match desired.trim() {
-            "" => UNNAMED,
+            "" => crate::i18n::site_default_name(),
             trimmed => trimmed,
         };
         if !self.name_taken(base, exclude) {
@@ -204,14 +201,14 @@ mod tests {
 
     #[test]
     fn 이름을_비워_두면_기본_이름이_붙는다() {
+        // 기본 이름은 카탈로그가 정한다 — 언어를 고정하고 원문과 견준다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let mut store = SiteStore::new();
         let first = store.add("   ");
         let second = store.add("");
-        assert_eq!(store.get(first).expect("첫째").name, UNNAMED);
-        assert_eq!(
-            store.get(second).expect("둘째").name,
-            format!("{UNNAMED} (2)")
-        );
+        assert_eq!(store.get(first).expect("첫째").name, "새 사이트");
+        assert_eq!(store.get(second).expect("둘째").name, "새 사이트 (2)");
     }
 
     #[test]

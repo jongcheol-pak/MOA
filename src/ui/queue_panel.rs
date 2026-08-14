@@ -41,30 +41,25 @@ const FLEX_COLUMN: usize = 1;
 const FLEX_MIN: f32 = 120.0;
 
 // ── 문구 (인벤토리 #35~#48) ──
-/// 연결별 탭 첫 항목 (인벤토리 #35)
-const ALL_SITES: &str = "전체";
-/// 머리글 (인벤토리 #37~#43)
-const HEADERS: [&str; 7] = [
-    "방향",
-    "로컬 파일",
-    "원격 파일",
-    "서버",
-    "크기",
-    "진행률",
-    "상태",
-];
+/// 머리글 (인벤토리 #37~#43) — 문구가 언어를 따르므로 상수가 아니라 그때그때 만든다
+fn headers() -> [&'static str; 7] {
+    [
+        crate::i18n::queue_column_direction(),
+        crate::i18n::queue_column_local(),
+        crate::i18n::queue_column_remote(),
+        crate::i18n::queue_column_server(),
+        crate::i18n::queue_column_size(),
+        crate::i18n::queue_column_progress(),
+        crate::i18n::queue_column_state(),
+    ]
+}
 /// 방향 글리프 (인벤토리 #44)
 /// 전송 방향 표시 — 아이콘 글꼴에서 가져온다 (프로젝트 규약)
 const UPLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_UP;
 const DOWNLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_DOWN;
-/// 상태 문구 (인벤토리 #45~#47)
-const STATE_WAIT: &str = "대기 중";
-const STATE_DONE: &str = "완료";
-const STATE_RUNNING: &str = "전송 중";
-/// 행 우클릭 메뉴 — **디자인에 진입점이 없어 이 구현이 정한 문구**다.
-/// 큐 항목을 하나씩 다시 걸거나 그만두는 길이 달리 없다(`⏸`·`✕`는 큐 전체를 다룬다)
-const MENU_RETRY: &str = "다시 시도";
-const MENU_CANCEL: &str = "전송 취소";
+// 상태 문구(인벤토리 #45~#47)와 행 우클릭 메뉴는 카탈로그에서 가져온다.
+// 그 메뉴는 **디자인에 진입점이 없어 이 구현이 정한 문구**다 — 큐 항목을 하나씩
+// 다시 걸거나 그만두는 길이 달리 없다(`⏸`·`✕`는 큐 전체를 다룬다)
 
 /// 사용자가 큐에서 고른 조작
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,16 +126,22 @@ pub fn format_speed(bytes_per_sec: u64) -> String {
 /// 전할 말이 사라진다
 pub fn state_text(state: &TransferState) -> (String, egui::Color32) {
     match state {
-        TransferState::Wait => (STATE_WAIT.to_owned(), theme::TEXT_MUTED),
+        TransferState::Wait => (
+            crate::i18n::queue_state_pending().to_owned(),
+            theme::TEXT_MUTED,
+        ),
         TransferState::Active { speed, .. } => {
             let speed = if *speed > 0 {
                 format!(" · {}", format_speed(*speed))
             } else {
                 String::new()
             };
-            (format!("{STATE_RUNNING}{speed}"), theme::ACCENT)
+            (
+                format!("{}{speed}", crate::i18n::queue_state_active()),
+                theme::ACCENT,
+            )
         }
-        TransferState::Done => (STATE_DONE.to_owned(), theme::OK_TEXT),
+        TransferState::Done => (crate::i18n::queue_state_done().to_owned(), theme::OK_TEXT),
         TransferState::Error { message } => (message.clone(), theme::ERROR),
     }
 }
@@ -287,13 +288,13 @@ pub fn show_site_tabs(
     order.append(&mut extra);
 
     let mut left = rect.left() + SITE_ROW_PAD_X;
-    let all_label = format!("{ALL_SITES} ({})", view.queue.len());
+    let all_label = format!("{} ({})", crate::i18n::queue_filter_all(), view.queue.len());
     let tabs: Vec<(Option<SiteId>, String)> = std::iter::once((None, all_label))
         .chain(order.into_iter().map(|id| {
             let name = sites
                 .get(id)
                 .map(|record| record.name.clone())
-                .unwrap_or_else(|| format!("사이트 {}", id.0));
+                .unwrap_or_else(|| crate::i18n::dynamic::queue_site_fallback(id.0));
             (
                 Some(id),
                 format!("{name} ({})", counts.get(&id).unwrap_or(&0)),
@@ -364,7 +365,7 @@ pub fn show_site_tabs(
 fn show_header(ui: &mut egui::Ui, rect: egui::Rect, widths: &[f32; 7]) {
     ui.painter().rect_filled(rect, 0.0, theme::HEADER_BG);
     let mut left = rect.left();
-    for (index, label) in HEADERS.iter().enumerate() {
+    for (index, label) in headers().iter().enumerate() {
         ui.painter().text(
             egui::pos2(left + CELL_PAD_X, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -427,7 +428,7 @@ fn show_row(
             sites
                 .get(item.site)
                 .map(|record| record.name.clone())
-                .unwrap_or_else(|| format!("사이트 {}", item.site.0)),
+                .unwrap_or_else(|| crate::i18n::dynamic::queue_site_fallback(item.site.0)),
             theme::TEXT_MUTED,
         ),
     ] {
@@ -490,11 +491,11 @@ fn show_row(
     // 항목 하나를 다시 걸거나 그만두는 길 — 디자인에 진입점이 없어 우클릭으로 둔다
     let mut action = None;
     response.context_menu(|ui| {
-        if item.state.is_error() && ui.button(MENU_RETRY).clicked() {
+        if item.state.is_error() && ui.button(crate::i18n::queue_retry()).clicked() {
             action = Some(QueueAction::Retry(item.id));
             ui.close();
         }
-        if item.state.is_pending() && ui.button(MENU_CANCEL).clicked() {
+        if item.state.is_pending() && ui.button(crate::i18n::queue_cancel()).clicked() {
             action = Some(QueueAction::Cancel(item.id));
             ui.close();
         }
@@ -534,27 +535,29 @@ mod tests {
 
     #[test]
     fn 머리글_문구는_인벤토리_원문_그대로다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 인벤토리 #37~#43
         assert_eq!(
-            HEADERS,
+            headers(),
             [
-                "방향",
-                "로컬 파일",
-                "원격 파일",
-                "서버",
-                "크기",
-                "진행률",
-                "상태"
+                crate::i18n::queue_column_direction(),
+                crate::i18n::queue_column_local(),
+                crate::i18n::queue_column_remote(),
+                crate::i18n::queue_column_server(),
+                crate::i18n::queue_column_size(),
+                crate::i18n::queue_column_progress(),
+                crate::i18n::queue_column_state()
             ]
         );
-        assert_eq!(ALL_SITES, "전체");
+        assert_eq!(crate::i18n::queue_filter_all(), "전체");
         // 방향 표시는 **아이콘 글꼴**에서 온다 (프로젝트 규약 — 원본 화살표는 두부가 된다)
         assert!(crate::ui::widgets::is_icon_font(UPLOAD_GLYPH));
         assert!(crate::ui::widgets::is_icon_font(DOWNLOAD_GLYPH));
         assert_ne!(UPLOAD_GLYPH, DOWNLOAD_GLYPH);
-        assert_eq!(STATE_WAIT, "대기 중");
-        assert_eq!(STATE_DONE, "완료");
-        assert_eq!(STATE_RUNNING, "전송 중");
+        assert_eq!(crate::i18n::queue_state_pending(), "대기 중");
+        assert_eq!(crate::i18n::queue_state_done(), "완료");
+        assert_eq!(crate::i18n::queue_state_active(), "전송 중");
     }
 
     #[test]
@@ -568,9 +571,11 @@ mod tests {
 
     #[test]
     fn 상태_문구와_색이_상태별로_갈린다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // Acceptance ⑦ (인벤토리 #45~#48)
         let (text, color) = state_text(&TransferState::Wait);
-        assert_eq!(text, "대기 중");
+        assert_eq!(text, crate::i18n::queue_state_pending());
         assert_eq!(color, theme::TEXT_MUTED);
 
         let (text, color) = state_text(&TransferState::Active {
@@ -582,10 +587,10 @@ mod tests {
 
         // 속도를 아직 못 쟀으면 군더더기를 붙이지 않는다
         let (text, _) = state_text(&TransferState::Active { sent: 0, speed: 0 });
-        assert_eq!(text, "전송 중");
+        assert_eq!(text, crate::i18n::queue_state_active());
 
         let (text, color) = state_text(&TransferState::Done);
-        assert_eq!(text, "완료");
+        assert_eq!(text, crate::i18n::queue_state_done());
         assert_eq!(color, theme::OK_TEXT);
 
         // 실패는 서버가 준 사유를 그대로 보인다
@@ -713,6 +718,8 @@ mod tests {
 
     #[test]
     fn 연결된_서버는_큐가_비어도_탭에_선다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 사용자 보고(2026-08-05): 연결한 서버가 탭 줄에 없어 고를 수 없었다 —
         // 원본대로 **큐에 든 항목**에서만 이름을 모았기 때문이다
         let mut sites = SiteStore::new();
@@ -746,7 +753,9 @@ mod tests {
             "연결된 서버가 탭에 없다: {texts:?}"
         );
         assert!(
-            texts.iter().any(|text| text.starts_with(ALL_SITES)),
+            texts
+                .iter()
+                .any(|text| text.starts_with(crate::i18n::queue_filter_all())),
             "`전체` 탭이 없다: {texts:?}"
         );
         // 연결도 없고 큐에도 없는 사이트는 서지 않는다 — 목록이 등록한 사이트 전부로 늘어나면

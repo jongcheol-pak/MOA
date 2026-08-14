@@ -29,10 +29,6 @@ const ICON_FONT_PX: f32 = 13.0;
 const CLOSE_FONT_PX: f32 = 14.0;
 
 // ── 문구 (인벤토리 #29~#34) ──
-const TAB_QUEUE: &str = "전송 큐";
-const TAB_LOG: &str = "서버 로그";
-const TAB_DONE: &str = "성공";
-const TAB_ERROR: &str = "실패";
 /// 큐 패널 우측 버튼 (인벤토리 #33) · 로그 패널 우측 버튼 (인벤토리 #34).
 ///
 /// **아이콘 글꼴(phosphor)에서 가져온다** — 원본 HTML의 글리프(`⏸`·`✕`·`▼`·`⧉`)를 그대로 쓰면
@@ -190,18 +186,18 @@ pub fn show_strip(
     // 원본 `:1018-1022` — 큐 탭 셋은 필터이고 로그 탭만 다른 화면이다
     let tabs = [
         (
-            format!("{TAB_QUEUE} ({})", counts.0),
+            format!("{} ({})", crate::i18n::dock_queue(), counts.0),
             Some(QueueFilter::All),
             theme::TEXT,
         ),
-        (TAB_LOG.to_owned(), None, theme::TEXT),
+        (crate::i18n::dock_log().to_owned(), None, theme::TEXT),
         (
-            format!("{TAB_DONE} ({})", counts.1),
+            format!("{} ({})", crate::i18n::dock_success(), counts.1),
             Some(QueueFilter::Done),
             theme::OK_TEXT,
         ),
         (
-            format!("{TAB_ERROR} ({})", counts.2),
+            format!("{} ({})", crate::i18n::dock_failed(), counts.2),
             Some(QueueFilter::Error),
             theme::ERROR_TEXT,
         ),
@@ -313,10 +309,12 @@ mod tests {
     #[test]
     fn 탭_문구는_인벤토리_원문_그대로다() {
         // 인벤토리 #29~#32 — 건수는 호출부가 붙인다
-        assert_eq!(TAB_QUEUE, "전송 큐");
-        assert_eq!(TAB_LOG, "서버 로그");
-        assert_eq!(TAB_DONE, "성공");
-        assert_eq!(TAB_ERROR, "실패");
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        assert_eq!(crate::i18n::dock_queue(), "전송 큐");
+        assert_eq!(crate::i18n::dock_log(), "서버 로그");
+        assert_eq!(crate::i18n::dock_success(), "성공");
+        assert_eq!(crate::i18n::dock_failed(), "실패");
         // 아이콘은 **아이콘 글꼴의 것**이어야 한다 — 원본 글리프를 그대로 쓰면 두부가 된다
         for icon in [ICON_PAUSE, ICON_CLEAR, ICON_COLLAPSE, ICON_COPY] {
             let code = icon.chars().next().expect("한 글자") as u32;
@@ -388,6 +386,8 @@ mod tests {
 
     #[test]
     fn 도크_스트립은_큐와_로그_탭을_보인다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 연결별 탭은 **스트립이 아니라 그 아래 줄**에 선다 (디자인 `:272` — 도크에 줄은 하나다).
         // 여기서는 위 줄이 네 탭을 그대로 내는지만 본다
         let queue = TransferQueue::new();
@@ -402,7 +402,12 @@ mod tests {
             ..DockState::default()
         };
         let 글자 = draw_strip(&ctx, &mut state, &view);
-        for 탭 in [TAB_QUEUE, TAB_LOG, TAB_DONE, TAB_ERROR] {
+        for 탭 in [
+            crate::i18n::dock_queue(),
+            crate::i18n::dock_log(),
+            crate::i18n::dock_success(),
+            crate::i18n::dock_failed(),
+        ] {
             assert!(
                 글자.iter().any(|text| text.starts_with(탭)),
                 "`{탭}` 탭이 없다: {글자:?}"

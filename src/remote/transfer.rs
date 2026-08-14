@@ -304,7 +304,9 @@ impl TransferRunner {
                     queue.update(
                         id,
                         TransferState::Error {
-                            message: format!("받은 파일을 제자리에 두지 못했습니다: {err}"),
+                            message: crate::i18n::dynamic::transfer_finalize_failed(
+                                &err.to_string(),
+                            ),
                         },
                     );
                     return;

@@ -78,11 +78,6 @@ const DEFAULT_WINDOW: WindowState = WindowState {
 /// 창 크기를 저장하지 못하는 상태**로 남지 않기 위함이다 — 다 쓰면 평소 추적으로 돌아간다
 const MAXIMIZE_RETRY_FRAMES: u8 = 30;
 
-/// 셸 메뉴를 쓸 수 없을 때 화면에 보일 문구.
-/// 원인이 무엇이든 사용자가 할 수 있는 일은 재시작뿐이라 한 문구로 통일한다
-const SHELL_UNAVAILABLE: &str =
-    "마우스 오른쪽 버튼 메뉴를 사용할 수 없습니다 (앱을 다시 시작해 주세요)";
-
 /// UI 스레드의 COM 아파트먼트 상태.
 /// 셸 컨텍스트 메뉴(`IContextMenu`)는 STA를 요구하므로 셸 연동 가용 여부가 여기서 갈린다
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -851,16 +846,18 @@ impl ExplorerApp {
         let mut confirmed = None;
         egui::Modal::new(egui::Id::new("workspace_remove_confirm")).show(ctx, |ui| {
             ui.set_width(REMOVE_DIALOG_WIDTH);
-            ui.heading("워크스페이스 삭제");
+            ui.heading(crate::i18n::app_workspace_delete_title());
             ui.add_space(8.0);
-            ui.label(format!("'{name}' 워크스페이스를 삭제할까요?"));
-            ui.label("이 워크스페이스의 화면 구성과 탭이 함께 사라집니다.");
+            ui.label(crate::i18n::dynamic::workspace_delete_confirm(&name));
+            ui.label(crate::i18n::app_workspace_delete_detail());
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("삭제").clicked() {
+                if ui.button(crate::i18n::delete()).clicked() {
                     confirmed = Some(true);
                 }
-                if ui.button("취소").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if ui.button(crate::i18n::cancel()).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
                     confirmed = Some(false);
                 }
             });
@@ -1212,9 +1209,9 @@ impl ExplorerApp {
             RemoteDialog::Rename | RemoteDialog::NewFolder => {
                 let rename = dialog == RemoteDialog::Rename;
                 let title = if rename {
-                    "이름 바꾸기"
+                    crate::i18n::rename()
                 } else {
-                    "새 폴더"
+                    crate::i18n::menu_new_folder()
                 };
                 let outcome = remote_menu::show_name_dialog(
                     ctx,
@@ -1471,10 +1468,7 @@ impl ExplorerApp {
             // 아이콘을 못 올렸으면 토글을 되돌린다 — 켜져 있다고 보이는데 아이콘이
             // 없으면 닫기를 눌렀을 때 앱을 되살릴 방법이 사라진다
             self.settings.tray_on_close = false;
-            self.notice = Some((
-                "트레이 아이콘을 만들지 못했습니다".to_owned(),
-                now + NOTICE_SECS,
-            ));
+            self.notice = Some((crate::i18n::app_tray_failed().to_owned(), now + NOTICE_SECS));
         }
     }
 
@@ -1886,9 +1880,9 @@ impl ExplorerApp {
             }
         }
         let text = if reverted {
-            format!("폴더를 열지 못했습니다 — {detail}")
+            crate::i18n::dynamic::remote_open_failed(&detail)
         } else {
-            format!("목록을 읽지 못했습니다 — {detail}")
+            crate::i18n::dynamic::remote_list_failed(&detail)
         };
         self.manager.note(conn, LogKind::Error, text.clone());
         self.notice = Some((text, now + NOTICE_SECS));
@@ -2190,10 +2184,8 @@ impl eframe::App for ExplorerApp {
             // 읽지 못한 폴더가 있으면 그 사실을 알린다 — 조용히 빼면 사용자는
             // 그 파일들이 왜 큐에 없는지 알 길이 없다 (plan Edge Case)
             if skipped > 0 {
-                self.toast.show(
-                    format!("읽을 수 없는 폴더 {skipped}개는 건너뛰었습니다"),
-                    now,
-                );
+                self.toast
+                    .show(crate::i18n::dynamic::skipped_folders(skipped), now);
             }
         }
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
@@ -2236,13 +2228,10 @@ impl eframe::App for ExplorerApp {
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| {
                 if !self.korean_font {
-                    ui.colored_label(
-                        theme::TEXT_DIM,
-                        "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다",
-                    );
+                    ui.colored_label(theme::TEXT_DIM, crate::i18n::app_font_fallback());
                 }
                 if !self.shell_available() {
-                    ui.colored_label(theme::TEXT_DIM, SHELL_UNAVAILABLE);
+                    ui.colored_label(theme::TEXT_DIM, crate::i18n::app_shell_menu_unavailable());
                 }
                 // 하단 상태 표시줄·도크를 사이드바보다 **먼저** 뗀다 — egui 패널은 먼저 그린 쪽이
                 // 넓은 자리를 가져가므로, 순서를 뒤집으면 둘 다 사이드바를 뺀 폭에만 그려진다.
@@ -2441,10 +2430,10 @@ const NOTICE_SECS: f64 = 6.0;
 /// 실패 사유 앞에 붙일 작업 이름 — 사용자가 시키지 않은 작업(`Cwd`·`Disconnect`)은 알리지 않는다
 fn op_label(op: OpKind) -> Option<&'static str> {
     match op {
-        OpKind::Mkdir => Some("새 폴더"),
-        OpKind::Remove | OpKind::Rmdir => Some("삭제"),
-        OpKind::Rename => Some("이름 바꾸기"),
-        OpKind::Chmod => Some("권한 바꾸기"),
+        OpKind::Mkdir => Some(crate::i18n::menu_new_folder()),
+        OpKind::Remove | OpKind::Rmdir => Some(crate::i18n::delete()),
+        OpKind::Rename => Some(crate::i18n::rename()),
+        OpKind::Chmod => Some(crate::i18n::op_chmod()),
         OpKind::Cwd | OpKind::Disconnect => None,
     }
 }
@@ -2470,7 +2459,10 @@ fn op_outcome(op: OpKind, result: Result<(), RemoteError>) -> OpOutcome {
     };
     match result {
         Ok(()) => OpOutcome::Relist,
-        Err(err) => OpOutcome::Notice(format!("{label} 실패 — {err}")),
+        Err(err) => OpOutcome::Notice(crate::i18n::dynamic::remote_op_failed(
+            label,
+            &err.to_string(),
+        )),
     }
 }
 

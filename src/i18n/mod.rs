@@ -328,6 +328,52 @@ strings! {
     remote_hostkey_changed => "서버 지문이 전과 다릅니다" / "The server fingerprint has changed";
     remote_hostkey_accept => "수락하고 연결" / "Accept and connect";
 
+    // ── 앱 본체 ──
+    /// 셸 메뉴를 쓸 수 없을 때 화면에 보일 문구 — 원인이 무엇이든 사용자가 할 수 있는 일은
+    /// 재시작뿐이라 한 문구로 통일한다
+    app_shell_menu_unavailable
+        => "마우스 오른쪽 버튼 메뉴를 사용할 수 없습니다 (앱을 다시 시작해 주세요)"
+        / "The right-click menu is unavailable (please restart the app)";
+    app_workspace_delete_title => "워크스페이스 삭제" / "Delete workspace";
+    app_workspace_delete_detail
+        => "이 워크스페이스의 화면 구성과 탭이 함께 사라집니다."
+        / "Its layout and tabs will be removed as well.";
+    /// 트레이 아이콘을 올리지 못했을 때 — 조용히 끄면 왜 안 뜨는지 알 수 없다 (FR-50)
+    app_tray_failed => "트레이 아이콘을 만들지 못했습니다" / "Could not create the tray icon";
+    /// 한글 글꼴을 하나도 등록하지 못했을 때 (FR-48)
+    app_font_fallback
+        => "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다"
+        / "Could not load a Korean font, so the default font is used";
+    /// 원격 작업 이름 — 실패 문구에 끼워 넣는다
+    op_new_folder => "새 폴더" / "New folder";
+    op_delete => "삭제" / "Delete";
+    op_rename => "이름 바꾸기" / "Rename";
+    op_chmod => "권한 바꾸기" / "Change permissions";
+
+    // ── 전송 큐 (FR-35) ──
+    queue_filter_all => "전체" / "All";
+    queue_column_direction => "방향" / "Direction";
+    queue_column_local => "로컬 파일" / "Local file";
+    queue_column_remote => "원격 파일" / "Remote file";
+    queue_column_server => "서버" / "Server";
+    queue_column_size => "크기" / "Size";
+    queue_column_progress => "진행률" / "Progress";
+    queue_column_state => "상태" / "State";
+    queue_state_pending => "대기 중" / "Pending";
+    queue_state_done => "완료" / "Done";
+    queue_state_active => "전송 중" / "Transferring";
+    queue_retry => "다시 시도" / "Retry";
+    queue_cancel => "전송 취소" / "Cancel transfer";
+
+    // ── 하단 도크 (FR-35·FR-40) ──
+    dock_queue => "전송 큐" / "Transfer queue";
+    dock_log => "서버 로그" / "Server log";
+    dock_success => "성공" / "Succeeded";
+    dock_failed => "실패" / "Failed";
+
+    /// 새로 만드는 사이트의 기본 이름 (FR-27)
+    site_default_name => "새 사이트" / "New site";
+
     // ── 트레이 메뉴 (FR-50) ──
     /// 우클릭 메뉴 항목 — 요청 문구 그대로다
     tray_show => "실행" / "Open";
@@ -421,6 +467,64 @@ pub mod dynamic {
             Language::Korean => format!("{count}개 항목을 서버에서 지웁니다."),
             Language::English if count == 1 => "1 item will be deleted from the server.".to_owned(),
             Language::English => format!("{count} items will be deleted from the server."),
+        }
+    }
+
+    /// 워크스페이스 삭제 확인의 첫 줄 — 이름이 문장 안에 들어간다
+    pub fn workspace_delete_confirm(name: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{name}' 워크스페이스를 삭제할까요?"),
+            Language::English => format!("Delete the workspace '{name}'?"),
+        }
+    }
+
+    /// 원격 폴더를 열지 못했을 때 — 서버가 준 사유가 뒤에 붙는다
+    pub fn remote_open_failed(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("폴더를 열지 못했습니다 — {detail}"),
+            Language::English => format!("Could not open the folder — {detail}"),
+        }
+    }
+
+    pub fn remote_list_failed(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("목록을 읽지 못했습니다 — {detail}"),
+            Language::English => format!("Could not read the listing — {detail}"),
+        }
+    }
+
+    /// 읽을 수 없어 건너뛴 폴더 수 — 영어는 하나일 때 단수형이다
+    pub fn skipped_folders(skipped: usize) -> String {
+        match current() {
+            Language::Korean => format!("읽을 수 없는 폴더 {skipped}개는 건너뛰었습니다"),
+            Language::English if skipped == 1 => {
+                "Skipped 1 folder that could not be read".to_owned()
+            }
+            Language::English => format!("Skipped {skipped} folders that could not be read"),
+        }
+    }
+
+    /// 원격 작업 실패 — 작업 이름과 서버 사유를 잇는다
+    pub fn remote_op_failed(label: &str, error: &str) -> String {
+        match current() {
+            Language::Korean => format!("{label} 실패 — {error}"),
+            Language::English => format!("{label} failed — {error}"),
+        }
+    }
+
+    /// 사이트 이름을 모를 때 번호로 부른다 (전송 큐)
+    pub fn queue_site_fallback(id: u32) -> String {
+        match current() {
+            Language::Korean => format!("사이트 {id}"),
+            Language::English => format!("Site {id}"),
+        }
+    }
+
+    /// 받은 파일을 제자리로 옮기지 못했을 때 (FR-36)
+    pub fn transfer_finalize_failed(error: &str) -> String {
+        match current() {
+            Language::Korean => format!("받은 파일을 제자리에 두지 못했습니다: {error}"),
+            Language::English => format!("Could not move the downloaded file into place: {error}"),
         }
     }
 
