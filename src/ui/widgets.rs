@@ -131,28 +131,7 @@ pub fn design_button(
     )
 }
 
-/// 기본 버튼(`연결(C)`) — 초록 채움 `#2F6B4F` · 테두리 `#3E8A66` · hover `#387E5D` (원본 `:496`)
-pub fn primary_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    pad_x: f32,
-    min_size: egui::Vec2,
-) -> egui::Response {
-    styled_button(
-        ui,
-        label,
-        theme::PRIMARY_TEXT,
-        (
-            theme::PRIMARY_FILL,
-            theme::PRIMARY_HOT,
-            theme::PRIMARY_BORDER,
-        ),
-        pad_x,
-        min_size,
-    )
-}
-
-/// 두 버튼의 공통 골격 — 색 세 벌(평소 채움 · hover 채움 · 테두리)만 다르다
+/// 디자인 버튼의 골격 — 색 세 벌(평소 채움 · hover 채움 · 테두리)을 받아 그린다
 fn styled_button(
     ui: &mut egui::Ui,
     label: &str,

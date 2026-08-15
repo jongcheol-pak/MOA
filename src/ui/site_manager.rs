@@ -12,6 +12,7 @@ use crate::remote::sites::SiteStore;
 use crate::remote::types::{
     CONNECTION_LIMIT_RANGE, Charset, Encryption, LogonType, Protocol, SiteId, TransferMode,
 };
+use crate::ui::dialog;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -20,13 +21,6 @@ use eframe::egui;
 /// 대화 크기 — 고정이다(`:385`)
 const DIALOG_WIDTH: f32 = 1080.0;
 const DIALOG_HEIGHT: f32 = 680.0;
-/// 스크림 — 원본 `rgba(0,0,0,.55)` (`:384`)
-const SCRIM_ALPHA: u8 = 140;
-/// 그림자 `0 18px 60px rgba(0,0,0,.6)` (`:385`)
-const SHADOW_OFFSET_Y: i8 = 18;
-const SHADOW_BLUR: u8 = 60;
-const SHADOW_ALPHA: u8 = 153;
-
 /// 헤더 — 높이 40px · `padding 0 8px 0 16px` (`:386`)
 const HEADER_HEIGHT: f32 = 40.0;
 const HEADER_PAD_LEFT: f32 = 16.0;
@@ -107,12 +101,16 @@ const FOOTNOTE_MARGIN_TOP: f32 = 14.0;
 /// 한 줄 텍스트가 차지하는 높이 — 13px 글자 기준
 const TEXT_ROW_HEIGHT: f32 = 18.0;
 
-/// 바닥 — 58px · 위 테두리 `#2C2C2C` · 우측 정렬 gap 10px · 버튼 30px `padding 0 24px` (`:495-498`)
-const FOOTER_HEIGHT: f32 = 58.0;
-const FOOTER_PAD_X: f32 = 18.0;
-const FOOTER_GAP: f32 = 10.0;
-const FOOTER_BUTTON_HEIGHT: f32 = 30.0;
-const FOOTER_BUTTON_PAD_X: f32 = 24.0;
+/// 바닥 버튼 줄 **바로 위**의 오류 문구 줄 높이 — 13px 글자 한 줄이 드는 자리다.
+///
+/// 버튼이 대화 전폭을 나눠 갖게 되면서(공통 셸) 종전처럼 오류를 버튼 왼쪽에 둘 자리가
+/// 없어졌다. 버튼 줄 높이는 `dialog::FOOTER_HEIGHT`(44px)가 정본이고, 이 줄과 더한
+/// 66px이 종전 바닥(58px) 자리를 대신한다 — 그만큼 본문이 8px 줄어든다
+const ERROR_ROW_HEIGHT: f32 = 22.0;
+
+/// 바닥 버튼의 자리 번호 — 배열에 넣은 순서이며 눌린 칸을 이 이름으로 가려낸다
+const CONNECT_BUTTON: usize = 0;
+const CONFIRM_BUTTON: usize = 1;
 
 // ── 선택지 목록 — 문구는 카탈로그가 정하고 여기서는 값과 짝짓기만 한다 ──
 /// 프로토콜 선택지 — 첫 항목의 문구는 원본 그대로다 (인벤토리 #69, `:1011`).
@@ -524,43 +522,50 @@ impl SiteManager {
         }
         let mut outcome = SiteManagerOutcome::None;
         let mut body = BodyOutcome::default();
-        let response = egui::Modal::new(egui::Id::new("사이트 관리자"))
-            .backdrop_color(egui::Color32::from_black_alpha(SCRIM_ALPHA))
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::SURFACE_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_CONTROL))
-                    .corner_radius(0)
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, SHADOW_OFFSET_Y],
-                        blur: SHADOW_BLUR,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(SHADOW_ALPHA),
-                    }),
-            )
-            .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(DIALOG_WIDTH, DIALOG_HEIGHT),
-                    egui::Sense::hover(),
-                );
+        // 왼쪽부터 연결·확인·취소 — PRD FR-27이 정한 순서다
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::site_connect()),
+            dialog::ButtonSpec::plain(crate::i18n::site_ok()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show_fixed(
+            ctx,
+            egui::Id::new("사이트 관리자"),
+            egui::vec2(DIALOG_WIDTH, DIALOG_HEIGHT),
+            &buttons,
+            |ui, rect| {
+                // `rect`는 바닥 버튼 줄을 뺀 나머지다 — 그 아래쪽 한 줄을 오류 문구가 쓴다
                 let header =
                     egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_HEIGHT));
-                let footer = egui::Rect::from_min_max(
-                    egui::pos2(rect.left(), rect.bottom() - FOOTER_HEIGHT),
+                let error_row = egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), rect.bottom() - ERROR_ROW_HEIGHT),
                     rect.max,
                 );
                 let body_rect = egui::Rect::from_min_max(
                     egui::pos2(rect.left(), header.bottom()),
-                    egui::pos2(rect.right(), footer.top()),
+                    egui::pos2(rect.right(), error_row.top()),
                 );
                 if self.show_header(ui, header) {
                     outcome = SiteManagerOutcome::Close;
                 }
                 body = self.show_body(ui, body_rect, store, connected);
-                if let Some(footer_outcome) = self.show_footer(ui, footer, store) {
-                    outcome = footer_outcome;
-                }
-            });
+                self.show_error_row(ui, error_row);
+            },
+        );
+        if let Some(index) = shell.clicked {
+            outcome = match index {
+                // 연결·확인은 등록을 거쳐야 한다 — 값이 모자라면 `commit`이 오류를 남기고
+                // `None`을 주며, 그때는 대화를 그대로 둔다
+                CONNECT_BUTTON | CONFIRM_BUTTON => match self.commit(store) {
+                    Some(id) if index == CONNECT_BUTTON => {
+                        SiteManagerOutcome::RegisterAndConnect(id)
+                    }
+                    Some(id) => SiteManagerOutcome::Register(id),
+                    None => SiteManagerOutcome::None,
+                },
+                _ => SiteManagerOutcome::Close,
+            };
+        }
         // 그리는 동안에는 목록을 빌려 읽고 있었다 — 변경은 여기서 적용한다
         if body.rename_done {
             self.finish_rename(store);
@@ -571,7 +576,7 @@ impl SiteManager {
         if let Some(action) = body.action {
             self.apply_list_action(action, store);
         }
-        if response.should_close() {
+        if shell.should_close {
             outcome = SiteManagerOutcome::Close;
         }
         if !matches!(outcome, SiteManagerOutcome::None) {
@@ -1146,75 +1151,21 @@ impl SiteManager {
         row
     }
 
-    /// 바닥 — 오류 문구와 버튼 3개 (`:495-498`, 인벤토리 #88~90)
-    fn show_footer(
-        &mut self,
-        ui: &mut egui::Ui,
-        rect: egui::Rect,
-        store: &mut SiteStore,
-    ) -> Option<SiteManagerOutcome> {
-        ui.painter().line_segment(
-            [
-                egui::pos2(rect.left(), rect.top() + 0.5),
-                egui::pos2(rect.right(), rect.top() + 0.5),
-            ],
-            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+    /// 바닥 버튼 줄 바로 위의 오류 문구 (인벤토리 #88).
+    ///
+    /// 버튼은 공통 셸이 그리므로 여기서는 사유 한 줄만 남긴다 — 오류가 없으면 빈 줄이다
+    fn show_error_row(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let Some(error) = &self.error else {
+            return;
+        };
+        // 본문과 같은 선에서 시작한다
+        ui.painter().text(
+            egui::pos2(rect.left() + BODY_PAD_X, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            error,
+            egui::FontId::proportional(widgets::FORM_FONT_PX),
+            theme::ERROR_TEXT,
         );
-        if let Some(error) = &self.error {
-            ui.painter().text(
-                egui::pos2(rect.left() + FOOTER_PAD_X, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                error,
-                egui::FontId::proportional(widgets::FORM_FONT_PX),
-                theme::ERROR_TEXT,
-            );
-        }
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(egui::Rect::from_min_max(
-                    egui::pos2(rect.left() + FOOTER_PAD_X, rect.top()),
-                    egui::pos2(rect.right() - FOOTER_PAD_X, rect.bottom()),
-                ))
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        );
-        child.spacing_mut().item_spacing.x = FOOTER_GAP;
-        // 오른쪽부터 그린다 — 원본의 배치 순서(연결·확인·취소)를 뒤집어 넣는다
-        let cancel = widgets::design_button(
-            &mut child,
-            crate::i18n::cancel(),
-            theme::TEXT_BUTTON,
-            FOOTER_BUTTON_PAD_X,
-            egui::vec2(0.0, FOOTER_BUTTON_HEIGHT),
-        )
-        .clicked();
-        let confirm = widgets::design_button(
-            &mut child,
-            crate::i18n::site_ok(),
-            theme::TEXT_BUTTON,
-            FOOTER_BUTTON_PAD_X,
-            egui::vec2(0.0, FOOTER_BUTTON_HEIGHT),
-        )
-        .clicked();
-        let connect = widgets::primary_button(
-            &mut child,
-            crate::i18n::site_connect(),
-            FOOTER_BUTTON_PAD_X,
-            egui::vec2(0.0, FOOTER_BUTTON_HEIGHT),
-        )
-        .clicked();
-
-        if cancel {
-            return Some(SiteManagerOutcome::Close);
-        }
-        if confirm || connect {
-            let id = self.commit(store)?;
-            return Some(if connect {
-                SiteManagerOutcome::RegisterAndConnect(id)
-            } else {
-                SiteManagerOutcome::Register(id)
-            });
-        }
-        None
     }
 }
 
@@ -1384,9 +1335,9 @@ mod tests {
         assert_eq!(LEFT_WIDTH, 400.0);
         assert_eq!(widgets::FORM_LABEL_WIDTH, 96.0);
         assert_eq!(widgets::FORM_FIELD_HEIGHT, 28.0);
-        assert_eq!(FOOTER_HEIGHT, 58.0);
-        assert_eq!(FOOTER_BUTTON_HEIGHT, 30.0);
-        assert_eq!(FOOTER_BUTTON_PAD_X, 24.0);
+        // 바닥은 오류 문구 줄과 공통 셸의 버튼 줄로 나뉜다 — 종전 58px 자리를 대신하며
+        // 버튼이 커진 만큼(30 → 44) 8px 늘었다
+        assert_eq!(ERROR_ROW_HEIGHT + dialog::FOOTER_HEIGHT, 66.0);
         // 헤더·목록 행·탭·버튼 3열도 원본 값이다
         assert_eq!(HEADER_HEIGHT, 40.0);
         assert_eq!(LIST_ROW_HEIGHT, 24.0);
