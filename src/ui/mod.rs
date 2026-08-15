@@ -5,6 +5,7 @@
 pub mod address_bar;
 pub mod app;
 pub mod app_icon;
+pub mod dialog;
 pub mod dock;
 pub mod file_list;
 pub mod font_scan;
