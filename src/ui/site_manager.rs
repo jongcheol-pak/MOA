@@ -553,13 +553,12 @@ impl SiteManager {
             },
         );
         if let Some(index) = shell.clicked {
+            let connect = index == CONNECT_BUTTON;
             outcome = match index {
                 // 연결·확인은 등록을 거쳐야 한다 — 값이 모자라면 `commit`이 오류를 남기고
                 // `None`을 주며, 그때는 대화를 그대로 둔다
                 CONNECT_BUTTON | CONFIRM_BUTTON => match self.commit(store) {
-                    Some(id) if index == CONNECT_BUTTON => {
-                        SiteManagerOutcome::RegisterAndConnect(id)
-                    }
+                    Some(id) if connect => SiteManagerOutcome::RegisterAndConnect(id),
                     Some(id) => SiteManagerOutcome::Register(id),
                     None => SiteManagerOutcome::None,
                 },

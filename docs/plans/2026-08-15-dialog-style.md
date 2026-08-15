@@ -19,6 +19,7 @@
 - `ui/site_manager.rs`(1844줄)·`ui/app.rs`(3573줄)의 1500줄 분리 검토선 초과 — 대장에 이미 등록된 항목이며 이번 변경은 두 파일에서 각각 70줄 안쪽이라 분리를 유발하지 않는다
 
 ## Deferred / Follow-up (구현 중 추가)
+- [SUGGEST] `theme::PRIMARY_FILL`이 이제 전송 큐의 완료 막대 색으로만 쓰이는데 이름은 여전히 "주 버튼"을 뜻한다. 개명하려면 이번 범위 밖인 `queue_panel.rs`의 호출부·시험까지 손대야 해 그대로 뒀다 (T5 quality S2)
 - [SUGGEST] 대화 넷의 마무리 블록(`shell.clicked` 매치 → `should_close` → `Cancelled` 반환 → `Confirmed`/`Pending`)이 거의 같은 모양으로 반복된다. `dialog`에 `finish<T>(shell, closed, value) -> DialogOutcome<T>` 같은 헬퍼를 두면 줄어드나, 대화마다 마무리가 미묘하게 다르다(이름 대화는 오류도 지운다). T3~T5를 마친 뒤 실제 반복 규모를 보고 Phase F에서 재검토 (T2 quality S1)
 - [SUGGEST] `Shell.clicked`가 `usize` 인덱스라 컴파일러가 버튼 개수와 매치 팔의 일치를 강제하지 못한다 — 버튼을 추가하면서 매치를 놓치면 새 버튼이 조용히 취소로 처리된다. 버튼 순서를 바꿀 때 매치 인덱스를 함께 본다 (T2 quality S2)
 
@@ -361,7 +362,7 @@
   - **Type**: D
   - **Design**:
     - ① 배치: 오류 줄 높이 상수 `ERROR_ROW_HEIGHT: f32 = 22.0`을 `site_manager.rs`의 기존 상수 구역(`:111` 부근)에 둔다 — 이 대화만의 값이라 `dialog`로 올리지 않는다(다른 일곱 대화에는 오류 줄이 없다)
-    - ② 신규 심볼과 책임: `ERROR_ROW_HEIGHT` 하나뿐. `show_fixed`가 준 content rect의 하단 22px이 오류 줄이고 그 위가 본문이라는 사실을 이름으로 남긴다
+    - ② 신규 심볼과 책임: `ERROR_ROW_HEIGHT`(오류 줄 높이 — `show_fixed`가 준 content rect의 하단 22px이 오류 줄이고 그 위가 본문이라는 사실을 이름으로 남긴다)와 버튼 자리 번호 `CONNECT_BUTTON`·`CONFIRM_BUTTON`(눌린 칸을 숫자가 아니라 이름으로 가려낸다 — 취소는 나머지라 `_`로 받는다)
     - ③ 의존 방향: `site_manager`가 `dialog`를 참조한다. 반대는 없다. `widgets::primary_button` 참조가 끊기며 그 함수와 색 상수 3개가 제거된다(D13)
     - ④ 비추상화 선언: 오류 줄을 `dialog` 셸의 기능(예: `show_fixed`에 `error: Option<&str>` 인자 추가)으로 올리지 않는다 — 여덟 대화 중 하나만 쓰는 것을 공통 API에 넣으면 나머지 일곱이 매번 `None`을 적게 된다
   - **Acceptance**:
