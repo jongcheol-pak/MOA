@@ -358,7 +358,7 @@
     - (i) 이 대화는 `allocate_exact_size`로 크기를 스스로 잡는다 → `show_fixed`가 프레임 크기(480×560)를 받아 푸터를 뺀 rect를 넘기므로 헤더·본문 계산만 그 rect 기준으로 다시 잡는다
   - **Depends on**: T1
 
-- [ ] T5. 사이트 관리자 푸터 교체와 오류 문구 재배치 (`ui/site_manager.rs` · `ui/widgets.rs` · `ui/theme.rs`)
+- [x] T5. 사이트 관리자 푸터 교체와 오류 문구 재배치 (`ui/site_manager.rs` · `ui/widgets.rs` · `ui/theme.rs`)
   - **Type**: D
   - **Design**:
     - ① 배치: 오류 줄 높이 상수 `ERROR_ROW_HEIGHT: f32 = 22.0`을 `site_manager.rs`의 기존 상수 구역(`:111` 부근)에 둔다 — 이 대화만의 값이라 `dialog`로 올리지 않는다(다른 일곱 대화에는 오류 줄이 없다)
