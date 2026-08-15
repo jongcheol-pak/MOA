@@ -18,6 +18,10 @@
 - 본문 폭을 규격화(예: 소형 400 / 중형 480)해 대화마다 제각각인 값을 정리 — 이번엔 폭을 건드리지 않아 미룬다
 - `ui/site_manager.rs`(1844줄)·`ui/app.rs`(3573줄)의 1500줄 분리 검토선 초과 — 대장에 이미 등록된 항목이며 이번 변경은 두 파일에서 각각 70줄 안쪽이라 분리를 유발하지 않는다
 
+## Deferred / Follow-up (구현 중 추가)
+- [SUGGEST] 대화 넷의 마무리 블록(`shell.clicked` 매치 → `should_close` → `Cancelled` 반환 → `Confirmed`/`Pending`)이 거의 같은 모양으로 반복된다. `dialog`에 `finish<T>(shell, closed, value) -> DialogOutcome<T>` 같은 헬퍼를 두면 줄어드나, 대화마다 마무리가 미묘하게 다르다(이름 대화는 오류도 지운다). T3~T5를 마친 뒤 실제 반복 규모를 보고 Phase F에서 재검토 (T2 quality S1)
+- [SUGGEST] `Shell.clicked`가 `usize` 인덱스라 컴파일러가 버튼 개수와 매치 팔의 일치를 강제하지 못한다 — 버튼을 추가하면서 매치를 놓치면 새 버튼이 조용히 취소로 처리된다. 버튼 순서를 바꿀 때 매치 인덱스를 함께 본다 (T2 quality S2)
+
 ## Investigation Log
 - 위키 참조: 관련 위키 자료 없음 — vault(`D:/Personal Project/Obsidian Vault/LLM WIKI`)는 실재하나 MOA는 `20_projects/`에 미등록이고, `30_knowledge`·`40_guides`에 egui 모달·대화 레시피가 없다(`grep -ril "egui|모달|팝업"` → gpui·winui·web 항목만). 코드 1차 출처로 진행
 - Deferred 대장 확인: `docs/plans/deferred.md` 53건(이전 plan 7건 이관 후). 이번 주제와 걸리는 항목은 `[2026-07-29] 커스텀 타이틀바의 창 그림자·둥근 모서리` 하나인데, 그것은 **창 자체**(winit 무장식)의 문제라 팝업 프레임과 층이 다르다 — 이번 작업으로 해소되지 않고 방해도 받지 않는다. 잔량 53건 < 100, 최고 경과 23일 < 30일이라 소진 batch는 열지 않는다
@@ -291,9 +295,9 @@
     - (ii-a) 신규 파일 추가와 `ui/mod.rs` 모듈 선언 → `## 사전 승인 항목`에 등록
   - **Depends on**: -
 
-- [ ] T2. 원격 대화 4종을 새 셸로 교체 (`ui/remote_menu.rs`)
+- [x] T2. 원격 대화 4종을 새 셸로 교체 (`ui/remote_menu.rs`)
   - **Type**: D
-  - **Design**: 신규 심볼 없음 — 기존 네 함수(`show_name_dialog`·`show_chmod_dialog`·`show_conflict_dialog`·`show_delete_confirm`)의 **내부만** `dialog::show` 호출로 바꾸고 공개 시그니처와 `DialogOutcome`은 그대로 둔다. 파일이 갖던 대화 전용 상수 4개는 `dialog` 모듈로 소유가 옮겨간다(4-A). 새 타입·헬퍼를 이 파일에 두지 않는다 — 넷의 공통 부분은 이미 T1이 들고 있다
+  - **Design**: 새 타입·헬퍼 없음 — 기존 네 함수(`show_name_dialog`·`show_chmod_dialog`·`show_conflict_dialog`·`show_delete_confirm`)의 **내부만** `dialog::show` 호출로 바꾸고 공개 시그니처와 `DialogOutcome`은 그대로 둔다. 파일이 갖던 대화 전용 상수 4개는 `dialog` 모듈로 소유가 옮겨가고, 대신 종전 리터럴에 이름을 붙인 비공개 상수(제목 글꼴·본문 폭 둘·미리보기 개수)를 둔다. 넷의 공통 동작은 이미 T1이 들고 있으므로 이 파일에 추상화를 새로 만들지 않는다
   - **Acceptance**:
     - Given 이름 입력·권한 변경·같은 이름 확인·원격 삭제 대화, When 각각을 연다, Then 넷 다 모서리 12px에 전폭 균등 버튼이고 버튼 순서는 D8 그대로다 (HUMAN-VERIFY)
     - `DIALOG_MARGIN`·`DIALOG_BUTTON_HEIGHT`·`DIALOG_BUTTON_PAD_X`·`DIALOG_BUTTON_GAP` 상수가 파일에서 사라지고 `Modal::new` 호출도 남지 않는다 (grep으로 기계 판정)
