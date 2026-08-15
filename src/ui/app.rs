@@ -25,6 +25,7 @@ use crate::remote::tree_cache::TreeCache;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::app_icon;
+use crate::ui::dialog;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::font_scan::FontScan;
 use crate::ui::icon_tex::IconTextures;
@@ -987,24 +988,31 @@ impl ExplorerApp {
             return;
         };
         let mut confirmed = None;
-        egui::Modal::new(egui::Id::new("workspace_remove_confirm")).show(ctx, |ui| {
-            ui.set_width(REMOVE_DIALOG_WIDTH);
-            ui.heading(crate::i18n::app_workspace_delete_title());
-            ui.add_space(8.0);
-            ui.label(crate::i18n::dynamic::workspace_delete_confirm(&name));
-            ui.label(crate::i18n::app_workspace_delete_detail());
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui.button(crate::i18n::delete()).clicked() {
-                    confirmed = Some(true);
-                }
-                if ui.button(crate::i18n::cancel()).clicked()
-                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
-                {
-                    confirmed = Some(false);
-                }
-            });
-        });
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::delete()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("workspace_remove_confirm"),
+            REMOVE_DIALOG_WIDTH,
+            &buttons,
+            |ui| {
+                ui.heading(crate::i18n::app_workspace_delete_title());
+                ui.add_space(8.0);
+                ui.label(crate::i18n::dynamic::workspace_delete_confirm(&name));
+                ui.label(crate::i18n::app_workspace_delete_detail());
+            },
+        );
+        match shell.clicked {
+            Some(0) => confirmed = Some(true),
+            Some(_) => confirmed = Some(false),
+            None => {}
+        }
+        // 종전에는 이 대화가 `Esc`를 직접 잡았다 — 이제 셸이 배경 클릭까지 함께 판정한다
+        if shell.should_close {
+            confirmed = Some(false);
+        }
         match confirmed {
             Some(true) => {
                 self.pending_remove = None;

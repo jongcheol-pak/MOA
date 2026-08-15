@@ -16,10 +16,16 @@ use crate::remote::hostkey::{HostKeyCheck, HostKeyDecision};
 use crate::remote::sftp::HostKeyPrompt;
 use crate::remote::sites::SiteStore;
 use crate::remote::types::{Protocol, SiteId};
+use crate::ui::dialog;
 use crate::ui::theme;
 use crate::ui::widgets;
 
 // ── 시각 토큰 (plan `## 시각 요소 분해` 1:1, 96DPI 기준 고정 px) ──
+/// 호스트 키 확인 대화의 본문 폭 — SHA256 지문 한 줄이 접히지 않는 너비
+const HOSTKEY_BODY_WIDTH: f32 = 460.0;
+/// 호스트 키 확인 대화의 제목 글꼴 크기 — 다른 확인 대화와 같은 값
+const HOSTKEY_TITLE_FONT_PX: f32 = 16.0;
+
 /// 배지 높이 (README §4)
 const BADGE_HEIGHT: f32 = 15.0;
 /// 배지 좌우 여백
@@ -416,33 +422,43 @@ pub fn show_hostkey_dialog(
     };
 
     let mut decision = None;
-    egui::Modal::new(egui::Id::new("원격 호스트 키 확인")).show(ctx, |ui| {
-        ui.set_width(460.0);
-        ui.label(egui::RichText::new(title).size(16.0).color(theme::TEXT));
-        ui.add_space(10.0);
-        ui.label(egui::RichText::new(host).color(theme::HEADER_TEXT));
-        ui.add_space(6.0);
-        // 지문은 사용자가 서버에서 뽑은 값과 눈으로 대조한다 — 고정폭으로 보여야 자릿수가 맞는다
-        ui.label(
-            egui::RichText::new(fingerprint)
-                .monospace()
-                .color(theme::OK_TEXT),
-        );
-        if let Some(warning) = &warning {
+    let buttons = [
+        dialog::ButtonSpec::strong(crate::i18n::remote_hostkey_accept()),
+        dialog::ButtonSpec::plain(crate::i18n::cancel()),
+    ];
+    let shell = dialog::show(
+        ctx,
+        egui::Id::new("원격 호스트 키 확인"),
+        HOSTKEY_BODY_WIDTH,
+        &buttons,
+        |ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .size(HOSTKEY_TITLE_FONT_PX)
+                    .color(theme::TEXT),
+            );
             ui.add_space(10.0);
-            ui.label(egui::RichText::new(warning).color(theme::ERROR_TEXT));
-        }
-
-        ui.add_space(14.0);
-        ui.horizontal(|ui| {
-            if ui.button(crate::i18n::remote_hostkey_accept()).clicked() {
-                decision = Some(HostKeyDecision::Accept);
+            ui.label(egui::RichText::new(host).color(theme::HEADER_TEXT));
+            ui.add_space(6.0);
+            // 지문은 사용자가 서버에서 뽑은 값과 눈으로 대조한다 — 고정폭으로 보여야 자릿수가 맞는다
+            ui.label(
+                egui::RichText::new(fingerprint)
+                    .monospace()
+                    .color(theme::OK_TEXT),
+            );
+            if let Some(warning) = &warning {
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new(warning).color(theme::ERROR_TEXT));
             }
-            if ui.button(crate::i18n::cancel()).clicked() {
-                decision = Some(HostKeyDecision::Reject);
-            }
-        });
-    });
+        },
+    );
+    match shell.clicked {
+        Some(0) => decision = Some(HostKeyDecision::Accept),
+        Some(_) => decision = Some(HostKeyDecision::Reject),
+        None => {}
+    }
+    // **`shell.should_close`는 쓰지 않는다** — 배경을 잘못 눌러 연결이 거절되면 사용자는
+    // 무엇 때문에 끊겼는지 알기 어렵다. 종전처럼 버튼을 눌러야만 결정이 나간다
     decision
 }
 
