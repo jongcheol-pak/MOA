@@ -10,6 +10,7 @@
 use crate::app::autostart;
 use crate::app::settings::{AppSettings, LanguageSetting};
 use crate::i18n;
+use crate::ui::dialog;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -21,16 +22,10 @@ use eframe::egui;
 const DIALOG_WIDTH: f32 = 480.0;
 const DIALOG_HEIGHT: f32 = 560.0;
 
-/// 뒤 화면을 덮는 어둠 — 사이트 관리자와 같은 값을 쓴다(대화가 둘로 보이지 않게)
-const SCRIM_ALPHA: u8 = 140;
-const SHADOW_OFFSET_Y: i8 = 18;
-const SHADOW_BLUR: u8 = 60;
-const SHADOW_ALPHA: u8 = 153;
-
-/// 헤더·푸터 높이 — 사이트 관리자와 같은 값이다. 같은 창 안의 대화 둘이 제목 줄·바닥 줄
-/// 높이를 다르게 쓰면 번갈아 열었을 때 판이 흔들려 보인다
+/// 헤더 높이 — 사이트 관리자와 같은 값이다. 같은 창 안의 대화 둘이 제목 줄 높이를
+/// 다르게 쓰면 번갈아 열었을 때 판이 흔들려 보인다.
+/// 바닥 줄 높이는 `dialog::FOOTER_HEIGHT`가 정본이다
 const HEADER_HEIGHT: f32 = 40.0;
-const FOOTER_HEIGHT: f32 = 58.0;
 /// 그룹을 가르는 선 — 제목 위에 그어 앞 그룹과 끊는다 (첫 그룹 위에는 긋지 않는다)
 const DIVIDER_THICKNESS: f32 = 1.0;
 /// 구분선과 그 아래 그룹 제목 사이 여백
@@ -46,11 +41,6 @@ const GROUP_FONT_PX: f32 = 12.0;
 const GROUP_GAP_TOP: f32 = 14.0;
 /// 그룹 제목과 첫 항목 사이
 const GROUP_GAP_BOTTOM: f32 = 6.0;
-/// 대화 모서리 — 창 자체는 각지지만(FR-22) 이 판은 살짝 둥글게 해 떠 있는 것으로 보인다
-const CORNER_RADIUS: u8 = 6;
-/// 닫기 버튼 좌우 여백
-const CLOSE_PAD_X: f32 = 16.0;
-const CLOSE_MIN_WIDTH: f32 = 72.0;
 /// 글꼴 드롭다운 폭 — 라벨(96px) 뒤 남는 자리에 맞춘다
 const FONT_FIELD_WIDTH: f32 = 240.0;
 /// 언어 드롭다운 폭 — 항목이 짧아 글꼴 목록만큼 넓을 이유가 없다
@@ -122,35 +112,20 @@ impl SettingsDialog {
             return SettingsOutcome::default();
         }
         let mut outcome = SettingsOutcome::default();
-        let mut close_requested = false;
-        let response = egui::Modal::new(egui::Id::new("앱 설정"))
-            .backdrop_color(egui::Color32::from_black_alpha(SCRIM_ALPHA))
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::SURFACE_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_CONTROL))
-                    .corner_radius(CORNER_RADIUS)
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, SHADOW_OFFSET_Y],
-                        blur: SHADOW_BLUR,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(SHADOW_ALPHA),
-                    }),
-            )
-            .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(DIALOG_WIDTH, DIALOG_HEIGHT),
-                    egui::Sense::hover(),
-                );
+        // 바닥 버튼이 하나뿐이라 그것이 곧 이 대화의 주 동작이다
+        let buttons = [dialog::ButtonSpec::strong(i18n::close())];
+        let shell = dialog::show_fixed(
+            ctx,
+            egui::Id::new("앱 설정"),
+            egui::vec2(DIALOG_WIDTH, DIALOG_HEIGHT),
+            &buttons,
+            |ui, rect| {
+                // `rect`는 바닥 버튼 줄을 뺀 나머지다 — 헤더와 본문이 그 안을 나눠 쓴다
                 let header =
                     egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_HEIGHT));
-                let footer = egui::Rect::from_min_max(
-                    egui::pos2(rect.left(), rect.bottom() - FOOTER_HEIGHT),
-                    rect.max,
-                );
                 let body = egui::Rect::from_min_max(
                     egui::pos2(rect.left() + BODY_PAD_X, header.bottom()),
-                    egui::pos2(rect.right() - BODY_PAD_X, footer.top()),
+                    egui::pos2(rect.right() - BODY_PAD_X, rect.bottom()),
                 );
                 show_header(ui, header);
                 // **본문만 스크롤한다** — 제목과 `닫기`는 늘 제자리에 있어야 한다.
@@ -163,12 +138,10 @@ impl SettingsDialog {
                         let inner = ui.max_rect();
                         outcome = show_body(ui, inner, settings, fonts);
                     });
-                if show_footer(ui, footer) {
-                    close_requested = true;
-                }
-            });
-        // 배경 클릭·`Esc`도 닫기다 — egui가 그 판정을 해 준다
-        if close_requested || response.should_close() {
+            },
+        );
+        // 배경 클릭·`Esc`도 닫기다 — 셸이 그 판정을 해 준다
+        if shell.clicked.is_some() || shell.should_close {
             self.close();
         }
         outcome
@@ -418,34 +391,6 @@ fn group_title(ui: &mut egui::Ui, text: &str, divider: Divider) {
     ui.add_space(GROUP_FONT_PX + GROUP_GAP_BOTTOM);
 }
 
-/// 푸터 — 오른쪽 끝 `닫기`. 눌렸으면 `true`
-fn show_footer(ui: &mut egui::Ui, rect: egui::Rect) -> bool {
-    // 바닥 줄과 본문을 가르는 선 — 그룹 사이 선과 같은 두께·색이라 판이 한 벌로 보인다.
-    // 좌우로 대화 끝까지 긋는다(그룹 선은 본문 여백 안에서만 긋는다)
-    ui.painter().hline(
-        rect.x_range(),
-        rect.top(),
-        egui::Stroke::new(DIVIDER_THICKNESS, theme::BORDER_CONTROL),
-    );
-    let width = widgets::design_button_width(ui, i18n::close(), CLOSE_PAD_X).max(CLOSE_MIN_WIDTH);
-    let button_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.right() - BODY_PAD_X - width,
-            rect.center().y - widgets::FORM_FIELD_HEIGHT / 2.0,
-        ),
-        egui::vec2(width, widgets::FORM_FIELD_HEIGHT),
-    );
-    let mut footer = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
-    widgets::design_button(
-        &mut footer,
-        i18n::close(),
-        theme::TEXT_BUTTON,
-        CLOSE_PAD_X,
-        egui::vec2(width, widgets::FORM_FIELD_HEIGHT),
-    )
-    .clicked()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,25 +446,6 @@ mod tests {
     }
 
     #[test]
-    fn 바닥_줄_위에_구분선을_긋는다() {
-        // 2026-08-14 사용자 요청 — 닫기 버튼이 본문과 붙어 보이지 않게 가른다
-        let ctx = egui::Context::default();
-        let 자리 = egui::Rect::from_min_size(
-            egui::pos2(0.0, 0.0),
-            egui::vec2(DIALOG_WIDTH, FOOTER_HEIGHT),
-        );
-        let output = ctx.run_ui(Default::default(), |ui| {
-            show_footer(ui, 자리);
-        });
-        let 선 = output
-            .shapes
-            .iter()
-            .filter(|clipped| matches!(clipped.shape, egui::Shape::LineSegment { .. }))
-            .count();
-        assert_eq!(선, 1, "바닥 줄 위 구분선이 없다");
-    }
-
-    #[test]
     fn 본문이_바닥_버튼_자리를_넘지_않는다() {
         // 2026-08-14 화면 확인 — 처음 잡은 420×400에서는 `언어` 그룹이 잘리고
         // 바닥의 `닫기`와 겹쳤다. 다섯 그룹이 **스크롤 없이** 들어가는지 재 둔다
@@ -539,7 +465,7 @@ mod tests {
             .map(|clipped| clipped.shape.visual_bounding_rect().max.y)
             .filter(|y| y.is_finite())
             .fold(0.0_f32, f32::max);
-        let 남은_자리 = DIALOG_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT;
+        let 남은_자리 = DIALOG_HEIGHT - HEADER_HEIGHT - dialog::FOOTER_HEIGHT;
         assert!(
             쓴_높이 <= 남은_자리,
             "본문이 {쓴_높이}px를 써 남은 자리 {남은_자리}px를 넘는다 — 바닥 버튼과 겹친다"
