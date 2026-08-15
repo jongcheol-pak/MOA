@@ -361,6 +361,8 @@ pub struct SiteManager {
     draft: Draft,
     /// 이름 바꾸는 중인 글자 — 목록 행이 편집기로 바뀐다
     renaming: Option<String>,
+    /// 편집기가 처음 뜨는 프레임인가 — 그때 한 번만 포커스를 준다
+    rename_focus: bool,
     /// 방금 실패한 까닭 — 바닥에 그대로 보인다
     error: Option<String>,
 }
@@ -399,12 +401,20 @@ impl SiteManager {
         self.selected = None;
         self.draft = Draft::default();
         self.renaming = None;
+        self.rename_focus = false;
         self.error = None;
     }
 
-    fn close(&mut self) {
+    /// 대화를 닫는다 — **고치던 이름을 먼저 확정한다**.
+    ///
+    /// 이름 편집은 목록 행에서 이뤄지고 `SiteStore`에 곧바로 반영되는데(모듈 주석), Enter를
+    /// 누르지 않고 `확인(O)`·`연결(C)`·`X`로 대화를 끝내는 길이 더 흔하다. 여기서 확정하지
+    /// 않으면 그 이름은 조용히 사라진다 (사용자 보고)
+    fn close(&mut self, store: &mut SiteStore) {
+        self.finish_rename(store);
         self.open = false;
         self.renaming = None;
+        self.rename_focus = false;
         self.error = None;
         // 초안을 버린다 — 평문 비밀번호도 여기서 함께 사라진다
         self.draft = Draft::default();
@@ -416,6 +426,7 @@ impl SiteManager {
             self.selected = Some(id);
             self.draft = draft;
             self.renaming = None;
+            self.rename_focus = false;
             self.error = None;
         }
     }
@@ -472,12 +483,14 @@ impl SiteManager {
         match action {
             ListAction::StartRename => {
                 self.renaming = store.get(id).map(|record| record.name.clone());
+                self.rename_focus = self.renaming.is_some();
             }
             ListAction::Delete => {
                 store.remove(id);
                 self.selected = None;
                 self.draft = Draft::default();
                 self.renaming = None;
+                self.rename_focus = false;
             }
             ListAction::Duplicate => {
                 if let Some(copy) = store.duplicate(id) {
@@ -489,6 +502,7 @@ impl SiteManager {
 
     /// 이름 바꾸기를 마친다 — 빈 이름이면 `SiteStore`가 기본 이름을 붙인다
     fn finish_rename(&mut self, store: &mut SiteStore) {
+        self.rename_focus = false;
         let (Some(id), Some(name)) = (self.selected, self.renaming.take()) else {
             return;
         };
@@ -561,7 +575,7 @@ impl SiteManager {
             outcome = SiteManagerOutcome::Close;
         }
         if !matches!(outcome, SiteManagerOutcome::None) {
-            self.close();
+            self.close(store);
         }
         outcome
     }
@@ -674,6 +688,8 @@ impl SiteManager {
         child.set_clip_rect(rows);
         let mut picked = None;
         let mut rename_done = false;
+        // 편집기를 그리기 전에 빼 둔다 — 루프 안에서는 `renaming`을 빌리고 있어 함께 못 읽는다
+        let focus = std::mem::take(&mut self.rename_focus);
         for record in store.sites() {
             let selected = self.selected == Some(record.id);
             let dot = if connected.contains(&record.id) {
@@ -683,7 +699,7 @@ impl SiteManager {
             };
             // 이름 바꾸는 중인 줄만 편집기로 바뀐다
             if selected && let Some(name) = &mut self.renaming {
-                rename_done = show_rename_row(&mut child, name, dot);
+                rename_done = show_rename_row(&mut child, name, dot, focus);
                 continue;
             }
             if show_site_row(&mut child, &record.name, dot, selected) {
@@ -1240,8 +1256,9 @@ fn show_site_row(ui: &mut egui::Ui, name: &str, dot: egui::Color32, selected: bo
     response.clicked()
 }
 
-/// 이름 바꾸는 중인 줄 — 편집이 끝났으면 `true` (Enter 또는 포커스를 잃었을 때)
-fn show_rename_row(ui: &mut egui::Ui, name: &mut String, dot: egui::Color32) -> bool {
+/// 이름 바꾸는 중인 줄 — 편집이 끝났으면 `true` (Enter 또는 포커스를 잃었을 때).
+/// `focus`는 편집기가 처음 뜬 프레임에만 참이다
+fn show_rename_row(ui: &mut egui::Ui, name: &mut String, dot: egui::Color32, focus: bool) -> bool {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), LIST_ROW_HEIGHT),
         egui::Sense::hover(),
@@ -1259,7 +1276,13 @@ fn show_rename_row(ui: &mut egui::Ui, name: &mut String, dot: egui::Color32) -> 
             .font(egui::FontId::proportional(widgets::FORM_FONT_PX))
             .desired_width(edit_rect.width()),
     );
-    response.request_focus();
+    // 포커스는 처음 한 번만 청한다 — 매 프레임 청하면 `has_focus`가 늘 참이라
+    // `lost_focus()`가 영영 거짓이 되고(egui `Memory::lost_focus`), 다른 곳을 눌러
+    // 편집을 마치는 길이 통째로 막힌다
+    if focus {
+        response.request_focus();
+        return false;
+    }
     response.lost_focus() || child.input(|input| input.key_pressed(egui::Key::Enter))
 }
 
@@ -1497,6 +1520,60 @@ mod tests {
     }
 
     #[test]
+    fn 이름을_고치다_대화를_닫아도_저장된다() {
+        // Enter를 누르지 않고 `확인(O)`·`연결(C)`·`X`로 끝내는 길 — 편집 중이던 이름이
+        // 버려지면 사용자가 보기에는 "이름을 바꿔도 저장되지 않는" 것이 된다
+        let (mut manager, mut store, id) = manager_with_site();
+
+        manager.apply_list_action(ListAction::StartRename, &mut store);
+        manager.renaming = Some("스테이징".to_owned());
+        manager.close(&mut store);
+
+        assert_eq!(store.get(id).expect("사이트").name, "스테이징");
+        assert_eq!(manager.renaming, None, "닫은 뒤에는 편집이 남지 않는다");
+    }
+
+    #[test]
+    fn 편집기_밖을_누르면_이름이_확정된다() {
+        // 포커스를 매 프레임 청하면 `lost_focus()`가 영영 거짓이 되어(egui `Memory::lost_focus`)
+        // 다른 곳을 눌러 편집을 마치는 길이 막힌다. 두 프레임을 그려 그 길을 지킨다
+        let (mut manager, mut store, id) = manager_with_site();
+        manager.apply_list_action(ListAction::StartRename, &mut store);
+        manager.renaming = Some("스테이징".to_owned());
+
+        // 첫 프레임 — 편집기가 뜨며 포커스를 청한다. 아직 확정하지 않는다
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+        });
+        assert_eq!(
+            store.get(id).expect("사이트").name,
+            "배포 서버",
+            "편집기가 막 떴을 뿐인데 확정됐다"
+        );
+        assert!(manager.renaming.is_some(), "편집이 이어져야 한다");
+
+        // 둘째 프레임 — 사용자가 편집기 밖을 누른다. 포커스는 **프레임 도중**에 옮겨가고,
+        // egui는 그 이전을 두 프레임 창(`id_two_frames_ago`)으로 알아챈다
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+            ui.ctx()
+                .memory_mut(|memory| memory.request_focus(egui::Id::new("편집기 밖")));
+        });
+        // 셋째 프레임 — 편집기가 포커스를 잃은 것을 알아채고 이름을 확정한다
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+        });
+
+        assert_eq!(
+            store.get(id).expect("사이트").name,
+            "스테이징",
+            "포커스를 잃으면 이름이 확정된다"
+        );
+        assert_eq!(manager.renaming, None, "확정한 뒤에는 편집이 남지 않는다");
+    }
+
+    #[test]
     fn 고른_사이트가_없으면_세_버튼이_아무_일도_하지_않는다() {
         // plan Edge Case — 사이트 0개에서 `삭제(D)`
         let mut store = SiteStore::new();
@@ -1599,7 +1676,7 @@ mod tests {
         manager.open_new();
         manager.draft.host = "example.test".to_owned();
         manager.draft.password = "버려질값".to_owned();
-        manager.close();
+        manager.close(&mut SiteStore::new());
         assert!(!manager.is_open());
         assert_eq!(manager.draft, Draft::default());
     }
