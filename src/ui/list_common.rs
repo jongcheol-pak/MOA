@@ -40,6 +40,13 @@ pub enum DragItem {
 }
 
 impl DragItem {
+    /// 폴더인가 — 로컬·원격 어느 쪽이든 같은 물음이다
+    pub fn is_dir(&self) -> bool {
+        match self {
+            DragItem::Local { is_dir, .. } | DragItem::Remote { is_dir, .. } => *is_dir,
+        }
+    }
+
     /// 옮겨 놓을 때 쓸 이름 — 경로의 마지막 조각
     pub fn name(&self) -> String {
         match self {
@@ -62,6 +69,21 @@ pub struct FileDrag {
     pub items: Vec<DragItem>,
     /// 원격에서 끌어온 것이면 그 사이트 — 받는 쪽이 어느 서버에서 받을지 알아야 한다
     pub source_site: Option<crate::remote::types::SiteId>,
+}
+
+/// 같은 이름이 있을 때 사용자가 고른 것 (FR-55).
+///
+/// 취소는 이 값이 아니라 대화가 `Cancelled`로 알린다 — 취소는 "무엇을 할지"가 아니라
+/// "아무것도 하지 않는다"라서 여기 넣으면 호출부가 그것도 처리해야 할 선택지로 읽는다.
+///
+/// `DragItem`·`DropOutcome`과 같은 자리에 둔다 — 전송을 여는 쪽(`ui::app`)과 물어보는
+/// 쪽(`ui::remote_menu`)이 둘 다 쓰므로, 어느 한쪽에 두면 두 모듈이 서로를 알게 된다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictChoice {
+    /// 있던 것을 덮어쓰고 전부 보낸다
+    Overwrite,
+    /// 겹치는 것만 빼고 나머지를 보낸다
+    Skip,
 }
 
 /// 끌어다 놓은 자리 — 그 패널이 지금 보고 있는 폴더다

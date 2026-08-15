@@ -298,6 +298,13 @@ strings! {
     remote_write => "쓰기" / "Write";
     remote_execute => "실행" / "Execute";
     remote_delete_title => "원격 항목 삭제" / "Delete remote items";
+    // ── 같은 이름 확인 (FR-55) ──
+    conflict_title => "같은 이름이 이미 있습니다" / "Items with the same name already exist";
+    conflict_irreversible => "덮어쓰면 되돌릴 수 없습니다." / "Overwriting cannot be undone.";
+    conflict_overwrite => "덮어쓰기" / "Overwrite";
+    conflict_skip => "건너뛰기" / "Skip";
+    /// 목록에서 폴더임을 알리는 꼬리표
+    conflict_folder_mark => "(폴더)" / "(folder)";
     remote_delete_irreversible => "되돌릴 수 없습니다." / "This cannot be undone.";
 
     // ── 원격 탭 상태 (FR-31) ──
@@ -519,6 +526,17 @@ pub mod dynamic {
             None => out.push_str(unknown),
         }
         out
+    }
+
+    /// 같은 이름 확인 대화의 첫 줄 (FR-55) — 영어는 하나일 때 단수형이다
+    pub fn conflict_count(count: usize) -> String {
+        match current() {
+            Language::Korean => format!("{count}개 항목이 대상에 이미 있습니다."),
+            Language::English if count == 1 => {
+                "1 item already exists at the destination.".to_owned()
+            }
+            Language::English => format!("{count} items already exist at the destination."),
+        }
     }
 
     /// 원격 삭제 확인 — 영어는 하나일 때 단수형이다
@@ -882,7 +900,7 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 21] = [
+        const EXEMPT_LITERALS: [&str; 22] = [
             // 위젯 ID
             "앱 설정",
             "설정 글꼴",
@@ -891,6 +909,7 @@ mod tests {
             "원격 이름 대화",
             "원격 권한 변경",
             "원격 삭제 확인",
+            "같은 이름 확인",
             "원격 호스트 키 확인",
             "사이트 관리자",
             "사이트 이름 바꾸기",
@@ -1052,6 +1071,16 @@ mod tests {
         assert_eq!(
             dynamic::remote_delete_count(3),
             "3개 항목을 서버에서 지웁니다."
+        );
+        // 같은 이름 확인 (FR-55) — 기대값은 언제나 원문 리터럴이다
+        assert_eq!(conflict_title(), "같은 이름이 이미 있습니다");
+        assert_eq!(conflict_overwrite(), "덮어쓰기");
+        assert_eq!(conflict_skip(), "건너뛰기");
+        assert_eq!(conflict_folder_mark(), "(폴더)");
+        assert_eq!(conflict_irreversible(), "덮어쓰면 되돌릴 수 없습니다.");
+        assert_eq!(
+            dynamic::conflict_count(3),
+            "3개 항목이 대상에 이미 있습니다."
         );
         // 한국어는 하나여도 문장이 같다 — 영어만 단수형으로 갈린다
         assert_eq!(

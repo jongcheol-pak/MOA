@@ -10,7 +10,7 @@ use crate::app::settings::{
 };
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
-use crate::panel::tabs::TabPhase;
+use crate::panel::tabs::{TabId, TabPhase, TabSource};
 use crate::remote::connection::{
     ConnCommand, ConnEvent, ConnPhase, ConnectionId, OpKind, TransferDirection,
 };
@@ -28,7 +28,7 @@ use crate::ui::app_icon;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::font_scan::FontScan;
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::list_common::{self, DragItem, DropOutcome, DropTarget};
+use crate::ui::list_common::{self, ConflictChoice, DragItem, DropOutcome, DropTarget};
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{DisplayRules, PanelState, RemoteAction};
@@ -42,6 +42,7 @@ use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
 use crate::ui::splitter;
 use crate::ui::status_bar::{self, StatusAction, StatusView};
+use crate::ui::tabs::TransferTargets;
 use crate::ui::theme;
 use crate::ui::titlebar::{self, WindowRequest};
 use crate::ui::toast::{self, Toast};
@@ -49,7 +50,7 @@ use crate::ui::tray::{Tray, TrayEvent};
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
@@ -202,6 +203,15 @@ pub struct WorkspaceView {
     /// 패널 실체. 트리는 `PanelId`만 알고 상태는 여기에 있다
     panels: HashMap<PanelId, PanelState>,
     active: PanelId,
+    /// 마지막으로 누른 패널의 활성 탭이 로컬이었을 때 그 탭 — **받기 목적지**다 (FR-54).
+    ///
+    /// 패널이 아니라 **탭**을 기억한다: 한 패널에 로컬 탭과 원격 탭이 섞여 있을 때
+    /// (원격 탭을 나눌 자리가 없어 같은 패널에 열린 경우) 패널만 기억하면 원격 탭을 보는
+    /// 순간 받기 대상이 사라져 받기가 영영 비활성이 된다.
+    /// 세션에는 담지 않는다 — 다시 켜면 아래 폴백 규칙이 곧바로 합리적인 값을 준다
+    last_local_tab: Option<TabId>,
+    /// 같은 규칙의 원격 쪽 — **올리기 목적지**다 (FR-54)
+    last_remote_tab: Option<TabId>,
 }
 
 impl WorkspaceView {
@@ -213,6 +223,9 @@ impl WorkspaceView {
             layout,
             panels,
             active: first,
+            // 전송 대상은 첫 조회에서 폴백 규칙이 정한다 (FR-54)
+            last_local_tab: None,
+            last_remote_tab: None,
         }
     }
 
@@ -297,6 +310,9 @@ impl WorkspaceView {
             layout,
             panels,
             active: ids.get(state.active_panel).copied().unwrap_or(first),
+            // 세션에 담지 않는 값이라 되살릴 것이 없다 — 첫 조회의 폴백이 정한다 (FR-54)
+            last_local_tab: None,
+            last_remote_tab: None,
         }
     }
 
@@ -331,6 +347,94 @@ impl WorkspaceView {
     /// 사이드바 부제에 쓸 현재 폴더 — 활성 패널의 활성 탭 경로
     fn active_dir(&self) -> Option<PathBuf> {
         self.panels.get(&self.active).map(|p| p.dir().to_path_buf())
+    }
+
+    /// 내용이 직접 눌린 패널을 전송 대상으로 삼는다 (FR-54).
+    ///
+    /// 부르는 쪽이 `LayoutOutcome::pressed_panel`로 걸러 주므로 **팝업에 가린 클릭은 오지
+    /// 않는다** — 그 판정을 여기서 다시 하지 않는 이유는 가림 여부를 아는 것이 그리기 쪽뿐이기
+    /// 때문이다. 종류가 다른 쪽(로컬을 눌렀을 때의 원격 대상)은 그대로 둔다
+    fn note_pressed(&mut self, panel: PanelId) {
+        let Some(state) = self.panels.get(&panel) else {
+            return;
+        };
+        let id = state.active_tab_id();
+        if state.is_remote() {
+            self.last_remote_tab = Some(id);
+        } else {
+            self.last_local_tab = Some(id);
+        }
+    }
+
+    /// 지금의 전송 대상 — 사라진 탭을 가리키고 있으면 먼저 되돌린다 (FR-54)
+    fn transfer_targets(&mut self) -> TransferTargets {
+        self.last_local_tab = self.resolve_target(self.last_local_tab, false);
+        self.last_remote_tab = self.resolve_target(self.last_remote_tab, true);
+        TransferTargets {
+            download: self.last_local_tab,
+            upload: self.last_remote_tab,
+            can_download: self.download_dir().is_some(),
+            can_upload: self.upload_dir().is_some() && !self.upload_source().is_empty(),
+        }
+    }
+
+    /// 기억해 둔 대상이 아직 살아 있으면 그대로, 아니면 **활성 탭이 그 종류인 첫 패널**로.
+    ///
+    /// 폴백이 활성 탭만 보는 이유: 아무 배경 탭이나 집으면 화면에서 아이콘을 찾기 어렵고,
+    /// 올리기 원본도 활성 탭의 선택에서만 나온다
+    fn resolve_target(&self, current: Option<TabId>, remote: bool) -> Option<TabId> {
+        if let Some(id) = current
+            && self.tab_source(id).is_some()
+        {
+            return Some(id);
+        }
+        self.layout
+            .panel_ids()
+            .into_iter()
+            .filter_map(|id| self.panels.get(&id))
+            .find(|panel| panel.is_remote() == remote)
+            .map(PanelState::active_tab_id)
+    }
+
+    /// 그 신원의 탭이 가리키는 곳 — 어느 패널에 있든 찾는다 (배경 탭 포함)
+    fn tab_source(&self, id: TabId) -> Option<&TabSource> {
+        self.panels.values().find_map(|panel| panel.tab_source(id))
+    }
+
+    /// 받기 목적지 — 받기 아이콘이 붙은 탭의 폴더 (FR-54)
+    fn download_dir(&self) -> Option<PathBuf> {
+        let source = self.tab_source(self.last_local_tab?)?;
+        source.local_path().map(Path::to_path_buf)
+    }
+
+    /// 올리기 목적지 — 올리기 아이콘이 붙은 탭의 사이트와 원격 폴더 (FR-54).
+    ///
+    /// **연결된 탭만** 대상이 된다: 연결이 없으면 목록을 조회할 수도 파일을 보낼 수도 없다
+    fn upload_dir(&self) -> Option<(SiteId, RemotePath)> {
+        match self.tab_source(self.last_remote_tab?)? {
+            TabSource::Remote {
+                site,
+                conn: Some(_),
+                path,
+                ..
+            } => Some((*site, path.clone())),
+            _ => None,
+        }
+    }
+
+    /// 올릴 것 — **받기 대상 탭이 활성인 패널**의 로컬 선택 (FR-54).
+    ///
+    /// 그 탭이 배경으로 밀려 있으면 빈 벡터다 — 목록 선택은 패널마다 하나뿐이라 배경 탭의
+    /// 선택은 화면에 남아 있지 않다
+    fn upload_source(&self) -> Vec<(PathBuf, bool)> {
+        let Some(id) = self.last_local_tab else {
+            return Vec::new();
+        };
+        self.panels
+            .values()
+            .find(|panel| panel.is_active_tab(id))
+            .map(PanelState::selected_local)
+            .unwrap_or_default()
     }
 }
 
@@ -439,6 +543,26 @@ pub struct ExplorerApp {
     /// 로컬 폴더를 펼친 결과가 오는 통로 (FR-38) — 펼치기는 워커 스레드가 한다
     expand_tx: std::sync::mpsc::Sender<ExpandResult>,
     expand_rx: std::sync::mpsc::Receiver<ExpandResult>,
+    /// 같은 이름 확인을 기다리는 전송들 (FR-55) — 답이 온 순서대로 처리한다
+    pending_conflicts: Vec<ConflictCheck>,
+    /// 확인 번호 발급기
+    next_conflict: u64,
+    /// 받는 곳의 존재 확인 결과가 오는 통로 — `(확인 번호, 겹친 이름들)`
+    conflict_tx: std::sync::mpsc::Sender<(u64, Vec<String>)>,
+    conflict_rx: std::sync::mpsc::Receiver<(u64, Vec<String>)>,
+    /// 올리기 확인이 서버에 물어 둔 것 — `조회 세대 → (물어본 연결, 올릴 최상위 이름들)`.
+    ///
+    /// 키가 확인 번호가 아니라 **보낸 조회 세대**다 — 답에는 세대만 실려 오므로 그것으로
+    /// 찾을 수 있어야 한다(`pending_tree_lists`와 같은 규칙).
+    ///
+    /// 답이 오면 이 이름들을 원격 목록과 대조한다. **사이트가 아니라 연결을** 함께 드는 이유:
+    /// 한 사이트는 연결을 여럿 쓰므로(FR-37 — 탐색 1 + 전송 2), 사이트로 거두면 끊긴 것과
+    /// 무관한 연결에 물어 둔 확인까지 함께 포기돼 그 전송이 묻지 않고 나간다
+    conflict_lists: HashMap<u64, (ConnectionId, Vec<String>)>,
+    /// 확인이 끝나 **물어보기를 기다리는** 전송들 — 온 순서대로 하나씩 대화로 올린다
+    conflict_queue: Vec<(ConflictCheck, Vec<String>)>,
+    /// 지금 떠 있는 확인 대화가 다루는 전송 — 대화는 한 번에 하나만 뜬다
+    conflict_dialog: Option<(ConflictCheck, Vec<String>)>,
     /// 워커가 일을 마쳤을 때 화면을 깨우는 통로 — 연결 관리자에 준 것과 같다
     repaint: Arc<dyn Fn() + Send + Sync>,
 }
@@ -472,6 +596,7 @@ impl ExplorerApp {
             crate::app::theme::paint_unpainted_as_window_bg(shell.hwnd());
         }
         let (expand_tx, expand_rx) = std::sync::mpsc::channel();
+        let (conflict_tx, conflict_rx) = std::sync::mpsc::channel();
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = cc.egui_ctx.clone();
             Arc::new(move || ctx.request_repaint())
@@ -529,6 +654,13 @@ impl ExplorerApp {
             next_tree_list: 0,
             expand_tx,
             expand_rx,
+            pending_conflicts: Vec::new(),
+            next_conflict: 0,
+            conflict_tx,
+            conflict_rx,
+            conflict_lists: HashMap::new(),
+            conflict_queue: Vec::new(),
+            conflict_dialog: None,
             repaint,
         };
         if let Some(session) = session {
@@ -1018,6 +1150,161 @@ impl ExplorerApp {
         }
     }
 
+    /// 전송을 시작한다 — `apply_drop`의 **유일한 앞문**이다 (FR-55).
+    ///
+    /// 대상에 같은 이름이 이미 있으면 먼저 물어본다. 확인이 끝나기 전에는 **아무것도 큐에
+    /// 넣지 않는다** — 그래야 사용자가 고른 `취소`가 절반만 취소되지 않는다.
+    /// 원격 메뉴의 받기·올리기와 끌어다 놓기가 모두 이 문을 지난다
+    fn start_transfer(&mut self, drop: DropOutcome) {
+        match drop.target.clone() {
+            // 받는 곳은 파일시스템이다 — 존재 확인은 워커 스레드가 한다
+            // (AGENTS: UI 스레드에서 블로킹 I/O 금지)
+            DropTarget::Local(dir) => {
+                let names: Vec<String> = drop
+                    .items
+                    .iter()
+                    .filter(|item| list_common::drop_direction(item, &drop.target).is_some())
+                    .map(DragItem::name)
+                    .collect();
+                if names.is_empty() {
+                    return;
+                }
+                let id = self.next_conflict;
+                self.next_conflict += 1;
+                self.pending_conflicts.push(ConflictCheck { id, drop });
+                let tx = self.conflict_tx.clone();
+                let wake = self.repaint.clone();
+                std::thread::spawn(move || {
+                    // 받는 곳은 Windows라 대소문자를 가리지 않는다 — `A.TXT`가 있으면
+                    // `a.txt`도 실제로 덮인다(D5)
+                    let existing: Vec<String> = std::fs::read_dir(&dir)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect();
+                    if tx
+                        .send((id, conflict_names(&names, &existing, true)))
+                        .is_ok()
+                    {
+                        wake();
+                    }
+                });
+            }
+            // 올리는 곳은 서버다 — 대상 폴더를 조회해 이름을 대조한다
+            DropTarget::Remote { site, dir } => {
+                let names: Vec<String> = drop
+                    .items
+                    .iter()
+                    .filter(|item| list_common::drop_direction(item, &drop.target).is_some())
+                    .map(DragItem::name)
+                    .collect();
+                // 연결이 없으면 물어볼 길이 없다 — 확인을 건너뛰고 보낸다 (D10)
+                let Some(conn) = self.site_connection(site).filter(|_| !names.is_empty()) else {
+                    self.apply_drop(drop);
+                    return;
+                };
+                let id = self.next_conflict;
+                self.next_conflict += 1;
+                self.pending_conflicts.push(ConflictCheck { id, drop });
+                // 조회 번호는 패널 목록·트리와 **다른 공간**에서 센다 — 같은 번호가 겹치면
+                // 한쪽의 답을 다른 쪽이 가져가 서로 영영 기다린다.
+                // **등록과 발송이 같은 값을 쓴다**: 한쪽만 기준값을 더하면 답이 와도 찾지 못해
+                // 그 전송이 대화도 못 뜨고 큐에도 못 들어간 채 사라진다
+                let generation = conflict_generation(id);
+                self.conflict_lists.insert(generation, (conn, names));
+                self.manager.send(
+                    conn,
+                    ConnCommand::List {
+                        generation,
+                        path: dir,
+                    },
+                );
+            }
+        }
+    }
+
+    /// 확인 결과가 온 전송을 처리한다 (FR-55).
+    ///
+    /// 겹치는 것이 없으면 그대로 큐로 보내고, 있으면 물어볼 것으로 쌓아 둔다.
+    ///
+    /// **대화는 한 번에 하나만** 뜨므로 그 사이에 도착한 결과는 `conflict_queue`에서 차례를
+    /// 기다린다 — 워커는 답을 한 번만 보내니 여기서 그 답까지 함께 들고 있어야 한다.
+    /// 들지 않고 되돌리면 그 전송은 대화도 못 뜨고 큐에도 못 들어간 채 사라진다
+    fn drain_conflict_checks(&mut self) {
+        while let Ok((id, conflicts)) = self.conflict_rx.try_recv() {
+            self.settle_conflict(id, conflicts);
+        }
+        // 대화 자리가 비어 있으면 기다리던 것 중 먼저 온 것을 올린다
+        if self.conflict_dialog.is_none() && !self.conflict_queue.is_empty() {
+            self.conflict_dialog = Some(self.conflict_queue.remove(0));
+        }
+    }
+
+    /// 그 연결에 물어 둔 확인을 모두 포기한다 (FR-55).
+    ///
+    /// 연결이 끊기면 답이 오지 않는다 — 붙잡아 두면 그 전송은 대화도 못 뜨고 큐에도 못
+    /// 들어간 채 남는다. 확인은 안전장치이지 관문이 아니므로 겹침 없음으로 보고 보낸다 (D10)
+    fn abandon_conflict_lists(&mut self, conn: ConnectionId) {
+        // **그 연결로** 물어 둔 것만 거둔다 — 같은 사이트의 다른 연결에 물어 둔 확인은
+        // 그대로 답을 기다린다(사이트 하나가 연결 셋을 쓴다 — FR-37)
+        let abandoned: Vec<u64> = self
+            .conflict_lists
+            .iter()
+            .filter(|(_, (asked, _))| *asked == conn)
+            .map(|(generation, _)| *generation)
+            .collect();
+        for generation in abandoned {
+            self.conflict_lists.remove(&generation);
+            self.settle_conflict(conflict_id(generation), Vec::new());
+        }
+    }
+
+    /// 확인이 끝난 전송 하나를 처리한다 — 받기(워커)와 올리기(서버 조회)가 함께 쓴다 (FR-55).
+    ///
+    /// **어디서 확인했는지는 여기서 상관없다** — 겹친 이름 목록만 있으면 그 다음 일은 같다.
+    /// 대화로 올리는 것은 `drain_conflict_checks`가 프레임마다 한 번 한다
+    fn settle_conflict(&mut self, id: u64, conflicts: Vec<String>) {
+        let Some(at) = self.pending_conflicts.iter().position(|c| c.id == id) else {
+            return;
+        };
+        let check = self.pending_conflicts.remove(at);
+        match apply_conflict_choice(check.drop.clone(), &conflicts, None) {
+            // 겹치는 것이 없다 — 물을 것도 없이 보낸다
+            Some(drop) => self.apply_drop(drop),
+            None => self.conflict_queue.push((check, conflicts)),
+        }
+    }
+
+    /// 같은 이름 확인 대화를 그리고 고른 대로 처리한다 (FR-55)
+    fn show_conflict_dialog(&mut self, ctx: &egui::Context) {
+        let Some((check, conflicts)) = self.conflict_dialog.take() else {
+            return;
+        };
+        // 목록에 폴더 표시를 붙이려면 원래 항목에서 종류를 되찾아야 한다
+        let names: Vec<(String, bool)> = conflicts
+            .iter()
+            .map(|name| {
+                let is_dir = check
+                    .drop
+                    .items
+                    .iter()
+                    .any(|item| item.is_dir() && item.name() == *name);
+                (name.clone(), is_dir)
+            })
+            .collect();
+        match remote_menu::show_conflict_dialog(ctx, &names) {
+            DialogOutcome::Pending => self.conflict_dialog = Some((check, conflicts)),
+            // 취소 — 이 전송은 아무것도 큐에 넣지 않는다 (D6)
+            DialogOutcome::Cancelled => {}
+            DialogOutcome::Confirmed(choice) => {
+                if let Some(drop) = apply_conflict_choice(check.drop, &conflicts, Some(choice)) {
+                    self.apply_drop(drop);
+                }
+            }
+        }
+    }
+
     /// 끌어다 놓은 것을 전송 큐에 넣는다 (FR-38).
     ///
     /// **로컬 → 원격은 올리기, 원격 → 로컬은 받기**다. 로컬끼리·원격끼리는 아무 일도 하지
@@ -1112,7 +1399,9 @@ impl ExplorerApp {
             // 받기·올리기는 **끌어다 놓기와 같은 길**로 보낸다 (FR-38) — 폴더를 훑는 것도,
             // 큐에 넣는 것도 이미 그쪽에 있다. 메뉴만 따로 두면 두 길이 곧 어긋난다
             RemoteMenuAction::Download => {
-                let (Some(site), Some(local)) = (site, self.other_panel_local(panel)) else {
+                // 받는 곳은 **받기 아이콘이 붙은 탭**이다 (FR-54) — 우클릭한 패널의 반대편이
+                // 아니다. 대상이 없으면 메뉴 줄이 비활성이라 여기까지 오지 않는다
+                let (Some(site), Some(dir)) = (site, self.download_dir()) else {
                     return;
                 };
                 let items = targets
@@ -1123,27 +1412,26 @@ impl ExplorerApp {
                         size: item.size,
                     })
                     .collect();
-                self.apply_drop(DropOutcome {
+                self.start_transfer(DropOutcome {
                     items,
                     source_site: Some(site),
-                    target: DropTarget::Local(local.dir),
+                    target: DropTarget::Local(dir),
                 });
             }
             RemoteMenuAction::Upload => {
-                let (Some(site), Some(local), Some(dir)) =
-                    (site, self.other_panel_local(panel), self.remote_dir(conn))
+                // 올리는 곳은 **올리기 아이콘이 붙은 탭**, 올릴 것은 **받기 아이콘 탭의 선택**이다
+                let (Some((site, dir)), selected) = (self.upload_dir(), self.upload_source())
                 else {
                     return;
                 };
-                if local.selected.is_empty() {
+                if selected.is_empty() {
                     return;
                 }
-                let items = local
-                    .selected
+                let items = selected
                     .into_iter()
                     .map(|(path, is_dir)| DragItem::Local { path, is_dir })
                     .collect();
-                self.apply_drop(DropOutcome {
+                self.start_transfer(DropOutcome {
                     items,
                     source_site: None,
                     target: DropTarget::Remote { site, dir },
@@ -1187,21 +1475,22 @@ impl ExplorerApp {
             .and_then(|panel| panel.active_conn())
     }
 
-    /// 원격 메뉴의 `받기`·`올리기`가 짝으로 삼는 **다른 패널의 로컬 쪽 상태**.
-    ///
-    /// 끌어다 놓기에는 "어디로"가 손끝에 있지만 메뉴에는 없다 — 두 칸 탐색기의 반대편이
-    /// 그 자리를 대신한다. 로컬 패널이 하나도 없으면 `None`이라 아무 일도 일어나지 않는다
-    fn other_panel_local(&self, from: PanelId) -> Option<LocalSide> {
-        let view = self.views.get(&self.workspaces.active().id)?;
-        view.panels
-            .iter()
-            .filter(|(id, _)| **id != from)
-            .find_map(|(_, panel)| {
-                panel.local_dir().map(|dir| LocalSide {
-                    dir,
-                    selected: panel.selected_local(),
-                })
-            })
+    /// 지금 워크스페이스의 받기 목적지 (FR-54) — 판정은 `WorkspaceView`가 한다
+    fn download_dir(&self) -> Option<PathBuf> {
+        self.views.get(&self.workspaces.active().id)?.download_dir()
+    }
+
+    /// 지금 워크스페이스의 올리기 목적지 (FR-54)
+    fn upload_dir(&self) -> Option<(SiteId, RemotePath)> {
+        self.views.get(&self.workspaces.active().id)?.upload_dir()
+    }
+
+    /// 지금 워크스페이스에서 올릴 것 (FR-54)
+    fn upload_source(&self) -> Vec<(PathBuf, bool)> {
+        self.views
+            .get(&self.workspaces.active().id)
+            .map(WorkspaceView::upload_source)
+            .unwrap_or_default()
     }
 
     /// 원격 대화들을 그리고 확인된 명령을 연결에 보낸다 (FR-39).
@@ -1718,6 +2007,8 @@ impl ExplorerApp {
             return;
         };
         if let Some(conn) = panel.close_tab(ctx) {
+            // 접기 전에 물어 둔 확인을 거둔다 — `release_conn`과 같은 이유다
+            self.abandon_conflict_lists(conn);
             self.manager.close(conn);
         }
     }
@@ -1736,6 +2027,11 @@ impl ExplorerApp {
     /// 기다리는 자리도 함께 지운다 (T24 Acceptance ④) — 남기면 영영 기다린다
     fn release_conn(&mut self, conn: ConnectionId) {
         let site = self.manager.get(conn).map(|connection| connection.site);
+        // 접기 **전에** 물어 둔 확인을 거둔다 — `manager.close`가 연결을 지우고 나면
+        // 그 사이트를 알 길이 없어, 답을 기다리던 전송이 대화도 못 뜨고 큐에도 못 들어간
+        // 채 남는다. 연결이 스스로 끊기는 길(`ConnPhase::Closed|Failed`)과 달리 이쪽은
+        // 워커의 단계 통지를 거치지 않는다
+        self.abandon_conflict_lists(conn);
         self.manager.close(conn);
         self.tree_cache.forget(conn);
         self.pending_tree_lists
@@ -1766,12 +2062,30 @@ impl ExplorerApp {
                     if matches!(phase, ConnPhase::Ready) {
                         self.request_remote_list(conn);
                     }
+                    // 연결이 끊기면 물어 둔 확인의 답이 영영 오지 않는다 — 그 전송을 붙잡아
+                    // 두지 말고 확인을 포기하고 보낸다 (D10). 서버가 거절하면 큐가 알린다
+                    if matches!(phase, ConnPhase::Failed { .. } | ConnPhase::Closed) {
+                        self.abandon_conflict_lists(conn);
+                    }
                 }
                 ConnEvent::Listed {
                     generation,
                     path,
                     entries,
                 } => {
+                    // 같은 이름 확인이 청한 답이면 여기서 끝난다 — 목록 화면·트리는 모른다.
+                    // **가장 먼저** 본다: 아래 패널 매칭까지 흘러가면 엉뚱한 패널이 이 목록을
+                    // 자기 것으로 그린다
+                    if let Some((_, names)) = self.conflict_lists.remove(&generation) {
+                        let existing: Vec<String> =
+                            entries.into_iter().map(|entry| entry.name).collect();
+                        // 올리는 곳은 대개 POSIX라 대소문자를 가린다 — 가리지 않으면 헛경고다 (D5)
+                        self.settle_conflict(
+                            conflict_id(generation),
+                            conflict_names(&names, &existing, false),
+                        );
+                        continue;
+                    }
                     // 트리가 청한 답이면 캐시로 간다 — 목록 화면은 이것을 모른다
                     if let Some((conn, path, cache_generation)) =
                         self.pending_tree_lists.remove(&generation)
@@ -1833,6 +2147,12 @@ impl ExplorerApp {
                 // 패널이 청한 것이면 **옮기기를 무르고** 사유를 상태 줄에 남긴다 (F-7 리뷰 B2).
                 // 무르지 않으면 주소창은 새 폴더를, 목록은 이전 폴더를 가리킨 채 갈라진다
                 ConnEvent::ListFailed { generation, detail } => {
+                    // 확인은 안전장치이지 관문이 아니다 — 물어보지 못했다고 전송을 막지
+                    // 않는다. 사유는 서버 로그에 남는다 (D10)
+                    if self.conflict_lists.remove(&generation).is_some() {
+                        self.settle_conflict(conflict_id(generation), Vec::new());
+                        continue;
+                    }
                     match self.pending_tree_lists.remove(&generation) {
                         Some((conn, path, cache_generation)) => {
                             self.tree_cache.fail(conn, cache_generation, &path, detail);
@@ -2202,6 +2522,7 @@ impl eframe::App for ExplorerApp {
                     .show(crate::i18n::dynamic::skipped_folders(skipped), now);
             }
         }
+        self.drain_conflict_checks();
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
         self.runner
             .start_ready(&mut self.queue, &self.manager, &self.sites, now);
@@ -2316,6 +2637,9 @@ impl eframe::App for ExplorerApp {
                 // 아직 뷰가 없을 수 있다
                 self.ensure_active_view();
                 if let Some(view) = self.views.get_mut(&id) {
+                    // 전송 대상은 **그리기 전에** 정한다 — 아이콘이 가리키는 곳과 실제로 가는
+                    // 곳이 같은 값에서 나와야 한다 (FR-54)
+                    let targets = view.transfer_targets();
                     let outcome = splitter::show_layout(
                         ui,
                         &ctx,
@@ -2333,7 +2657,14 @@ impl eframe::App for ExplorerApp {
                             show_extensions: self.settings.show_extensions,
                             show_hidden: self.settings.show_hidden,
                         },
+                        targets,
                     );
+                    // 이번 프레임에 눌린 패널이 다음 전송의 대상이 된다 — 팝업에 가린 클릭은
+                    // 여기 오지 않는다(`pressed_panel` 설명). 메뉴 실행보다 **앞서** 반영해야
+                    // 방금 우클릭한 패널이 곧 올리기 대상이 된다
+                    if let Some(pressed) = outcome.pressed_panel {
+                        view.note_pressed(pressed);
+                    }
                     menu = outcome.menu;
                     panel_command = outcome.command;
                     remote_action = outcome.remote;
@@ -2358,7 +2689,7 @@ impl eframe::App for ExplorerApp {
                 // 끌어다 놓은 것을 큐에 넣는다 — 어느 패널에 놓였는지는 쓰지 않는다(항목의
                 // 종류와 놓은 자리의 종류만으로 방향이 정해진다)
                 if let Some((_, drop)) = dropped.take() {
-                    self.apply_drop(drop);
+                    self.start_transfer(drop);
                 }
                 // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
                 if let Some((target, (action, targets))) = remote_menu.take() {
@@ -2391,6 +2722,8 @@ impl eframe::App for ExplorerApp {
         self.show_settings_dialog(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);
+        // 같은 이름 확인 대화 (FR-55) — 이것이 닫히기 전에는 그 전송이 큐에 들어가지 않는다
+        self.show_conflict_dialog(&ctx);
         // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
         self.toast.show_ui(&ctx);
         // 로그 복사는 그리기가 끝난 뒤에 보낸다 (`⧉` — FR-40)
@@ -2434,6 +2767,23 @@ struct RemoteOps {
 /// 패널의 목록 조회는 0부터 하나씩 올라간다 — 두 번호가 겹치면 한쪽의 답을 다른 쪽이
 /// 가져가 서로 영영 기다린다. 실제로 부딪히려면 패널이 이 값만큼 폴더를 옮겨야 한다
 const TREE_LIST_BASE: u64 = 1 << 40;
+
+/// 같은 이름 확인 조회의 세대 기준값 (FR-55) — 패널 목록·트리와 번호 공간을 나눈다.
+///
+/// 세 번째 종류가 되면서 기준값도 셋이 됐다. 요청에 출처를 명시하는 `enum ListSource`로
+/// 바꾸는 것은 별도 작업으로 미뤘다(plan D8) — 연결·패널·트리 캐시까지 닿는 리팩터다
+const CONFLICT_LIST_BASE: u64 = 2 << 40;
+
+/// 확인 번호 → 조회 세대. **등록·발송·조회가 모두 이 한 쌍만 쓴다** — 양쪽에서 손으로
+/// 더하고 빼면 한쪽만 고쳐졌을 때 답을 영영 찾지 못한다(실제로 그렇게 어긋났다)
+fn conflict_generation(id: u64) -> u64 {
+    CONFLICT_LIST_BASE + id
+}
+
+/// 조회 세대 → 확인 번호 — 위의 역이다
+fn conflict_id(generation: u64) -> u64 {
+    generation - CONFLICT_LIST_BASE
+}
 
 /// 트리에 보일 차례로 줄을 세운다 — **목록과 같은 규칙**이라야 화면이 두 벌로 갈리지 않는다.
 /// (`remote::tree_cache`는 `panel`을 모르므로 정렬은 이쪽에서 맞춰 넘긴다)
@@ -2518,10 +2868,59 @@ fn delete_command(path: RemotePath, is_dir: bool) -> ConnCommand {
     }
 }
 
-/// 원격 메뉴가 짝으로 삼는 로컬 패널의 상태 — 보고 있는 폴더와 그 안에서 고른 것들
-struct LocalSide {
-    dir: PathBuf,
-    selected: Vec<(PathBuf, bool)>,
+/// 고른 최상위 항목 중 **대상에 이미 있는 이름**들 (FR-55).
+///
+/// 판정 단위가 최상위 항목인 이유(D4): 대상 폴더 목록을 한 번만 읽으면 되어 확인 대화가
+/// 곧바로 뜬다. 폴더는 통째로 덮어쓰기·건너뛰기가 되고, 그 안까지 파고들지 않는다.
+///
+/// `ignore_case`는 **받는 쪽 파일시스템의 규칙**이다 — 받기는 Windows라 참(대소문자를 가려
+/// 봐야 실제로는 덮인다), 올리기는 대개 POSIX라 거짓(가리지 않으면 헛경고가 난다)
+fn conflict_names(names: &[String], existing: &[String], ignore_case: bool) -> Vec<String> {
+    let same = |a: &str, b: &str| {
+        if ignore_case {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    names
+        .iter()
+        .filter(|name| existing.iter().any(|had| same(name, had)))
+        .cloned()
+        .collect()
+}
+
+/// 확인 결과와 사용자의 결정으로 **실제로 큐에 넣을 것**을 정한다 (FR-55).
+///
+/// D6의 계약을 이 한 함수에 담는다 — 아직 묻지 않았는데(`choice`가 `None`) 충돌이 있으면
+/// `None`을 돌려주어 **아무것도 큐에 들어가지 않게** 한다. 취소는 호출부가 아예 부르지 않는다
+fn apply_conflict_choice(
+    drop: DropOutcome,
+    conflicts: &[String],
+    choice: Option<ConflictChoice>,
+) -> Option<DropOutcome> {
+    match choice {
+        // 아직 묻기 전 — 겹치는 것이 없을 때만 그대로 보낸다
+        None if conflicts.is_empty() => Some(drop),
+        None => None,
+        Some(ConflictChoice::Overwrite) => Some(drop),
+        Some(ConflictChoice::Skip) => {
+            let items: Vec<DragItem> = drop
+                .items
+                .into_iter()
+                .filter(|item| !conflicts.contains(&item.name()))
+                .collect();
+            // 겹치는 것을 빼고 나니 남는 것이 없으면 보낼 일도 없다
+            (!items.is_empty()).then_some(DropOutcome { items, ..drop })
+        }
+    }
+}
+
+/// 같은 이름 확인을 기다리는 전송 한 벌 (FR-55)
+struct ConflictCheck {
+    /// 이 확인의 번호 — 워커·서버 답이 어느 조작의 것인지 잇는다
+    id: u64,
+    drop: DropOutcome,
 }
 
 /// 지금 뜬 원격 대화의 종류
@@ -2914,6 +3313,261 @@ mod tests {
         assert!(
             !should_hide_on_close(true, true, true),
             "종료 중인데 창만 숨긴다"
+        );
+    }
+
+    /// 로컬 탭 하나를 든 패널
+    fn local_panel(dir: &str) -> PanelState {
+        PanelState::new(PathBuf::from(dir))
+    }
+
+    /// 연결까지 붙은 원격 탭을 활성으로 둔 패널 — 앞의 로컬 탭은 배경으로 남는다
+    fn remote_panel(dir: &str, site: u32, path: &str, conn: u32) -> PanelState {
+        let mut panel = local_panel(dir);
+        panel.open_remote_tab(SiteId(site), RemotePath::new(path));
+        assert!(
+            panel.attach_conn(ConnectionId(conn)),
+            "원격 탭에 연결이 붙지 않았다"
+        );
+        panel
+    }
+
+    #[test]
+    fn 마지막으로_누른_패널의_활성_탭이_전송_대상이_된다() {
+        // 화면에 아이콘으로 보이는 곳과 실제로 가는 곳이 같아야 한다 (FR-54)
+        let area = rect(0, 0, 1200, 800);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let left = view.active;
+        view.panels.insert(left, local_panel(r"D:\받은 파일"));
+        let right = view
+            .layout
+            .split(left, SplitDir::Horizontal, SplitPlace::After, area)
+            .unwrap();
+        view.panels
+            .insert(right, remote_panel(r"C:\", 7, "/pub", 3));
+
+        view.note_pressed(left);
+        view.note_pressed(right);
+
+        let targets = view.transfer_targets();
+        assert_eq!(
+            targets.download,
+            view.panels[&left].active_tab_id().into(),
+            "받기 대상이 마지막으로 누른 로컬 탭이 아니다"
+        );
+        assert_eq!(targets.upload, view.panels[&right].active_tab_id().into());
+        assert_eq!(view.download_dir(), Some(PathBuf::from(r"D:\받은 파일")));
+        assert_eq!(
+            view.upload_dir(),
+            Some((SiteId(7), RemotePath::new("/pub")))
+        );
+    }
+
+    #[test]
+    fn 원격_탭으로_옮겨도_받기_대상은_그_로컬_탭을_지킨다() {
+        // 한 패널에 로컬·원격 탭이 섞이면(나눌 자리가 없어 같은 패널에 열린 경우) 패널만
+        // 기억하는 방식은 원격 탭을 보는 순간 받기 대상을 잃는다 — 그래서 탭을 기억한다 (D2)
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let only = view.active;
+        view.panels.insert(only, local_panel(r"D:\받은 파일"));
+        view.note_pressed(only);
+        let 로컬_탭 = view.panels[&only].active_tab_id();
+
+        // 같은 패널에 원격 탭을 열면 로컬 탭은 배경으로 밀린다
+        view.panels
+            .get_mut(&only)
+            .unwrap()
+            .open_remote_tab(SiteId(1), RemotePath::new("/pub"));
+        view.note_pressed(only);
+
+        let targets = view.transfer_targets();
+        assert_eq!(targets.download, Some(로컬_탭), "받기 대상이 사라졌다");
+        assert_eq!(view.download_dir(), Some(PathBuf::from(r"D:\받은 파일")));
+    }
+
+    #[test]
+    fn 배경_탭이_대상이면_올릴_것이_없다() {
+        // 목록 선택은 패널마다 하나뿐이라 배경 탭의 선택은 화면에 남아 있지 않다 (D3)
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let only = view.active;
+        view.panels
+            .insert(only, remote_panel(r"D:\받은 파일", 1, "/pub", 2));
+        view.note_pressed(only);
+
+        let targets = view.transfer_targets();
+        assert!(targets.upload.is_some(), "올릴 곳은 정해져 있어야 한다");
+        assert!(view.upload_source().is_empty());
+        assert!(!targets.can_upload, "배경 탭의 선택으로 올리기가 열렸다");
+    }
+
+    #[test]
+    fn 대상_탭이_사라지면_같은_종류의_활성_탭으로_되돌아간다() {
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let only = view.active;
+        view.panels.insert(only, local_panel(r"D:\받은 파일"));
+        view.note_pressed(only);
+        let 옛_탭 = view.panels[&only].active_tab_id();
+
+        // 그 패널을 통째로 갈아 끼우면 옛 탭은 어디에도 없다
+        view.panels.insert(only, local_panel(r"E:\새 폴더"));
+        let targets = view.transfer_targets();
+        assert_ne!(targets.download, Some(옛_탭));
+        assert_eq!(view.download_dir(), Some(PathBuf::from(r"E:\새 폴더")));
+
+        // 활성 탭이 로컬인 패널이 하나도 없으면 받기 대상 자체가 없다
+        view.panels
+            .insert(only, remote_panel(r"E:\새 폴더", 1, "/pub", 2));
+        let targets = view.transfer_targets();
+        assert_eq!(targets.download, None);
+        assert!(!targets.can_download);
+    }
+
+    /// 원격에서 받아 오는 전송 한 벌 — 이름만 다른 파일 셋
+    fn 받기_전송(names: &[&str]) -> DropOutcome {
+        DropOutcome {
+            items: names
+                .iter()
+                .map(|name| DragItem::Remote {
+                    path: RemotePath::new(&format!("/pub/{name}")),
+                    is_dir: false,
+                    size: 10,
+                })
+                .collect(),
+            source_site: Some(SiteId(1)),
+            target: DropTarget::Local(PathBuf::from(r"D:\받은 파일")),
+        }
+    }
+
+    fn 이름들(drop: &DropOutcome) -> Vec<String> {
+        drop.items.iter().map(DragItem::name).collect()
+    }
+
+    #[test]
+    fn 받는_쪽은_대소문자를_가리지_않는다() {
+        // Windows는 A.TXT가 있으면 a.txt도 실제로 덮인다 — 가려 보면 경고를 놓친다 (D5)
+        let 고른_것 = ["report.zip".to_owned(), "a.txt".to_owned()];
+        let 이미 = ["REPORT.ZIP".to_owned(), "b.txt".to_owned()];
+        assert_eq!(conflict_names(&고른_것, &이미, true), vec!["report.zip"]);
+        // 올리는 쪽(POSIX)은 가린다 — 가리지 않으면 헛경고가 난다
+        assert!(conflict_names(&고른_것, &이미, false).is_empty());
+    }
+
+    #[test]
+    fn 묻기_전에는_겹치는_것이_있으면_아무것도_보내지_않는다() {
+        // D6 — 취소가 절반만 취소되지 않게 하는 계약이다
+        let drop = 받기_전송(&["report.zip", "a.txt", "b.txt"]);
+        let 겹침 = vec!["report.zip".to_owned()];
+        assert!(apply_conflict_choice(drop.clone(), &겹침, None).is_none());
+        // 겹치는 것이 없으면 묻지 않고 그대로 간다
+        let 그대로 = apply_conflict_choice(drop.clone(), &[], None).expect("보낼 것이 있다");
+        assert_eq!(이름들(&그대로).len(), 3);
+    }
+
+    #[test]
+    fn 덮어쓰기는_전부_건너뛰기는_겹치는_것만_뺀다() {
+        let drop = 받기_전송(&["report.zip", "a.txt", "b.txt"]);
+        let 겹침 = vec!["report.zip".to_owned()];
+
+        let 덮어쓰기 = apply_conflict_choice(drop.clone(), &겹침, Some(ConflictChoice::Overwrite))
+            .expect("덮어쓰면 전부 간다");
+        assert_eq!(이름들(&덮어쓰기).len(), 3);
+
+        let 건너뛰기 = apply_conflict_choice(drop.clone(), &겹침, Some(ConflictChoice::Skip))
+            .expect("나머지는 간다");
+        assert_eq!(이름들(&건너뛰기), vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn 건너뛰어_남는_것이_없으면_보내지_않는다() {
+        let drop = 받기_전송(&["report.zip"]);
+        let 겹침 = vec!["report.zip".to_owned()];
+        assert!(apply_conflict_choice(drop, &겹침, Some(ConflictChoice::Skip)).is_none());
+    }
+
+    #[test]
+    fn 확인_결과는_대화가_떠_있어도_유실되지_않는다() {
+        // 회귀 — 되돌려 넣을 때 계산된 겹침 목록을 버리면 워커가 답을 다시 보내지 않아
+        // 그 전송은 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다 (리뷰 B1)
+        let 대기: Vec<(ConflictCheck, Vec<String>)> = vec![
+            (
+                ConflictCheck {
+                    id: 1,
+                    drop: 받기_전송(&["a.txt"]),
+                },
+                vec!["a.txt".to_owned()],
+            ),
+            (
+                ConflictCheck {
+                    id: 2,
+                    drop: 받기_전송(&["b.txt"]),
+                },
+                vec!["b.txt".to_owned()],
+            ),
+        ];
+        // 대기열에 든 것은 겹침 목록을 **함께** 들고 있어야 다음 차례에 그대로 물어볼 수 있다
+        for (check, conflicts) in &대기 {
+            assert!(
+                !conflicts.is_empty(),
+                "겹침 목록이 비어 대화를 띄울 수 없다"
+            );
+            assert!(
+                apply_conflict_choice(check.drop.clone(), conflicts, None).is_none(),
+                "겹치는데도 묻지 않고 통과했다"
+            );
+            let 덮어쓰기 = apply_conflict_choice(
+                check.drop.clone(),
+                conflicts,
+                Some(ConflictChoice::Overwrite),
+            );
+            assert!(덮어쓰기.is_some(), "차례가 와도 보낼 수 없는 상태다");
+        }
+    }
+
+    #[test]
+    fn 올리는_쪽은_대소문자를_가린다() {
+        // 원격은 대개 POSIX다 — 가리지 않으면 Setup.exe 때문에 setup.exe가 헛경고를 받는다 (D5)
+        let 올릴_것 = ["setup.exe".to_owned(), "data.bin".to_owned()];
+        let 원격 = ["setup.exe".to_owned(), "log".to_owned()];
+        assert_eq!(conflict_names(&올릴_것, &원격, false), vec!["setup.exe"]);
+
+        let 대문자만 = ["Setup.exe".to_owned()];
+        assert!(
+            conflict_names(&올릴_것, &대문자만, false).is_empty(),
+            "대소문자가 다른 이름을 겹친 것으로 봤다"
+        );
+    }
+
+    #[test]
+    fn 확인_번호와_조회_세대는_서로_되돌아온다() {
+        // 회귀 — 등록은 확인 번호로, 조회는 기준값을 더한 세대로 하는 바람에 답이 와도
+        // 찾지 못했다. 올리기가 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다 (완료 검증 B1)
+        for id in [0, 1, 7, 4096, u32::MAX as u64] {
+            let generation = conflict_generation(id);
+            assert_eq!(
+                conflict_id(generation),
+                id,
+                "세대에서 확인 번호를 되찾지 못했다"
+            );
+            assert!(
+                generation >= CONFLICT_LIST_BASE,
+                "확인 조회가 자기 번호 공간 밖으로 나갔다"
+            );
+        }
+        // 서로 다른 확인은 서로 다른 세대를 쓴다 — 겹치면 한쪽 답을 다른 쪽이 가져간다
+        assert_ne!(conflict_generation(1), conflict_generation(2));
+    }
+
+    #[test]
+    fn 조회_세대는_다른_조회와_번호가_겹치지_않는다() {
+        // 겹치면 한쪽의 답을 다른 쪽이 가져가 서로 영영 기다린다 (D8).
+        // 두 공간 사이의 간격이 한 실행에서 쓸 번호보다 훨씬 크다
+        const { assert!(CONFLICT_LIST_BASE - TREE_LIST_BASE == 1 << 40) };
+        // 확인 번호는 기준값에 더해 보내고 답에서 다시 빼 되찾는다 — 그 왕복이 맞는지 본다
+        let 보낸_세대 = CONFLICT_LIST_BASE + 7;
+        assert_eq!(보낸_세대 - CONFLICT_LIST_BASE, 7);
+        assert!(
+            보낸_세대 > TREE_LIST_BASE + (1 << 39),
+            "트리 번호 공간과 겹친다"
         );
     }
 }

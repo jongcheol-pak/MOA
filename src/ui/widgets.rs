@@ -5,11 +5,27 @@
 //! 이 규칙을 화면마다 각자 구현하면 hover 색·여백·테두리가 조금씩 갈린다.
 use std::sync::Arc;
 
+use crate::remote::connection::TransferDirection;
 use crate::ui::theme;
 use eframe::egui;
 
 /// 아이콘 글꼴 기본 크기 — 타이틀바 캡션 버튼이 쓰던 값이 기준이다
 const DEFAULT_ICON_PX: f32 = 16.0;
+
+/// 전송 방향 글리프 (인벤토리 #44) — 아이콘 글꼴에서 가져온다 (프로젝트 규약)
+pub const UPLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_UP;
+pub const DOWNLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_DOWN;
+
+/// 전송 방향을 나타내는 글리프와 색 — **전송 큐와 탭 스트립이 함께 쓴다**.
+///
+/// 큐 화면에만 두지 않는 이유: 탭 스트립도 "이 탭이 받는 곳인가 올리는 곳인가"를 같은 뜻으로
+/// 보여야 하는데(FR-54), 각자 글리프를 정하면 같은 개념이 화면마다 다른 모양이 된다
+pub fn direction_mark(direction: TransferDirection) -> (&'static str, egui::Color32) {
+    match direction {
+        TransferDirection::Upload => (UPLOAD_GLYPH, theme::ACCENT),
+        TransferDirection::Download => (DOWNLOAD_GLYPH, theme::OK_TEXT),
+    }
+}
 
 /// 이 글자가 **아이콘 글꼴(phosphor)의 것**인가 — 사용자 정의 영역(U+E000~U+F8FF)에 있는가.
 ///

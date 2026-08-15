@@ -4,6 +4,7 @@ use crate::panel::history::History;
 use crate::remote::connection::ConnectionId;
 use crate::remote::types::{RemotePath, SiteId};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateSolidBrush, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FillRect, HDC,
@@ -24,11 +25,38 @@ use windows::core::{HSTRING, PWSTR, Result};
 /// 탭 스트립 높이
 pub const TAB_HEIGHT: i32 = 26;
 
+/// 탭 하나를 앱이 사는 동안 유일하게 가리키는 값 (FR-54).
+///
+/// 인덱스로 탭을 가리키지 않는 이유: 앞의 탭이 닫히면 인덱스가 당겨져 **다른 탭을 가리키게**
+/// 된다. 전송 대상은 탭을 오래 기억해야 하므로(배경 탭으로 밀려도 유지된다) 자리가 아니라
+/// 신원으로 가리킨다.
+///
+/// 세션에 저장하지 않는다 — 앱을 다시 켜면 새로 매겨지고, 대상은 그때 다시 정해진다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TabId(u64);
+
+/// 다음에 내줄 번호. **닫힌 탭의 번호는 다시 쓰지 않는다** — 재사용하면 옛 번호를 들고 있던
+/// 쪽이 엉뚱한 탭을 가리키게 된다.
+///
+/// 형제 식별자들(`SiteId`·`ConnectionId`·`TransferId`)처럼 소유자의 `next_id` 필드를 쓰지 않고
+/// **모듈 전역**에 두는 이유: 그쪽 소유자는 앱에 하나뿐이지만 `TabsModel`은 **패널마다** 있어,
+/// 인스턴스마다 세면 다른 패널의 탭이 같은 번호를 받는다. 발급기를 주입 가능한 트레이트로
+/// 만들지도 않는다 — 바꿔 낄 구현이 없고 테스트도 "서로 다르다"만 보면 된다
+static NEXT_TAB_ID: AtomicU64 = AtomicU64::new(1);
+
+impl TabId {
+    fn next() -> TabId {
+        TabId(NEXT_TAB_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// 탭 하나의 탐색 상태 — 탭별 독립 소스·히스토리 (FR-3).
 ///
 /// 커밋된 위치를 `PathBuf`가 아니라 `TabSource`로 드는 이유는 아래 `TabSource` 설명 참조.
 /// 히스토리는 **로컬 탐색 전용**이다 — 원격 탭의 뒤로/앞으로는 이번 범위 밖이라 비워 둔다
 pub struct TabState {
+    /// 이 탭의 신원 — 생성자가 스스로 매긴다(호출부는 넘기지 않는다)
+    pub id: TabId,
     pub source: TabSource,
     pub history: History,
 }
@@ -36,6 +64,7 @@ pub struct TabState {
 impl TabState {
     pub fn new(path: PathBuf) -> TabState {
         TabState {
+            id: TabId::next(),
             history: History::new(path.clone()),
             source: TabSource::Local(path),
         }
@@ -44,6 +73,7 @@ impl TabState {
     /// 원격 위치를 가리키는 탭 — 아직 연결하지 않은 상태로 만든다
     pub fn remote(site: SiteId, path: RemotePath) -> TabState {
         TabState {
+            id: TabId::next(),
             // 히스토리는 로컬 경로만 담는다 — 원격 탭에서는 쓰이지 않는다
             history: History::new(PathBuf::new()),
             source: TabSource::Remote {
@@ -184,6 +214,13 @@ impl TabsModel {
         Some(TabsModel { tabs, active })
     }
 
+    /// 탭들을 그대로 본다 — **신원(`TabId`)과 소스를 함께 봐야 하는 곳**이 쓴다
+    /// (탭 스트립이 어느 탭에 전송 아이콘을 그릴지 고르는 자리 — FR-54).
+    /// `sources()`는 소스만 복제해 주므로 그 판정에 쓸 수 없다
+    pub fn tabs(&self) -> &[TabState] {
+        &self.tabs
+    }
+
     /// 탭별 소스 (탭 순서 유지) — 세션 저장·탭 라벨이 쓴다
     pub fn sources(&self) -> Vec<TabSource> {
         self.tabs.iter().map(|t| t.source.clone()).collect()
@@ -217,6 +254,11 @@ impl TabsModel {
 
     pub fn active(&self) -> &TabState {
         &self.tabs[self.active]
+    }
+
+    /// 지금 보고 있는 탭의 신원 (FR-54)
+    pub fn active_id(&self) -> TabId {
+        self.tabs[self.active].id
     }
 
     pub fn active_mut(&mut self) -> &mut TabState {
@@ -488,6 +530,47 @@ mod tests {
 
     fn tab(p: &str) -> TabState {
         TabState::new(PathBuf::from(p))
+    }
+
+    #[test]
+    fn 탭마다_다른_신원을_받는다() {
+        // 인덱스가 아니라 신원으로 가리키는 이유가 이것이다 — 앞 탭이 닫혀도 남은 탭의
+        // 값이 흔들리지 않아야 전송 대상이 엉뚱한 곳으로 옮겨가지 않는다 (FR-54)
+        let mut m = TabsModel::new(tab(r"C:\a"));
+        m.add(tab(r"C:\b"));
+        m.add(tab(r"C:\c"));
+        let ids: Vec<TabId> = m.tabs().iter().map(|t| t.id).collect();
+        assert_eq!(ids.len(), 3);
+        for (at, id) in ids.iter().enumerate() {
+            assert!(
+                !ids[at + 1..].contains(id),
+                "같은 신원을 두 탭이 나눠 가졌다: {id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 닫힌_탭의_신원은_다시_쓰이지_않는다() {
+        // 재사용하면 옛 값을 들고 있던 쪽(전송 대상)이 새 탭을 옛 탭으로 착각한다
+        let mut m = TabsModel::new(tab(r"C:\a"));
+        m.add(tab(r"C:\b"));
+        let 닫힌_신원 = m.tabs()[1].id;
+        m.close(1);
+        m.add(tab(r"C:\c"));
+        assert!(
+            m.tabs().iter().all(|t| t.id != 닫힌_신원),
+            "닫힌 탭의 신원이 새 탭에 다시 매겨졌다"
+        );
+    }
+
+    #[test]
+    fn 세션에서_되살린_탭들도_신원이_서로_다르다() {
+        // 복원 경로도 생성자를 거치므로 자동으로 성립한다 — 그 계약을 굳혀 둔다
+        let m = TabsModel::from_tabs(vec![tab(r"C:\a"), tab(r"C:\b")], 5).expect("탭 둘");
+        assert_ne!(m.tabs()[0].id, m.tabs()[1].id);
+        // 활성 인덱스는 범위로 눌리고, 그 자리의 신원이 active_id다
+        assert_eq!(m.active_index(), 1);
+        assert_eq!(m.active_id(), m.tabs()[1].id);
     }
 
     #[test]

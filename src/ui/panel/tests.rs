@@ -93,6 +93,8 @@ fn draw_once(panel: &mut PanelState, sites: &SiteStore) -> eframe::egui::FullOut
                 &mut textures,
                 remote,
                 PanelMenuState::for_panes(1, ViewMode::Details),
+                // 전송 대상이 없는 상태 — 이 시험들은 탭 아이콘이 아니라 배치·상태를 본다
+                crate::ui::tabs::TransferTargets::default(),
             );
         });
     })

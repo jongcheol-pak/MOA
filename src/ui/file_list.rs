@@ -459,7 +459,7 @@ impl FileListView {
 impl FileListView {
     /// 로컬 목록에서 고른 항목들 — 경로와 폴더 여부. 원격 목록이면 빈 벡터다.
     ///
-    /// 원격 메뉴의 `올리기`가 반대편 패널에서 이것을 읽는다 (FR-39)
+    /// 원격 메뉴의 `올리기`가 **받기 아이콘이 붙은 탭**에서 이것을 읽는다 (FR-54)
     pub fn selected_local(&self) -> Vec<(PathBuf, bool)> {
         let ListModel::Local(rows) = &self.model else {
             return Vec::new();

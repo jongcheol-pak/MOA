@@ -5,7 +5,8 @@
 //! 탭 하나는 **한 덩어리 위젯**이다 — 제목과 닫기 버튼을 각각 `Button`으로 두면
 //! 저마다 프레임·여백을 그려 두 개의 사각형으로 보인다(Windows 11 탐색기는 한 탭 안에
 //! 아이콘·제목·닫기가 들어 있다). 그래서 영역만 잡고 내용은 직접 그린다.
-use crate::panel::tabs::{TabPhase, TabSource, TabsModel};
+use crate::panel::tabs::{TabId, TabPhase, TabSource, TabsModel};
+use crate::remote::connection::TransferDirection;
 use crate::remote::types::Protocol;
 use crate::remote::types::SiteId;
 use crate::ui::menu::{self, Command, PanelMenuState};
@@ -55,6 +56,25 @@ const SPLIT_ICON_SIZE: f32 = 12.0;
 /// 분할 버튼 아이콘 선 두께
 const SPLIT_ICON_STROKE: f32 = 1.0;
 
+/// 전송 대상 탭과 지금 할 수 있는 일 — 앱이 정해 패널·탭 스트립으로 내려보낸다 (FR-54).
+///
+/// 화면에 보이는 것과 실제로 가는 곳이 **같은 값에서 나와야** 하므로, 아이콘을 그리는 쪽과
+/// 메뉴를 여닫는 쪽과 전송을 만드는 쪽이 모두 이 한 값을 본다.
+///
+/// 값을 정하는 곳은 `ui::app`인데 **정의는 여기 둔다** — 이 파일이 그리기에 쓰므로 `ui::app`에
+/// 두면 `ui::tabs` → `ui::app`이라는 상향 의존이 생긴다. 아래로 흐르는 값은 아래에 둔다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TransferTargets {
+    /// 받기 아이콘을 그릴 로컬 탭
+    pub download: Option<TabId>,
+    /// 올리기 아이콘을 그릴 원격 탭
+    pub upload: Option<TabId>,
+    /// 받기가 지금 뜻이 있는가 — 받을 곳이 정해져 있다
+    pub can_download: bool,
+    /// 올리기가 지금 뜻이 있는가 — 올릴 곳이 연결돼 있고 올릴 것도 골라져 있다
+    pub can_upload: bool,
+}
+
 /// 탭 스트립이 상위(패널)에 돌려주는 조작.
 /// 탭 조작과 메뉴 명령은 서로 독립이라 한 프레임에 함께 나올 수 있다
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -102,6 +122,7 @@ pub fn show_tab_strip(
     model: &TabsModel,
     remote: RemoteView<'_>,
     menu_state: PanelMenuState,
+    targets: TransferTargets,
 ) -> TabStripOutcome {
     let mut outcome = TabStripOutcome::default();
     // 두 클로저가 `outcome`을 동시에 빌리지 않도록 필드를 나눠 넘긴다
@@ -112,7 +133,7 @@ pub fn show_tab_strip(
     } = &mut outcome;
     egui::Sides::new().shrink_left().height(STRIP_HEIGHT).show(
         ui,
-        |ui| show_tabs(ui, model, remote, tab, open_site),
+        |ui| show_tabs(ui, model, remote, targets, tab, open_site),
         |ui| show_menu_button(ui, menu_state, command),
     );
     // 사이드바에서 끌어온 사이트를 이 스트립에 놓으면 새 탭으로 연다 (FR-38·인벤토리 #15).
@@ -150,6 +171,7 @@ fn show_tabs(
     ui: &mut egui::Ui,
     model: &TabsModel,
     remote: RemoteView<'_>,
+    targets: TransferTargets,
     action: &mut Option<TabAction>,
     open_site: &mut Option<SiteId>,
 ) {
@@ -162,9 +184,10 @@ fn show_tabs(
             // 탭끼리 붙어야 한 줄로 이어져 보인다 — 사이를 벌리면 다시 낱개 버튼처럼 보인다
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.horizontal(|ui| {
-                let sources = model.sources();
+                let tabs = model.tabs();
                 let active_index = model.active_index();
-                for (index, source) in sources.iter().enumerate() {
+                for (index, tab) in tabs.iter().enumerate() {
+                    let source = &tab.source;
                     let active = index == active_index;
                     // 원격 탭의 이름·프로토콜은 사이트 설정에서 그때그때 읽는다 —
                     // 탭이 사본을 들면 `이름 바꾸기(R)` 뒤에 탭만 옛 이름으로 남는다 (T7 결정)
@@ -179,7 +202,15 @@ fn show_tabs(
                         }
                         TabSource::Local(_) => None,
                     };
-                    let hit = show_tab(ui, index, &title, source, badge, active);
+                    let hit = show_tab(
+                        ui,
+                        index,
+                        &title,
+                        source,
+                        badge,
+                        active,
+                        tab_icon(tab.id, targets),
+                    );
                     if hit.close {
                         *action = Some(TabAction::Close(index));
                     } else if hit.switch {
@@ -190,7 +221,7 @@ fn show_tabs(
                     // 마지막 탭 뒤에도 같은 규칙으로 하나 둔다 — 탭 줄과 `+`를 가르는 선이다
                     // (사용자 요청). 활성 탭 옆이면 여기서도 긋지 않는다
                     let next = index + 1;
-                    let before_plus = next == sources.len();
+                    let before_plus = next == tabs.len();
                     if !active && (before_plus || next != active_index) {
                         draw_separator(ui.painter(), hit.rect);
                     }
@@ -220,6 +251,8 @@ fn show_tabs(
 ///
 /// 내부 요소는 위젯이 아니라 painter로 그린다. `icon_button` 같은 위젯을 쓰면
 /// 자기 자리를 새로 잡아 탭 밖에 배치되고, 그 자리에서 탭 클릭도 삼켜진다
+// 인자가 일곱인 이유: 탭 하나를 그리는 데 실제로 그만큼이 필요하다.
+// 묶어 넘기면 호출부에서 다시 풀어야 해 오히려 길어진다
 fn show_tab(
     ui: &mut egui::Ui,
     index: usize,
@@ -227,6 +260,7 @@ fn show_tab(
     source: &TabSource,
     badge: Option<(&TabPhase, Protocol)>,
     active: bool,
+    icon: (&'static str, egui::Color32),
 ) -> TabHit {
     let text = elide(title);
     let font = egui::TextStyle::Button.resolve(ui.style());
@@ -257,16 +291,13 @@ fn show_tab(
         };
         ui.painter().rect_filled(rect, corner, theme::CONTROL_BG);
     }
-    // 연결된 원격 탭만 아이콘이 또렷하다 — 로컬 탭은 늘 또렷하다 (README §4)
-    let icon_color = match badge {
-        None | Some((TabPhase::Ok, _)) => theme::FOLDER_ICON,
-        Some(_) => theme::FOLDER_ICON.gamma_multiply(DIM_ICON_ALPHA),
-    };
+    let (glyph, base_color) = icon;
+    let icon_color = icon_color(base_color, badge);
     let painter = ui.painter();
     painter.text(
         parts.icon.center(),
         egui::Align2::CENTER_CENTER,
-        egui_phosphor::regular::FOLDER,
+        glyph,
         egui::FontId::proportional(TAB_ICON_PX),
         icon_color,
     );
@@ -320,6 +351,32 @@ fn show_tab(
         switch,
         close: close_clicked || middle_close,
         rect,
+    }
+}
+
+/// 아이콘을 얼마나 또렷하게 그릴지.
+///
+/// 연결된 원격 탭만 또렷하다 — 로컬 탭은 늘 또렷하다 (README §4). **전송 대상 아이콘도 같은
+/// 규칙을 따른다**: 끊긴 서버는 올릴 수 있는 곳이 아니므로 그 화살표도 흐려야 한다
+fn icon_color(base: egui::Color32, badge: Option<(&TabPhase, Protocol)>) -> egui::Color32 {
+    match badge {
+        None | Some((TabPhase::Ok, _)) => base,
+        Some(_) => base.gamma_multiply(DIM_ICON_ALPHA),
+    }
+}
+
+/// 이 탭의 아이콘 자리에 무엇을 그릴지 (FR-54).
+///
+/// 전송 대상 탭은 폴더 대신 **방향 화살표**를 단다 — 큐 화면이 이미 쓰는 것과 같은 글리프·색이라
+/// (`widgets::direction_mark`) "받는 곳"·"올리는 곳"의 뜻이 화면마다 갈리지 않는다.
+/// 색이 폴더의 노랑에서 벗어나므로 여러 탭 중 대상이 한눈에 띈다
+fn tab_icon(id: TabId, targets: TransferTargets) -> (&'static str, egui::Color32) {
+    if targets.download == Some(id) {
+        widgets::direction_mark(TransferDirection::Download)
+    } else if targets.upload == Some(id) {
+        widgets::direction_mark(TransferDirection::Upload)
+    } else {
+        (egui_phosphor::regular::FOLDER, theme::FOLDER_ICON)
     }
 }
 
@@ -547,5 +604,74 @@ mod tests {
         assert!(is_close_hit(&parts, parts.close.center()));
         assert!(!is_close_hit(&parts, parts.label.center()));
         assert!(!is_close_hit(&parts, parts.icon.center()));
+    }
+
+    /// 전송 대상 판정용 탭 신원 — 실제 탭 없이 값만 만든다
+    fn ids() -> (TabId, TabId, TabId) {
+        let a = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:"));
+        let b = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:"));
+        let c = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:\c"));
+        (a.id, b.id, c.id)
+    }
+
+    #[test]
+    fn 받기_대상_탭은_받기_화살표를_단다() {
+        // 큐 화면과 같은 글리프·색이어야 "받는 곳"의 뜻이 화면마다 갈리지 않는다 (D9)
+        let (down, up, plain) = ids();
+        let targets = TransferTargets {
+            download: Some(down),
+            upload: Some(up),
+            can_download: true,
+            can_upload: true,
+        };
+        assert_eq!(
+            tab_icon(down, targets),
+            widgets::direction_mark(TransferDirection::Download)
+        );
+        assert_eq!(
+            tab_icon(up, targets),
+            widgets::direction_mark(TransferDirection::Upload)
+        );
+        // 대상이 아닌 탭은 폴더 그대로다
+        assert_eq!(
+            tab_icon(plain, targets),
+            (egui_phosphor::regular::FOLDER, theme::FOLDER_ICON)
+        );
+    }
+
+    #[test]
+    fn 대상이_없으면_모든_탭이_폴더다() {
+        let (a, _, _) = ids();
+        assert_eq!(
+            tab_icon(a, TransferTargets::default()),
+            (egui_phosphor::regular::FOLDER, theme::FOLDER_ICON)
+        );
+    }
+
+    #[test]
+    fn 끊긴_원격_탭은_대상이어도_아이콘이_흐리다() {
+        // 끊긴 서버는 올릴 수 있는 곳이 아니다 — 화살표만 또렷하면 눌러도 되는 것처럼 보인다
+        let up = widgets::direction_mark(TransferDirection::Upload).1;
+        let 또렷 = icon_color(up, Some((&TabPhase::Ok, Protocol::Ftp)));
+        let 흐림 = icon_color(up, Some((&TabPhase::Connecting, Protocol::Ftp)));
+        assert_eq!(또렷, up);
+        assert_ne!(흐림, up, "끊긴 원격 탭의 대상 아이콘이 흐려지지 않았다");
+        // 로컬 탭(배지 없음)은 늘 또렷하다
+        assert_eq!(icon_color(up, None), up);
+    }
+
+    #[test]
+    fn 두_방향_아이콘은_서로_다르다() {
+        // 같은 글리프·색이면 받는 곳과 올리는 곳을 구분할 수 없다
+        let down = widgets::direction_mark(TransferDirection::Download);
+        let up = widgets::direction_mark(TransferDirection::Upload);
+        assert_ne!(down.0, up.0);
+        assert_ne!(down.1, up.1);
+        // 폴더 아이콘과도 달라야 대상이 눈에 띈다
+        assert_ne!(down.1, theme::FOLDER_ICON);
+        assert_ne!(up.1, theme::FOLDER_ICON);
+        // 아이콘 글꼴에서 온 글리프여야 두부로 그려지지 않는다 (AGENTS 규약)
+        assert!(widgets::is_icon_font(down.0));
+        assert!(widgets::is_icon_font(up.0));
     }
 }

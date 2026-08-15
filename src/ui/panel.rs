@@ -13,7 +13,7 @@ use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
 use crate::panel::file_list::{ListRow, PARENT_ENTRY};
-use crate::panel::tabs::{CloseOutcome, TabPhase, TabSource, TabState, TabsModel};
+use crate::panel::tabs::{CloseOutcome, TabId, TabPhase, TabSource, TabState, TabsModel};
 use crate::remote::connection::{ConnCommand, ConnectionId};
 use crate::remote::manager::ConnectionManager;
 use crate::remote::types::{RemoteEntry, RemotePath, SiteId};
@@ -29,6 +29,7 @@ use crate::ui::remote_states::{self, FailedAction, RemoteView};
 use crate::ui::session::TabSpec;
 use crate::ui::shell_host;
 use crate::ui::tabs::TabAction;
+use crate::ui::tabs::TransferTargets;
 use crate::ui::theme;
 use crate::ui::tree::{FolderTreeView, TREE_WIDTH, TreeChoice, TreeRequest, TreeSource};
 use crate::ui::view_mode::ViewMode;
@@ -534,6 +535,31 @@ impl PanelState {
         self.tabs.active().source.is_remote()
     }
 
+    /// 지금 보고 있는 탭의 신원 (FR-54) — 전송 대상을 정하는 쪽이 쓴다
+    pub fn active_tab_id(&self) -> TabId {
+        self.tabs.active_id()
+    }
+
+    /// 그 신원의 탭이 가리키는 곳 — 이 패널에 없으면 `None` (FR-54).
+    ///
+    /// **배경 탭도 찾는다** — 전송 대상은 활성 탭에서 밀려나도 유지되므로(대상 sticky),
+    /// 활성 탭만 보는 `remote_dir` 같은 조회로는 그 자리를 읽을 수 없다
+    pub fn tab_source(&self, id: TabId) -> Option<&TabSource> {
+        self.tabs
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == id)
+            .map(|tab| &tab.source)
+    }
+
+    /// 그 신원의 탭이 **이 패널의 활성 탭**인가 (FR-54).
+    ///
+    /// 올리기 원본을 고를 때 쓴다 — 목록 선택은 패널마다 하나뿐이라 활성 탭의 것이다.
+    /// 대상 탭이 배경으로 밀렸으면 그 탭의 선택은 화면에 없다
+    pub fn is_active_tab(&self, id: TabId) -> bool {
+        self.tabs.active_id() == id
+    }
+
     /// 활성 탭이 쓰는 연결 — 로컬 탭이거나 아직 연결하지 않았으면 `None`
     pub fn active_conn(&self) -> Option<ConnectionId> {
         match &self.tabs.active().source {
@@ -549,15 +575,6 @@ impl PanelState {
             TabSource::Remote { site, .. } => Some(*site),
             TabSource::Local(_) => None,
         }
-    }
-
-    /// 활성 탭이 보고 있는 로컬 폴더 — 원격 탭이면 `None`
-    pub fn local_dir(&self) -> Option<PathBuf> {
-        self.tabs
-            .active()
-            .source
-            .local_path()
-            .map(Path::to_path_buf)
     }
 
     /// 로컬 목록에서 고른 항목들 — 원격 탭이면 빈 벡터다 (FR-39 `올리기`)
@@ -1040,6 +1057,9 @@ impl PanelState {
     ///
     /// 셸 메뉴 요청과 분할 요청은 실행하지 않고 반환한다 — 셸 메뉴는 모달이라 그리기가 끝난 뒤에
     /// 띄워야 하고, 분할은 트리를 바꾸므로 이 패널을 그리는 도중에 할 수 없다
+    // 인자가 여덟인 이유는 `show_layout`과 같다 — 그리기에 필요한 자원과 앱이 정한 규칙이
+    // 그만큼이고, 묶어 넘기면 여기서 다시 풀어야 한다
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -1048,8 +1068,9 @@ impl PanelState {
         textures: &mut IconTextures,
         remote: RemoteView<'_>,
         menu_state: PanelMenuState,
+        targets: TransferTargets,
     ) -> PanelOutcome {
-        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, remote, menu_state);
+        let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, remote, menu_state, targets);
         let tab = self.tabs.active();
         let nav = self.address.show(ui, tab.committed(), &tab.history);
 
@@ -1097,7 +1118,7 @@ impl PanelState {
                 egui::UiBuilder::new().id_salt("content").max_rect(content),
                 |ui| {
                     ui.set_clip_rect(content);
-                    self.show_content(ui, icons, textures, remote)
+                    self.show_content(ui, icons, textures, remote, targets)
                 },
             )
             .inner;
@@ -1176,6 +1197,7 @@ impl PanelState {
         icons: &mut IconCache,
         textures: &mut IconTextures,
         remote: RemoteView<'_>,
+        targets: TransferTargets,
     ) -> ContentOutcome {
         // 단계를 먼저 떼어 둔다 — 아래에서 목록(`&mut self.list`)을 그리는 동안 탭을 빌릴 수 없다
         let phase = match &self.tabs.active().source {
@@ -1274,7 +1296,7 @@ impl PanelState {
             Some(TabPhase::Ok) | None => {
                 let (action, drop) = self.show_list(ui, icons, textures);
                 // 메뉴는 목록을 그린 **뒤에** 띄운다 — 먼저 그리면 목록이 그 위를 덮는다
-                let menu = self.show_remote_menu(ui, phase == Some(TabPhase::Ok));
+                let menu = self.show_remote_menu(ui, phase == Some(TabPhase::Ok), targets);
                 (action, None, drop, menu)
             }
         }
@@ -1325,13 +1347,18 @@ impl PanelState {
     ///
     /// 고른 것과 **그때의 대상 경로들**을 함께 올린다 — 대화가 뜨는 동안 선택이 바뀔 수 있어,
     /// 나중에 다시 읽으면 사용자가 고른 것과 다른 항목에 명령이 갈 수 있다
-    fn show_remote_menu(&mut self, ui: &mut egui::Ui, connected: bool) -> Option<RemoteMenuPick> {
+    fn show_remote_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        connected: bool,
+        targets: TransferTargets,
+    ) -> Option<RemoteMenuPick> {
         let at = self.remote_menu_at?;
         let Some(dir) = self.tabs.active().source.remote_path().cloned() else {
             self.remote_menu_at = None;
             return None;
         };
-        let targets = self.list.selected_remote(&dir);
+        let picked = self.list.selected_remote(&dir);
         let mut chosen = None;
         // 창 가장자리에서 눌러도 메뉴가 밖으로 넘어가지 않게 안으로 당긴다 — 셸 메뉴는
         // OS가 해 주는 일이라(D21) 우리가 그리는 이쪽에서는 직접 해야 한다 (quality 리뷰 m1)
@@ -1346,7 +1373,8 @@ impl PanelState {
                     .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
                     .corner_radius(0)
                     .show(ui, |ui| {
-                        chosen = remote_menu::show_remote_menu(ui, targets.len(), connected);
+                        chosen =
+                            remote_menu::show_remote_menu(ui, picked.len(), connected, targets);
                     });
             })
             .response;
@@ -1362,7 +1390,7 @@ impl PanelState {
         if chosen.is_some() || outside || escape {
             self.remote_menu_at = None;
         }
-        chosen.map(|action| (action, targets))
+        chosen.map(|action| (action, picked))
     }
 
     /// 이 목록 위에 놓인 드롭을 거둔다 (FR-38).

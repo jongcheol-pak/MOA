@@ -6,6 +6,8 @@
 //!
 //! **실행하지 않는다** — 고른 것을 값으로 돌려주고 연결에 명령을 보내는 것은 `ExplorerApp`이다.
 use crate::remote::types::RemotePath;
+use crate::ui::list_common::ConflictChoice;
+use crate::ui::tabs::TransferTargets;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -42,10 +44,11 @@ pub struct RemoteTarget {
 pub enum RemoteMenuAction {
     /// 고른 항목을 로컬로 받는다 (전송 큐로 들어간다)
     Download,
-    /// **다른 패널에서 고른 로컬 항목**을 이 폴더로 올린다.
+    /// **받기 아이콘이 붙은 로컬 탭에서 고른 항목**을 올리기 아이콘이 붙은 원격 폴더로
+    /// 올린다 (FR-54).
     ///
-    /// 올릴 것을 파일 대화로 고르게 하지 않는다 — 두 칸 탐색기에서 반대편 패널이 이미
-    /// "고른 것"을 들고 있고, 끌어다 놓기(FR-38)도 같은 짝을 쓴다
+    /// 올릴 것을 파일 대화로 고르게 하지 않는다 — 목록에서 이미 "고른 것"이 있고,
+    /// 끌어다 놓기(FR-38)도 같은 짝을 쓴다. 어디서 어디로 가는지는 두 아이콘이 보여 준다
     Upload,
     /// 이름 바꾸기 대화를 연다 — **하나만 고른 때**만 뜬다(새 이름은 하나뿐이다)
     Rename,
@@ -68,10 +71,11 @@ pub fn show_remote_menu(
     ui: &mut egui::Ui,
     selected: usize,
     connected: bool,
+    targets: TransferTargets,
 ) -> Option<RemoteMenuAction> {
     ui.set_width(MENU_WIDTH);
     let mut chosen = None;
-    for row in menu_rows(selected, connected) {
+    for row in menu_rows(selected, connected, targets) {
         // 구분선 앞뒤로 "고른 것에 하는 일"과 "이 폴더에 하는 일"이 나뉜다
         if row.separator_before {
             ui.separator();
@@ -95,10 +99,13 @@ pub struct MenuRow {
 /// 이번에 보일 메뉴 줄들과 각각의 활성 여부 (plan Edge Case).
 ///
 /// 끊긴 연결에서는 **서버에 닿는 것이 전부** 비활성이다 — 눌러도 되지 않는 것을 눌리게 두면
-/// 사용자는 눌렀다가 아무 일도 안 일어나는 것을 보게 된다.
-/// `올리기`·`새 폴더`·`새로 고침`은 원격 선택이 없어도 뜻이 있다(각각 반대편 패널의 선택,
-/// 지금 폴더가 대상이다)
-pub fn menu_rows(selected: usize, connected: bool) -> Vec<MenuRow> {
+/// 사용자는 눌렀다가 아무 일도 안 일어나는 것을 보게 된다. 이 판정이 **가장 먼저**다:
+/// `targets`가 무엇이든 연결이 끊겼으면 서버에 닿는 줄은 열리지 않는다.
+///
+/// `받기`·`올리기`는 **대상 탭이 정해져 있을 때만** 열린다 (FR-54) — 대상이 없는데 눌리면
+/// 아무 일도 일어나지 않고 사용자는 그 까닭을 알 수 없다.
+/// `새 폴더`·`새로 고침`은 원격 선택이 없어도 뜻이 있다(지금 폴더가 대상이다)
+pub fn menu_rows(selected: usize, connected: bool, targets: TransferTargets) -> Vec<MenuRow> {
     /// 그 줄이 요구하는 선택 개수
     #[derive(Clone, Copy)]
     enum Needs {
@@ -155,14 +162,20 @@ pub fn menu_rows(selected: usize, connected: bool) -> Vec<MenuRow> {
     ]
     .into_iter()
     .map(|(label, action, needs, separator_before)| MenuRow {
-        label,
-        action,
         enabled: connected
             && match needs {
                 Needs::Any => true,
                 Needs::Some => selected > 0,
                 Needs::One => selected == 1,
+            }
+            // 전송 두 줄은 갈 곳(과 올릴 것)이 있어야 뜻이 있다 (FR-54)
+            && match action {
+                RemoteMenuAction::Download => targets.can_download,
+                RemoteMenuAction::Upload => targets.can_upload,
+                _ => true,
             },
+        label,
+        action,
         separator_before,
     })
     .collect()
@@ -173,7 +186,8 @@ pub fn menu_rows(selected: usize, connected: bool) -> Vec<MenuRow> {
 /// 테두리·구분선까지 정확히 재지 않는다 — 조금 넉넉하게 잡으면 안쪽으로 더 당겨질 뿐이라
 /// 잘리는 것보다 낫다
 pub fn menu_size() -> egui::Vec2 {
-    let rows = menu_rows(0, false).len() as f32;
+    // 줄 **수**만 센다 — 비활성 줄도 그려지므로 대상 유무는 높이를 바꾸지 않는다
+    let rows = menu_rows(0, false, TransferTargets::default()).len() as f32;
     egui::vec2(
         MENU_WIDTH + FRAME_PAD * 2.0,
         rows * ROW_HEIGHT + FRAME_PAD * 4.0,
@@ -410,6 +424,86 @@ pub fn show_chmod_dialog(
     }
 }
 
+/// 같은 이름 확인 대화 (FR-55).
+///
+/// `names`는 대상에 이미 있는 최상위 항목들이다 — `(이름, 폴더인가)`. 세 버튼은 **목록
+/// 전체에 한 번에** 적용된다: 항목마다 물으면 겹치는 것이 많을 때 대화가 반복해서 뜬다.
+/// 취소·Esc·바깥 클릭은 `Cancelled`이며 그때는 **아무것도 전송하지 않는다**(D6).
+///
+/// 삭제 확인 대화와 같은 규격(여백·버튼 크기·목록 5개 미리보기)을 쓴다 — 같은 자리에서
+/// 뜨는 확인 대화가 서로 달라 보이면 사용자가 매번 새로 읽어야 한다
+pub fn show_conflict_dialog(
+    ctx: &egui::Context,
+    names: &[(String, bool)],
+) -> DialogOutcome<ConflictChoice> {
+    let mut chosen = None;
+    let mut closed = false;
+    let response = egui::Modal::new(egui::Id::new("같은 이름 확인"))
+        .frame(
+            egui::Frame::popup(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(DIALOG_MARGIN)),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(
+                egui::RichText::new(crate::i18n::conflict_title())
+                    .size(16.0)
+                    .color(theme::TEXT),
+            );
+            ui.add_space(8.0);
+            ui.label(crate::i18n::dynamic::conflict_count(names.len()));
+            for (name, is_dir) in names.iter().take(5) {
+                let line = if *is_dir {
+                    format!("{name} {}", crate::i18n::conflict_folder_mark())
+                } else {
+                    name.clone()
+                };
+                ui.label(egui::RichText::new(line).color(theme::TEXT_MUTED));
+            }
+            if names.len() > 5 {
+                ui.label(egui::RichText::new("…").color(theme::TEXT_MUTED));
+            }
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(crate::i18n::conflict_irreversible()).color(theme::ERROR_TEXT),
+            );
+            ui.add_space(12.0);
+            // 오른쪽부터 그린다 — 다른 확인 대화와 같은 순서다
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = DIALOG_BUTTON_GAP;
+                let button = |ui: &mut egui::Ui, label: &str| {
+                    widgets::design_button(
+                        ui,
+                        label,
+                        theme::TEXT_BUTTON,
+                        DIALOG_BUTTON_PAD_X,
+                        egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
+                    )
+                    .clicked()
+                };
+                if button(ui, crate::i18n::cancel()) {
+                    closed = true;
+                }
+                if button(ui, crate::i18n::conflict_skip()) {
+                    chosen = Some(ConflictChoice::Skip);
+                }
+                if button(ui, crate::i18n::conflict_overwrite()) {
+                    chosen = Some(ConflictChoice::Overwrite);
+                }
+            });
+        });
+    if response.should_close() {
+        closed = true;
+    }
+    if closed {
+        return DialogOutcome::Cancelled;
+    }
+    match chosen {
+        Some(choice) => DialogOutcome::Confirmed(choice),
+        None => DialogOutcome::Pending,
+    }
+}
+
 /// 삭제 확인 대화 (Acceptance ①·Halt Forecast).
 ///
 /// **자동으로 지우는 경로는 없다** — 메뉴에서 곧바로 삭제로 가는 길이 없고, 이 대화가
@@ -543,30 +637,83 @@ mod tests {
         assert_eq!(validate_name("위/아래"), Err("이름에 / 는 쓸 수 없습니다."));
     }
 
+    /// 받을 곳도 올릴 곳도 정해진 상태 — 대상 판정을 시험 대상에서 빼고 볼 때 쓴다
+    fn 대상_있음() -> TransferTargets {
+        TransferTargets {
+            can_download: true,
+            can_upload: true,
+            ..TransferTargets::default()
+        }
+    }
+
     #[test]
     fn 메뉴가_한_프레임을_그린다() {
-        // 선택 개수·연결 유무 조합이 모두 패닉 없이 도는지 본다
+        // 선택 개수·연결 유무·대상 유무 조합이 모두 패닉 없이 도는지 본다
         let ctx = egui::Context::default();
         for selected in [0, 1, 3] {
             for connected in [false, true] {
-                let _ = ctx.run_ui(Default::default(), |ui| {
-                    egui::CentralPanel::default().show(ui, |ui| {
-                        show_remote_menu(ui, selected, connected);
+                for targets in [TransferTargets::default(), 대상_있음()] {
+                    let _ = ctx.run_ui(Default::default(), |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            show_remote_menu(ui, selected, connected, targets);
+                        });
                     });
-                });
+                }
             }
         }
     }
 
     #[test]
     fn 끊긴_연결에서는_서버에_닿는_줄이_모두_비활성이다() {
-        // plan Edge Case — 연결이 끊긴 상태 → 항목 비활성
+        // plan Edge Case — 연결이 끊긴 상태 → 항목 비활성.
+        // **전송 대상이 다 정해져 있어도** 연결 판정이 앞선다 (FR-54가 이 규칙을 뒤집지 않는다)
         for selected in [0, 1, 3] {
-            assert!(
-                menu_rows(selected, false).iter().all(|row| !row.enabled),
-                "끊긴 연결에서 눌리는 줄이 남았다"
-            );
+            for targets in [TransferTargets::default(), 대상_있음()] {
+                assert!(
+                    menu_rows(selected, false, targets)
+                        .iter()
+                        .all(|row| !row.enabled),
+                    "끊긴 연결에서 눌리는 줄이 남았다"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn 갈_곳이_없으면_전송_두_줄이_비활성이다() {
+        // 대상 탭이 없는데 눌리면 아무 일도 일어나지 않고 사용자는 그 까닭을 알 수 없다 (FR-54)
+        let 줄 = |targets| {
+            menu_rows(1, true, targets)
+                .into_iter()
+                .map(|row| (row.action, row.enabled))
+                .collect::<Vec<_>>()
+        };
+        let 없음 = 줄(TransferTargets::default());
+        assert_eq!(
+            없음
+                .iter()
+                .filter(|(_, on)| *on)
+                .map(|(action, _)| action.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                RemoteMenuAction::Rename,
+                RemoteMenuAction::Chmod,
+                RemoteMenuAction::Delete,
+                RemoteMenuAction::NewFolder,
+                RemoteMenuAction::Refresh,
+            ],
+            "갈 곳이 없는데 받기·올리기가 열려 있다"
+        );
+
+        // 받을 곳만 정해지면 받기만 열린다
+        let 받기만 = TransferTargets {
+            can_download: true,
+            ..TransferTargets::default()
+        };
+        let 줄들 = 줄(받기만);
+        let on = |action| 줄들.iter().any(|(a, on)| *a == action && *on);
+        assert!(on(RemoteMenuAction::Download));
+        assert!(!on(RemoteMenuAction::Upload));
     }
 
     #[test]
@@ -579,9 +726,9 @@ mod tests {
                 .expect("메뉴 줄")
                 .enabled
         };
-        let one = menu_rows(1, true);
+        let one = menu_rows(1, true, 대상_있음());
         assert!(enabled(&one, RemoteMenuAction::Rename));
-        let many = menu_rows(3, true);
+        let many = menu_rows(3, true, 대상_있음());
         assert!(!enabled(&many, RemoteMenuAction::Rename));
         // 여럿에도 뜻이 있는 것은 그대로 열려 있다
         assert!(enabled(&many, RemoteMenuAction::Delete));
@@ -591,7 +738,7 @@ mod tests {
 
     #[test]
     fn 고른_것이_없어도_할_수_있는_일은_남는다() {
-        let rows = menu_rows(0, true);
+        let rows = menu_rows(0, true, 대상_있음());
         let enabled: Vec<_> = rows
             .iter()
             .filter(|row| row.enabled)
@@ -600,14 +747,18 @@ mod tests {
         assert_eq!(
             enabled,
             vec![
-                // 올리기는 **반대편 패널의 선택**이 대상이라 원격 선택과 무관하다
+                // 올리기는 **받기 아이콘 탭의 선택**이 대상이라 원격 선택과 무관하다
                 RemoteMenuAction::Upload,
                 RemoteMenuAction::NewFolder,
                 RemoteMenuAction::Refresh,
             ]
         );
         // 하나를 고르면 나머지도 열린다
-        assert!(menu_rows(1, true).iter().all(|row| row.enabled));
+        assert!(
+            menu_rows(1, true, 대상_있음())
+                .iter()
+                .all(|row| row.enabled)
+        );
         // 문구는 구현이 정한 신규 문구 그대로다 (디자인 미제공)
         let labels: Vec<_> = rows.iter().map(|row| row.label).collect();
         assert_eq!(

@@ -14,6 +14,7 @@ use crate::ui::panel::{
     DisplayRules, MenuRequest, PanelOutcome, PanelState, RemoteAction, RemoteMenuPick,
 };
 use crate::ui::remote_states::RemoteView;
+use crate::ui::tabs::TransferTargets;
 use crate::ui::theme;
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
@@ -67,6 +68,14 @@ pub struct LayoutOutcome {
     /// first-wins로 하나만 남기면 두 패널이 같은 프레임에 노드를 펼쳤을 때 한쪽이 영영
     /// `읽는 중…`에 머문다(다시 청하려면 접었다 펴야 한다 — 캐시가 `Loading`으로 막는다)
     pub tree_requests: Vec<(PanelId, TreeRequest)>,
+    /// 이번 프레임에 **내용이 직접 눌린** 패널 — 전송 대상 탭을 정하는 신호다 (FR-54).
+    ///
+    /// 위 `command`가 쓰는 활성 판정(`active`)을 그대로 쓰지 않는 이유가 그 필드 설명에 있다:
+    /// 메뉴 팝업이 자기 패널 밖으로 뻗으면 그 위를 눌러도 **아래 깔린 패널**이 활성이 된다.
+    /// 활성 테두리가 잠깐 옮겨 가는 것과 달리 전송 대상은 파일이 어디로 갈지를 정하므로,
+    /// 팝업에 가린 클릭까지 대상으로 세면 사용자가 누른 적 없는 폴더로 파일이 간다.
+    /// 그래서 여기서는 **레이어 가림을 존중하는** `rect_contains_pointer`로 따로 판정한다
+    pub pressed_panel: Option<PanelId>,
 }
 
 /// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
@@ -144,6 +153,7 @@ pub fn show_layout(
     textures: &mut IconTextures,
     remote: RemoteView<'_>,
     display: DisplayRules,
+    targets: TransferTargets,
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
@@ -169,6 +179,11 @@ pub fn show_layout(
         {
             *active = *id;
         }
+        // 전송 대상은 **가려지지 않은 클릭**만 센다 (FR-54) — 위 `active`와 달리 이 판정은
+        // `rect_contains_pointer`를 거쳐 팝업·모달에 덮인 자리를 걸러 낸다
+        if pressed_at.is_some() && ui.rect_contains_pointer(pane) {
+            outcome.pressed_panel = Some(*id);
+        }
         let Some(panel) = panels.get_mut(id) else {
             continue;
         };
@@ -182,7 +197,7 @@ pub fn show_layout(
                 ui.set_clip_rect(pane);
                 {
                     panel.apply_display_rules(display, ctx);
-                    panel.show(ui, ctx, icons, textures, remote, menu_state)
+                    panel.show(ui, ctx, icons, textures, remote, menu_state, targets)
                 }
             })
             .inner;

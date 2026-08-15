@@ -5,7 +5,7 @@
 //! (plan 비추상화 선언) — 자세히 보기 표와 요구가 다르다.
 //!
 //! **큐를 고치지 않는다** — 읽어서 그리고, 사용자가 고른 것은 값으로 돌려준다.
-use crate::remote::connection::{TransferDirection, TransferId};
+use crate::remote::connection::TransferId;
 use crate::remote::queue::{QueueFilter, TransferItem, TransferState, UNKNOWN};
 use crate::remote::sites::SiteStore;
 use crate::remote::types::SiteId;
@@ -53,10 +53,6 @@ fn headers() -> [&'static str; 7] {
         crate::i18n::queue_column_state(),
     ]
 }
-/// 방향 글리프 (인벤토리 #44)
-/// 전송 방향 표시 — 아이콘 글꼴에서 가져온다 (프로젝트 규약)
-const UPLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_UP;
-const DOWNLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_DOWN;
 // 상태 문구(인벤토리 #45~#47)와 행 우클릭 메뉴는 카탈로그에서 가져온다.
 // 그 메뉴는 **디자인에 진입점이 없어 이 구현이 정한 문구**다 — 큐 항목을 하나씩
 // 다시 걸거나 그만두는 길이 달리 없다(`⏸`·`✕`는 큐 전체를 다룬다)
@@ -164,14 +160,6 @@ fn site_dot_color(failed: &[SiteId], site: SiteId) -> egui::Color32 {
         theme::ERROR
     } else {
         theme::OK_DOT
-    }
-}
-
-/// 방향 글리프와 색 (`:699`)
-fn direction_mark(direction: TransferDirection) -> (&'static str, egui::Color32) {
-    match direction {
-        TransferDirection::Upload => (UPLOAD_GLYPH, theme::ACCENT),
-        TransferDirection::Download => (DOWNLOAD_GLYPH, theme::OK_TEXT),
     }
 }
 
@@ -405,7 +393,7 @@ fn show_row(
         at
     };
 
-    let (glyph, glyph_color) = direction_mark(item.direction);
+    let (glyph, glyph_color) = widgets::direction_mark(item.direction);
     let at = cell(widths[0]);
     ui.painter().text(
         egui::pos2(at.left(), at.center().y),
@@ -506,6 +494,7 @@ fn show_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::connection::TransferDirection;
     use crate::remote::queue::TransferQueue;
     use crate::remote::types::RemotePath;
     use std::path::PathBuf;
@@ -552,9 +541,9 @@ mod tests {
         );
         assert_eq!(crate::i18n::queue_filter_all(), "전체");
         // 방향 표시는 **아이콘 글꼴**에서 온다 (프로젝트 규약 — 원본 화살표는 두부가 된다)
-        assert!(crate::ui::widgets::is_icon_font(UPLOAD_GLYPH));
-        assert!(crate::ui::widgets::is_icon_font(DOWNLOAD_GLYPH));
-        assert_ne!(UPLOAD_GLYPH, DOWNLOAD_GLYPH);
+        assert!(crate::ui::widgets::is_icon_font(widgets::UPLOAD_GLYPH));
+        assert!(crate::ui::widgets::is_icon_font(widgets::DOWNLOAD_GLYPH));
+        assert_ne!(widgets::UPLOAD_GLYPH, widgets::DOWNLOAD_GLYPH);
         assert_eq!(crate::i18n::queue_state_pending(), "대기 중");
         assert_eq!(crate::i18n::queue_state_done(), "완료");
         assert_eq!(crate::i18n::queue_state_active(), "전송 중");
