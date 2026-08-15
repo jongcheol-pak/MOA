@@ -436,6 +436,9 @@
   5. 설정에서 언어를 영어로 바꾸고 같은 이름 확인 대화를 다시 열어 `Overwrite`가 칸에 드는지 본다
 
 ## Phase Ledger
+- Phase F 통과 (HEAD df62554) — 완결 검증 MAJOR 1건(자기 유발 stale 주석)을 같은 루프에서 수정
+- Phase G 해당 없음 (PRD 연결 없음 — 시각 세부를 PRD가 규정하지 않는다)
+- **F-8 시각 충실도: ⏳ 미확인 잔존** — 렌더 확인이 필요한 항목이 남아 완료 선언을 보류한다. 목록은 `## Verification Strategy`의 수동 검증 절차
 
 ## Retry Ledger
 - 재시도 없음 (T1~T6 전부 1라운드 통과 — task 리뷰에서 BLOCKER·MAJOR 0건). Phase F 완결 검증이 MAJOR 1건(stale 주석)을 잡아 같은 루프에서 고쳤다
@@ -456,6 +459,9 @@
 - Phase F 완결 검증 반영 (커밋 예정): 자기 유발 stale 주석 2곳(`site_manager.rs`의 바닥 58px·버튼 30px 서술)을 새 구성으로 고치고, 버튼 0개일 때 빈 44px 자리를 잡지 않도록 셸을 고쳤으며, 호출부가 하나뿐이 된 `widgets::styled_button` 래퍼를 `design_button`에 인라인했다.
 
 ## Next Steps
+- 권장 다음 액션: `cargo run --release`로 앱을 띄워 `## Verification Strategy`의 수동 검증 1~5를 확인한다. 어색한 곳이 있으면 그 항목만 고치면 된다(모서리 반경·굵기·오류 줄 높이는 전부 상수 하나씩이다).
+- 화면 확인이 끝난 뒤: master 병합·push는 별도 승인 대상이다.
+- Suggested skills: `pjc:llm-wiki`(위키 반영 — 사용자 동의 시), 공식 `/code-review`
 
 ## Open Questions
 - [x] Q1: 적용 범위 → 모달 8곳 전부 (D1)
