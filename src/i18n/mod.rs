@@ -299,7 +299,6 @@ strings! {
     remote_execute => "실행" / "Execute";
     remote_delete_title => "원격 항목 삭제" / "Delete remote items";
     remote_delete_irreversible => "되돌릴 수 없습니다." / "This cannot be undone.";
-    remote_delete_recursive => "폴더 안에 든 것까지 지웁니다" / "Also delete folder contents";
 
     // ── 원격 탭 상태 (FR-31) ──
     remote_hint_head => "주소창에 " / "Type ";

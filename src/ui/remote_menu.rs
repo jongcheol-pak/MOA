@@ -14,6 +14,10 @@ use eframe::egui;
 const MENU_WIDTH: f32 = 180.0;
 const ROW_HEIGHT: f32 = 28.0;
 
+/// 확인 대화 안쪽 여백 — egui 기본값(6px)은 글이 테두리에 붙어 보인다.
+/// 사이트 관리자 본문·푸터의 좌우 여백(18px)에 맞춘다
+const DIALOG_MARGIN: i8 = 18;
+
 /// 확인 대화 아래 버튼의 높이·좌우 여백·사이 간격 — 사이트 관리자 푸터와 같은 값이다
 /// (`ui::site_manager`의 `FOOTER_BUTTON_*`). 대화마다 버튼 크기가 다르면 눈에 띈다
 const DIALOG_BUTTON_HEIGHT: f32 = 30.0;
@@ -408,75 +412,72 @@ pub fn show_chmod_dialog(
 
 /// 삭제 확인 대화 (Acceptance ①·Halt Forecast).
 ///
-/// **자동으로 지우는 경로는 없다** — 폴더가 섞여 있으면 `안에 든 것까지 지웁니다`를
-/// 따로 켜야 재귀 삭제가 나간다. 되돌릴 수 없는 일이라 두 번 묻는 셈이다.
+/// **자동으로 지우는 경로는 없다** — 메뉴에서 곧바로 삭제로 가는 길이 없고, 이 대화가
+/// `Confirmed`를 돌려준 자리에서만 명령이 나간다.
 ///
-/// 돌려주는 값: `Confirmed(recursive)`면 지운다. 다른 대화들과 같은 결론 타입을 쓴다
-pub fn show_delete_confirm(
-    ctx: &egui::Context,
-    targets: &[RemotePath],
-    // 고른 것 중에 폴더가 있는가 — 없으면 재귀 여부를 묻지 않는다
-    has_dir: bool,
-    recursive: &mut bool,
-) -> DialogOutcome<bool> {
+/// **재귀 여부는 묻지 않는다** — 파일이냐 폴더냐는 목록이 이미 알고(`RemoteTarget::is_dir`)
+/// 그에 맞는 명령은 앱이 고른다. 예전에는 `안에 든 것까지 지웁니다` 체크로 그것을
+/// 사용자에게 물었는데, 켜도 나가는 것은 `RMD`/`rmdir`(빈 폴더 전용)이라 안에 든 것은
+/// 어차피 지워지지 않았다 — 문구가 하는 일과 달랐다.
+///
+/// 돌려주는 값: `Confirmed(())`면 지운다. 다른 대화들과 같은 결론 타입을 쓴다
+pub fn show_delete_confirm(ctx: &egui::Context, targets: &[RemoteTarget]) -> DialogOutcome<()> {
     let mut confirmed = None;
     let mut closed = false;
-    let response = egui::Modal::new(egui::Id::new("원격 삭제 확인")).show(ctx, |ui| {
-        ui.set_width(420.0);
-        ui.label(
-            egui::RichText::new(crate::i18n::remote_delete_title())
-                .size(16.0)
-                .color(theme::TEXT),
-        );
-        ui.add_space(8.0);
-        ui.label(crate::i18n::dynamic::remote_delete_count(targets.len()));
-        for path in targets.iter().take(5) {
-            ui.label(egui::RichText::new(path.as_str()).color(theme::TEXT_MUTED));
-        }
-        if targets.len() > 5 {
-            ui.label(egui::RichText::new("…").color(theme::TEXT_MUTED));
-        }
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(crate::i18n::remote_delete_irreversible()).color(theme::ERROR_TEXT),
-        );
-        // 파일만 고른 자리에서는 재귀 물음이 뜻이 없다 — 「폴더 안에 든 것까지」를 그대로
-        // 두면 무엇이 지워지는지가 흐려진다. 값도 함께 내려 둔다(켜 둔 채 닫았던 지난
-        // 대화의 상태가 남으면 화면에 없는 체크가 명령에 실린다)
-        if has_dir {
+    let response = egui::Modal::new(egui::Id::new("원격 삭제 확인"))
+        // 기본 팝업 모양(채움·테두리·그림자)은 그대로 두고 안쪽 여백만 넓힌다
+        .frame(
+            egui::Frame::popup(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(DIALOG_MARGIN)),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(
+                egui::RichText::new(crate::i18n::remote_delete_title())
+                    .size(16.0)
+                    .color(theme::TEXT),
+            );
             ui.add_space(8.0);
-            ui.checkbox(recursive, crate::i18n::remote_delete_recursive());
-        } else {
-            *recursive = false;
-        }
-        ui.add_space(12.0);
-        // 오른쪽부터 그린다 — 사이트 관리자 푸터와 같은 순서(확인·취소)를 뒤집어 넣는다
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = DIALOG_BUTTON_GAP;
-            if widgets::design_button(
-                ui,
-                crate::i18n::cancel(),
-                theme::TEXT_BUTTON,
-                DIALOG_BUTTON_PAD_X,
-                egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
-            )
-            .clicked()
-            {
-                closed = true;
+            ui.label(crate::i18n::dynamic::remote_delete_count(targets.len()));
+            for item in targets.iter().take(5) {
+                ui.label(egui::RichText::new(item.path.as_str()).color(theme::TEXT_MUTED));
             }
-            if widgets::design_button(
-                ui,
-                crate::i18n::delete(),
-                theme::TEXT_BUTTON,
-                DIALOG_BUTTON_PAD_X,
-                egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
-            )
-            .clicked()
-            {
-                confirmed = Some(*recursive);
+            if targets.len() > 5 {
+                ui.label(egui::RichText::new("…").color(theme::TEXT_MUTED));
             }
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(crate::i18n::remote_delete_irreversible())
+                    .color(theme::ERROR_TEXT),
+            );
+            ui.add_space(12.0);
+            // 오른쪽부터 그린다 — 사이트 관리자 푸터와 같은 순서(확인·취소)를 뒤집어 넣는다
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = DIALOG_BUTTON_GAP;
+                if widgets::design_button(
+                    ui,
+                    crate::i18n::cancel(),
+                    theme::TEXT_BUTTON,
+                    DIALOG_BUTTON_PAD_X,
+                    egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
+                )
+                .clicked()
+                {
+                    closed = true;
+                }
+                if widgets::design_button(
+                    ui,
+                    crate::i18n::delete(),
+                    theme::TEXT_BUTTON,
+                    DIALOG_BUTTON_PAD_X,
+                    egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
+                )
+                .clicked()
+                {
+                    confirmed = Some(());
+                }
+            });
         });
-    });
     if response.should_close() {
         closed = true;
     }
@@ -484,7 +485,7 @@ pub fn show_delete_confirm(
         return DialogOutcome::Cancelled;
     }
     match confirmed {
-        Some(recursive) => DialogOutcome::Confirmed(recursive),
+        Some(()) => DialogOutcome::Confirmed(()),
         None => DialogOutcome::Pending,
     }
 }

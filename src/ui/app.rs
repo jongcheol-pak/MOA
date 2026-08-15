@@ -1105,7 +1105,8 @@ impl ExplorerApp {
         };
         let site = self.manager.get(conn).map(|connection| connection.site);
         self.remote_ops.conn = Some(conn);
-        self.remote_ops.targets = targets.iter().map(|item| item.path.clone()).collect();
+        // 경로만이 아니라 항목째로 든다 — 삭제가 파일·폴더에 따라 다른 명령을 보내야 한다
+        self.remote_ops.targets = targets.clone();
         self.remote_ops.error = None;
         match action {
             // 받기·올리기는 **끌어다 놓기와 같은 길**로 보낸다 (FR-38) — 폴더를 훑는 것도,
@@ -1154,7 +1155,7 @@ impl ExplorerApp {
                     .remote_ops
                     .targets
                     .first()
-                    .and_then(|path| path.file_name())
+                    .and_then(|item| item.path.file_name())
                     .unwrap_or_default()
                     .to_owned();
                 self.remote_ops.dialog = Some(RemoteDialog::Rename);
@@ -1173,10 +1174,6 @@ impl ExplorerApp {
                 self.remote_ops.dialog = Some(RemoteDialog::Chmod);
             }
             RemoteMenuAction::Delete => {
-                self.remote_ops.recursive = false;
-                // 폴더가 섞여 있을 때만 재귀 여부를 묻는다 — 파일만 고른 자리에
-                // 「폴더 안에 든 것까지」가 뜨면 무엇이 지워지는지가 흐려진다
-                self.remote_ops.has_dir = targets.iter().any(|item| item.is_dir);
                 self.remote_ops.dialog = Some(RemoteDialog::Delete);
             }
         }
@@ -1237,10 +1234,10 @@ impl ExplorerApp {
                     return;
                 };
                 let command = if rename {
-                    self.remote_ops.targets.first().and_then(|path| {
+                    self.remote_ops.targets.first().and_then(|item| {
                         Some(ConnCommand::Rename {
-                            from: path.clone(),
-                            to: path.parent()?.join(&name),
+                            from: item.path.clone(),
+                            to: item.path.parent()?.join(&name),
                         })
                     })
                 } else {
@@ -1260,24 +1257,26 @@ impl ExplorerApp {
                 let Some(mode) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
                     return;
                 };
-                for path in std::mem::take(&mut self.remote_ops.targets) {
-                    self.manager.send(conn, ConnCommand::Chmod { path, mode });
+                for item in std::mem::take(&mut self.remote_ops.targets) {
+                    self.manager.send(
+                        conn,
+                        ConnCommand::Chmod {
+                            path: item.path,
+                            mode,
+                        },
+                    );
                 }
             }
             RemoteDialog::Delete => {
-                let outcome = remote_menu::show_delete_confirm(
-                    ctx,
-                    &self.remote_ops.targets,
-                    self.remote_ops.has_dir,
-                    &mut self.remote_ops.recursive,
-                );
-                let Some(recursive) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
+                let outcome = remote_menu::show_delete_confirm(ctx, &self.remote_ops.targets);
+                let Some(()) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
                     return;
                 };
-                for path in std::mem::take(&mut self.remote_ops.targets) {
-                    // 폴더인지는 서버가 안다 — 재귀를 켜지 않았으면 파일 삭제를 보내고,
-                    // 폴더라 거부되면 그 사유가 로그와 상태 줄에 남는다 (D22와 같은 방식)
-                    self.manager.send(conn, delete_command(path, recursive));
+                for item in std::mem::take(&mut self.remote_ops.targets) {
+                    // 파일이냐 폴더냐는 목록이 알려 준 그대로 쓴다 — 폴더에 파일 삭제 명령을
+                    // 보내면 서버가 거절할 뿐이고, 그 사유가 로그와 상태 줄에 남는다 (D22)
+                    self.manager
+                        .send(conn, delete_command(item.path, item.is_dir));
                 }
             }
         }
@@ -2420,18 +2419,14 @@ struct RemoteOps {
     conn: Option<ConnectionId>,
     /// 지금 뜬 대화
     dialog: Option<RemoteDialog>,
-    /// 대화가 다루는 대상들
-    targets: Vec<RemotePath>,
+    /// 대화가 다루는 대상들 — 폴더 여부까지 들고 있어야 삭제가 명령을 고를 수 있다
+    targets: Vec<RemoteTarget>,
     /// 이름 입력값과 그 오류
     name: String,
     error: Option<String>,
     /// 권한 대화의 상태
     permissions: Permissions,
     octal: String,
-    /// 삭제 대화의 재귀 여부
-    recursive: bool,
-    /// 삭제 대상에 폴더가 있는가 — 없으면 재귀 물음을 아예 띄우지 않는다
-    has_dir: bool,
 }
 
 /// 트리 조회의 세대 번호가 시작하는 자리.
@@ -2511,9 +2506,12 @@ fn settle_dialog<T>(outcome: DialogOutcome<T>, dialog: &mut Option<RemoteDialog>
 /// 확인을 마친 삭제가 보낼 명령 (FR-39).
 ///
 /// **이 함수를 부르는 곳은 확인 대화가 `Some`을 돌려준 자리 하나뿐이다** — 메뉴에서 곧바로
-/// 삭제로 가는 길은 없다(plan Halt Forecast)
-fn delete_command(path: RemotePath, recursive: bool) -> ConnCommand {
-    if recursive {
+/// 삭제로 가는 길은 없다(plan Halt Forecast).
+///
+/// 폴더냐 파일이냐로 갈린다 — 폴더에는 `RMD`/`rmdir`, 파일에는 `DELE`/`unlink`가 나간다.
+/// **둘 다 재귀가 아니다**: 안이 빈 폴더가 아니면 서버가 거절하고 그 사유가 로그에 남는다
+fn delete_command(path: RemotePath, is_dir: bool) -> ConnCommand {
+    if is_dir {
         ConnCommand::Rmdir(path)
     } else {
         ConnCommand::Remove(path)
@@ -2853,8 +2851,8 @@ mod tests {
     }
 
     #[test]
-    fn 삭제는_재귀_여부에_따라_다른_명령이_된다() {
-        // Acceptance ① — 확인 대화가 돌려준 값만 이 함수에 들어온다
+    fn 삭제는_폴더_여부에_따라_다른_명령이_된다() {
+        // 목록이 알려 준 폴더 여부가 그대로 명령이 된다 — 사용자에게 묻지 않는다
         let path = RemotePath::new("/var/www/old");
         assert_eq!(
             delete_command(path.clone(), false),
