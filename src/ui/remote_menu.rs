@@ -7,11 +7,18 @@
 //! **실행하지 않는다** — 고른 것을 값으로 돌려주고 연결에 명령을 보내는 것은 `ExplorerApp`이다.
 use crate::remote::types::RemotePath;
 use crate::ui::theme;
+use crate::ui::widgets;
 use eframe::egui;
 
 /// 메뉴 폭 — 일반 메뉴와 같은 값 (`FileExplorer-FTP.dc.html:355` 계열)
 const MENU_WIDTH: f32 = 180.0;
 const ROW_HEIGHT: f32 = 28.0;
+
+/// 확인 대화 아래 버튼의 높이·좌우 여백·사이 간격 — 사이트 관리자 푸터와 같은 값이다
+/// (`ui::site_manager`의 `FOOTER_BUTTON_*`). 대화마다 버튼 크기가 다르면 눈에 띈다
+const DIALOG_BUTTON_HEIGHT: f32 = 30.0;
+const DIALOG_BUTTON_PAD_X: f32 = 24.0;
+const DIALOG_BUTTON_GAP: f32 = 10.0;
 
 /// 메뉴가 다룰 원격 항목 하나.
 ///
@@ -408,6 +415,8 @@ pub fn show_chmod_dialog(
 pub fn show_delete_confirm(
     ctx: &egui::Context,
     targets: &[RemotePath],
+    // 고른 것 중에 폴더가 있는가 — 없으면 재귀 여부를 묻지 않는다
+    has_dir: bool,
     recursive: &mut bool,
 ) -> DialogOutcome<bool> {
     let mut confirmed = None;
@@ -431,15 +440,40 @@ pub fn show_delete_confirm(
         ui.label(
             egui::RichText::new(crate::i18n::remote_delete_irreversible()).color(theme::ERROR_TEXT),
         );
-        ui.add_space(8.0);
-        ui.checkbox(recursive, crate::i18n::remote_delete_recursive());
+        // 파일만 고른 자리에서는 재귀 물음이 뜻이 없다 — 「폴더 안에 든 것까지」를 그대로
+        // 두면 무엇이 지워지는지가 흐려진다. 값도 함께 내려 둔다(켜 둔 채 닫았던 지난
+        // 대화의 상태가 남으면 화면에 없는 체크가 명령에 실린다)
+        if has_dir {
+            ui.add_space(8.0);
+            ui.checkbox(recursive, crate::i18n::remote_delete_recursive());
+        } else {
+            *recursive = false;
+        }
         ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            if ui.button(crate::i18n::delete()).clicked() {
-                confirmed = Some(*recursive);
-            }
-            if ui.button(crate::i18n::cancel()).clicked() {
+        // 오른쪽부터 그린다 — 사이트 관리자 푸터와 같은 순서(확인·취소)를 뒤집어 넣는다
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = DIALOG_BUTTON_GAP;
+            if widgets::design_button(
+                ui,
+                crate::i18n::cancel(),
+                theme::TEXT_BUTTON,
+                DIALOG_BUTTON_PAD_X,
+                egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
+            )
+            .clicked()
+            {
                 closed = true;
+            }
+            if widgets::design_button(
+                ui,
+                crate::i18n::delete(),
+                theme::TEXT_BUTTON,
+                DIALOG_BUTTON_PAD_X,
+                egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
+            )
+            .clicked()
+            {
+                confirmed = Some(*recursive);
             }
         });
     });

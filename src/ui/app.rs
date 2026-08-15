@@ -380,7 +380,7 @@ pub struct ExplorerApp {
     settings: AppSettings,
     /// 앱 설정 대화 (FR-47) — 타이틀바 설정 메뉴의 `설정`이 연다
     settings_dialog: SettingsDialog,
-    /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 대화를 처음 열 때 한 번만 읽는다
+    /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 앱이 시작할 때 한 번만 읽는다
     font_scan: FontScan,
     /// 알림 영역 아이콘 (FR-50) — `종료` 토글이 켜져 있을 때만 있다. 없애면 아이콘이 사라진다
     tray: Option<Tray>,
@@ -534,6 +534,10 @@ impl ExplorerApp {
         if let Some(session) = session {
             app.apply_session(session);
         }
+        // 글꼴 목록은 만드는 데 1.5초쯤 걸린다 — 설정 대화를 열고 나서 시작하면 그 시간이
+        // 그대로 「글꼴 목록을 읽는 중…」으로 보인다. 시작할 때 미리 띄워 두면 대화를
+        // 열 때는 대개 이미 준비돼 있다. 워커 스레드가 하므로 시작 화면은 멈추지 않는다
+        app.font_scan.ensure_started(&cc.egui_ctx);
         app
     }
 
@@ -1170,6 +1174,9 @@ impl ExplorerApp {
             }
             RemoteMenuAction::Delete => {
                 self.remote_ops.recursive = false;
+                // 폴더가 섞여 있을 때만 재귀 여부를 묻는다 — 파일만 고른 자리에
+                // 「폴더 안에 든 것까지」가 뜨면 무엇이 지워지는지가 흐려진다
+                self.remote_ops.has_dir = targets.iter().any(|item| item.is_dir);
                 self.remote_ops.dialog = Some(RemoteDialog::Delete);
             }
         }
@@ -1261,6 +1268,7 @@ impl ExplorerApp {
                 let outcome = remote_menu::show_delete_confirm(
                     ctx,
                     &self.remote_ops.targets,
+                    self.remote_ops.has_dir,
                     &mut self.remote_ops.recursive,
                 );
                 let Some(recursive) = settle_dialog(outcome, &mut self.remote_ops.dialog) else {
@@ -1515,8 +1523,8 @@ impl ExplorerApp {
         if !self.settings_dialog.is_open() {
             return;
         }
-        // 목록 만들기는 1.5초쯤 걸려 워커에 맡긴다 — 대화를 여는 순간 창이 멈추면 안 된다.
-        // 이미 받아 둔 목록이 있으면 `ensure_started`가 아무 일도 하지 않는다
+        // 목록은 앱이 시작할 때 미리 읽어 둔다 — 여기서 다시 부르는 것은 그 워커가
+        // 결과 없이 사라졌을 때를 위한 대비다(이미 목록이 있으면 아무 일도 하지 않는다)
         self.font_scan.ensure_started(ctx);
         self.font_scan.poll();
 
@@ -2422,6 +2430,8 @@ struct RemoteOps {
     octal: String,
     /// 삭제 대화의 재귀 여부
     recursive: bool,
+    /// 삭제 대상에 폴더가 있는가 — 없으면 재귀 물음을 아예 띄우지 않는다
+    has_dir: bool,
 }
 
 /// 트리 조회의 세대 번호가 시작하는 자리.
