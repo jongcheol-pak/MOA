@@ -433,6 +433,10 @@
 ## Retry Ledger
 
 ## Progress Log
+- T1-T2 완료 (커밋 8c2a8e6, 2b09bfb): 공통 셸 모듈 `src/ui/dialog.rs` 신설 → 원격 대화 4종 이식. 남은 `Modal::new` 직접 사용은 `app.rs`·`remote_states.rs`·`settings_dialog.rs`·`site_manager.rs` 넷.
+  - 결정: 버튼 라벨 글꼴을 임의 값(14px) 대신 앱 전역 버튼 글꼴(`TextStyle::Button`)로 — 대화 버튼만 다른 화면과 달라지지 않게 (T1 quality m1).
+  - 결정: `Sense::click()`이 포커스와 Space·Enter를 함께 주므로 조작 회귀는 없으나, 포커스 표식이 없어 hover와 같은 채움을 포커스에도 준다 (T2에서 보완).
+  - 결정: 대화 전용 상수의 소유를 `dialog` 모듈로 옮기되, 각 대화의 본문 폭·제목 글꼴처럼 그 대화만의 값은 그 파일에 이름 붙인 상수로 남긴다.
 
 ## Next Steps
 
