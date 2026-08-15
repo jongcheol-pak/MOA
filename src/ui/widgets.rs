@@ -121,36 +121,17 @@ pub fn design_button(
     pad_x: f32,
     min_size: egui::Vec2,
 ) -> egui::Response {
-    styled_button(
-        ui,
-        label,
-        text_color,
-        (theme::HEADER_BG, theme::ROW_HOT, theme::BORDER_CONTROL),
-        pad_x,
-        min_size,
-    )
-}
-
-/// 디자인 버튼의 골격 — 색 세 벌(평소 채움 · hover 채움 · 테두리)을 받아 그린다
-fn styled_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    text_color: egui::Color32,
-    (fill, hot, border): (egui::Color32, egui::Color32, egui::Color32),
-    pad_x: f32,
-    min_size: egui::Vec2,
-) -> egui::Response {
     ui.scope(|ui| {
         ui.spacing_mut().button_padding = egui::vec2(pad_x, 0.0);
         let widgets = &mut ui.style_mut().visuals.widgets;
         for (state, fill) in [
-            (&mut widgets.inactive, fill),
-            (&mut widgets.hovered, hot),
-            (&mut widgets.active, hot),
+            (&mut widgets.inactive, theme::HEADER_BG),
+            (&mut widgets.hovered, theme::ROW_HOT),
+            (&mut widgets.active, theme::ROW_HOT),
         ] {
             state.weak_bg_fill = fill;
             state.bg_fill = fill;
-            state.bg_stroke = egui::Stroke::new(BUTTON_STROKE, border);
+            state.bg_stroke = egui::Stroke::new(BUTTON_STROKE, theme::BORDER_CONTROL);
             state.corner_radius = egui::CornerRadius::ZERO;
             // 눌렸을 때 커지지 않는다 — 디자인은 상태에 따라 크기가 변하지 않는다
             state.expansion = 0.0;

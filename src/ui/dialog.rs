@@ -103,9 +103,14 @@ pub fn show(
                     ui.set_width(body_width);
                     body(ui);
                 });
-            let (rect, _) = ui
-                .allocate_exact_size(egui::vec2(frame_width, FOOTER_HEIGHT), egui::Sense::hover());
-            clicked = footer(ui, rect, buttons);
+            // 버튼이 없으면 자리도 잡지 않는다 — 빈 44px이 본문 아래에 남지 않게
+            if !buttons.is_empty() {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(frame_width, FOOTER_HEIGHT),
+                    egui::Sense::hover(),
+                );
+                clicked = footer(ui, rect, buttons);
+            }
         });
     Shell {
         clicked,
