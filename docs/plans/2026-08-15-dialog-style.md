@@ -317,7 +317,7 @@
     - (i) 버튼 라벨이 칸을 넘칠 가능성 → T1의 클립 처리로 해결
   - **Depends on**: T1
 
-- [ ] T3. 워크스페이스 삭제·호스트 키 대화 교체 (`ui/app.rs` · `ui/remote_states.rs`)
+- [x] T3. 워크스페이스 삭제·호스트 키 대화 교체 (`ui/app.rs` · `ui/remote_states.rs`)
   - **Type**: C
   - **Acceptance**:
     - Given 워크스페이스 삭제 확인, When 연다, Then 모서리 12px·전폭 `[삭제][취소]` (HUMAN-VERIFY) 이고 Esc가 종전대로 취소로 동작한다
