@@ -439,6 +439,7 @@
 - Phase F 통과 (HEAD df62554) — 완결 검증 MAJOR 1건(자기 유발 stale 주석)을 같은 루프에서 수정
 - Phase G 해당 없음 (PRD 연결 없음 — 시각 세부를 PRD가 규정하지 않는다)
 - **F-8 시각 충실도: ⏳ 미확인 잔존** — 렌더 확인이 필요한 항목이 남아 완료 선언을 보류한다. 목록은 `## Verification Strategy`의 수동 검증 절차
+  - 자동 캡처를 시도했으나 얻지 못했다: 앱을 릴리즈 빌드로 띄우고 Orca computer-use로 접근했지만 **접근성 트리가 창 하나뿐이고 스크린샷이 빈 채로 돌아왔다**(egui 앱이라 accesskit이 켜져 있지 않다). 두 번 시도 후 중단했고 앱은 종료했다 — 시각 확인은 사용자 화면 확인이 유일한 경로다
 
 ## Retry Ledger
 - 재시도 없음 (T1~T6 전부 1라운드 통과 — task 리뷰에서 BLOCKER·MAJOR 0건). Phase F 완결 검증이 MAJOR 1건(stale 주석)을 잡아 같은 루프에서 고쳤다
