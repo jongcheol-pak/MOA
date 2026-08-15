@@ -220,7 +220,10 @@ fn footer(ui: &egui::Ui, rect: egui::Rect, buttons: &[ButtonSpec<'_>]) -> Option
             ui.id().with(("dialog_footer", index)),
             egui::Sense::click(),
         );
-        if response.hovered() {
+        // 포커스에도 같은 표식을 준다 — `Sense::click()`이 포커스와 Space·Enter 활성화를
+        // 함께 주는데(egui `context.rs`), 표식이 없으면 키보드로 옮겨 다닐 때 지금 어느
+        // 버튼에 있는지 보이지 않는다. 종전 `ui.button`은 egui가 포커스 테두리를 그려 줬다
+        if response.hovered() || response.has_focus() {
             painter.rect_filled(
                 *slot,
                 slot_corners(index, buttons.len(), CORNER_RADIUS),

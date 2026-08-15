@@ -6,25 +6,27 @@
 //!
 //! **실행하지 않는다** — 고른 것을 값으로 돌려주고 연결에 명령을 보내는 것은 `ExplorerApp`이다.
 use crate::remote::types::RemotePath;
+use crate::ui::dialog;
 use crate::ui::list_common::ConflictChoice;
 use crate::ui::tabs::TransferTargets;
 use crate::ui::theme;
-use crate::ui::widgets;
 use eframe::egui;
 
 /// 메뉴 폭 — 일반 메뉴와 같은 값 (`FileExplorer-FTP.dc.html:355` 계열)
 const MENU_WIDTH: f32 = 180.0;
 const ROW_HEIGHT: f32 = 28.0;
 
-/// 확인 대화 안쪽 여백 — egui 기본값(6px)은 글이 테두리에 붙어 보인다.
-/// 사이트 관리자 본문·푸터의 좌우 여백(18px)에 맞춘다
-const DIALOG_MARGIN: i8 = 18;
+/// 확인 대화 제목 글꼴 크기
+const TITLE_FONT_PX: f32 = 16.0;
 
-/// 확인 대화 아래 버튼의 높이·좌우 여백·사이 간격 — 사이트 관리자 푸터와 같은 값이다
-/// (`ui::site_manager`의 `FOOTER_BUTTON_*`). 대화마다 버튼 크기가 다르면 눈에 띈다
-const DIALOG_BUTTON_HEIGHT: f32 = 30.0;
-const DIALOG_BUTTON_PAD_X: f32 = 24.0;
-const DIALOG_BUTTON_GAP: f32 = 10.0;
+/// 이름·권한 대화의 본문 폭 — 한 줄짜리 입력과 체크박스 세 줄이 드는 너비
+const INPUT_BODY_WIDTH: f32 = 360.0;
+
+/// 목록을 보이는 확인 대화의 본문 폭 — 경로가 길어 입력 대화보다 넓다
+const LIST_BODY_WIDTH: f32 = 420.0;
+
+/// 목록 미리보기에 보일 항목 수 — 그보다 많으면 말줄임표 한 줄로 줄인다
+const PREVIEW_LIMIT: usize = 5;
 
 /// 메뉴가 다룰 원격 항목 하나.
 ///
@@ -312,29 +314,38 @@ pub fn show_name_dialog(
 ) -> DialogOutcome<String> {
     let mut confirmed = None;
     let mut closed = false;
-    let response = egui::Modal::new(egui::Id::new(("원격 이름 대화", title))).show(ctx, |ui| {
-        ui.set_width(360.0);
-        ui.label(egui::RichText::new(title).size(16.0).color(theme::TEXT));
-        ui.add_space(10.0);
-        ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
-        if let Some(message) = error.as_ref() {
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(message).color(theme::ERROR_TEXT));
-        }
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            if ui.button(crate::i18n::remote_ok()).clicked() {
-                match validate_name(name) {
-                    Ok(valid) => confirmed = Some(valid.to_owned()),
-                    Err(message) => *error = Some(message.to_owned()),
-                }
+    let buttons = [
+        dialog::ButtonSpec::strong(crate::i18n::remote_ok()),
+        dialog::ButtonSpec::plain(crate::i18n::cancel()),
+    ];
+    let shell = dialog::show(
+        ctx,
+        egui::Id::new(("원격 이름 대화", title)),
+        INPUT_BODY_WIDTH,
+        &buttons,
+        |ui| {
+            ui.label(
+                egui::RichText::new(title)
+                    .size(TITLE_FONT_PX)
+                    .color(theme::TEXT),
+            );
+            ui.add_space(10.0);
+            ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
+            if let Some(message) = error.as_ref() {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(message).color(theme::ERROR_TEXT));
             }
-            if ui.button(crate::i18n::cancel()).clicked() {
-                closed = true;
-            }
-        });
-    });
-    if response.should_close() {
+        },
+    );
+    match shell.clicked {
+        Some(0) => match validate_name(name) {
+            Ok(valid) => confirmed = Some(valid.to_owned()),
+            Err(message) => *error = Some(message.to_owned()),
+        },
+        Some(_) => closed = true,
+        None => {}
+    }
+    if shell.should_close {
         closed = true;
     }
     if closed {
@@ -366,53 +377,59 @@ pub fn show_chmod_dialog(
     ];
     let mut confirmed = None;
     let mut closed = false;
-    let response = egui::Modal::new(egui::Id::new("원격 권한 변경")).show(ctx, |ui| {
-        ui.set_width(360.0);
-        ui.label(
-            egui::RichText::new(crate::i18n::remote_chmod_title())
-                .size(16.0)
-                .color(theme::TEXT),
-        );
-        ui.add_space(10.0);
-        for (group, label) in groups.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(*label).color(theme::HEADER_TEXT));
-                for (bit, name) in bits.iter().enumerate() {
-                    if ui
-                        .checkbox(&mut permissions.bits[group][bit], *name)
-                        .changed()
-                    {
-                        // 체크를 바꾸면 숫자가 따라간다
-                        *octal = permissions.to_octal_text();
+    let buttons = [
+        dialog::ButtonSpec::strong(crate::i18n::remote_apply()),
+        dialog::ButtonSpec::plain(crate::i18n::cancel()),
+    ];
+    let shell = dialog::show(
+        ctx,
+        egui::Id::new("원격 권한 변경"),
+        INPUT_BODY_WIDTH,
+        &buttons,
+        |ui| {
+            ui.label(
+                egui::RichText::new(crate::i18n::remote_chmod_title())
+                    .size(TITLE_FONT_PX)
+                    .color(theme::TEXT),
+            );
+            ui.add_space(10.0);
+            for (group, label) in groups.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(*label).color(theme::HEADER_TEXT));
+                    for (bit, name) in bits.iter().enumerate() {
+                        if ui
+                            .checkbox(&mut permissions.bits[group][bit], *name)
+                            .changed()
+                        {
+                            // 체크를 바꾸면 숫자가 따라간다
+                            *octal = permissions.to_octal_text();
+                        }
                     }
+                });
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(crate::i18n::remote_chmod_octal())
+                        .color(theme::HEADER_TEXT),
+                );
+                if ui
+                    .add(egui::TextEdit::singleline(octal).desired_width(80.0))
+                    .changed()
+                    && let Some(parsed) = Permissions::from_octal_text(octal)
+                {
+                    // 숫자를 고치면 체크가 따라간다 — 잘못 적은 동안에는 그대로 둔다
+                    *permissions = parsed;
                 }
             });
-        }
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(crate::i18n::remote_chmod_octal()).color(theme::HEADER_TEXT),
-            );
-            if ui
-                .add(egui::TextEdit::singleline(octal).desired_width(80.0))
-                .changed()
-                && let Some(parsed) = Permissions::from_octal_text(octal)
-            {
-                // 숫자를 고치면 체크가 따라간다 — 잘못 적은 동안에는 그대로 둔다
-                *permissions = parsed;
-            }
-        });
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            if ui.button(crate::i18n::remote_apply()).clicked() {
-                confirmed = Some(permissions.to_mode());
-            }
-            if ui.button(crate::i18n::cancel()).clicked() {
-                closed = true;
-            }
-        });
-    });
-    if response.should_close() {
+        },
+    );
+    match shell.clicked {
+        Some(0) => confirmed = Some(permissions.to_mode()),
+        Some(_) => closed = true,
+        None => {}
+    }
+    if shell.should_close {
         closed = true;
     }
     if closed {
@@ -438,21 +455,26 @@ pub fn show_conflict_dialog(
 ) -> DialogOutcome<ConflictChoice> {
     let mut chosen = None;
     let mut closed = false;
-    let response = egui::Modal::new(egui::Id::new("같은 이름 확인"))
-        .frame(
-            egui::Frame::popup(&ctx.style_of(ctx.theme()))
-                .inner_margin(egui::Margin::same(DIALOG_MARGIN)),
-        )
-        .show(ctx, |ui| {
-            ui.set_width(420.0);
+    // 왼쪽부터 덮어쓰기·건너뛰기·취소 — 종전 배치를 그대로 옮겼다
+    let buttons = [
+        dialog::ButtonSpec::strong(crate::i18n::conflict_overwrite()),
+        dialog::ButtonSpec::plain(crate::i18n::conflict_skip()),
+        dialog::ButtonSpec::plain(crate::i18n::cancel()),
+    ];
+    let shell = dialog::show(
+        ctx,
+        egui::Id::new("같은 이름 확인"),
+        LIST_BODY_WIDTH,
+        &buttons,
+        |ui| {
             ui.label(
                 egui::RichText::new(crate::i18n::conflict_title())
-                    .size(16.0)
+                    .size(TITLE_FONT_PX)
                     .color(theme::TEXT),
             );
             ui.add_space(8.0);
             ui.label(crate::i18n::dynamic::conflict_count(names.len()));
-            for (name, is_dir) in names.iter().take(5) {
+            for (name, is_dir) in names.iter().take(PREVIEW_LIMIT) {
                 let line = if *is_dir {
                     format!("{name} {}", crate::i18n::conflict_folder_mark())
                 } else {
@@ -460,39 +482,22 @@ pub fn show_conflict_dialog(
                 };
                 ui.label(egui::RichText::new(line).color(theme::TEXT_MUTED));
             }
-            if names.len() > 5 {
+            if names.len() > PREVIEW_LIMIT {
                 ui.label(egui::RichText::new("…").color(theme::TEXT_MUTED));
             }
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(crate::i18n::conflict_irreversible()).color(theme::ERROR_TEXT),
             );
-            ui.add_space(12.0);
-            // 오른쪽부터 그린다 — 다른 확인 대화와 같은 순서다
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = DIALOG_BUTTON_GAP;
-                let button = |ui: &mut egui::Ui, label: &str| {
-                    widgets::design_button(
-                        ui,
-                        label,
-                        theme::TEXT_BUTTON,
-                        DIALOG_BUTTON_PAD_X,
-                        egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
-                    )
-                    .clicked()
-                };
-                if button(ui, crate::i18n::cancel()) {
-                    closed = true;
-                }
-                if button(ui, crate::i18n::conflict_skip()) {
-                    chosen = Some(ConflictChoice::Skip);
-                }
-                if button(ui, crate::i18n::conflict_overwrite()) {
-                    chosen = Some(ConflictChoice::Overwrite);
-                }
-            });
-        });
-    if response.should_close() {
+        },
+    );
+    match shell.clicked {
+        Some(0) => chosen = Some(ConflictChoice::Overwrite),
+        Some(1) => chosen = Some(ConflictChoice::Skip),
+        Some(_) => closed = true,
+        None => {}
+    }
+    if shell.should_close {
         closed = true;
     }
     if closed {
@@ -518,25 +523,27 @@ pub fn show_conflict_dialog(
 pub fn show_delete_confirm(ctx: &egui::Context, targets: &[RemoteTarget]) -> DialogOutcome<()> {
     let mut confirmed = None;
     let mut closed = false;
-    let response = egui::Modal::new(egui::Id::new("원격 삭제 확인"))
-        // 기본 팝업 모양(채움·테두리·그림자)은 그대로 두고 안쪽 여백만 넓힌다
-        .frame(
-            egui::Frame::popup(&ctx.style_of(ctx.theme()))
-                .inner_margin(egui::Margin::same(DIALOG_MARGIN)),
-        )
-        .show(ctx, |ui| {
-            ui.set_width(420.0);
+    let buttons = [
+        dialog::ButtonSpec::strong(crate::i18n::delete()),
+        dialog::ButtonSpec::plain(crate::i18n::cancel()),
+    ];
+    let shell = dialog::show(
+        ctx,
+        egui::Id::new("원격 삭제 확인"),
+        LIST_BODY_WIDTH,
+        &buttons,
+        |ui| {
             ui.label(
                 egui::RichText::new(crate::i18n::remote_delete_title())
-                    .size(16.0)
+                    .size(TITLE_FONT_PX)
                     .color(theme::TEXT),
             );
             ui.add_space(8.0);
             ui.label(crate::i18n::dynamic::remote_delete_count(targets.len()));
-            for item in targets.iter().take(5) {
+            for item in targets.iter().take(PREVIEW_LIMIT) {
                 ui.label(egui::RichText::new(item.path.as_str()).color(theme::TEXT_MUTED));
             }
-            if targets.len() > 5 {
+            if targets.len() > PREVIEW_LIMIT {
                 ui.label(egui::RichText::new("…").color(theme::TEXT_MUTED));
             }
             ui.add_space(6.0);
@@ -544,35 +551,14 @@ pub fn show_delete_confirm(ctx: &egui::Context, targets: &[RemoteTarget]) -> Dia
                 egui::RichText::new(crate::i18n::remote_delete_irreversible())
                     .color(theme::ERROR_TEXT),
             );
-            ui.add_space(12.0);
-            // 오른쪽부터 그린다 — 사이트 관리자 푸터와 같은 순서(확인·취소)를 뒤집어 넣는다
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = DIALOG_BUTTON_GAP;
-                if widgets::design_button(
-                    ui,
-                    crate::i18n::cancel(),
-                    theme::TEXT_BUTTON,
-                    DIALOG_BUTTON_PAD_X,
-                    egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
-                )
-                .clicked()
-                {
-                    closed = true;
-                }
-                if widgets::design_button(
-                    ui,
-                    crate::i18n::delete(),
-                    theme::TEXT_BUTTON,
-                    DIALOG_BUTTON_PAD_X,
-                    egui::vec2(0.0, DIALOG_BUTTON_HEIGHT),
-                )
-                .clicked()
-                {
-                    confirmed = Some(());
-                }
-            });
-        });
-    if response.should_close() {
+        },
+    );
+    match shell.clicked {
+        Some(0) => confirmed = Some(()),
+        Some(_) => closed = true,
+        None => {}
+    }
+    if shell.should_close {
         closed = true;
     }
     if closed {
