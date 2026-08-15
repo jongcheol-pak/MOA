@@ -252,7 +252,7 @@
 
 ## Tasks
 
-- [ ] T1. 공통 대화 셸·푸터 모듈 신설 (`src/ui/dialog.rs`)
+- [x] T1. 공통 대화 셸·푸터 모듈 신설 (`src/ui/dialog.rs`)
   - **Type**: D
   - **Design**:
     - ① 배치: 신규 `src/ui/dialog.rs`(D9), `ui/mod.rs`에 `pub mod dialog;` 추가. `ui` 계층 안이며 `app`·`panel`·`fs`를 참조하지 않는다
