@@ -432,6 +432,8 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- 재시도 없음 (T1~T4 전부 1라운드 통과 — BLOCKER·MAJOR 0건)
+
 
 ## Progress Log
 - T1-T2 완료 (커밋 8c2a8e6, 2b09bfb): 공통 셸 모듈 `src/ui/dialog.rs` 신설 → 원격 대화 4종 이식. 남은 `Modal::new` 직접 사용은 `app.rs`·`remote_states.rs`·`settings_dialog.rs`·`site_manager.rs` 넷.
