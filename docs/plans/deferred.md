@@ -52,6 +52,13 @@
 - [2026-08-14] 숨김 항목 토글이 원격 패널에서도 재조회를 부른다 — 로컬은 감시 갱신 때마다 어차피 다시 읽지만 원격은 네트워크 왕복이다. 원격만 응답을 캐시해 재필터하는 길이 있다 (출처: 2026-08-13-app-settings-part1 T12 quality S1)
 - [2026-08-14] **오류 사유가 언어 전환을 따라가지 않는다** — 실패한 순간의 언어로 굳어 화면에 남고(전송 큐의 것은 세션에 저장돼 재시작 뒤에도), 연결 실패 화면에서는 한 줄에 두 언어가 섞인다. 고치려면 오류를 문자열이 아니라 구조로 들어야 하는데 10개 파일 + 세션 저장 형식에 걸쳐 **이번엔 PRD FR-53에 한계를 적는 쪽을 골랐다**(2026-08-14 사용자 결정). 되돌린다면 `ConnPhase::Failed`·`TabPhase::Error`·`TransferState::Error`가 `RemoteError`를 들게 하는 것부터다 (출처: 2026-08-13-app-settings-part2 Phase F)
 - [2026-08-14] 화면 문구 검사는 **리터럴만 본다** — 문구를 변수에 담아 옮기거나 바깥에서 받아 그리면 걸리지 않는다. 그런 우회를 막는 장치는 없고 리뷰가 본다 (출처: 2026-08-13-app-settings-part2 T8)
+- [2026-08-15] PRD FR-32·README의 "폴더 아이콘" 서술에 FR-54 포인터 한 절 — FR-38·FR-39에는 붙였으므로 관례상 여기도 붙이는 편이 낫다. **PRD 문면 변경이라 사용자 승인 필요** (출처: 2026-08-15-transfer-target-tabs 완료 검증 m2)
+- [2026-08-15] `conflict_names`가 항목 **종류를 보지 않고 이름만** 대조 — FR-55 문면은 종류 일치를 함의한다. 한 폴더에 같은 이름의 파일과 폴더가 함께 있을 수 없어 동작은 같지만 표현이 다르다 (출처: 2026-08-15-transfer-target-tabs m3, 결함으로 보지 않음)
+- [2026-08-15] CPU가 붐빌 때 lib 시험 1건이 간헐 실패 — 시간 마감(2초)에 기대는 시험은 `remote/manager.rs:248·306`·`remote/transfer.rs:454`·`fs/thumbnail.rs:575`뿐이고 셋 다 그 회차가 건드리지 않은 파일이다. 재현되면 마감을 늘리거나 시계를 주입식으로 (출처: 2026-08-15-transfer-target-tabs Phase F)
+- [2026-08-15] `apply_conflict_choice`의 `Option<ConflictChoice>`가 "아직 묻기 전"과 사용자 선택을 한 타입에 겹쳐 든다 — `enum Decision { NotAsked, Overwrite, Skip }` 3상태로 나누면 `conflicts.is_empty()`와의 결합이 사라진다 (출처: 2026-08-15-transfer-target-tabs T5 quality S2)
+- [2026-08-15] 같은 이름 확인 흐름(`start_transfer`·`drain_conflict_checks`·`show_conflict_dialog`와 세 상태 필드)을 `ui/transfer_conflict.rs`로 분리 — `ui/app.rs`가 3400줄을 넘겼다. 위 2026-08-05 `ui/app.rs` 분리 항목과 한 뿌리 (출처: 2026-08-15-transfer-target-tabs T5 quality 2라운드 S1)
+- [2026-08-15] 충돌 확인의 **재귀 검사** — 고른 최상위 항목 이름만 본다. 폴더를 덮어쓰기로 고르면 그 안의 파일은 개별 확인 없이 덮어쓴다 (출처: 2026-08-15-transfer-target-tabs D4)
+- [2026-08-15] 올리기 충돌 확인의 원격 목록 신선도 — 조회와 전송 사이에 서버가 바뀌면 알 수 없다. FTP/SFTP에 변경 통지가 없다는 기존 한계와 한 뿌리 (출처: 2026-08-15-transfer-target-tabs)
 
 ## 종결
 - [2026-07-29 → 2026-08-05] `ui/address_bar.rs`의 rustfmt 드리프트 — 반영 (2026-08-04-ftp-integration T0에서 `cargo fmt` 1회로 해소, 이후 전 task가 `fmt --check` 무차이)
