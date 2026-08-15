@@ -387,7 +387,7 @@
     - (ii-a) `widgets::primary_button`(`pub` 함수) 제거 → `## 사전 승인 항목`에 등록
   - **Depends on**: T1, T2, T3, T4 — 규약 시험(`Modal::new` 0건)이 `src/ui` **전체**를 훑으므로 네 대화가 모두 교체된 뒤에야 `#[ignore]`를 뗄 수 있다
 
-- [ ] T6. README·AGENTS.md에 팝업 공통 규격 기술
+- [x] T6. README·AGENTS.md에 팝업 공통 규격 기술
   - **Type**: A
   - **Acceptance**:
     - `AGENTS.md` Conventions에 "모달 대화는 `ui::dialog`의 셸을 거친다 — `Modal`을 직접 쓰지 않으며 규약은 `dialog.rs`의 시험이 지킨다"는 취지의 한 줄이 있다 (아이콘·화면 문구 항목과 같은 형식)
