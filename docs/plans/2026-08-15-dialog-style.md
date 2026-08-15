@@ -262,7 +262,7 @@
       - `pub fn show(ctx, id, body_width, buttons, body: impl FnOnce(&mut Ui)) -> Shell` — 자동 높이. 프레임 폭 = `body_width + BODY_MARGIN*2`, 본문 Ui에 여백 18을 셸이 입힌다. 확인 대화 6종용
       - `pub fn show_fixed(ctx, id, frame_size, buttons, content: impl FnOnce(&mut Ui, Rect)) -> Shell` — 고정 크기. `content`에 넘기는 rect는 **푸터를 뺀 나머지**이며 본문 여백은 호출부가 관리한다. 앱 설정·사이트 관리자용
       - `pub fn footer_slots(rect, count) -> Vec<Rect>` · `pub fn slot_corners(index, count, radius) -> CornerRadius` — 순수 계산. 단위 시험이 그린 결과를 뒤지지 않고 값을 직접 단언하도록 노출한다
-      - `pub const FOOTER_HEIGHT: f32 = 44.0` · `BODY_MARGIN: f32 = 18.0` · `CORNER_RADIUS: u8 = 12` · `FAUX_BOLD_OFFSET: f32 = 0.6`
+      - `pub const FOOTER_HEIGHT: f32 = 44.0` · `BODY_MARGIN: i8 = 18`(`egui::Margin::same`이 `i8`만 받는다 — f32가 필요한 자리는 `f32::from`으로 올린다) · `CORNER_RADIUS: u8 = 12` · `FAUX_BOLD_OFFSET: f32 = 0.6`
       - `fn faux_bold_text(painter, pos, text, font, color)` — 굵은 face 없이 굵게 그린다(비공개, 푸터만 쓴다)
       - 사이트 관리자의 오류 줄은 셸이 모르는 그 대화만의 것이므로 `show_fixed`가 넘긴 rect 안에서 호출부가 그린다(D12의 22px을 `content` rect에 포함)
     - ③ 의존 방향: `dialog`는 `theme`만 참조한다. 여덟 대화가 `dialog`를 참조하며 그 역은 없다. `widgets`와는 서로 모른다

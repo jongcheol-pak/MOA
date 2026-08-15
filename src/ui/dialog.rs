@@ -29,9 +29,6 @@ pub const BODY_MARGIN: i8 = 18;
 /// 구분선 굵기
 const DIVIDER: f32 = 1.0;
 
-/// 버튼 라벨 글꼴 크기
-const LABEL_FONT_PX: f32 = 14.0;
-
 /// 굵게 그릴 때 좌우로 벌리는 간격 — 얕게 둔다. 크게 하면 획이 겹쳐 뭉개진다
 const FAUX_BOLD_OFFSET: f32 = 0.6;
 
@@ -254,18 +251,26 @@ fn footer(ui: &egui::Ui, rect: egui::Rect, buttons: &[ButtonSpec<'_>]) -> Option
         );
     }
 
+    // 글꼴은 앱 전역 버튼 글꼴을 그대로 쓴다 — 여기서 크기를 따로 정하면 대화 버튼만
+    // 다른 화면의 버튼과 달라진다(`widgets::design_button`도 이 값을 쓴다)
+    let font = egui::TextStyle::Button.resolve(ui.style());
     for (slot, spec) in slots.iter().zip(buttons) {
         // 라벨이 칸보다 길면 잘라 옆 칸을 침범하지 않게 한다
-        let label = painter.with_clip_rect(*slot);
-        let font = egui::FontId::proportional(LABEL_FONT_PX);
+        let label = ui.painter_at(*slot);
         if spec.emphasis {
-            faux_bold_text(&label, slot.center(), spec.label, font, theme::TEXT_BUTTON);
+            faux_bold_text(
+                &label,
+                slot.center(),
+                spec.label,
+                font.clone(),
+                theme::TEXT_BUTTON,
+            );
         } else {
             label.text(
                 slot.center(),
                 egui::Align2::CENTER_CENTER,
                 spec.label,
-                font,
+                font.clone(),
                 theme::TEXT_BUTTON,
             );
         }
