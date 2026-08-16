@@ -60,6 +60,15 @@ pub struct Session {
     /// `parse_session`이 통째로 폴백해 기존 워크스페이스가 전부 초기화되기 때문이다 (D2)
     #[serde(default, deserialize_with = "settings_or_default")]
     pub settings: AppSettings,
+    /// 폴더 트리 즐겨찾기 (FR-56) — 더한 차례 그대로의 로컬 폴더 경로들.
+    ///
+    /// **경로가 아니라 문자열로 담는다** — `PathBuf`는 UTF-8이 아닌 경로에서 직렬화 자체가
+    /// 실패하는데 `save_session`은 그 실패를 조용히 삼켜 **세션 저장이 통째로 무산**된다.
+    /// 즐겨찾기 하나 때문에 창 위치·탭까지 잃지 않으려는 것이며, 탭 경로(`TabSession.path`)도
+    /// 같은 이유로 문자열이다 (plan D9).
+    /// `settings`와 같이 스키마 버전을 올리지 않고 더한다 (D2)
+    #[serde(default, deserialize_with = "favorites_or_default")]
+    pub favorites: Vec<String>,
 }
 
 /// 손상된 `settings`를 **그 자리에서만** 삼킨다 — 세션 전체를 잃지 않기 위해서다.
@@ -74,6 +83,19 @@ where
 {
     // 일단 원시 값으로 받아 낸 뒤 변환을 시도한다 — 이 단계에서 실패하면 그것은
     // JSON 자체가 깨진 것이라 어차피 세션 전체가 읽히지 않는다
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(raw).unwrap_or_default())
+}
+
+/// 손상된 `favorites`를 **그 자리에서만** 삼킨다 — `settings_or_default`와 같은 판단이다.
+///
+/// 즐겨찾기 목록이 손으로 편집돼 타입이 어긋나면(문자열 하나가 통째로 들어오는 등) 그 오류가
+/// `Session` 역직렬화 전체로 번져 워크스페이스·분할·탭·큐까지 함께 폴백된다. 즐겨찾기 하나
+/// 때문에 탐색 상태를 잃는 것은 대가가 맞지 않으므로 여기서 끊는다 (plan D5)
+fn favorites_or_default<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
     let raw = serde_json::Value::deserialize(deserializer)?;
     Ok(serde_json::from_value(raw).unwrap_or_default())
 }
@@ -555,6 +577,7 @@ mod tests {
             queue: Vec::new(),
             dock: DockSession::default(),
             settings: AppSettings::default(),
+            favorites: Vec::new(),
             window: WindowState {
                 x: 100,
                 y: 50,
@@ -843,5 +866,36 @@ mod tests {
             parse_session(&text).is_none(),
             "사이트 없는 원격 탭을 받아들였다"
         );
+    }
+
+    #[test]
+    fn 즐겨찾기_키가_없는_파일도_그대로_살아난다() {
+        // 이 필드가 생기기 전에 저장된 파일 — 세션 전체가 폴백되면 안 된다 (plan 전제 1)
+        let mut text = serde_json::to_string(&sample()).expect("직렬화");
+        let mut value: serde_json::Value = serde_json::from_str(&text).expect("값");
+        value.as_object_mut().expect("객체").remove("favorites");
+        text = value.to_string();
+
+        let back = parse_session(&text).expect("즐겨찾기 키가 없다고 폴백됐다");
+        assert!(back.favorites.is_empty());
+        assert_eq!(back.workspaces.len(), sample().workspaces.len());
+    }
+
+    #[test]
+    fn 즐겨찾기가_깨져도_나머지_세션은_살아난다() {
+        // 손으로 편집돼 타입이 어긋난 경우 — 그 자리만 비우고 탐색 상태는 지킨다 (plan D5)
+        let mut session = sample();
+        session.favorites = vec![r"D:\작업".to_owned()];
+        let text = serde_json::to_string(&session).expect("직렬화");
+        let mut value: serde_json::Value = serde_json::from_str(&text).expect("값");
+        value["favorites"] = serde_json::Value::String("망가짐".to_owned());
+
+        let back = parse_session(&value.to_string()).expect("즐겨찾기 때문에 세션을 잃었다");
+        assert!(back.favorites.is_empty(), "깨진 값을 그대로 받았다");
+        assert_eq!(
+            back.workspaces, session.workspaces,
+            "워크스페이스까지 잃었다"
+        );
+        assert_eq!(back.window, session.window);
     }
 }

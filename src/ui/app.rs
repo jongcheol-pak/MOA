@@ -2,6 +2,7 @@
 //!
 //! 실제 탐색은 `ui::panel::PanelState`가 담당하고, 그 패널들을 담은 분할 화면 한 벌이
 //! `WorkspaceView`다. 이 구조체는 워크스페이스 목록(사이드바)과 뷰들을 잇는 그릇이다.
+use crate::app::favorites::FavoriteStore;
 use crate::app::layout::TreeShape;
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir, SplitPlace};
 use crate::app::settings::{
@@ -513,6 +514,8 @@ pub struct ExplorerApp {
     manager: ConnectionManager,
     /// 등록된 사이트 (FR-27). 탭·사이드바가 이름·프로토콜을 여기서 읽는다
     sites: SiteStore,
+    /// 폴더 트리 즐겨찾기 (FR-56) — 앱에 하나뿐이라 모든 패널·탭이 같은 목록을 본다
+    favorites: FavoriteStore,
     /// SFTP 지문 확인 대화와 연결 워커를 잇는 통로 (D15)
     hostkey: HostKeyGate,
     /// 사이트 관리자 대화 (FR-27) — 연결 메뉴의 `새 사이트 추가…`와 실패 화면의 `설정 열기`가 연다
@@ -634,6 +637,7 @@ impl ExplorerApp {
                 Arc::new(move || ctx.request_repaint())
             }),
             sites: SiteStore::new(),
+            favorites: FavoriteStore::new(),
             hostkey: HostKeyGate::new(),
             site_manager: SiteManager::new(),
             toast: Toast::new(),
@@ -705,6 +709,8 @@ impl ExplorerApp {
         // 사이트·큐·도크를 되살린다 (FR-44) — **연결은 열지 않고 전송도 시작하지 않는다**.
         // 원격 탭은 `연결 없음`으로 서 있고, 큐는 대기·실패인 채로 기다린다
         self.sites = session.sites.clone();
+        // 즐겨찾기는 문자열로 담겨 있다(D9) — 여기서 경로로 되돌린다
+        self.favorites = FavoriteStore::from_paths(session.favorites.iter().map(PathBuf::from));
         self.queue = session::restore_queue(&session);
         self.dock = DockState::from_session(&session.dock);
         self.settings = session.settings.clone();
@@ -756,25 +762,32 @@ impl ExplorerApp {
                 },
             })
             .collect();
-        // 앱 설정은 `to_session`이 아니라 여기서 싣는다 — `to_session`은 창·워크스페이스를
-        // 옮기는 자리라 인자를 하나 더 받으면 그 책임이 흐려지고, 호출부(테스트 7곳)도 함께 는다
-        Session {
-            settings: self.settings.clone(),
-            ..session::to_session(
-                self.window.clone(),
-                SidebarSession {
-                    width: self.sidebar_width as i32,
-                    collapsed: self.sidebar_collapsed,
-                },
-                self.workspaces.active_index(),
-                &workspaces,
-                RemoteSnapshot {
-                    sites: &self.sites,
-                    queue: &self.queue,
-                    dock: self.dock.to_session(),
-                },
-            )
-        }
+        // 앱 설정과 즐겨찾기는 `to_session`이 아니라 여기서 싣는다 — `to_session`은 창·
+        // 워크스페이스를 옮기는 자리라 인자를 더 받으면 그 책임이 흐려지고, 호출부(이 파일과
+        // `ui::session`의 시험들)도 함께 는다.
+        // 즐겨찾기만 `with_favorites`를 거치는 이유는 **이 자리가 스프레드**라는 데 있다 —
+        // 필드를 빠뜨려도 컴파일이 통과하므로, 덮는 규칙을 순수 함수로 떼어 시험이 그것을
+        // 직접 부르게 했다 (plan D7)
+        session::with_favorites(
+            Session {
+                settings: self.settings.clone(),
+                ..session::to_session(
+                    self.window.clone(),
+                    SidebarSession {
+                        width: self.sidebar_width as i32,
+                        collapsed: self.sidebar_collapsed,
+                    },
+                    self.workspaces.active_index(),
+                    &workspaces,
+                    RemoteSnapshot {
+                        sites: &self.sites,
+                        queue: &self.queue,
+                        dock: self.dock.to_session(),
+                    },
+                )
+            },
+            self.favorites.paths(),
+        )
     }
 
     /// 셸 메뉴를 쓸 수 있는가 — COM STA와 창 핸들이 모두 있어야 한다

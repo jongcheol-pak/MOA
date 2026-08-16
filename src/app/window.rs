@@ -1003,11 +1003,12 @@ fn save_current_session(hwnd: HWND) {
     }
     let rc = wp.rcNormalPosition;
     settings::save_session(&Session {
-        // 원격 쪽과 앱 설정은 egui 판의 것이다 — 이 판은 기본값으로 둔다 (D26·전제 17)
+        // 원격 쪽·앱 설정·즐겨찾기는 egui 판의 것이다 — 이 판은 기본값으로 둔다 (D26·전제 17)
         sites: Default::default(),
         queue: Vec::new(),
         dock: Default::default(),
         settings: Default::default(),
+        favorites: Vec::new(),
         version: settings::SESSION_VERSION,
         window: WindowState {
             x: rc.left,

@@ -84,9 +84,11 @@ pub fn to_session(
         sites: remote.sites.clone(),
         queue: to_queue_session(remote.queue),
         dock: remote.dock,
-        // 앱 설정은 창·워크스페이스와 성격이 달라 이 함수가 받지 않는다 —
-        // 부르는 쪽(`ExplorerApp::collect_session`)이 자기 값으로 덮어쓴다
+        // 앱 설정과 즐겨찾기는 창·워크스페이스와 성격이 달라 이 함수가 받지 않는다 —
+        // 부르는 쪽(`ExplorerApp::collect_session`)이 자기 값으로 덮어쓴다.
+        // 즐겨찾기를 덮는 것은 아래 `with_favorites`다
         settings: Default::default(),
+        favorites: Vec::new(),
         workspaces: workspaces
             .iter()
             .map(|workspace| WorkspaceSession {
@@ -105,6 +107,25 @@ pub fn to_session(
                 active_panel: workspace.active_panel,
             })
             .collect(),
+    }
+}
+
+/// 즐겨찾기를 세션에 싣는다 (FR-56).
+///
+/// **`to_session`이 받지 않고 이 함수로 덮는 이유**: `to_session`은 창·워크스페이스를 옮기는
+/// 자리라 인자를 더하면 책임이 흐려지고 호출부(이 파일의 시험 12곳)가 함께 는다 — 앱 설정이
+/// 이미 같은 방식이다.
+///
+/// **부르는 쪽이 스프레드(`..to_session(..)`)라 이 한 줄을 빠뜨려도 컴파일이 통과한다**.
+/// 그래서 덮는 규칙을 순수 함수로 떼어 두고 시험이 이 함수를 직접 부른다 (plan D7).
+/// 경로는 여기서 문자열이 된다 — 저장 형식이 문자열이기 때문이다(D9, `to_tab_session`과 같다)
+pub fn with_favorites(session: Session, favorites: &[PathBuf]) -> Session {
+    Session {
+        favorites: favorites
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        ..session
     }
 }
 
@@ -790,5 +811,31 @@ mod tests {
             restored[0].panels[0].tabs[1],
             TabSpec::Remote { site: id, .. } if id == site
         ));
+    }
+
+    #[test]
+    fn 즐겨찾기가_세션에_실려_왕복한다() {
+        // plan D7 — 부르는 쪽(`collect_session`)이 스프레드라 컴파일러가 이 자리를 잡아 주지
+        // 못한다. 그래서 덮는 규칙을 이 함수로 떼어 두고 시험이 직접 부른다
+        let session = to_session(
+            window(),
+            SidebarSession::default(),
+            0,
+            &sample(),
+            empty_remote(),
+        );
+        assert!(session.favorites.is_empty(), "`to_session`이 값을 지어냈다");
+
+        let favorites = [PathBuf::from(r"D:\작업"), PathBuf::from(r"C:\Users")];
+        let with = with_favorites(session, &favorites);
+        assert_eq!(
+            with.favorites,
+            vec![r"D:\작업", r"C:\Users"],
+            "차례가 뒤바뀌었다"
+        );
+
+        let text = serde_json::to_string(&with).expect("직렬화");
+        let back = crate::app::settings::parse_session(&text).expect("왕복");
+        assert_eq!(back.favorites, with.favorites, "저장했다 읽으니 달라졌다");
     }
 }
