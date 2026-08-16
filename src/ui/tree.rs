@@ -11,11 +11,13 @@
 //! 읽는가"뿐이라, 화면 코드를 두 벌로 두면 들여쓰기·선택 강조·`읽는 중…` 같은 것이 곧
 //! 어긋난다. 로컬은 이 모듈이 워커 스레드로 직접 읽고, 원격은 **읽어 달라는 요청을 값으로
 //! 올려보낸다**(연결을 아는 것은 앱이다 — `remote::tree_cache`가 받아 둔다).
+use crate::app::favorites::FavoriteAction;
 use crate::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
 use crate::panel::file_list::{ListRow, SortKey, compare_entries};
 use crate::remote::connection::ConnectionId;
 use crate::remote::tree_cache::{TreeCache, TreeNode};
 use crate::remote::types::RemotePath;
+use crate::ui::menu::clamp_menu_pos;
 use crate::ui::theme;
 use eframe::egui;
 use eframe::egui::collapsing_header::CollapsingState;
@@ -70,7 +72,30 @@ pub struct TreeOutcome {
     pub chosen: Option<TreeChoice>,
     /// 이번 프레임에 처음 펼쳐진 폴더들 — 보통 0~1개다
     pub requests: Vec<TreeRequest>,
+    /// 우클릭 메뉴에서 고른 즐겨찾기 조작 (FR-56) — 실제로 목록을 바꾸는 것은 앱이다.
+    /// 트리가 직접 고치지 않는 이유는 `chosen`과 같다 — 그리는 도중에 상태를 바꾸면
+    /// 같은 프레임의 다른 패널이 옛 목록을 보게 된다
+    pub favorite: Option<FavoriteAction>,
 }
+
+/// 트리 우클릭 메뉴가 다루는 줄 — 어디서 열렸는지에 따라 메뉴 항목이 갈린다
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MenuTarget {
+    /// 드라이브·하위 폴더 줄 — `즐겨찾기`가 뜬다(이미 담긴 폴더면 비활성)
+    Node(PathBuf),
+    /// 즐겨찾기 줄 — `해제`가 뜬다. 여기에 `즐겨찾기`를 함께 두지 않는 이유는
+    /// 이미 담겨 있다는 것이 그 자리 자체로 자명하기 때문이다
+    Favorite(PathBuf),
+}
+
+/// 트리 메뉴 한 줄의 높이·폭 — 원격 목록 메뉴와 같은 값으로 맞춘다.
+///
+/// 그 모듈의 부품을 가져다 쓰지 않는 이유는 대상과 항목이 달라서다(plan 비추상화 선언) —
+/// 같은 값을 쓰되 각자 그린다. 지금 이 모양을 쓰는 곳은 둘이라 공통화 문턱(3회)에 못 미친다
+const MENU_ROW_HEIGHT: f32 = 28.0;
+const MENU_WIDTH: f32 = 180.0;
+/// 메뉴 테두리와 안쪽 여백을 어림한 값 — 화면 밖으로 나가지 않게 당길 때 쓴다
+const MENU_FRAME_PAD: f32 = 8.0;
 
 /// 노드의 하위 폴더 상태. 열거 실패(접근 거부·삭제)도 빈 `Loaded`로 수렴한다 —
 /// 트리에서 사용자에게 알릴 것이 없고, 화살표만 사라지면 충분하다
@@ -94,6 +119,11 @@ pub struct FolderTreeView {
     selected: Option<TreeChoice>,
     tx: Sender<(PathBuf, Vec<PathBuf>)>,
     rx: Receiver<(PathBuf, Vec<PathBuf>)>,
+    /// 우클릭 메뉴가 열린 자리와 그 대상 — `None`이면 닫혀 있다 (FR-56).
+    ///
+    /// **트리를 감출 때 패널이 `close_menu`로 비운다** — 트리가 그려지지 않는 프레임에는
+    /// 이 안의 어떤 코드도 돌지 않아 스스로 닫을 수 없기 때문이다
+    menu_at: Option<(egui::Pos2, MenuTarget)>,
     /// 숨김·시스템 폴더를 보일지 (FR-13) — 목록과 같은 값을 받는다.
     ///
     /// 트리만 따로 두면 같은 창에서 목록의 숨긴 폴더는 사라지는데 트리에는 남아,
@@ -114,6 +144,7 @@ impl FolderTreeView {
             roots: Rc::new(drive_roots()),
             nodes: HashMap::new(),
             selected: None,
+            menu_at: None,
             tx,
             rx,
             show_hidden: true,
@@ -159,10 +190,83 @@ impl FolderTreeView {
                     }
                 }
                 TreeSource::Remote { conn, root, cache } => {
+                    // 원격 트리에는 즐겨찾기가 없다 — 로컬에서 열어 둔 메뉴가 남아 있으면
+                    // 여기서 비운다. 안 그러면 로컬 탭으로 돌아올 때 옛 메뉴가 되살아난다
+                    self.menu_at = None;
                     self.show_remote_node(ui, conn, &root, 0, cache, &mut outcome);
                 }
             });
+        // 메뉴는 **스크롤 영역 밖**에 그린다 — 안에 그리면 스크롤에 딸려가고 잘린다
+        self.show_menu(ui, favorites, &mut outcome);
         outcome
+    }
+
+    /// 우클릭 메뉴를 닫는다 — **트리를 감출 때 패널이 부른다**.
+    ///
+    /// 트리가 그려지지 않는 프레임에는 `show`가 통째로 건너뛰어져 스스로 닫을 수 없다.
+    /// 비우지 않으면 트리를 다시 켤 때 옛 메뉴가 그대로 떠 있다
+    pub fn close_menu(&mut self) {
+        self.menu_at = None;
+    }
+
+    /// 우클릭 메뉴 한 장 (FR-56) — 대상이 트리 노드면 `즐겨찾기`, 즐겨찾기 줄이면 `해제`다.
+    ///
+    /// 원격 목록 메뉴(`ui::remote_menu`)와 **부품을 나누지 않는다**(plan 비추상화 선언) —
+    /// 다루는 것도 항목도 달라서다. 다만 화면 밖으로 나가지 않게 당기는 계산만은 같은
+    /// 함수(`ui::menu::clamp_menu_pos`)를 쓴다
+    fn show_menu(&mut self, ui: &mut egui::Ui, favorites: &[PathBuf], outcome: &mut TreeOutcome) {
+        let Some((at, target)) = self.menu_at.clone() else {
+            return;
+        };
+        let size = egui::vec2(
+            MENU_WIDTH + MENU_FRAME_PAD * 2.0,
+            MENU_ROW_HEIGHT + MENU_FRAME_PAD * 4.0,
+        );
+        let viewport = ui.ctx().input(|input| input.viewport_rect());
+        let at = clamp_menu_pos(viewport, at, size);
+        let mut chosen = None;
+        let response = egui::Area::new(ui.id().with("트리 메뉴"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::menu(ui.style())
+                    .fill(theme::SURFACE_BG)
+                    .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                    .corner_radius(0)
+                    .show(ui, |ui| {
+                        ui.set_width(MENU_WIDTH);
+                        match &target {
+                            MenuTarget::Node(path) => {
+                                // 이미 담긴 폴더면 비활성 — 눌러도 되지 않는 것을 눌리게 두면
+                                // 사용자는 눌렀다가 아무 일도 안 일어나는 것을 본다
+                                let enabled = !favorites.iter().any(|known| known == path);
+                                if menu_row(ui, crate::i18n::tree_favorite_add(), enabled) {
+                                    chosen = Some(FavoriteAction::Add(path.clone()));
+                                }
+                            }
+                            MenuTarget::Favorite(path) => {
+                                if menu_row(ui, crate::i18n::tree_favorite_remove(), true) {
+                                    chosen = Some(FavoriteAction::Remove(path.clone()));
+                                }
+                            }
+                        }
+                    });
+            })
+            .response;
+
+        // 바깥을 누르거나 Esc면 닫는다 — 메뉴가 화면에 눌어붙지 않게 한다
+        let outside = ui.input(|input| {
+            input.pointer.any_click()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_none_or(|pos| !response.rect.contains(pos))
+        });
+        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if chosen.is_some() || outside || escape {
+            self.menu_at = None;
+        }
+        outcome.favorite = chosen;
     }
 
     /// 즐겨찾기 줄들과 그 아래를 가르는 구분선 (FR-56).
@@ -190,6 +294,12 @@ impl FolderTreeView {
                     .on_hover_text(path.to_string_lossy());
                 if response.clicked() {
                     self.select(choice, outcome);
+                }
+                // 즐겨찾기 줄의 메뉴는 `해제` 하나다 (FR-56)
+                if response.secondary_clicked()
+                    && let Some(at) = response.interact_pointer_pos()
+                {
+                    self.menu_at = Some((at, MenuTarget::Favorite(path.clone())));
                 }
             });
         }
@@ -300,9 +410,11 @@ impl FolderTreeView {
         if matches!(self.nodes.get(path), Some(Node::Loaded(children)) if children.is_empty()) {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                if ui.selectable_label(is_selected, label).clicked() {
+                let response = ui.selectable_label(is_selected, label);
+                if response.clicked() {
                     self.select(choice, outcome);
                 }
+                self.open_node_menu(&response, path);
             });
             return;
         }
@@ -310,9 +422,11 @@ impl FolderTreeView {
         let id = ui.make_persistent_id(path);
         let header =
             CollapsingState::load_with_default_open(ui.ctx(), id, false).show_header(ui, |ui| {
-                if ui.selectable_label(is_selected, label).clicked() {
+                let response = ui.selectable_label(is_selected, label);
+                if response.clicked() {
                     self.select(choice, outcome);
                 }
+                self.open_node_menu(&response, path);
             });
         header.body(|ui| {
             // 이 클로저는 펼쳐졌을 때만 호출된다 — 여기가 지연 열거의 시작점이다
@@ -337,6 +451,18 @@ impl FolderTreeView {
                 }
             }
         });
+    }
+
+    /// 트리 노드 줄에서 우클릭이 있었으면 그 자리에 메뉴를 연다 (FR-56).
+    ///
+    /// 잎 노드와 펼칠 수 있는 노드 두 자리에서 같은 판정을 하므로 한 곳에 둔다 —
+    /// 어느 한쪽만 고쳐 메뉴가 안 열리는 줄이 생기지 않게 한다
+    fn open_node_menu(&mut self, response: &egui::Response, path: &Path) {
+        if response.secondary_clicked()
+            && let Some(at) = response.interact_pointer_pos()
+        {
+            self.menu_at = Some((at, MenuTarget::Node(path.to_path_buf())));
+        }
     }
 
     fn select(&mut self, choice: TreeChoice, outcome: &mut TreeOutcome) {
@@ -411,6 +537,36 @@ fn child_dirs(parent: &Path, mut entries: Vec<FileEntry>, show_hidden: bool) -> 
         .iter()
         .map(|e| parent.join(e.name_string()))
         .collect()
+}
+
+/// 메뉴 한 줄 — 눌렸으면 `true`. 비활성 줄은 흐리게 그리고 클릭을 받지 않는다.
+///
+/// 원격 목록 메뉴의 같은 이름 함수와 값·모양을 맞췄다(plan 4-D) — 부품을 공유하지 않는
+/// 이유는 그 모듈 주석과 같다(대상·항목이 다르다)
+fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), MENU_ROW_HEIGHT),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+    if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, theme::MENU_HOT);
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        if enabled {
+            theme::TEXT
+        } else {
+            theme::TEXT_DIM
+        },
+    );
+    enabled && response.clicked()
 }
 
 /// 트리에 보일 이름 — 드라이브 루트는 이름이 없어 경로 자체(`C:\`)를 쓴다

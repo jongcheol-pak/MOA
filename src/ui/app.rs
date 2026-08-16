@@ -2589,6 +2589,7 @@ impl eframe::App for ExplorerApp {
         let mut remote_menu = None;
         // 원격 트리가 청한 하위 조회 (T24)
         let mut tree_requests = Vec::new();
+        let mut favorite = None;
         // 사이트 관리자의 `연결(C)`이 쓸 분할 영역 — 모달은 CentralPanel 밖에서 그리므로
         // 안에서 정해지는 이 값을 밖으로 들고 나온다
         let mut layout_area = None;
@@ -2710,6 +2711,7 @@ impl eframe::App for ExplorerApp {
                     dropped = outcome.drop;
                     remote_menu = outcome.remote_menu;
                     tree_requests = outcome.tree_requests;
+                    favorite = outcome.favorite;
                 }
                 // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
                 // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.
@@ -2731,6 +2733,12 @@ impl eframe::App for ExplorerApp {
                 // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
                 if let Some((target, (action, targets))) = remote_menu.take() {
                     self.apply_remote_menu(target, action, targets);
+                }
+                // 트리 메뉴가 고른 즐겨찾기 조작 (FR-56) — 어느 패널에서 골랐는지는 쓰지
+                // 않는다(목록이 앱에 하나뿐이라 모든 패널이 같은 것을 본다).
+                // 무엇이 늘고 주는지의 규칙은 `FavoriteStore::apply`에 있다
+                if let Some((_, action)) = favorite.take() {
+                    self.favorites.apply(action);
                 }
                 // 원격 위치가 바뀐 패널은 목록을 다시 읽는다 — 트리 선택(T24 Acceptance ⑤)과
                 // 상위 이동이 이 길을 함께 쓴다

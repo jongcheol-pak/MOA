@@ -7,6 +7,7 @@
 //! 실패(삭제·권한)하면 사유만 표시하고 현 위치·목록을 그대로 둔다.
 //!
 //! 워커 스레드에 맡기는 일(열거·만들기)은 `workers`가, 테스트는 `tests`가 든다.
+use crate::app::favorites::FavoriteAction;
 use crate::fs::create;
 use crate::fs::enumerate::{EnumOutcome, FileEntry};
 use crate::fs::icons::IconCache;
@@ -22,7 +23,7 @@ use crate::ui::address_bar::{AddressBar, NavAction};
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_common::{DropOutcome, DropTarget, FileDrag};
-use crate::ui::menu::{Command, PanelMenuState};
+use crate::ui::menu::{Command, PanelMenuState, clamp_menu_pos};
 use crate::ui::panel::workers::{CreateOp, DirLoad};
 use crate::ui::remote_menu::{self, RemoteMenuAction, RemoteTarget};
 use crate::ui::remote_states::{self, FailedAction, RemoteView};
@@ -93,16 +94,6 @@ enum PendingNav {
 /// 원격 목록 메뉴에서 고른 것과 그때의 대상들 (FR-39)
 pub type RemoteMenuPick = (RemoteMenuAction, Vec<RemoteTarget>);
 
-/// 팝업이 화면 밖으로 나가지 않게 시작점을 안으로 당긴다 (quality 리뷰 m1).
-///
-/// 화면보다 큰 팝업이면 왼쪽·위쪽 모서리를 우선한다 — 아래가 잘려도 첫 줄은 보인다
-fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
-    egui::pos2(
-        at.x.min(screen.right() - size.x).max(screen.left()),
-        at.y.min(screen.bottom() - size.y).max(screen.top()),
-    )
-}
-
 /// `show_content`가 한 프레임에서 거둔 것들 — 목록 조작·단계 화면의 조치·놓기·원격 메뉴
 type ContentOutcome = (
     FileListAction,
@@ -133,6 +124,8 @@ pub struct PanelOutcome {
     pub drop: Option<DropOutcome>,
     /// 원격 목록 우클릭 메뉴에서 고른 것과 그 대상들 (FR-39)
     pub remote_menu: Option<RemoteMenuPick>,
+    /// 트리 우클릭 메뉴에서 고른 즐겨찾기 조작 (FR-56) — 목록을 고치는 것은 앱이다
+    pub favorite: Option<FavoriteAction>,
     /// 원격 트리가 청한 하위 조회들 (FR-9 원격판) — 연결에 보내는 것은 앱이다.
     ///
     /// **여럿을 그대로 올린다** — 한 프레임에 형제 노드 여럿이 펼쳐져 있으면 요청도 여럿이다.
@@ -1170,6 +1163,9 @@ impl PanelState {
                 .into();
             egui::Rect::from_min_max(egui::pos2(split_x + TREE_BORDER, area.top()), area.max)
         } else {
+            // 트리를 감추면 그 코드가 통째로 건너뛰어져 우클릭 메뉴가 스스로 닫히지 못한다 —
+            // 여기서 비우지 않으면 다시 켤 때 옛 메뉴가 그대로 떠 있다 (FR-56)
+            self.tree.close_menu();
             area
         };
         let (action, remote_action, drop, remote_menu) = ui
@@ -1184,7 +1180,10 @@ impl PanelState {
 
         // 탭·탐색은 여기서 바로 처리해도 된다(모달이 없다). 셸 메뉴만 호출부로 올려보낸다
         let mut tree_requests = Vec::new();
+        let mut favorite = None;
         if let Some(outcome) = tree_outcome {
+            // 즐겨찾기 목록은 앱이 하나만 들고 있으므로 조작은 값으로 올려보낸다
+            favorite = outcome.favorite;
             match outcome.chosen {
                 // 트리에서 고른 폴더로 목록이 이동한다 (Acceptance ⑤)
                 Some(TreeChoice::Local(path)) => self.navigate(path, ctx),
@@ -1221,6 +1220,7 @@ impl PanelState {
             closed_conn,
             drop,
             remote_menu,
+            favorite,
             tree_requests,
         }
     }

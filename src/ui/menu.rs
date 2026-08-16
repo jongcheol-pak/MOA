@@ -344,6 +344,19 @@ fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
     ]
 }
 
+/// 팝업이 화면 밖으로 나가지 않게 시작점을 안으로 당긴다 (quality 리뷰 m1).
+///
+/// 화면보다 큰 팝업이면 왼쪽·위쪽 모서리를 우선한다 — 아래가 잘려도 첫 줄은 보인다.
+///
+/// **패널과 트리가 함께 쓴다** — 패널의 원격 목록 메뉴와 트리의 즐겨찾기 메뉴가 같은 보정을
+/// 받아야 해서, 어느 한쪽에 두지 않고 명령만 값으로 돌려주는 이 모듈에 둔다 (plan D6)
+pub fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
+    egui::pos2(
+        at.x.min(screen.right() - size.x).max(screen.left()),
+        at.y.min(screen.bottom() - size.y).max(screen.top()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,5 +618,28 @@ mod tests {
                 assert_eq!(key, egui::Key::F5);
             }
         }
+    }
+
+    #[test]
+    fn 가장자리에서_연_메뉴는_화면_안으로_당겨진다() {
+        // quality 리뷰 m1 — 셸 메뉴는 OS가 보정해 주지만(D21) 우리가 그리는 메뉴는 아니다
+        let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
+        let size = egui::vec2(200.0, 240.0);
+        // 안쪽에서 열면 그 자리 그대로다
+        assert_eq!(
+            clamp_menu_pos(screen, egui::pos2(100.0, 100.0), size),
+            egui::pos2(100.0, 100.0)
+        );
+        // 오른쪽·아래 가장자리에서 열면 안으로 당긴다
+        assert_eq!(
+            clamp_menu_pos(screen, egui::pos2(1150.0, 780.0), size),
+            egui::pos2(1000.0, 560.0)
+        );
+        // 화면보다 큰 메뉴는 왼쪽 위를 맞춘다 — 아래가 잘려도 첫 줄은 보인다
+        let huge = egui::vec2(2000.0, 2000.0);
+        assert_eq!(
+            clamp_menu_pos(screen, egui::pos2(600.0, 400.0), huge),
+            egui::pos2(0.0, 0.0)
+        );
     }
 }

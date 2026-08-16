@@ -974,29 +974,6 @@ fn 패널이_쓰는_연결은_중복_없이_모인다() {
 }
 
 #[test]
-fn 가장자리에서_연_메뉴는_화면_안으로_당겨진다() {
-    // quality 리뷰 m1 — 셸 메뉴는 OS가 보정해 주지만(D21) 우리가 그리는 메뉴는 아니다
-    let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 800.0));
-    let size = egui::vec2(200.0, 240.0);
-    // 안쪽에서 열면 그 자리 그대로다
-    assert_eq!(
-        clamp_menu_pos(screen, egui::pos2(100.0, 100.0), size),
-        egui::pos2(100.0, 100.0)
-    );
-    // 오른쪽·아래 가장자리에서 열면 안으로 당긴다
-    assert_eq!(
-        clamp_menu_pos(screen, egui::pos2(1150.0, 780.0), size),
-        egui::pos2(1000.0, 560.0)
-    );
-    // 화면보다 큰 메뉴는 왼쪽 위를 맞춘다 — 아래가 잘려도 첫 줄은 보인다
-    let huge = egui::vec2(2000.0, 2000.0);
-    assert_eq!(
-        clamp_menu_pos(screen, egui::pos2(600.0, 400.0), huge),
-        egui::pos2(0.0, 0.0)
-    );
-}
-
-#[test]
 fn 권한이_없으면_그_폴더로_옮기고_목록_자리에_사유를_적는다() {
     // 2026-08-16 사용자 요청 — 종전에는 이전 목록을 그대로 둔 채 상태 줄에만 사유를 적어,
     // 주소창·트리가 가리키는 곳과 목록이 갈렸다
@@ -1236,6 +1213,385 @@ fn 즐겨찾기를_누르면_그_폴더로_옮겨간다() {
         "히스토리에 쌓지 않았다"
     );
 }
+/// 즐겨찾기를 든 패널을 프레임 단위로 그린다 — 우클릭 메뉴처럼 **두 프레임에 걸쳐**
+/// 일어나는 일을 보는 시험들이 쓴다(메뉴는 우클릭을 받은 다음 프레임에 그려진다)
+struct FavoriteHarness {
+    ctx: egui::Context,
+    icons: IconCache,
+    textures: crate::ui::icon_tex::IconTextures,
+    tree: crate::remote::tree_cache::TreeCache,
+    sites: SiteStore,
+}
+
+impl FavoriteHarness {
+    fn new() -> FavoriteHarness {
+        FavoriteHarness {
+            ctx: egui::Context::default(),
+            icons: IconCache::new(),
+            textures: crate::ui::icon_tex::IconTextures::new(),
+            tree: crate::remote::tree_cache::TreeCache::new(),
+            sites: SiteStore::new(),
+        }
+    }
+
+    /// 한 프레임 그리고 화면과 그 프레임의 결과를 함께 돌려준다
+    fn draw(
+        &mut self,
+        panel: &mut PanelState,
+        favorites: &[std::path::PathBuf],
+        input: egui::RawInput,
+    ) -> (eframe::egui::FullOutput, Option<FavoriteAction>) {
+        let remote = RemoteView {
+            sites: &self.sites,
+            connected: &[],
+            tree: &self.tree,
+        };
+        let (icons, textures) = (&mut self.icons, &mut self.textures);
+        let mut picked = None;
+        let output = self.ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let inner = ui.ctx().clone();
+                let outcome = panel.show(
+                    ui,
+                    &inner,
+                    icons,
+                    textures,
+                    remote,
+                    PanelMenuState::for_panes(1, ViewMode::Details),
+                    crate::ui::tabs::TransferTargets::default(),
+                    favorites,
+                );
+                picked = outcome.favorite;
+            });
+        });
+        (output, picked)
+    }
+
+    /// 아무 입력 없이 한 프레임 — 화면만 본다
+    fn frame(
+        &mut self,
+        panel: &mut PanelState,
+        favorites: &[std::path::PathBuf],
+    ) -> eframe::egui::FullOutput {
+        self.draw(panel, favorites, Default::default()).0
+    }
+
+    /// 그 자리를 누르고 뗀다 — 마지막 프레임의 결과를 돌려준다
+    fn click(
+        &mut self,
+        panel: &mut PanelState,
+        favorites: &[std::path::PathBuf],
+        at: egui::Pos2,
+        button: egui::PointerButton,
+        start: f64,
+    ) -> (eframe::egui::FullOutput, Option<FavoriteAction>) {
+        let mut last = None;
+        for (step, pressed) in [(0.0, true), (0.05, false)] {
+            let input = egui::RawInput {
+                time: Some(start + step),
+                events: vec![egui::Event::PointerButton {
+                    pos: at,
+                    button,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            };
+            last = Some(self.draw(panel, favorites, input));
+        }
+        last.expect("두 프레임을 그렸다")
+    }
+}
+
+/// 트리 구역에 그려진 그 글의 한가운데 — 없으면 시험을 세운다
+fn tree_text_spot(output: &eframe::egui::FullOutput, label: &str) -> egui::Pos2 {
+    let pos = drawn_text_positions(output)
+        .into_iter()
+        .find(|(text, pos)| text == label && pos.x < TREE_WIDTH)
+        .unwrap_or_else(|| panic!("트리에 `{label}` 줄이 없다"))
+        .1;
+    // 글의 왼쪽 위 자리다 — 그 줄 한가운데를 겨눈다
+    egui::pos2(pos.x + 8.0, pos.y + 6.0)
+}
+
+#[test]
+fn 트리_노드를_우클릭하면_즐겨찾기_메뉴가_뜬다() {
+    // FR-56 — 등록 진입점이다. 아직 담기지 않은 폴더라 활성으로 뜬다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut harness = FavoriteHarness::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+
+    let first = harness.frame(&mut panel, &[]);
+    // 주소창에도 `C:\` 같은 경로가 있어 **트리 구역만** 본다 — 트리는 상태 줄 아래에서
+    // 시작하므로 토글 아이콘보다 아래인 것이 트리의 줄이다
+    let texts = drawn_text_positions(&first);
+    let 토글 = texts
+        .iter()
+        .find(|(text, _)| text == TREE_TOGGLE_ICON)
+        .expect("트리 토글 아이콘")
+        .1;
+    let 드라이브 = texts
+        .iter()
+        .find(|(text, pos)| text.ends_with(":\\") && pos.x < TREE_WIDTH && pos.y > 토글.y)
+        .expect("트리의 드라이브 줄")
+        .1;
+    let at = egui::pos2(드라이브.x + 8.0, 드라이브.y + 6.0);
+
+    harness.click(&mut panel, &[], at, egui::PointerButton::Secondary, 0.05);
+    let opened = harness.frame(&mut panel, &[]);
+
+    let texts = drawn_texts(&opened);
+    assert!(
+        texts.iter().any(|text| text == "즐겨찾기"),
+        "우클릭했는데 메뉴가 뜨지 않았다: {texts:?}"
+    );
+}
+
+#[test]
+fn 즐겨찾기_줄의_메뉴는_해제다() {
+    // 담긴 폴더에는 `해제`만 둔다 — 이미 담겨 있다는 것이 그 자리로 자명하다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut harness = FavoriteHarness::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+
+    let first = harness.frame(&mut panel, &favorites);
+    let at = tree_text_spot(&first, "작업");
+    harness.click(
+        &mut panel,
+        &favorites,
+        at,
+        egui::PointerButton::Secondary,
+        0.05,
+    );
+    let opened = harness.frame(&mut panel, &favorites);
+
+    let texts = drawn_texts(&opened);
+    assert!(
+        texts.iter().any(|text| text == "해제"),
+        "`해제`가 없다: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|text| text == "즐겨찾기"),
+        "이미 담긴 줄에 `즐겨찾기`가 함께 떴다: {texts:?}"
+    );
+}
+
+#[test]
+fn 원격_트리_노드에는_메뉴가_뜨지_않는다() {
+    // 사용자 명시 제외 — 원격 폴더는 즐겨찾기 대상이 아니다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let (mut panel, sites) = remote_panel_in(TabPhase::Ok);
+    panel.tree_visible = true;
+    let mut harness = FavoriteHarness::new();
+    harness.sites = sites;
+
+    let first = harness.frame(&mut panel, &[]);
+    let at = tree_text_spot(&first, "/");
+    harness.click(&mut panel, &[], at, egui::PointerButton::Secondary, 0.05);
+    let opened = harness.frame(&mut panel, &[]);
+
+    let texts = drawn_texts(&opened);
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text == "즐겨찾기" || text == "해제"),
+        "원격 트리에 메뉴가 떴다: {texts:?}"
+    );
+}
+
+#[test]
+fn 메뉴에서_고른_조작이_패널_밖으로_올라간다() {
+    // 목록을 고치는 것은 앱이다 — 패널은 고른 것을 값으로 올려보내기만 한다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut harness = FavoriteHarness::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+
+    let first = harness.frame(&mut panel, &favorites);
+    let at = tree_text_spot(&first, "작업");
+    harness.click(
+        &mut panel,
+        &favorites,
+        at,
+        egui::PointerButton::Secondary,
+        0.05,
+    );
+    let opened = harness.frame(&mut panel, &favorites);
+    let 해제 = drawn_text_positions(&opened)
+        .into_iter()
+        .find(|(text, _)| text == "해제")
+        .expect("`해제` 줄")
+        .1;
+    let 해제 = egui::pos2(해제.x + 8.0, 해제.y + 6.0);
+
+    let (_, picked) = harness.click(
+        &mut panel,
+        &favorites,
+        해제,
+        egui::PointerButton::Primary,
+        0.20,
+    );
+
+    assert_eq!(
+        picked,
+        Some(FavoriteAction::Remove(std::path::PathBuf::from(r"D:\작업"))),
+        "`해제`를 눌렀는데 그 조작이 올라오지 않았다"
+    );
+}
+
+#[test]
+fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
+    // 사용자 요청 — 눌러도 되지 않는 것을 눌리게 두면 사용자는 눌렀다가 아무 일도
+    // 일어나지 않는 것을 본다.
+    //
+    // **같은 자리를 두 조건에서 눌러 견준다** — 미등록이면 조작이 올라오고 등록됐으면
+    // 올라오지 않아야 한다. 한쪽만 보면 "좌표가 빗나가서 아무것도 안 올라온 것"과
+    // 구분할 수 없어 시험이 죽은 채 통과한다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+
+    /// 트리의 첫 드라이브 줄을 우클릭하고, 뜬 `즐겨찾기` 줄을 눌러 그 결과를 돌려준다
+    fn pick_on_first_drive(favorites: &[std::path::PathBuf]) -> (String, Option<FavoriteAction>) {
+        let mut harness = FavoriteHarness::new();
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        panel.tree_visible = true;
+        panel.deferred_start = None;
+
+        let drawn = harness.frame(&mut panel, favorites);
+        let texts = drawn_text_positions(&drawn);
+        let 토글 = texts
+            .iter()
+            .find(|(text, _)| text == TREE_TOGGLE_ICON)
+            .expect("트리 토글 아이콘")
+            .1;
+        // 즐겨찾기 줄과 트리 줄에 같은 이름이 함께 있을 수 있다 — **아래쪽**이 트리 줄이다
+        let (이름, 자리) = texts
+            .iter()
+            .filter(|(text, pos)| text.ends_with(":\\") && pos.x < TREE_WIDTH && pos.y > 토글.y)
+            .max_by(|a, b| a.1.y.total_cmp(&b.1.y))
+            .cloned()
+            .expect("트리의 드라이브 줄");
+
+        harness.click(
+            &mut panel,
+            favorites,
+            egui::pos2(자리.x + 8.0, 자리.y + 6.0),
+            egui::PointerButton::Secondary,
+            0.05,
+        );
+        let opened = harness.frame(&mut panel, favorites);
+        let 메뉴줄 = drawn_text_positions(&opened)
+            .into_iter()
+            .find(|(text, _)| text == "즐겨찾기")
+            .expect("`즐겨찾기` 줄이 뜨지 않았다")
+            .1;
+
+        let (_, picked) = harness.click(
+            &mut panel,
+            favorites,
+            egui::pos2(메뉴줄.x + 8.0, 메뉴줄.y + 6.0),
+            egui::PointerButton::Primary,
+            0.20,
+        );
+        (이름, picked)
+    }
+
+    // ① 아직 담기지 않았으면 눌러서 담긴다 — 이 좌표가 실제로 그 줄을 누른다는 증거다
+    let (이름, picked) = pick_on_first_drive(&[]);
+    assert_eq!(
+        picked,
+        Some(FavoriteAction::Add(std::path::PathBuf::from(&이름))),
+        "미등록 폴더인데 `즐겨찾기`를 눌러도 조작이 올라오지 않았다"
+    );
+
+    // ② 이미 담겼으면 같은 자리를 눌러도 아무것도 올라오지 않는다
+    let (_, picked) = pick_on_first_drive(&[std::path::PathBuf::from(&이름)]);
+    assert_eq!(picked, None, "이미 담긴 폴더인데 다시 담겼다");
+}
+
+#[test]
+fn 트리를_감추면_열린_메뉴가_닫힌다() {
+    // 트리가 그려지지 않는 프레임에는 메뉴 코드가 통째로 건너뛰어져 스스로 닫지 못한다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut harness = FavoriteHarness::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+
+    let first = harness.frame(&mut panel, &favorites);
+    let at = tree_text_spot(&first, "작업");
+    harness.click(
+        &mut panel,
+        &favorites,
+        at,
+        egui::PointerButton::Secondary,
+        0.05,
+    );
+    let opened = harness.frame(&mut panel, &favorites);
+    assert!(
+        drawn_texts(&opened).iter().any(|text| text == "해제"),
+        "메뉴가 열리지 않아 이 시험이 무의미하다"
+    );
+
+    // 트리를 껐다 켠다
+    panel.tree_visible = false;
+    harness.frame(&mut panel, &favorites);
+    panel.tree_visible = true;
+    let reopened = harness.frame(&mut panel, &favorites);
+
+    assert!(
+        !drawn_texts(&reopened).iter().any(|text| text == "해제"),
+        "트리를 다시 켜니 옛 메뉴가 되살아났다"
+    );
+}
+
+#[test]
+fn 활성_탭이_원격으로_바뀌면_열린_메뉴가_닫힌다() {
+    // 로컬에서 연 메뉴가 원격 화면 위에 떠서도, 돌아왔을 때 되살아나서도 안 된다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let (mut panel, sites) = remote_panel_in(TabPhase::Ok);
+    panel.tree_visible = true;
+    let mut harness = FavoriteHarness::new();
+    harness.sites = sites;
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+
+    // 로컬 탭을 하나 열어 그 트리에서 메뉴를 연다
+    let ctx = egui::Context::default();
+    panel.handle_tab(TabAction::New, &ctx);
+    let first = harness.frame(&mut panel, &favorites);
+    let at = tree_text_spot(&first, "작업");
+    harness.click(
+        &mut panel,
+        &favorites,
+        at,
+        egui::PointerButton::Secondary,
+        0.05,
+    );
+    let opened = harness.frame(&mut panel, &favorites);
+    assert!(
+        drawn_texts(&opened).iter().any(|text| text == "해제"),
+        "메뉴가 열리지 않아 이 시험이 무의미하다"
+    );
+
+    // 원격 탭으로 갔다가 다시 로컬로 돌아온다
+    assert!(panel.tabs.switch(0), "원격 탭으로 돌아가지 못했다");
+    harness.frame(&mut panel, &favorites);
+    assert!(panel.tabs.switch(1), "로컬 탭으로 돌아오지 못했다");
+    let back = harness.frame(&mut panel, &favorites);
+
+    assert!(
+        !drawn_texts(&back).iter().any(|text| text == "해제"),
+        "원격을 거쳐 돌아오니 옛 메뉴가 되살아났다"
+    );
+}
+
 #[test]
 fn 트리_토글은_트리_위쪽_왼쪽_끝에_선다() {
     // 2026-08-16 사용자 결정 — 토글이 목록 쪽(트리 오른쪽)에 있으면 무엇을 여는 버튼인지

@@ -191,6 +191,12 @@ strings! {
     /// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격 트리가 같은 문구를 쓴다
     tree_loading => "읽는 중…" / "Loading…";
 
+    /// 트리 항목 우클릭 메뉴 — 이 폴더를 즐겨찾기에 담는다 (FR-56).
+    /// 이미 담긴 폴더면 비활성으로 보인다
+    tree_favorite_add => "즐겨찾기" / "Add to favorites";
+    /// 즐겨찾기 줄 우클릭 메뉴 — 목록에서 뺀다
+    tree_favorite_remove => "해제" / "Remove from favorites";
+
     // ── 패널·목록·상태 줄 ──
     /// 트리 토글의 툴팁 — 아이콘은 로컬·원격이 같고 이 문구만 갈린다
     panel_folder_tree => "폴더 트리" / "Folder tree";
@@ -1041,12 +1047,13 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 23] = [
+        const EXEMPT_LITERALS: [&str; 24] = [
             // 위젯 ID
             "앱 설정",
             "설정 글꼴",
             "설정 언어",
             "원격 메뉴",
+            "트리 메뉴",
             "원격 이름 대화",
             "원격 권한 변경",
             "원격 삭제 확인",

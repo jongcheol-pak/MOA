@@ -3,6 +3,7 @@
 //! 배치 계산은 `app::layout::LayoutTree`(순수 로직·단위 테스트 완비)가 그대로 하고,
 //! 이 파일은 그 결과를 egui 좌표로 옮겨 그리고 입력을 되돌려주는 일만 한다.
 //! egui의 `SidePanel`류 도킹 컨테이너는 쓰지 않는다 — 중첩 자유 분할을 표현하지 못한다.
+use crate::app::favorites::FavoriteAction;
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::remote::connection::ConnectionId;
@@ -64,6 +65,10 @@ pub struct LayoutOutcome {
     pub drop: Option<(PanelId, DropOutcome)>,
     /// 원격 메뉴에서 고른 것과 그 패널 (FR-39)
     pub remote_menu: Option<(PanelId, RemoteMenuPick)>,
+    /// 트리 우클릭 메뉴에서 고른 즐겨찾기 조작과 그 패널 (FR-56).
+    ///
+    /// 한 프레임에 메뉴는 하나만 떠 있으므로 first-wins다 — 다른 필드와 같은 규칙이다
+    pub favorite: Option<(PanelId, FavoriteAction)>,
     /// 원격 트리가 청한 하위 조회들 (T24) — **모아서** 올린다.
     ///
     /// first-wins로 하나만 남기면 두 패널이 같은 프레임에 노드를 펼쳤을 때 한쪽이 영영
@@ -93,6 +98,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         closed_conn,
         drop,
         remote_menu,
+        favorite,
         tree_requests,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
@@ -130,6 +136,12 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         && let Some(url) = remote_url
     {
         outcome.remote_url = Some((id, url));
+    }
+    // 즐겨찾기 조작도 한 프레임에 하나뿐이다 — 메뉴가 하나만 떠 있기 때문이다
+    if outcome.favorite.is_none()
+        && let Some(action) = favorite
+    {
+        outcome.favorite = Some((id, action));
     }
     outcome
         .tree_requests
@@ -317,6 +329,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
+                favorite: None,
                 tree_requests: Vec::new(),
             },
         );
@@ -331,6 +344,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
+                favorite: None,
                 tree_requests: Vec::new(),
             },
         );
@@ -367,6 +381,7 @@ mod tests {
                     closed_conn: None,
                     drop: None,
                     remote_menu: None,
+                    favorite: None,
                     tree_requests: Vec::new(),
                 },
             );
@@ -395,6 +410,7 @@ mod tests {
                     closed_conn: Some(conn),
                     drop: None,
                     remote_menu: None,
+                    favorite: None,
                     tree_requests: Vec::new(),
                 },
             );
@@ -434,6 +450,7 @@ mod tests {
                 closed_conn: None,
                 drop: None,
                 remote_menu: None,
+                favorite: None,
                 tree_requests: requests.clone(),
             },
         );
