@@ -216,10 +216,10 @@ impl FolderTreeView {
                     ui.colored_label(theme::ERROR_TEXT, detail);
                 }
                 Some(TreeNode::Loading) => {
-                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::tree_loading());
                 }
                 None => {
-                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::tree_loading());
                     if needs_children(cache, conn, path) {
                         outcome.requests.push(TreeRequest::Remote {
                             conn,
@@ -292,7 +292,7 @@ impl FolderTreeView {
                     }
                 }
                 None => {
-                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::tree_loading());
                 }
             }
         });

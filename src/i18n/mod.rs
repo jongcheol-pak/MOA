@@ -113,8 +113,9 @@ strings! {
         => "시작 프로그램 설정을 바꾸지 못했습니다"
         / "Could not change the startup setting";
     settings_tray_on_close => "닫으면 트레이로 보내기" / "Send to tray on close";
-    settings_show_extensions => "파일 확장명" / "File name extensions";
-    settings_show_hidden => "숨김 항목" / "Hidden items";
+    /// 토글 라벨은 **켰을 때 일어나는 일**을 적는다 — 이름만 두면 켜고 끄는 것이 무엇인지 모른다
+    settings_show_extensions => "파일 확장명 표시" / "Show file name extensions";
+    settings_show_hidden => "숨김 항목 표시" / "Show hidden items";
     /// 언어 선택지 — `English`는 두 언어에서 같다
     settings_language_system => "시스템 기본" / "System default";
     settings_language_korean => "한국어" / "Korean";
@@ -164,6 +165,14 @@ strings! {
     sidebar_add_site => "새 사이트 추가…" / "Add site…";
     sidebar_new_workspace => "새 워크스페이스" / "New workspace";
     sidebar_refresh_sites => "사이트 목록 새로 고침" / "Refresh site list";
+    /// 사이트 우클릭 메뉴 (인벤토리 #10) — **`삭제`가 아니다.**
+    /// 이 조작은 사이드바에서 감출 뿐이고 사이트는 사이트 관리자에 남는다.
+    /// 종전 라벨(`삭제`)은 등록이 지워진 줄로 읽히게 했다 (2026-08-16 검토)
+    sidebar_hide_site => "사이드바에서 숨기기" / "Hide from sidebar";
+    /// `+` 버튼 툴팁 — 누르면 일어나는 일을 그대로 적는다(`연결`은 무엇이 열리는지 알 수 없다)
+    sidebar_connect_menu => "사이트 연결 메뉴" / "Connect to a site";
+    /// 사이트가 하나도 없을 때의 안내 — 첫 화면에서 다음에 무엇을 할지 알려 준다
+    sidebar_no_sites => "+ 를 눌러 서버를 등록하세요" / "Press + to add a server";
 
     // ── 탭 스트립·주소창 ──
     tabs_new => "새 탭" / "New tab";
@@ -196,15 +205,21 @@ strings! {
     column_owner => "소유자" / "Owner";
     /// 상태 표시줄의 큐 토글 (인벤토리 #53)
     status_queue => "전송 큐" / "Transfer queue";
-    /// 실패 알약 (인벤토리 #57)
-    status_failed => "실패" / "Failed";
+    /// 실패 알약의 낱말 (인벤토리 #57) — 건수는 `dynamic::status_failed_count`가 붙인다
+    /// 다 읽었는데 보일 것이 없을 때 (2026-08-16 검토) — 종전에는 빈칸만 남아,
+    /// 다 읽은 것인지 실패한 것인지 화면으로 가릴 수 없었다
+    list_empty_folder => "이 폴더는 비어 있습니다" / "This folder is empty";
     /// 폴더를 펼치는 중임을 알리는 문구
     status_expanding => "펼치는 중…" / "Expanding…";
     /// 새로 만드는 폴더·파일의 기본 이름 — 화면 언어를 따라 실제 이름이 정해진다.
     /// 파일 쪽은 Windows 탐색기의 `새로 만들기 > 텍스트 문서`와 같은 이름이다 (사용자 확정)
     create_folder_base => "새 폴더" / "New folder";
     create_file_base => "새 텍스트 문서" / "New Text Document";
-    create_no_name => "쓸 수 있는 이름을 찾지 못했습니다" / "Could not find a usable name";
+    /// 같은 이름이 이미 여럿이라 번호를 붙일 자리를 다 써 버렸을 때 —
+    /// "무엇을 하다 실패했는지"가 없으면 사용자는 이 말을 알아들을 수 없다
+    create_no_name
+        => "같은 이름이 너무 많아 새 이름을 붙이지 못했습니다"
+        / "Too many items share this name — could not pick a new one";
     /// 자동 워크스페이스 이름의 앞부분 — `워크스페이스 3`처럼 뒤에 번호가 붙는다 (D7)
     workspace_auto_prefix => "워크스페이스 " / "Workspace ";
     /// 사이트를 찾을 수 없을 때 탭에 보일 이름 (사이트가 지워진 뒤 남은 탭)
@@ -214,10 +229,17 @@ strings! {
     // 라벨 뒤 `(S)`·`(R)` 같은 접근 키 알파벳은 **영어에서도 그대로 둔다**
     // — 키 배정이 바뀌면 사용자가 익힌 조작이 깨진다
     site_title => "사이트 관리자" / "Site Manager";
-    site_list_label => "항목 선택(S):" / "Select entry(S):";
+    /// 무엇을 고르는 목록인지 이름으로 말한다 — `항목`은 이 화면에서 뜻이 닿지 않는다
+    site_list_label => "사이트(S):" / "Site(S):";
     site_rename => "이름 바꾸기(R)" / "Rename(R)";
     site_delete => "삭제(D)" / "Delete(D)";
     site_duplicate => "복제(I)" / "Duplicate(I)";
+    /// 삭제 확인 대화 (2026-08-16 검토) — 워크스페이스·원격 파일 삭제에는 확인이 있는데
+    /// 사이트만 곧바로 지워, 되돌릴 수 없기로는 같은 일에 안전장치가 자리마다 달랐다
+    site_delete_title => "사이트 삭제" / "Delete site";
+    site_delete_detail
+        => "저장한 주소와 로그인 정보가 함께 사라집니다."
+        / "Its address and sign-in details will be removed as well.";
     site_tab_general => "일반" / "General";
     site_tab_transfer => "전송 설정" / "Transfer";
     site_tab_charset => "문자셋" / "Charset";
@@ -243,7 +265,7 @@ strings! {
         => "이 이름은 알지 못해 UTF-8로 처리합니다."
         / "This name is not recognized, so UTF-8 is used.";
     site_charset_warning
-        => "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다."
+        => "문자셋을 잘못 지정하면 파일 이름이 깨져 보일 수 있습니다."
         / "A wrong character set can make file names display incorrectly.";
     /// 이미 연결된 서버의 전송 모드를 바꿨을 때 — 지금 연결에 바로 듣지 않는다는 것을
     /// 알리지 않으면 사용자는 같은 실패를 다시 겪는다
@@ -275,6 +297,17 @@ strings! {
     site_mode_active => "능동형(A)" / "Active(A)";
     site_mode_passive => "수동형(P)" / "Passive(P)";
     site_charset_custom => "문자셋 직접 설정(C)" / "Set character set manually(C)";
+    /// 전송 모드 세 선택지의 설명 (2026-08-16 검토) — `능동형`·`수동형`은 FTP를 아는 사람에게만
+    /// 뜻이 닿는 말이라, 낱말은 그대로 두고 무슨 일이 일어나는지를 툴팁으로 붙인다
+    site_hint_mode_default
+        => "수동형으로 먼저 붙어 보고, 안 되면 능동형으로 한 번 더 시도합니다."
+        / "Tries passive first, then active once if that fails.";
+    site_hint_mode_active
+        => "서버가 이쪽으로 연결을 겁니다. 공유기·방화벽 뒤에서는 막히는 일이 많습니다."
+        / "The server connects back to you — often blocked behind a router or firewall.";
+    site_hint_mode_passive
+        => "이쪽에서 서버로 연결을 겁니다. 공유기·방화벽 뒤에서는 보통 이쪽이 통합니다."
+        / "You connect out to the server — usually the one that works behind a router or firewall.";
 
     // ── 원격 메뉴 (FR-31) ──
     remote_download => "받기" / "Download";
@@ -284,7 +317,7 @@ strings! {
     remote_chmod => "권한 변경…" / "Change permissions…";
     remote_delete => "삭제…" / "Delete…";
     /// 이름에 쓸 수 없는 글자를 적었을 때
-    remote_error_slash => "이름에 / 는 쓸 수 없습니다." / "A name cannot contain /.";
+    remote_error_slash => "이름에 /는 쓸 수 없습니다." / "A name cannot contain /.";
     remote_error_empty => "이름을 입력해 주세요." / "Enter a name.";
     remote_ok => "확인" / "OK";
     cancel => "취소" / "Cancel";
@@ -309,7 +342,10 @@ strings! {
 
     // ── 원격 탭 상태 (FR-31) ──
     remote_hint_head => "주소창에 " / "Type ";
-    remote_hint_tail => " 를 입력해 연결하세요" / " in the address bar to connect";
+    /// 앞 공백이 **한국어에만 없다** — 화면은 이 조각을 앞 조각(`sftp://호스트`)에 그대로
+    /// 이어 붙이는데(`remote_states::show_empty`가 낱말 간격을 0으로 둔다), 한국어는 조사라
+    /// 붙여 써야 하고 영어는 앞 낱말과 떨어져야 한다
+    remote_hint_tail => "를 입력해 연결하세요" / " in the address bar to connect";
     /// 미연결 탭 안내 둘째 줄 (인벤토리 #15)
     remote_hint_drag
         => "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다"
@@ -324,10 +360,19 @@ strings! {
     remote_fail_view_log => "서버 로그 보기" / "View server log";
     /// 서버가 사유를 주지 않았을 때 보일 문구
     remote_fail_reason_fallback => "서버가 응답하지 않았습니다." / "The server did not respond.";
-    /// 실패 사유 뒤에 늘 붙는 안내 (인벤토리 #17)
+    /// 실패 사유 뒤에 붙는 안내 (인벤토리 #17) — **실패 갈래마다 다르다**.
+    ///
+    /// 종전에는 이 연결 안내 하나를 종류를 가리지 않고 붙였다. 비밀번호가 틀린 사람에게도
+    /// 암호화 설정을 의심하게 만들어, 맞는 설정을 계속 바꿔 보게 했다 (2026-08-16 검토)
     remote_fail_reason_hint
         => "암호화 설정이 서버와 다를 수도 있습니다."
         / "The encryption setting may not match the server.";
+    remote_fail_hint_auth
+        => "사용자 이름과 비밀번호를 확인해 주세요."
+        / "Check the user name and password.";
+    remote_fail_hint_hostkey
+        => "서버 지문이 바뀌었는지 확인해 주세요."
+        / "Check whether the server fingerprint has changed.";
     remote_connecting => "연결 중…" / "Connecting…";
     remote_not_connected => "연결 없음" / "Not connected";
     remote_hostkey_first => "이 서버를 처음 연결합니다" / "Connecting to this server for the first time";
@@ -350,9 +395,6 @@ strings! {
     app_font_fallback
         => "한글 글꼴을 불러오지 못해 기본 글꼴로 표시합니다"
         / "Could not load a Korean font, so the default font is used";
-    /// 원격 작업 이름 — 실패 문구에 끼워 넣는다.
-    /// 나머지 셋(새 폴더·삭제·이름 바꾸기)은 메뉴 문구와 같은 말이라 그 키를 그대로 쓴다
-    op_chmod => "권한 바꾸기" / "Change permissions";
 
     // ── 전송 큐 (FR-35) ──
     queue_filter_all => "전체" / "All";
@@ -374,6 +416,15 @@ strings! {
     dock_log => "서버 로그" / "Server log";
     dock_success => "성공" / "Succeeded";
     dock_failed => "실패" / "Failed";
+    /// 우측 아이콘 넷의 툴팁 (2026-08-16 검토) — 아이콘만 있고 설명이 없어,
+    /// 특히 빗자루가 무엇을 지우는지 짐작할 수 없었다. 앱의 다른 아이콘 버튼은 모두 툴팁이 있다
+    dock_pause => "전송 일시 정지" / "Pause transfers";
+    dock_resume => "전송 다시 시작" / "Resume transfers";
+    dock_clear_done => "끝난 항목 지우기" / "Clear finished items";
+    dock_copy_log => "로그 복사" / "Copy log";
+    dock_collapse => "아래 패널 접기" / "Collapse the bottom panel";
+    /// 전송한 것이 하나도 없을 때 표에 보일 안내
+    queue_empty => "아직 전송한 파일이 없습니다" / "No transfers yet";
 
     /// 새로 만드는 사이트의 기본 이름 (FR-27)
     site_default_name => "새 사이트" / "New site";
@@ -390,6 +441,8 @@ strings! {
     op_remove => "삭제" / "Delete";
     op_rmdir => "폴더 삭제" / "Delete folder";
     op_rename_op => "이름 바꾸기" / "Rename";
+    /// 메뉴·대화와 **같은 말**이어야 한다 — 종전 `권한 바꾸기`는 같은 동작을 두 이름으로 불렀다
+    op_chmod => "권한 변경" / "Change permissions";
     op_open => "열기" / "Open";
     op_resume => "이어 올리기" / "Resume upload";
     op_create => "만들기" / "Create";
@@ -417,9 +470,10 @@ strings! {
         => "서버가 로그인을 받아들이지 않았습니다"
         / "The server did not accept the login";
     remote_not_a_folder => "폴더가 아닙니다" / "Not a folder";
+    /// 사유만 적으면 사용자는 무엇을 해야 하는지 알 수 없다 — 다음 행동까지 함께 적는다
     remote_unknown_server
-        => "처음 보는 서버라 연결하지 않았습니다"
-        / "Did not connect — this server has not been seen before";
+        => "처음 보는 서버라 연결하지 않았습니다. 서버 지문을 확인한 뒤 다시 연결해 주세요"
+        / "Did not connect — this server has not been seen before. Check its fingerprint and connect again";
     /// `classify`가 조각으로 쓰는 이름 — 조사와 함께 조립된다
     remote_subject_home => "서버의 시작 폴더 이름" / "the name of the server's home folder";
     remote_subject_names => "이 폴더의 파일 이름" / "the file names in this folder";
@@ -429,8 +483,8 @@ strings! {
         / "Connected, waiting for the welcome message…";
     remote_log_tls => "TLS로 암호화된 연결입니다." / "The connection is encrypted with TLS.";
     remote_log_plain
-        => "보안되지 않은 서버입니다. TLS를 통한 연결을 지원하지 않습니다."
-        / "This server is not secured. It does not support connecting over TLS.";
+        => "암호화되지 않은 연결입니다. 이 서버는 TLS를 지원하지 않습니다."
+        / "This connection is not encrypted. The server does not support TLS.";
     remote_log_login => "로그인…" / "Logging in…";
     remote_log_login_done => "로그인 완료" / "Logged in";
     /// 서버 로그의 줄 종류 접두 (FR-40)
@@ -443,7 +497,8 @@ strings! {
 
     // ── 트레이 메뉴 (FR-50) ──
     /// 우클릭 메뉴 항목 — 요청 문구 그대로다
-    tray_show => "실행" / "Open";
+    /// 이미 도는 앱을 다시 `실행`한다고 적으면 뜻이 어긋난다 — 창을 여는 것이다(영어와도 맞다)
+    tray_show => "열기" / "Open";
     tray_quit => "종료" / "Quit";
 
     /// 설정 대화의 언어 항목 라벨
@@ -456,6 +511,26 @@ strings! {
 /// 언어마다 문장을 통째로 다시 쓸 수 있어야 한다
 pub mod dynamic {
     use super::{Language, current};
+
+    /// 한국어 목적격 조사 — 앞 글자에 받침이 있으면 `을`, 없으면 `를`.
+    ///
+    /// **`을(를)` 병기를 화면에 내보내지 않기 위한 것이다** — 완성된 문장으로 보이지 않는다.
+    /// 한글로 끝나지 않는 말(경로·명령 이름)은 발음으로 갈려 판정할 수 없으므로, 그런 값이
+    /// 들어가는 문장은 애초에 조사가 붙지 않게 다시 썼다(`err_not_found` 등) —
+    /// 이 함수에는 **카탈로그가 쥐고 있는 한국어 낱말만** 들어온다
+    fn object_particle(word: &str) -> &'static str {
+        match word.chars().next_back() {
+            // 한글 음절 = 초성×588 + 중성×28 + 종성. 나머지가 0이면 받침이 없다
+            Some(ch) if ('가'..='힣').contains(&ch) => {
+                if (ch as u32 - '가' as u32).is_multiple_of(28) {
+                    "를"
+                } else {
+                    "을"
+                }
+            }
+            _ => "를",
+        }
+    }
 
     /// 폴더를 열지 못한 사유 — 경로 이름이 문장 안에 들어간다
     pub fn open_denied(name: &str) -> String {
@@ -479,11 +554,25 @@ pub mod dynamic {
         }
     }
 
-    /// 새로 만들기 실패 — 한국어는 조사가 붙고 영어는 관사가 붙는다 (D2)
+    /// 새로 만들기 실패 — 한국어는 조사가 붙고 영어는 관사가 붙는다 (D2).
+    /// `kind`는 `폴더`·`파일` 둘 중 하나라 받침이 갈린다 — 조사를 그때그때 고른다
     pub fn create_failed(kind: &str, error: &str) -> String {
         match current() {
-            Language::Korean => format!("새 {kind}을(를) 만들지 못했습니다 — {error}"),
+            Language::Korean => {
+                let particle = object_particle(kind);
+                format!("새 {kind}{particle} 만들지 못했습니다 — {error}")
+            }
             Language::English => format!("Could not create the new {kind} — {error}"),
+        }
+    }
+
+    /// 상태 줄 실패 알약 (인벤토리 #57) — 종전 `실패 3`은 무엇이 3인지 적지 않았다.
+    /// 한국어는 수 뒤에 단위가 붙고 영어는 수가 앞에 선다
+    pub fn status_failed_count(count: usize) -> String {
+        match current() {
+            Language::Korean => format!("실패 {count}건"),
+            Language::English if count == 1 => "1 failed".to_owned(),
+            Language::English => format!("{count} failed"),
         }
     }
 
@@ -582,11 +671,37 @@ pub mod dynamic {
         }
     }
 
-    /// 원격 작업 실패 — 작업 이름과 서버 사유를 잇는다
-    pub fn remote_op_failed(label: &str, error: &str) -> String {
+    // ── 원격 파일 작업 실패 (FR-39) ──
+    //
+    // **작업마다 문장을 따로 둔다** — 종전에는 메뉴 라벨을 빌려 `{이름} 실패`로 이었는데,
+    // 그러면 `새 폴더 실패`처럼 한국어 문장이 되지 않는 말이 상태 줄에 그대로 나갔다.
+    // 카탈로그의 다른 실패 문구(`폴더를 열지 못했습니다 — …`)와 같은 꼴로 맞춘다
+
+    pub fn op_mkdir_failed(error: &str) -> String {
         match current() {
-            Language::Korean => format!("{label} 실패 — {error}"),
-            Language::English => format!("{label} failed — {error}"),
+            Language::Korean => format!("새 폴더를 만들지 못했습니다 — {error}"),
+            Language::English => format!("Could not create the folder — {error}"),
+        }
+    }
+
+    pub fn op_delete_failed(error: &str) -> String {
+        match current() {
+            Language::Korean => format!("삭제하지 못했습니다 — {error}"),
+            Language::English => format!("Could not delete — {error}"),
+        }
+    }
+
+    pub fn op_rename_failed(error: &str) -> String {
+        match current() {
+            Language::Korean => format!("이름을 바꾸지 못했습니다 — {error}"),
+            Language::English => format!("Could not rename — {error}"),
+        }
+    }
+
+    pub fn op_chmod_failed(error: &str) -> String {
+        match current() {
+            Language::Korean => format!("권한을 변경하지 못했습니다 — {error}"),
+            Language::English => format!("Could not change permissions — {error}"),
         }
     }
 
@@ -628,9 +743,10 @@ pub mod dynamic {
         }
     }
 
+    /// 경로는 한글로 끝나지 않을 수 있어 조사를 붙일 수 없다 — `경로`를 세워 그 뒤에 붙인다
     pub fn err_not_found(path: &str, detail: &str) -> String {
         match current() {
-            Language::Korean => format!("'{path}'을(를) 찾을 수 없습니다 — {detail}"),
+            Language::Korean => format!("'{path}' 경로를 찾을 수 없습니다 — {detail}"),
             Language::English => format!("Could not find '{path}' — {detail}"),
         }
     }
@@ -655,7 +771,8 @@ pub mod dynamic {
 
     pub fn err_unsupported(operation: &str, detail: &str) -> String {
         match current() {
-            Language::Korean => format!("서버가 '{operation}'을(를) 지원하지 않습니다 — {detail}"),
+            // 명령 이름은 영문이라 조사를 붙일 수 없다 — `명령`을 세워 그 뒤에 붙인다
+            Language::Korean => format!("서버가 '{operation}' 명령을 지원하지 않습니다 — {detail}"),
             Language::English => format!("The server does not support '{operation}' — {detail}"),
         }
     }
@@ -752,8 +869,9 @@ pub mod dynamic {
     pub fn name_decode_failed(subject: &str) -> String {
         match current() {
             Language::Korean => {
+                let particle = object_particle(subject);
                 format!(
-                    "{subject}을(를) 읽지 못했습니다 (서버가 UTF-8이 아닌 이름을 쓰는 것 같습니다)"
+                    "{subject}{particle} 읽지 못했습니다 (서버가 UTF-8이 아닌 이름을 쓰는 것 같습니다)"
                 )
             }
             Language::English => {
@@ -794,6 +912,29 @@ pub mod dynamic {
         match current() {
             Language::Korean => format!("{operation}: 데이터 연결이 이미 열려 있습니다"),
             Language::English => format!("{operation}: the data connection is already open"),
+        }
+    }
+
+    /// 사이트 삭제 확인의 첫 줄 — 워크스페이스 삭제 대화와 같은 꼴이다
+    pub fn site_delete_confirm(name: &str) -> String {
+        match current() {
+            Language::Korean => format!("'{name}' 사이트를 삭제할까요?"),
+            Language::English => format!("Delete the site '{name}'?"),
+        }
+    }
+
+    /// 사이드바에서 감춘 뒤 뜨는 알림 — **지운 것이 아님**과 어디에 남았는지를 함께 알린다.
+    /// 이름 뒤에 `사이트`를 세워 조사를 피한다(이름은 사용자가 지은 말이라 받침을 알 수 없다)
+    pub fn site_hidden(name: &str) -> String {
+        match current() {
+            Language::Korean => {
+                format!(
+                    "'{name}' 사이트를 사이드바에서 숨겼습니다 · 사이트 관리자에 그대로 있습니다"
+                )
+            }
+            Language::English => {
+                format!("Hid '{name}' from the sidebar · it remains in Site Manager")
+            }
         }
     }
 
@@ -900,7 +1041,7 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 22] = [
+        const EXEMPT_LITERALS: [&str; 23] = [
             // 위젯 ID
             "앱 설정",
             "설정 글꼴",
@@ -912,6 +1053,7 @@ mod tests {
             "같은 이름 확인",
             "원격 호스트 키 확인",
             "사이트 관리자",
+            "사이트 삭제 확인",
             "사이트 이름 바꾸기",
             "원격 알림",
             // 글꼴 검증에 쓰는 내부 값 (`ui::font_scan`)
@@ -1065,7 +1207,7 @@ mod tests {
         );
         assert_eq!(
             dynamic::create_failed("폴더", "접근 거부"),
-            "새 폴더을(를) 만들지 못했습니다 — 접근 거부"
+            "새 폴더를 만들지 못했습니다 — 접근 거부"
         );
         assert_eq!(dynamic::item_counts(3, 12), "폴더 3 파일 12");
         assert_eq!(
@@ -1108,9 +1250,27 @@ mod tests {
             "읽을 수 없는 폴더 2개는 건너뛰었습니다"
         );
         assert_eq!(
-            dynamic::remote_op_failed("삭제", "550 Denied"),
-            "삭제 실패 — 550 Denied"
+            dynamic::op_delete_failed("550 Denied"),
+            "삭제하지 못했습니다 — 550 Denied"
         );
+        assert_eq!(
+            dynamic::op_mkdir_failed("550 Denied"),
+            "새 폴더를 만들지 못했습니다 — 550 Denied"
+        );
+        // 조사는 앞말의 받침을 따라 갈린다 — `을(를)` 병기를 화면에 내보내지 않는다
+        assert_eq!(
+            dynamic::create_failed("파일", "거부됨"),
+            "새 파일을 만들지 못했습니다 — 거부됨"
+        );
+        assert_eq!(
+            dynamic::create_failed("폴더", "거부됨"),
+            "새 폴더를 만들지 못했습니다 — 거부됨"
+        );
+        assert_eq!(
+            dynamic::err_not_found("/srv/data", "550"),
+            "'/srv/data' 경로를 찾을 수 없습니다 — 550"
+        );
+        assert_eq!(dynamic::status_failed_count(3), "실패 3건");
         assert_eq!(dynamic::queue_site_fallback(3), "사이트 3");
         assert_eq!(
             dynamic::transfer_finalize_failed("access denied"),
@@ -1131,9 +1291,11 @@ mod tests {
             "Could not open the folder — 550 Denied"
         );
         assert_eq!(
-            dynamic::remote_op_failed("Delete", "550 Denied"),
-            "Delete failed — 550 Denied"
+            dynamic::op_delete_failed("550 Denied"),
+            "Could not delete — 550 Denied"
         );
+        assert_eq!(dynamic::status_failed_count(1), "1 failed");
+        assert_eq!(dynamic::status_failed_count(3), "3 failed");
         assert_eq!(dynamic::queue_site_fallback(3), "Site 3");
         // 영어는 하나일 때 단수형이다
         assert_eq!(
@@ -1161,7 +1323,7 @@ mod tests {
         );
         assert_eq!(
             dynamic::err_not_found("/none", "550"),
-            "'/none'을(를) 찾을 수 없습니다 — 550"
+            "'/none' 경로를 찾을 수 없습니다 — 550"
         );
         assert_eq!(
             dynamic::err_permission("/etc", "550"),
@@ -1173,7 +1335,7 @@ mod tests {
         );
         assert_eq!(
             dynamic::err_unsupported("SITE CHMOD", "502"),
-            "서버가 'SITE CHMOD'을(를) 지원하지 않습니다 — 502"
+            "서버가 'SITE CHMOD' 명령을 지원하지 않습니다 — 502"
         );
         assert_eq!(
             dynamic::err_protocol("bad reply"),

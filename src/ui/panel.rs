@@ -54,6 +54,9 @@ const TREE_PAD: f32 = 4.0;
 /// 매 프레임 깨우면 만드는 동안 앱이 쉬지 않고 그려 배터리를 먹고, 너무 길면 사진이
 /// 뒤늦게 뜬다. 20장 남짓이 수백 ms 안에 만들어지므로 그 사이 몇 번 확인하는 값으로 잡았다
 const THUMB_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// 빈 폴더 안내가 목록 위쪽에서 떨어지는 거리 — 가운데에 두면 목록이 짧은 창에서 잘린다
+const EMPTY_HINT_TOP: f32 = 28.0;
+const EMPTY_HINT_FONT_PX: f32 = 13.0;
 
 /// 열거 성공 시 히스토리에 적용할 동작
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1230,22 +1233,22 @@ impl PanelState {
                 }
                 if self.load.is_loading() {
                     ui.spinner();
-                    ui.colored_label(theme::TEXT_DIM, crate::i18n::tree_loading());
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::tree_loading());
                 }
                 if !self.status.is_empty() {
-                    ui.colored_label(theme::TEXT_DIM, &self.status);
+                    ui.colored_label(theme::TEXT_MUTED, &self.status);
                 }
             },
             |ui| {
                 if !connected {
                     // 연결되지 않은 원격 패널은 항목 수를 모른다 — 0으로 보이면
                     // "빈 폴더"라는 없는 말을 하게 된다 (인벤토리 #95)
-                    ui.colored_label(theme::TEXT_DIM, remote_states::UNKNOWN_COUNT);
+                    ui.colored_label(theme::TEXT_MUTED, remote_states::UNKNOWN_COUNT);
                 } else if !self.load.is_loading() {
                     // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
                     let (dirs, files) = self.list.counts();
                     ui.colored_label(
-                        theme::TEXT_DIM,
+                        theme::TEXT_MUTED,
                         crate::i18n::dynamic::item_counts(dirs, files),
                     );
                 }
@@ -1277,12 +1280,13 @@ impl PanelState {
                     None,
                 )
             }
-            Some(TabPhase::Error { message }) => {
-                let action = remote_states::show_failed(ui, &message).map(|chosen| match chosen {
-                    FailedAction::Retry => RemoteAction::Retry,
-                    FailedAction::OpenSettings => RemoteAction::OpenSettings,
-                    FailedAction::ViewLog => RemoteAction::ViewLog,
-                });
+            Some(TabPhase::Error { message, kind }) => {
+                let action =
+                    remote_states::show_failed(ui, &message, kind).map(|chosen| match chosen {
+                        FailedAction::Retry => RemoteAction::Retry,
+                        FailedAction::OpenSettings => RemoteAction::OpenSettings,
+                        FailedAction::ViewLog => RemoteAction::ViewLog,
+                    });
                 (FileListAction::None, action, None, None)
             }
             // 아직 아무것도 읽지 못한 채 읽는 중이면 목록 자리에 자리표시를 세운다 —
@@ -1322,6 +1326,19 @@ impl PanelState {
             .show(ui, icons, textures, &self.thumb_textures, &mut visible);
         for path in visible {
             self.thumbs.request(&path);
+        }
+        // 다 읽었는데 아무것도 없으면 그 사실을 적는다 (2026-08-16 검토).
+        // **목록을 대신 그리지 않고 그 위에 얹는다** — 목록 자리가 그대로 있어야
+        // 빈 폴더에 파일을 끌어다 놓을 수 있다.
+        // 세는 것은 `counts()`다 — `..` 줄은 항목이 아니라 거기에 들지 않는다
+        if self.list.counts() == (0, 0) && !self.load.is_loading() {
+            ui.painter().text(
+                egui::pos2(list_rect.center().x, list_rect.top() + EMPTY_HINT_TOP),
+                egui::Align2::CENTER_TOP,
+                crate::i18n::list_empty_folder(),
+                egui::FontId::proportional(EMPTY_HINT_FONT_PX),
+                theme::TEXT_MUTED,
+            );
         }
 
         // 끌기 시작 — 무엇을 싣는지는 지금 보고 있는 곳이 정한다

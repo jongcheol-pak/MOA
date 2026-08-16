@@ -292,7 +292,7 @@ fn footer(ui: &egui::Ui, rect: egui::Rect, buttons: &[ButtonSpec<'_>]) -> Option
 /// 바꾸고 획이 굵어지지 않는다. 사용자가 고른 글꼴의 굵은 짝을 찾는 길도 없다 — 글꼴 목록은
 /// 가족 이름으로만 색인해 `맑은 고딕`과 그 굵은 짝이 같은 자리에 묻힌다(`app::fonts`).
 /// 겹쳐 그리면 어떤 글꼴이든 그 글꼴 그대로 굵어지고 메모리도 더 쓰지 않는다
-fn faux_bold_text(
+pub(crate) fn faux_bold_text(
     painter: &egui::Painter,
     center: egui::Pos2,
     text: &str,

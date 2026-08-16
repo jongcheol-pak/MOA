@@ -15,7 +15,7 @@ use crate::panel::tabs::TabPhase;
 use crate::remote::hostkey::{HostKeyCheck, HostKeyDecision};
 use crate::remote::sftp::HostKeyPrompt;
 use crate::remote::sites::SiteStore;
-use crate::remote::types::{Protocol, SiteId};
+use crate::remote::types::{FailureKind, Protocol, SiteId};
 use crate::ui::dialog;
 use crate::ui::theme;
 use crate::ui::widgets;
@@ -59,6 +59,9 @@ const FAIL_BUTTON_HEIGHT: f32 = 28.0;
 const FAIL_BUTTON_PAD_X: f32 = 16.0;
 /// 사유 문구가 길 때 보일 최대 줄 수 — 그보다 길면 말줄임한다
 const FAIL_REASON_MAX_ROWS: usize = 3;
+
+/// `서버 로그 보기` 글자 크기 — 버튼보다 한 단계 작다
+const VIEW_LOG_FONT_PX: f32 = 12.0;
 
 /// 연결 중 취소 버튼 높이·좌우 여백 (HTML:228)
 const CANCEL_BUTTON_HEIGHT: f32 = 22.0;
@@ -249,7 +252,7 @@ pub fn show_empty(ui: &mut egui::Ui) {
             ui.label(egui::RichText::new(crate::i18n::remote_hint_tail()).color(theme::TEXT_MUTED));
         });
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(crate::i18n::remote_hint_drag()).color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new(crate::i18n::remote_hint_drag()).color(theme::TEXT_MUTED));
     });
 }
 
@@ -276,24 +279,83 @@ pub fn show_reconnect(ui: &mut egui::Ui) -> bool {
     clicked
 }
 
-/// 실패 화면의 사유 문구 — 서버가 준 것에 안내를 덧붙인다 (인벤토리 #17).
+/// 실패 화면의 사유 문구 — 서버가 준 것에 **그 갈래에 맞는** 안내를 덧붙인다 (인벤토리 #17).
 ///
-/// 서버가 아무 말도 하지 않았으면 빈 줄만 남으므로 일반 문구로 메운다 (plan Edge Case)
-pub fn failure_reason(detail: &str) -> String {
+/// 서버가 아무 말도 하지 않았으면 빈 줄만 남으므로 일반 문구로 메운다 (plan Edge Case).
+///
+/// 갈래를 모르는 실패(`Other`)에는 아무것도 덧붙이지 않는다 — **짐작으로 원인을 대느니
+/// 사유만 보이는 편이 낫다**. 틀린 원인을 지목하면 사용자는 맞는 설정을 바꿔 보게 된다
+pub fn failure_reason(detail: &str, kind: FailureKind) -> String {
     let detail = detail.trim();
-    if detail.is_empty() {
-        format!(
-            "{} {}",
-            crate::i18n::remote_fail_reason_fallback(),
-            crate::i18n::remote_fail_reason_hint()
-        )
+    let body = if detail.is_empty() {
+        crate::i18n::remote_fail_reason_fallback()
     } else {
-        format!("{detail} {}", crate::i18n::remote_fail_reason_hint())
+        detail
+    };
+    match kind {
+        FailureKind::Connect => format!("{body} {}", crate::i18n::remote_fail_reason_hint()),
+        FailureKind::Auth => format!("{body} {}", crate::i18n::remote_fail_hint_auth()),
+        FailureKind::HostKey => format!("{body} {}", crate::i18n::remote_fail_hint_hostkey()),
+        FailureKind::Other => body.to_owned(),
     }
 }
 
+/// 실패 화면의 주 버튼 — `재시도`다 (2026-08-16 검토).
+///
+/// 열에 아홉은 이것을 누르는데 종전에는 옆의 `설정 열기`와 생김새가 같아 위계가 없었다.
+/// 굵게 그리는 방식은 **하단 버튼 줄과 같은 것**을 쓴다 — 이 앱에는 굵은 글꼴이 없다.
+/// 라벨을 빈 채로 버튼을 그리고 그 위에 겹쳐 그린다: 버튼이 제 라벨까지 그리면 획이
+/// 세 겹이 되어 대화 버튼과 다른 굵기가 된다
+fn show_retry(ui: &mut egui::Ui) -> egui::Response {
+    let label = crate::i18n::remote_fail_retry();
+    let width = widgets::design_button_width(ui, label, FAIL_BUTTON_PAD_X);
+    let response = widgets::design_button(
+        ui,
+        "",
+        theme::TEXT,
+        0.0,
+        egui::vec2(width, FAIL_BUTTON_HEIGHT),
+    );
+    dialog::faux_bold_text(
+        ui.painter(),
+        response.rect.center(),
+        label,
+        egui::TextStyle::Button.resolve(ui.style()),
+        theme::TEXT,
+    );
+    response
+}
+
+/// `서버 로그 보기` (인벤토리 #20) — 눌리는 글자다.
+///
+/// 종전에는 흐린 글자에 클릭 감지만 붙어 있어 **누를 수 있다는 신호가 하나도 없었다**
+/// (2026-08-16 검토). 마우스를 올리면 밝아지고 밑줄이 서며 커서가 손가락으로 바뀐다
+fn show_view_log(ui: &mut egui::Ui) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        crate::i18n::remote_fail_view_log().to_owned(),
+        egui::FontId::proportional(VIEW_LOG_FONT_PX),
+        theme::TEXT_MUTED,
+    );
+    let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+    let hovered = response.hovered();
+    let color = if hovered {
+        theme::TEXT
+    } else {
+        theme::TEXT_MUTED
+    };
+    ui.painter().galley(rect.min, galley, color);
+    if hovered {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.bottom() - 0.5,
+            egui::Stroke::new(1.0, color),
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// 연결 실패 화면 (인벤토리 #16~20). 사용자가 고른 조치를 돌려준다
-pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
+pub fn show_failed(ui: &mut egui::Ui, detail: &str, kind: FailureKind) -> Option<FailedAction> {
     let mut action = None;
     ui.vertical_centered(|ui| {
         ui.add_space(FAIL_GAP * 2.0);
@@ -327,7 +389,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
         ui.add_space(FAIL_GAP / 2.0);
         let available = (ui.available_width() - FAIL_PAD_X * 2.0).max(0.0);
         let reason = ui.painter().layout(
-            failure_reason(detail),
+            failure_reason(detail, kind),
             egui::FontId::proportional(13.0),
             theme::TEXT_MUTED,
             available,
@@ -353,15 +415,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
             .sum::<f32>()
                 + ui.spacing().item_spacing.x;
             ui.add_space(((ui.available_width() - buttons) / 2.0).max(0.0));
-            if widgets::design_button(
-                ui,
-                crate::i18n::remote_fail_retry(),
-                theme::TEXT_BUTTON,
-                FAIL_BUTTON_PAD_X,
-                egui::vec2(0.0, FAIL_BUTTON_HEIGHT),
-            )
-            .clicked()
-            {
+            if show_retry(ui).clicked() {
                 action = Some(FailedAction::Retry);
             }
             if widgets::design_button(
@@ -378,17 +432,7 @@ pub fn show_failed(ui: &mut egui::Ui, detail: &str) -> Option<FailedAction> {
         });
 
         ui.add_space(6.0);
-        if ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new(crate::i18n::remote_fail_view_log())
-                        .size(12.0)
-                        .color(theme::TEXT_DIM),
-                )
-                .sense(egui::Sense::click()),
-            )
-            .clicked()
-        {
+        if show_view_log(ui).clicked() {
             action = Some(FailedAction::ViewLog);
         }
     });
@@ -576,7 +620,8 @@ mod tests {
         assert_eq!(
             badge_label(
                 &TabPhase::Error {
-                    message: "530".to_owned()
+                    message: "530".to_owned(),
+                    kind: FailureKind::Auth
                 },
                 Protocol::Sftp
             ),
@@ -609,7 +654,8 @@ mod tests {
             crate::i18n::remote_hint_head(),
             crate::i18n::remote_hint_tail()
         );
-        assert_eq!(first, "주소창에 sftp://호스트 를 입력해 연결하세요");
+        // 조사는 앞말에 붙여 쓴다 — 종전에는 `호스트 를`로 떨어져 있었다 (2026-08-16 검토)
+        assert_eq!(first, "주소창에 sftp://호스트를 입력해 연결하세요");
         assert_eq!(
             crate::i18n::remote_hint_drag(),
             "사이드바의 사이트를 이 탭으로 끌어다 놓아도 됩니다"
@@ -637,14 +683,37 @@ mod tests {
         let _guard =
             crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 서버가 아무 말도 하지 않으면 빈 줄만 남는다 (plan Edge Case)
-        let empty = failure_reason("   ");
+        let empty = failure_reason("   ", FailureKind::Connect);
         assert!(empty.starts_with("서버가 응답하지 않았습니다."), "{empty}");
         assert!(empty.ends_with("암호화 설정이 서버와 다를 수도 있습니다."));
 
         // 사유가 있으면 그대로 두고 안내만 덧붙인다
-        let given = failure_reason("530 Login incorrect");
+        let given = failure_reason("530 Login incorrect", FailureKind::Connect);
         assert!(given.starts_with("530 Login incorrect"));
         assert!(given.ends_with("암호화 설정이 서버와 다를 수도 있습니다."));
+    }
+
+    #[test]
+    fn 실패_안내는_갈래마다_다르다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        // 종전에는 갈래를 가리지 않고 암호화 안내를 붙여, 비밀번호가 틀린 사람에게
+        // 엉뚱한 원인을 지목했다 (2026-08-16 검토)
+        let auth = failure_reason("530 Login incorrect", FailureKind::Auth);
+        assert!(
+            auth.ends_with("사용자 이름과 비밀번호를 확인해 주세요."),
+            "{auth}"
+        );
+        let hostkey = failure_reason("fingerprint mismatch", FailureKind::HostKey);
+        assert!(
+            hostkey.ends_with("서버 지문이 바뀌었는지 확인해 주세요."),
+            "{hostkey}"
+        );
+        // 갈래를 모르면 아무것도 덧붙이지 않는다 — 짐작으로 원인을 대지 않는다
+        assert_eq!(
+            failure_reason("550 Denied", FailureKind::Other),
+            "550 Denied"
+        );
     }
 
     #[test]

@@ -30,6 +30,8 @@ const HEADER_HEIGHT: f32 = 22.0;
 const ROW_HEIGHT: f32 = 24.0;
 const CELL_PAD_X: f32 = 6.0;
 const FONT_PX: f32 = 13.0;
+/// 빈 표 안내가 머리글 아래에서 떨어지는 거리
+const EMPTY_HINT_TOP: f32 = 24.0;
 /// 진행 막대 (`:290`)
 const BAR_WIDTH: f32 = 110.0;
 const BAR_HEIGHT: f32 = 6.0;
@@ -73,14 +75,25 @@ fn stripe(index: usize) -> bool {
 
 /// 크기 표기 — 원본이 `1,840 KB` 꼴로 KB 단위에 자릿수 구분을 넣는다 (`:704`).
 ///
+/// **MB·GB까지 올린다** — 원본은 KB에 고정이라 1.8GB 파일이 `1,887,437 KB`로 나왔다.
+/// 같은 표의 속도(`format_speed`)는 이미 GB/s까지 올라가므로 단위 규칙도 그쪽에 맞춘다
+/// (2026-08-16 검토).
+///
 /// 0은 "모른다"는 뜻이라 `—`다 (plan Edge Case)
 pub fn format_size(bytes: u64) -> String {
+    const GB: u64 = 1024 * 1024 * 1024;
+    const MB: u64 = 1024 * 1024;
     if bytes == 0 {
         return UNKNOWN.to_owned();
     }
+    if bytes >= GB {
+        return format!("{:.1} GB", bytes as f64 / GB as f64);
+    }
+    if bytes >= MB {
+        return format!("{:.1} MB", bytes as f64 / MB as f64);
+    }
     // 1KB 미만도 1KB로 보인다 — 원본이 KB 아래를 쓰지 않는다
-    let kb = bytes.div_ceil(1024);
-    format!("{} KB", group_digits(kb))
+    format!("{} KB", group_digits(bytes.div_ceil(1024)))
 }
 
 /// 세 자리마다 쉼표 — `1840` → `1,840`
@@ -214,6 +227,18 @@ pub fn show_queue(
         egui::pos2(rect.right(), rect.bottom()),
     );
     let items = visible_items(view.queue, state.filter, state.site);
+    // 보일 것이 없으면 그 사실을 적는다 (2026-08-16 검토) — 머리글만 남은 표는
+    // 아직 아무것도 안 한 것인지 거른 결과가 없는 것인지 알려 주지 않는다
+    if items.is_empty() {
+        ui.painter().text(
+            egui::pos2(body.center().x, body.top() + EMPTY_HINT_TOP),
+            egui::Align2::CENTER_TOP,
+            crate::i18n::queue_empty(),
+            egui::FontId::proportional(FONT_PX),
+            theme::TEXT_MUTED,
+        );
+        return None;
+    }
     let mut action = None;
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -605,9 +630,12 @@ mod tests {
 
     #[test]
     fn 크기와_속도_표기가_원본_꼴이다() {
-        // 원본 `1,840 KB`·`12.4 MB/s` (`:704`)
-        assert_eq!(format_size(1_884_160), "1,840 KB");
+        // 원본 `1,840 KB`·`12.4 MB/s` (`:704`) — KB는 1MB 아래에서만 쓴다
         assert_eq!(format_size(12 * 1024), "12 KB");
+        assert_eq!(format_size(900 * 1024), "900 KB");
+        // MB·GB로 올라간다 — KB에 고정하면 `1,887,437 KB` 같은 수가 나온다 (2026-08-16 검토)
+        assert_eq!(format_size(1_884_160), "1.8 MB");
+        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.0 GB");
         assert_eq!(format_size(1), "1 KB", "1KB 미만도 한 칸으로 보인다");
         assert_eq!(format_size(0), "—", "크기를 모르면 표기가 없다");
         assert_eq!(group_digits(1_234_567), "1,234,567");

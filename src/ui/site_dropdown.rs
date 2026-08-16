@@ -79,7 +79,7 @@ pub fn show_site_dropdown(
             ui.label(
                 egui::RichText::new(crate::i18n::site_dropdown_open())
                     .size(CAPTION_FONT_PX)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::TEXT_MUTED),
             );
             for record in remote.sites.visible() {
                 if show_row(
@@ -122,13 +122,13 @@ fn show_row(ui: &mut egui::Ui, name: &str, protocol: &str, connected: bool) -> b
     let proto = painter.layout_no_wrap(
         protocol.to_owned(),
         egui::FontId::proportional(PROTO_FONT_PX),
-        theme::TEXT_DIM,
+        theme::TEXT_MUTED,
     );
     let proto_left = rect.right() - ROW_PAD_X - proto.size().x;
     painter.galley(
         egui::pos2(proto_left, rect.center().y - proto.size().y / 2.0),
         proto,
-        theme::TEXT_DIM,
+        theme::TEXT_MUTED,
     );
 
     let name_left = dot_center.x + ROW_DOT / 2.0 + ROW_GAP;

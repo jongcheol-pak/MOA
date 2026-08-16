@@ -351,7 +351,43 @@ pub enum RemoteError {
     Cancelled,
 }
 
+/// 실패 화면이 사유 뒤에 덧붙일 안내를 고르는 기준 (FR-32).
+///
+/// 서버가 준 원문만으로는 무엇을 고쳐야 하는지 알기 어려워 한 줄을 덧붙이는데, **종류를
+/// 가리지 않고 같은 문장을 붙이면 엉뚱한 원인을 지목한다** — 비밀번호가 틀린 사람에게
+/// 암호화 설정을 의심하게 만들면 맞는 설정을 계속 바꿔 보게 된다.
+///
+/// `RemoteError`를 그대로 화면에 넘기지 않는 이유: 화면이 알아야 하는 것은 "어느 갈래인가"
+/// 하나뿐이라, 오류 원문까지 들고 다니면 탭 상태가 원격 계층의 값을 통째로 품게 된다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FailureKind {
+    /// 연결 자체가 안 됨 — 주소·포트·암호화 설정을 의심할 자리다
+    Connect,
+    /// 서버가 로그인을 받지 않음
+    Auth,
+    /// 서버 지문 문제
+    HostKey,
+    /// 그 밖 — 덧붙일 안내가 없다. 짐작으로 원인을 대느니 사유만 보인다
+    #[default]
+    Other,
+}
+
 impl RemoteError {
+    /// 이 실패가 어느 갈래인가 — 실패 화면의 안내가 이것으로 갈린다
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            RemoteError::Connect { .. } => FailureKind::Connect,
+            RemoteError::Auth { .. } => FailureKind::Auth,
+            RemoteError::HostKey { .. } => FailureKind::HostKey,
+            RemoteError::NotFound { .. }
+            | RemoteError::PermissionDenied { .. }
+            | RemoteError::Transfer { .. }
+            | RemoteError::Unsupported { .. }
+            | RemoteError::Protocol { .. }
+            | RemoteError::Cancelled => FailureKind::Other,
+        }
+    }
+
     /// 실패 화면·상태 줄에 그대로 보일 서버 원문. 취소는 원문이 없다
     pub fn detail(&self) -> &str {
         match self {

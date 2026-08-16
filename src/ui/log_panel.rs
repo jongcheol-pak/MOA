@@ -93,7 +93,7 @@ fn show_line(ui: &mut egui::Ui, line: &crate::remote::log::LogLine) {
         egui::Align2::LEFT_CENTER,
         &line.time,
         font.clone(),
-        theme::TEXT_DIM,
+        theme::TEXT_MUTED,
     );
     ui.painter().text(
         egui::pos2(left + TIME_WIDTH + COLUMN_GAP, rect.center().y),

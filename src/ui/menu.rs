@@ -167,7 +167,7 @@ pub fn column_menu_items(ui: &mut egui::Ui, flags: ColumnFlags, out: &mut Option
     ui.label(
         egui::RichText::new(crate::i18n::menu_columns())
             .size(COLUMN_MENU_CAPTION_PX)
-            .color(theme::TEXT_DIM),
+            .color(theme::TEXT_MUTED),
     );
     for kind in ALL_COLUMNS {
         let button = egui::Button::new(column_menu_label(ui, kind, flags.shows(kind)))

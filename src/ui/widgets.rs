@@ -127,7 +127,9 @@ pub fn design_button(
         for (state, fill) in [
             (&mut widgets.inactive, theme::HEADER_BG),
             (&mut widgets.hovered, theme::ROW_HOT),
-            (&mut widgets.active, theme::ROW_HOT),
+            // 눌린 동안은 hover보다 한 단계 밝다 — 같은 색이면 눌렀다는 것이 손에 잡히지
+            // 않는다. 값은 팔레트가 이미 "눌림·선택"으로 정해 둔 것을 쓴다 (2026-08-16 검토)
+            (&mut widgets.active, theme::CONTROL_ACTIVE),
         ] {
             state.weak_bg_fill = fill;
             state.bg_fill = fill;
@@ -400,7 +402,7 @@ const SPINNER_ARROW_PX: f32 = 8.0;
 ///
 /// egui의 `radio_value`를 쓰지 않는 이유: 그것은 원 크기·점 지름·색이 스타일에 묶여 있어
 /// 디자인 값(14px 원·6px 점·선택 `#4A9EFF`)으로 맞추려면 결국 직접 그리게 된다
-pub fn radio_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+pub fn radio_row(ui: &mut egui::Ui, label: &str, selected: bool, hint: Option<&str>) -> bool {
     let text = ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::proportional(FORM_FONT_PX),
@@ -435,9 +437,12 @@ pub fn radio_row(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
         text,
         theme::TEXT,
     );
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    // 낱말만으로 뜻이 닿지 않는 선택지(능동형·수동형)는 한 줄 설명을 단다
+    match hint {
+        Some(hint) => response.on_hover_text(hint).clicked(),
+        None => response.clicked(),
+    }
 }
 
 /// 체크박스 한 줄 — 사각 + 라벨. 눌렸으면 `true` (인벤토리 #80)

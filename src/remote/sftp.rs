@@ -732,7 +732,7 @@ mod tests {
             Some("/a"),
         );
         assert!(
-            matches!(&unsupported, RemoteError::Unsupported { operation, .. } if operation == "권한 바꾸기")
+            matches!(&unsupported, RemoteError::Unsupported { operation, .. } if operation == "권한 변경")
         );
 
         // 그 밖의 실패는 프로토콜 오류로 모으되 원문을 잃지 않는다

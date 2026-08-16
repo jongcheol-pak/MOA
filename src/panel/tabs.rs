@@ -2,7 +2,7 @@
 use crate::app::theme;
 use crate::panel::history::History;
 use crate::remote::connection::ConnectionId;
-use crate::remote::types::{RemotePath, SiteId};
+use crate::remote::types::{FailureKind, RemotePath, SiteId};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -118,6 +118,8 @@ pub enum TabPhase {
     Ok,
     Error {
         message: String,
+        /// 실패 화면이 덧붙일 안내를 고르는 기준 (FR-32) — 연결 쪽에서 그대로 실려 온다
+        kind: FailureKind,
     },
 }
 

@@ -253,7 +253,7 @@ fn show_font_group(
             egui::Align2::LEFT_TOP,
             i18n::settings_font_scanning(),
             egui::FontId::proportional(widgets::FORM_FONT_PX),
-            theme::TEXT_DIM,
+            theme::TEXT_MUTED,
         );
         ui.add_space(widgets::FORM_FIELD_HEIGHT);
         return outcome;

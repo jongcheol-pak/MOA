@@ -641,7 +641,7 @@ mod tests {
         assert_eq!(validate_name("  여백  "), Ok("여백"));
         assert_eq!(validate_name(""), Err("이름을 입력해 주세요."));
         assert_eq!(validate_name("   "), Err("이름을 입력해 주세요."));
-        assert_eq!(validate_name("위/아래"), Err("이름에 / 는 쓸 수 없습니다."));
+        assert_eq!(validate_name("위/아래"), Err("이름에 /는 쓸 수 없습니다."));
     }
 
     /// 받을 곳도 올릴 곳도 정해진 상태 — 대상 판정을 시험 대상에서 빼고 볼 때 쓴다

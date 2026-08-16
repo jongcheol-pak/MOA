@@ -623,6 +623,7 @@ fn 단계마다_본문이_통째로_달라진다() {
 
     let 실패 = remote_screen_texts(TabPhase::Error {
         message: "530 Login incorrect".to_owned(),
+        kind: crate::remote::types::FailureKind::Auth,
     });
     for 문구 in [
         "연결하지 못했습니다",
@@ -649,6 +650,7 @@ fn 연결되지_않은_원격_패널은_항목_수를_모른다고_보인다() {
         TabPhase::Connecting,
         TabPhase::Error {
             message: "530".to_owned(),
+            kind: crate::remote::types::FailureKind::Auth,
         },
     ] {
         let texts = remote_screen_texts(phase.clone());
@@ -684,6 +686,7 @@ fn 원격_탭_화면에서도_위젯_id가_겹치지_않는다() {
         TabPhase::Connecting,
         TabPhase::Error {
             message: "530".to_owned(),
+            kind: crate::remote::types::FailureKind::Auth,
         },
         TabPhase::Ok,
     ] {

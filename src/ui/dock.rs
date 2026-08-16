@@ -35,6 +35,9 @@ const CLOSE_FONT_PX: f32 = 14.0;
 /// 이 앱의 글꼴(맑은 고딕 + phosphor)에 그 부호점이 없어 **두부(`?`)로 보인다**
 /// (2026-08-05 화면 확인 — 같은 함정을 메뉴 화살표에서도 겪었다)
 const ICON_PAUSE: &str = egui_phosphor::regular::PAUSE;
+/// 멈춘 뒤에는 **다시 시작**을 뜻하는 모양으로 바뀐다 — 멈춘 상태에서 일시 정지 표시를
+/// 그대로 두면 아이콘도 툴팁도 지금 상태와 어긋난다
+const ICON_PLAY: &str = egui_phosphor::regular::PLAY;
 const ICON_CLEAR: &str = egui_phosphor::regular::BROOM;
 const ICON_COLLAPSE: &str = egui_phosphor::regular::CARET_DOWN;
 const ICON_COPY: &str = egui_phosphor::regular::COPY;
@@ -63,6 +66,11 @@ pub struct DockState {
 }
 
 /// 세션 파일에 적히는 키 — 열거형 이름이 바뀌어도 저장 형식은 그대로여야 한다
+/// 필터 탭 묶음과 로그 탭 사이의 구분선이 차지하는 폭
+const TAB_DIVIDER_GAP: f32 = 13.0;
+/// 그 선이 스트립 위아래에서 물러서는 거리 — 끝까지 그으면 탭 경계처럼 보인다
+const TAB_DIVIDER_INSET: f32 = 7.0;
+
 const PANEL_QUEUE: &str = "queue";
 const PANEL_LOG: &str = "log";
 const FILTER_ALL: &str = "all";
@@ -183,14 +191,15 @@ pub fn show_strip(
         view.queue.count(QueueFilter::Done),
         view.queue.count(QueueFilter::Error),
     );
-    // 원본 `:1018-1022` — 큐 탭 셋은 필터이고 로그 탭만 다른 화면이다
+    // 큐 탭 셋은 **같은 화면의 필터**이고 로그 탭만 다른 화면이다.
+    // 원본은 로그를 필터 사이에 끼워 두었지만(`:1018-1022`), 성격이 다른 것이 가운데 서면
+    // 넷이 같은 종류로 읽힌다 — 필터를 모으고 로그는 구분선 뒤로 보낸다 (2026-08-16 검토)
     let tabs = [
         (
             format!("{} ({})", crate::i18n::dock_queue(), counts.0),
             Some(QueueFilter::All),
             theme::TEXT,
         ),
-        (crate::i18n::dock_log().to_owned(), None, theme::TEXT),
         (
             format!("{} ({})", crate::i18n::dock_success(), counts.1),
             Some(QueueFilter::Done),
@@ -201,10 +210,20 @@ pub fn show_strip(
             Some(QueueFilter::Error),
             theme::ERROR_TEXT,
         ),
+        (crate::i18n::dock_log().to_owned(), None, theme::TEXT),
     ];
 
     let mut left = rect.left();
-    for (label, filter, active_color) in tabs {
+    for (index, (label, filter, active_color)) in tabs.into_iter().enumerate() {
+        // 필터 묶음과 로그 사이에 선을 하나 긋는다 — 종류가 다르다는 것을 자리로도 보인다
+        if index > 0 && filter.is_none() {
+            ui.painter().vline(
+                left + TAB_DIVIDER_GAP / 2.0,
+                (rect.top() + TAB_DIVIDER_INSET)..=(rect.bottom() - TAB_DIVIDER_INSET),
+                egui::Stroke::new(1.0, theme::BORDER_CONTROL),
+            );
+            left += TAB_DIVIDER_GAP;
+        }
         let text = ui.painter().layout_no_wrap(
             label,
             egui::FontId::proportional(TAB_FONT_PX),
@@ -250,23 +269,56 @@ pub fn show_strip(
         }
     }
 
-    // 우측 아이콘 — 화면에 따라 구성이 다르다 (인벤토리 #33·#34)
-    let icons: &[(&str, f32, Option<DockAction>)] = if showing_log {
-        &[
-            (ICON_COPY, ICON_FONT_PX, Some(DockAction::CopyLog)),
-            (ICON_COLLAPSE, CLOSE_FONT_PX, None),
-        ]
+    // 우측 아이콘 — 화면에 따라 구성이 다르다 (인벤토리 #33·#34).
+    // 넷 다 아이콘뿐이라 **툴팁이 유일한 설명**이다
+    let (pause_icon, pause_hint) = if view.queue.is_paused() {
+        (ICON_PLAY, crate::i18n::dock_resume())
     } else {
-        &[
-            (ICON_PAUSE, ICON_FONT_PX, Some(DockAction::TogglePause)),
-            (ICON_CLEAR, ICON_FONT_PX, Some(DockAction::ClearDone)),
-            (ICON_COLLAPSE, CLOSE_FONT_PX, None),
-        ]
+        (ICON_PAUSE, crate::i18n::dock_pause())
+    };
+    let log_icons = [
+        (
+            ICON_COPY,
+            ICON_FONT_PX,
+            Some(DockAction::CopyLog),
+            crate::i18n::dock_copy_log(),
+        ),
+        (
+            ICON_COLLAPSE,
+            CLOSE_FONT_PX,
+            None,
+            crate::i18n::dock_collapse(),
+        ),
+    ];
+    let queue_icons = [
+        (
+            pause_icon,
+            ICON_FONT_PX,
+            Some(DockAction::TogglePause),
+            pause_hint,
+        ),
+        (
+            ICON_CLEAR,
+            ICON_FONT_PX,
+            Some(DockAction::ClearDone),
+            crate::i18n::dock_clear_done(),
+        ),
+        (
+            ICON_COLLAPSE,
+            CLOSE_FONT_PX,
+            None,
+            crate::i18n::dock_collapse(),
+        ),
+    ];
+    let icons: &[(&str, f32, Option<DockAction>, &str)] = if showing_log {
+        &log_icons
+    } else {
+        &queue_icons
     };
     let mut action = None;
     let mut right = rect.right() - STRIP_PAD_RIGHT;
     // 오른쪽 끝부터 거꾸로 놓는다 — 원본의 순서(⏸ ✕ ▼)가 유지된다
-    for (glyph, font_px, kind) in icons.iter().rev() {
+    for (glyph, font_px, kind, hint) in icons.iter().rev() {
         let icon = egui::Rect::from_min_size(
             egui::pos2(right - ICON_SIZE, rect.center().y - ICON_SIZE / 2.0),
             egui::vec2(ICON_SIZE, ICON_SIZE),
@@ -281,6 +333,7 @@ pub fn show_strip(
             theme::TEXT_MUTED,
             *font_px,
         )
+        .on_hover_text(*hint)
         .clicked();
         if clicked {
             match kind {

@@ -227,7 +227,7 @@ pub fn show_status_bar(
     // 실패 알약 — **실패가 있을 때만** (인벤토리 #57)
     let failures = view.queue.count(crate::remote::queue::QueueFilter::Error);
     if failures > 0 {
-        let text = format!("{} {failures}", crate::i18n::status_failed());
+        let text = crate::i18n::dynamic::status_failed_count(failures);
         let width = PILL_PAD_X * 2.0 + DOT + PILL_GAP + text_width(ui, &text, &font);
         right -= width;
         let pill = egui::Rect::from_min_size(
@@ -351,7 +351,7 @@ mod tests {
         // 이 앱 글꼴에 없어 두부가 된다 (프로젝트 규약)
         assert!(widgets::is_icon_font(CARET_OPEN) && widgets::is_icon_font(CARET_CLOSED));
         assert_ne!(CARET_OPEN, CARET_CLOSED, "여닫힘이 같은 글리프다");
-        assert_eq!(crate::i18n::status_failed(), "실패");
+        assert_eq!(crate::i18n::dynamic::status_failed_count(2), "실패 2건");
     }
 
     fn queue_with(states: &[TransferState]) -> TransferQueue {

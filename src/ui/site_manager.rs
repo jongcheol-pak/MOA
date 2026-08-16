@@ -22,6 +22,9 @@ use eframe::egui;
 /// 대화 크기 — 고정이다(`:385`)
 const DIALOG_WIDTH: f32 = 1080.0;
 const DIALOG_HEIGHT: f32 = 680.0;
+/// 삭제 확인 대화의 본문 폭 — 워크스페이스 삭제 확인과 같은 값이다.
+/// 같은 성격의 물음이 자리마다 다른 크기로 뜨면 판이 흔들려 보인다
+const DELETE_CONFIRM_WIDTH: f32 = 360.0;
 /// 헤더 — 높이 40px · `padding 0 8px 0 16px` (`:386`)
 const HEADER_HEIGHT: f32 = 40.0;
 const HEADER_PAD_LEFT: f32 = 16.0;
@@ -151,12 +154,24 @@ fn logon_options() -> [(LogonType, &'static str); 2] {
     ]
 }
 
-/// 전송 모드 라디오 3종 (인벤토리 #77~79, `:852`)
-fn transfer_options() -> [(TransferMode, &'static str); 3] {
+/// 전송 모드 라디오 3종 (인벤토리 #77~79, `:852`) — 라벨과 그 설명을 함께 든다
+fn transfer_options() -> [(TransferMode, &'static str, &'static str); 3] {
     [
-        (TransferMode::Default, crate::i18n::site_mode_default()),
-        (TransferMode::Active, crate::i18n::site_mode_active()),
-        (TransferMode::Passive, crate::i18n::site_mode_passive()),
+        (
+            TransferMode::Default,
+            crate::i18n::site_mode_default(),
+            crate::i18n::site_hint_mode_default(),
+        ),
+        (
+            TransferMode::Active,
+            crate::i18n::site_mode_active(),
+            crate::i18n::site_hint_mode_active(),
+        ),
+        (
+            TransferMode::Passive,
+            crate::i18n::site_mode_passive(),
+            crate::i18n::site_hint_mode_passive(),
+        ),
     ]
 }
 
@@ -364,6 +379,9 @@ pub struct SiteManager {
     rename_focus: bool,
     /// 방금 실패한 까닭 — 바닥에 그대로 보인다
     error: Option<String>,
+    /// 삭제를 묻는 중인 사이트 — 확인 대화가 떠 있는 동안만 값이 있다.
+    /// 되돌릴 수 없는 일이라 곧바로 지우지 않는다 (2026-08-16 검토)
+    pending_delete: Option<SiteId>,
 }
 
 impl SiteManager {
@@ -412,6 +430,8 @@ impl SiteManager {
     fn close(&mut self, store: &mut SiteStore) {
         self.finish_rename(store);
         self.open = false;
+        // 묻던 것도 함께 접는다 — 남겨 두면 다음에 열 때 확인 대화부터 뜬다
+        self.pending_delete = None;
         self.renaming = None;
         self.rename_focus = false;
         self.error = None;
@@ -484,13 +504,8 @@ impl SiteManager {
                 self.renaming = store.get(id).map(|record| record.name.clone());
                 self.rename_focus = self.renaming.is_some();
             }
-            ListAction::Delete => {
-                store.remove(id);
-                self.selected = None;
-                self.draft = Draft::default();
-                self.renaming = None;
-                self.rename_focus = false;
-            }
+            // 곧바로 지우지 않고 한 번 묻는다 — 주소·로그인 정보가 함께 사라지고 되돌릴 수 없다
+            ListAction::Delete => self.pending_delete = Some(id),
             ListAction::Duplicate => {
                 if let Some(copy) = store.duplicate(id) {
                     self.select(store, copy);
@@ -553,7 +568,11 @@ impl SiteManager {
                 self.show_error_row(ui, error_row);
             },
         );
-        if let Some(index) = shell.clicked {
+        // 삭제를 묻는 동안에는 이 대화의 조작을 받지 않는다 — 위에 뜬 확인이 답을 기다린다.
+        // egui가 아래 모달의 입력을 막아 주지만 그 판정은 **다음 프레임**부터라, 묻기
+        // 시작한 그 프레임에 이 대화의 버튼이 함께 눌리는 것을 여기서 막는다
+        let asking = self.pending_delete.is_some();
+        if let Some(index) = shell.clicked.filter(|_| !asking) {
             let connect = index == CONNECT_BUTTON;
             outcome = match index {
                 // 연결·확인은 등록을 거쳐야 한다 — 값이 모자라면 `commit`이 오류를 남기고
@@ -576,13 +595,61 @@ impl SiteManager {
         if let Some(action) = body.action {
             self.apply_list_action(action, store);
         }
-        if shell.should_close {
+        // 삭제 확인은 **관리자 위에** 뜬다 — 뒤의 대화는 그대로 두고 답만 기다린다
+        self.show_delete_confirm(ctx, store);
+        if shell.should_close && !asking {
             outcome = SiteManagerOutcome::Close;
         }
         if !matches!(outcome, SiteManagerOutcome::None) {
             self.close(store);
         }
         outcome
+    }
+
+    /// 사이트 삭제 확인 (2026-08-16 검토) — 워크스페이스 삭제 대화와 같은 구성이다.
+    ///
+    /// 배경 클릭·`Esc`는 취소로 본다: 지우는 쪽이 기본값이 되면 실수로 지우게 된다
+    fn show_delete_confirm(&mut self, ctx: &egui::Context, store: &mut SiteStore) {
+        let Some(id) = self.pending_delete else {
+            return;
+        };
+        let Some(name) = store.get(id).map(|record| record.name.clone()) else {
+            // 묻는 사이에 대상이 사라졌다 — 물을 것이 없다
+            self.pending_delete = None;
+            return;
+        };
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::delete()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("사이트 삭제 확인"),
+            DELETE_CONFIRM_WIDTH,
+            &buttons,
+            |ui| {
+                ui.heading(crate::i18n::site_delete_title());
+                ui.add_space(8.0);
+                ui.label(crate::i18n::dynamic::site_delete_confirm(&name));
+                ui.label(crate::i18n::site_delete_detail());
+            },
+        );
+        match shell.clicked {
+            Some(0) => {
+                store.remove(id);
+                self.pending_delete = None;
+                self.selected = None;
+                self.draft = Draft::default();
+                self.renaming = None;
+                self.rename_focus = false;
+            }
+            Some(_) => self.pending_delete = None,
+            None => {
+                if shell.should_close {
+                    self.pending_delete = None;
+                }
+            }
+        }
     }
 
     /// 헤더 — 제목과 닫기 버튼. 닫기를 눌렀으면 `true` (`:386-388`)
@@ -877,8 +944,13 @@ impl SiteManager {
         );
         row.spacing_mut().item_spacing.x = RADIO_GAP;
         let mut picked_mode = None;
-        for (mode, label) in transfer_options() {
-            if widgets::radio_row(&mut row, label, self.draft.transfer_mode == mode) {
+        for (mode, label, hint) in transfer_options() {
+            if widgets::radio_row(
+                &mut row,
+                label,
+                self.draft.transfer_mode == mode,
+                Some(hint),
+            ) {
                 picked_mode = Some(mode);
             }
         }
@@ -952,7 +1024,7 @@ impl SiteManager {
                     egui::vec2(form.width() - MARK_INDENT, widgets::FORM_FIELD_HEIGHT),
                 ),
             );
-            if widgets::radio_row(&mut row, label, self.draft.charset_custom == custom) {
+            if widgets::radio_row(&mut row, label, self.draft.charset_custom == custom, None) {
                 self.draft.charset_custom = custom;
             }
             top += widgets::FORM_FIELD_HEIGHT + CHARSET_GAP;
@@ -1300,7 +1372,7 @@ mod tests {
             crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // 인벤토리 #60~75·#88~90 — 여기서 한 글자라도 다듬으면 화면과 명세가 갈린다
         assert_eq!(crate::i18n::site_title(), "사이트 관리자");
-        assert_eq!(crate::i18n::site_list_label(), "항목 선택(S):");
+        assert_eq!(crate::i18n::site_list_label(), "사이트(S):");
         assert_eq!(crate::i18n::site_rename(), "이름 바꾸기(R)");
         assert_eq!(crate::i18n::site_delete(), "삭제(D)");
         assert_eq!(crate::i18n::site_duplicate(), "복제(I)");
@@ -1466,9 +1538,10 @@ mod tests {
         assert_ne!(copy, id);
         assert_eq!(store.get(copy).expect("사본").name, "스테이징 (2)");
 
+        // 삭제는 곧바로 지우지 않고 **묻는 상태로만** 들어간다 (2026-08-16 검토)
         manager.apply_list_action(ListAction::Delete, &mut store);
-        assert!(store.get(copy).is_none());
-        assert_eq!(manager.selected, None, "지운 사이트가 선택으로 남지 않는다");
+        assert_eq!(manager.pending_delete, Some(copy));
+        assert!(store.get(copy).is_some(), "묻기도 전에 지워졌다");
     }
 
     #[test]
@@ -1657,7 +1730,7 @@ mod tests {
         assert_eq!(crate::i18n::site_label_encoding(), "인코딩(E):");
         assert_eq!(
             crate::i18n::site_charset_warning(),
-            "문자셋을 잘못 지정하면 파일명이 올바르게 보여지지 않을 수 있습니다."
+            "문자셋을 잘못 지정하면 파일 이름이 깨져 보일 수 있습니다."
         );
         // 인코딩 필드 폭·높이도 원본 값이다 (`:482`)
         assert_eq!(ENCODING_WIDTH, 210.0);

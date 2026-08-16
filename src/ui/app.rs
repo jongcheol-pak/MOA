@@ -795,7 +795,7 @@ impl ExplorerApp {
     }
 
     /// 사이드바 조작 반영 — 목록 변경은 전부 여기서만 일어난다
-    fn handle_sidebar(&mut self, action: SidebarAction, area: LayoutRect) {
+    fn handle_sidebar(&mut self, action: SidebarAction, area: LayoutRect, now: f64) {
         match action {
             SidebarAction::Select(index) => {
                 self.workspaces.set_active(index);
@@ -820,8 +820,17 @@ impl ExplorerApp {
                 // 여는 방법에 따라 배치가 달라진다
                 self.open_site_tab(site, None, area);
             }
-            // 목록에서 감출 뿐 사이트는 남는다 (README §1) — 사이트 관리자에 그대로 보인다
-            SidebarAction::HideSite(site) => self.sites.hide(site),
+            // 목록에서 감출 뿐 사이트는 남는다 (README §1) — 사이트 관리자에 그대로 보인다.
+            // **그 사실을 알린다** — 메뉴가 감춘다고 적어도, 사라진 줄에서 되돌리는 길까지는
+            // 읽히지 않는다 (2026-08-16 검토)
+            SidebarAction::HideSite(site) => {
+                let name = self.sites.get(site).map(|record| record.name.clone());
+                self.sites.hide(site);
+                if let Some(name) = name {
+                    self.toast
+                        .show(crate::i18n::dynamic::site_hidden(&name), now);
+                }
+            }
             // 사이트 목록은 메모리에 있어 지금은 다시 읽을 것이 없다.
             // 파일로 오가는 저장이 붙는 T25(세션 v3)에서 이 자리가 다시 읽기가 된다
             SidebarAction::RefreshSites => {}
@@ -2475,8 +2484,9 @@ fn to_tab_phase(phase: &ConnPhase) -> TabPhase {
         ConnPhase::Idle | ConnPhase::Closed => TabPhase::New,
         ConnPhase::Connecting => TabPhase::Connecting,
         ConnPhase::Ready => TabPhase::Ok,
-        ConnPhase::Failed { detail } => TabPhase::Error {
+        ConnPhase::Failed { detail, kind } => TabPhase::Error {
             message: detail.clone(),
+            kind: *kind,
         },
     }
 }
@@ -2575,10 +2585,10 @@ impl eframe::App for ExplorerApp {
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| {
                 if !self.korean_font {
-                    ui.colored_label(theme::TEXT_DIM, crate::i18n::app_font_fallback());
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::app_font_fallback());
                 }
                 if !self.shell_available() {
-                    ui.colored_label(theme::TEXT_DIM, crate::i18n::app_shell_menu_unavailable());
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::app_shell_menu_unavailable());
                 }
                 // 하단 상태 표시줄·도크를 사이드바보다 **먼저** 뗀다 — egui 패널은 먼저 그린 쪽이
                 // 넓은 자리를 가져가므로, 순서를 뒤집으면 둘 다 사이드바를 뺀 폭에만 그려진다.
@@ -2617,8 +2627,9 @@ impl eframe::App for ExplorerApp {
 
                 let area = splitter::to_layout_rect(ui.available_rect_before_wrap());
                 layout_area = Some(area);
+                let now = ui.input(|input| input.time);
                 for action in sidebar_actions {
-                    self.handle_sidebar(action, area);
+                    self.handle_sidebar(action, area, now);
                 }
                 // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
                 // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
@@ -2804,13 +2815,14 @@ fn sort_tree_children(entries: &mut [crate::remote::types::RemoteEntry]) {
 /// 파일 작업 실패 사유가 상태 줄에 머무는 시간(초) — 알림(FR-43)보다 조금 길게 둔다
 const NOTICE_SECS: f64 = 6.0;
 
-/// 실패 사유 앞에 붙일 작업 이름 — 사용자가 시키지 않은 작업(`Cwd`·`Disconnect`)은 알리지 않는다
-fn op_label(op: OpKind) -> Option<&'static str> {
+/// 상태 줄에 남길 실패 문장 — 사용자가 시키지 않은 작업(`Cwd`·`Disconnect`)은 알리지 않는다
+fn op_failure_message(op: OpKind, error: &RemoteError) -> Option<String> {
+    let detail = error.to_string();
     match op {
-        OpKind::Mkdir => Some(crate::i18n::menu_new_folder()),
-        OpKind::Remove | OpKind::Rmdir => Some(crate::i18n::delete()),
-        OpKind::Rename => Some(crate::i18n::rename()),
-        OpKind::Chmod => Some(crate::i18n::op_chmod()),
+        OpKind::Mkdir => Some(crate::i18n::dynamic::op_mkdir_failed(&detail)),
+        OpKind::Remove | OpKind::Rmdir => Some(crate::i18n::dynamic::op_delete_failed(&detail)),
+        OpKind::Rename => Some(crate::i18n::dynamic::op_rename_failed(&detail)),
+        OpKind::Chmod => Some(crate::i18n::dynamic::op_chmod_failed(&detail)),
         OpKind::Cwd | OpKind::Disconnect => None,
     }
 }
@@ -2831,15 +2843,17 @@ enum OpOutcome {
 /// 실패해도 **사유만 남기고 앱은 그대로 돈다** — `SITE CHMOD`를 모르는 FTP 서버가 흔한데
 /// 그때마다 앱이 멈추거나 연결이 끊기면 쓸 수 없다 (D22)
 fn op_outcome(op: OpKind, result: Result<(), RemoteError>) -> OpOutcome {
-    let Some(label) = op_label(op) else {
+    // 사용자가 시킨 작업이 아니면 성공도 실패도 알리지 않는다 — 목록도 다시 읽지 않는다
+    // (`Disconnect` 뒤에 목록을 걸면 이미 닫힌 연결에 말을 거는 셈이다)
+    if matches!(op, OpKind::Cwd | OpKind::Disconnect) {
         return OpOutcome::Ignore;
-    };
+    }
     match result {
         Ok(()) => OpOutcome::Relist,
-        Err(err) => OpOutcome::Notice(crate::i18n::dynamic::remote_op_failed(
-            label,
-            &err.to_string(),
-        )),
+        Err(err) => match op_failure_message(op, &err) {
+            Some(message) => OpOutcome::Notice(message),
+            None => OpOutcome::Ignore,
+        },
     }
 }
 
@@ -3213,10 +3227,12 @@ mod tests {
         assert_eq!(to_tab_phase(&ConnPhase::Ready), TabPhase::Ok);
         assert_eq!(
             to_tab_phase(&ConnPhase::Failed {
-                detail: "530 Login incorrect".to_owned()
+                detail: "530 Login incorrect".to_owned(),
+                kind: crate::remote::types::FailureKind::Auth
             }),
             TabPhase::Error {
-                message: "530 Login incorrect".to_owned()
+                message: "530 Login incorrect".to_owned(),
+                kind: crate::remote::types::FailureKind::Auth
             }
         );
     }
@@ -3243,7 +3259,7 @@ mod tests {
         let OpOutcome::Notice(text) = op_outcome(OpKind::Chmod, Err(unsupported)) else {
             panic!("실패가 사유로 남지 않았다");
         };
-        assert!(text.starts_with("권한 바꾸기 실패"), "{text}");
+        assert!(text.starts_with("권한을 변경하지 못했습니다"), "{text}");
         assert!(text.contains("SITE CHMOD"), "서버 원문이 빠졌다: {text}");
         // 사용자가 시키지 않은 작업까지 알리면 상태 줄이 잡음으로 찬다
         assert_eq!(

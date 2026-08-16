@@ -406,7 +406,22 @@ impl WorkspaceSidebar {
     ) {
         ui.add_space(CONNECT_HEADER_TOP);
         self.show_connect_header(ui, sites, actions);
-        // 사이트가 하나도 없으면 헤더만 남는다 (plan Edge Case)
+        // 사이트가 하나도 없으면 **다음에 할 일을 적는다** — 종전에는 헤더만 남아, 앱을 처음 연
+        // 사람이 서버를 어디서 등록하는지 화면에서 알 수 없었다 (2026-08-16 검토)
+        if sites.visible().next().is_none() {
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), SITE_ROW_HEIGHT),
+                egui::Sense::hover(),
+            );
+            ui.painter().text(
+                egui::pos2(rect.left() + ITEM_MARGIN_X, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                crate::i18n::sidebar_no_sites(),
+                egui::FontId::proportional(HEADER_FONT_PX),
+                theme::TEXT_MUTED,
+            );
+            return;
+        }
         for record in sites.visible() {
             let live = connected.contains(&record.id);
             self.show_site_row(ui, record, live, actions);
@@ -462,7 +477,7 @@ impl WorkspaceSidebar {
 
         let plus = ui
             .interact(plus_rect, ui.id().with("sites_add"), egui::Sense::click())
-            .on_hover_text(crate::i18n::connect());
+            .on_hover_text(crate::i18n::sidebar_connect_menu());
         header_glyph(
             ui,
             plus_rect,
@@ -521,13 +536,13 @@ impl WorkspaceSidebar {
         let proto_galley = ui.painter().layout_no_wrap(
             proto.to_owned(),
             egui::FontId::proportional(SITE_PROTO_PX),
-            theme::TEXT_DIM,
+            theme::TEXT_MUTED,
         );
         let proto_left = rect.right() - SITE_PAD_X - proto_galley.size().x;
         ui.painter().galley(
             egui::pos2(proto_left, rect.center().y - proto_galley.size().y / 2.0),
             proto_galley,
-            theme::TEXT_DIM,
+            theme::TEXT_MUTED,
         );
 
         let name_left = dot_center.x + SITE_DOT / 2.0 + SITE_GAP;
@@ -607,14 +622,14 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
         ui.label(
             egui::RichText::new(crate::i18n::sidebar_saved_sites())
                 .size(MENU_CAPTION_PX)
-                .color(theme::TEXT_DIM),
+                .color(theme::TEXT_MUTED),
         );
         for record in sites.visible() {
             let button = egui::Button::new(egui::RichText::new(&record.name).color(theme::TEXT))
                 .right_text(
                     egui::RichText::new(record.protocol.label())
                         .size(SITE_PROTO_PX)
-                        .color(theme::TEXT_DIM),
+                        .color(theme::TEXT_MUTED),
                 )
                 .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
             if ui.add(button).clicked() {
@@ -647,30 +662,22 @@ fn show_site_context_menu(
         ui.label(
             egui::RichText::new(&record.name)
                 .size(MENU_CAPTION_PX)
-                .color(theme::TEXT_DIM),
+                .color(theme::TEXT_MUTED),
         );
         ui.separator();
-        let remove =
-            egui::Button::new(egui::RichText::new(crate::i18n::delete()).color(theme::TEXT))
-                .right_text(
-                    egui::RichText::new(HIDE_SITE_SHORTCUT)
-                        .size(SITE_PROTO_PX)
-                        .color(theme::TEXT_DIM),
-                )
-                .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
-        // 지우는 조작이라 마우스를 올리면 빨갛다 (원본 `:358`) — 되돌릴 수 없는 일과
-        // 같은 색을 써서, 무심코 누르기 전에 한 번 더 보이게 한다
-        let clicked = ui
-            .scope(|ui| {
-                let widgets = &mut ui.style_mut().visuals.widgets;
-                for state in [&mut widgets.hovered, &mut widgets.active] {
-                    state.weak_bg_fill = theme::CLOSE_HOT;
-                    state.bg_fill = theme::CLOSE_HOT;
-                }
-                ui.add(remove)
-            })
-            .inner
-            .clicked();
+        let hide = egui::Button::new(
+            egui::RichText::new(crate::i18n::sidebar_hide_site()).color(theme::TEXT),
+        )
+        .right_text(
+            egui::RichText::new(HIDE_SITE_SHORTCUT)
+                .size(SITE_PROTO_PX)
+                .color(theme::TEXT_MUTED),
+        )
+        .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        // **파괴색을 쓰지 않는다** — 원본은 이 자리를 삭제로 보고 빨갛게 칠했지만(`:358`)
+        // 실제로는 사이드바에서 감출 뿐 사이트는 남는다. 되돌릴 수 있는 일에 되돌릴 수 없는
+        // 일의 색을 쓰면 그 색의 뜻이 닳는다 (2026-08-16 검토)
+        let clicked = ui.add(hide).clicked();
         if clicked {
             actions.push(SidebarAction::HideSite(record.id));
             ui.close();

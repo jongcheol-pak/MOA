@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 
 use crate::remote::log::{LogBuffer, LogKind, mask_secrets};
 use crate::remote::types::{
-    Progress, RemoteEntry, RemoteError, RemotePath, RemoteResult, RemoteSession, SiteId, SiteRecord,
+    FailureKind, Progress, RemoteEntry, RemoteError, RemotePath, RemoteResult, RemoteSession,
+    SiteId, SiteRecord,
 };
 
 /// 화면을 다시 그리게 하는 콜백 (D6). `remote`가 egui를 모른 채 화면을 깨우는 유일한 통로다
@@ -163,6 +164,9 @@ pub enum ConnPhase {
     Ready,
     Failed {
         detail: String,
+        /// 실패 화면이 덧붙일 안내를 고르는 기준 (FR-32) — 원문과 함께 나른다.
+        /// 문자열만 넘기면 화면이 사유를 다시 뜯어 갈래를 짐작해야 한다
+        kind: FailureKind,
     },
     Closed,
 }
@@ -571,6 +575,7 @@ fn connect_with_retry(worker: &mut Worker) -> bool {
         else {
             return worker.emit(ConnEvent::Phase(ConnPhase::Failed {
                 detail: err.to_string(),
+                kind: err.failure_kind(),
             }));
         };
 
@@ -1543,7 +1548,7 @@ mod tests {
             })
             .collect();
         assert!(
-            lines.contains(&"보안되지 않은 서버입니다. TLS를 통한 연결을 지원하지 않습니다."),
+            lines.contains(&"암호화되지 않은 연결입니다. 이 서버는 TLS를 지원하지 않습니다."),
             "{lines:?}"
         );
         assert!(!lines.contains(&"TLS로 암호화된 연결입니다."), "{lines:?}");
