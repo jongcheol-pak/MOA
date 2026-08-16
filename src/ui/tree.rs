@@ -135,14 +135,24 @@ impl FolderTreeView {
     }
 
     /// 트리를 그리고, 고른 폴더와 새로 펼쳐진 폴더의 조회 요청을 돌려준다.
-    /// 이동도 조회도 호출부의 몫이다 — 트리는 목록도 연결도 모른다
-    pub fn show(&mut self, ui: &mut egui::Ui, source: TreeSource<'_>) -> TreeOutcome {
+    /// 이동도 조회도 호출부의 몫이다 — 트리는 목록도 연결도 모른다.
+    ///
+    /// `favorites`는 **로컬 트리 맨 위에 설 바로가기들**이다 (FR-56) — 앱이 하나만 들고
+    /// 모든 패널에 같은 것을 내려보낸다. 트리는 저장소 타입을 모르고 경로 목록만 본다
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        source: TreeSource<'_>,
+        favorites: &[PathBuf],
+    ) -> TreeOutcome {
         self.poll();
         let mut outcome = TreeOutcome::default();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match source {
                 TreeSource::Local => {
+                    // 즐겨찾기는 **로컬 트리에만** 선다 (사용자 결정 — 원격은 제외)
+                    self.show_favorites(ui, favorites, &mut outcome);
                     let roots = Rc::clone(&self.roots);
                     for root in roots.iter() {
                         self.show_node(ui, root, &mut outcome);
@@ -153,6 +163,37 @@ impl FolderTreeView {
                 }
             });
         outcome
+    }
+
+    /// 즐겨찾기 줄들과 그 아래를 가르는 구분선 (FR-56).
+    ///
+    /// **비어 있으면 줄도 구분선도 그리지 않는다**(사용자 결정) — 쓰지 않는 사람의 화면에
+    /// 빈 자리가 남지 않는다. 항목은 폴더 이름만 보이고 전체 경로는 툴팁이 든다 —
+    /// 트리 폭이 200px이라 경로를 그대로 적으면 대부분 잘린다
+    fn show_favorites(
+        &mut self,
+        ui: &mut egui::Ui,
+        favorites: &[PathBuf],
+        outcome: &mut TreeOutcome,
+    ) {
+        if favorites.is_empty() {
+            return;
+        }
+        for path in favorites {
+            let choice = TreeChoice::Local(path.clone());
+            let is_selected = self.selected.as_ref() == Some(&choice);
+            // 펼침 화살표가 없는 줄이라 그 자리만큼 들여쓴다 — 하위 없는 트리 잎과 같은 자리다
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent);
+                let response = ui
+                    .selectable_label(is_selected, display_name(path))
+                    .on_hover_text(path.to_string_lossy());
+                if response.clicked() {
+                    self.select(choice, outcome);
+                }
+            });
+        }
+        ui.separator();
     }
 
     /// 원격 노드 하나와 (펼쳐져 있으면) 그 하위를 그린다.
@@ -478,6 +519,8 @@ mod tests {
                         root: RemotePath::new(root),
                         cache,
                     },
+                    // 원격 트리에는 즐겨찾기가 서지 않는다 — 그래도 인자는 받는다
+                    &[PathBuf::from(r"D:\작업")],
                 );
             });
         });

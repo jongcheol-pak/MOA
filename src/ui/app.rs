@@ -2694,6 +2694,7 @@ impl eframe::App for ExplorerApp {
                             show_hidden: self.settings.show_hidden,
                         },
                         targets,
+                        self.favorites.paths(),
                     );
                     // 이번 프레임에 눌린 패널이 다음 전송의 대상이 된다 — 팝업에 가린 클릭은
                     // 여기 오지 않는다(`pressed_panel` 설명). 메뉴 실행보다 **앞서** 반영해야

@@ -1116,6 +1116,7 @@ impl PanelState {
         remote: RemoteView<'_>,
         menu_state: PanelMenuState,
         targets: TransferTargets,
+        favorites: &[PathBuf],
     ) -> PanelOutcome {
         let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, remote, menu_state, targets);
         let tab = self.tabs.active();
@@ -1162,7 +1163,7 @@ impl PanelState {
                         .max_rect(tree_rect.shrink(TREE_PAD)),
                     |ui| {
                         ui.set_clip_rect(tree_rect);
-                        self.tree.show(ui, source)
+                        self.tree.show(ui, source, favorites)
                     },
                 )
                 .inner

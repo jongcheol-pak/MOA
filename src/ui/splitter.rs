@@ -19,6 +19,7 @@ use crate::ui::theme;
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// 스플리터 히트 영역을 좌우(상하)로 넓히는 여유.
 /// 경계선은 얇아야 하고 잡기는 쉬워야 한다 — **조작 영역만** 넓힌다(그리기는 그 두께 그대로)
@@ -154,6 +155,8 @@ pub fn show_layout(
     remote: RemoteView<'_>,
     display: DisplayRules,
     targets: TransferTargets,
+    // 폴더 트리 맨 위에 설 즐겨찾기 (FR-56) — 앱에 하나뿐이라 모든 패널이 같은 것을 받는다
+    favorites: &[PathBuf],
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
@@ -197,7 +200,9 @@ pub fn show_layout(
                 ui.set_clip_rect(pane);
                 {
                     panel.apply_display_rules(display, ctx);
-                    panel.show(ui, ctx, icons, textures, remote, menu_state, targets)
+                    panel.show(
+                        ui, ctx, icons, textures, remote, menu_state, targets, favorites,
+                    )
                 }
             })
             .inner;

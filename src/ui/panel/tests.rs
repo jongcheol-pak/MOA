@@ -60,6 +60,39 @@ fn drawn_text_positions(output: &eframe::egui::FullOutput) -> Vec<(String, egui:
     found
 }
 
+/// 한 프레임에 그려진 가로 구분선 수 — 구분선은 글이 아니라 얇은 사각형이라 글 목록에 없다.
+/// 절대 개수가 아니라 **늘고 주는 것**을 보는 데 쓴다(패널에는 원래 상태 줄 아래 구분선이 있다)
+fn separator_count(output: &eframe::egui::FullOutput) -> usize {
+    fn count(shape: &egui::Shape, found: &mut usize) {
+        match shape {
+            // egui `separator()`는 얇은 사각형으로도, 선분으로도 그려진다 — 둘 다 센다
+            egui::Shape::Rect(rect) => {
+                let size = rect.rect.size();
+                if size.y <= 2.0 && size.x > size.y * 4.0 {
+                    *found += 1;
+                }
+            }
+            egui::Shape::LineSegment { points, .. } => {
+                let (a, b) = (points[0], points[1]);
+                if (a.y - b.y).abs() <= 1.0 && (a.x - b.x).abs() > 4.0 {
+                    *found += 1;
+                }
+            }
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    count(shape, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = 0;
+    for clipped in &output.shapes {
+        count(&clipped.shape, &mut found);
+    }
+    found
+}
+
 /// 한 프레임에 그려진 자리표시 막대 수 — 목록 자리에 자리표시가 섰는지 판정한다.
 /// 막대는 글자가 아니라 사각형이라 `drawn_texts`로는 보이지 않는다
 fn skeleton_bars(output: &eframe::egui::FullOutput) -> usize {
@@ -94,6 +127,15 @@ fn id_clash_warnings(output: &eframe::egui::FullOutput) -> Vec<String> {
 
 /// 패널을 한 프레임 그린다 — 사이트 목록은 호출부가 준다
 fn draw_once(panel: &mut PanelState, sites: &SiteStore) -> eframe::egui::FullOutput {
+    draw_once_with_favorites(panel, sites, &[])
+}
+
+/// 즐겨찾기를 든 채 한 프레임 그린다 — 트리 위쪽 구역을 보는 시험이 쓴다
+fn draw_once_with_favorites(
+    panel: &mut PanelState,
+    sites: &SiteStore,
+    favorites: &[std::path::PathBuf],
+) -> eframe::egui::FullOutput {
     let tree = crate::remote::tree_cache::TreeCache::new();
     let remote = RemoteView {
         sites,
@@ -115,6 +157,7 @@ fn draw_once(panel: &mut PanelState, sites: &SiteStore) -> eframe::egui::FullOut
                 PanelMenuState::for_panes(1, ViewMode::Details),
                 // 전송 대상이 없는 상태 — 이 시험들은 탭 아이콘이 아니라 배치·상태를 본다
                 crate::ui::tabs::TransferTargets::default(),
+                favorites,
             );
         });
     })
@@ -1019,6 +1062,117 @@ fn 권한이_없으면_그_폴더로_옮기고_목록_자리에_사유를_적는
     // 읽어 낸 폴더로 옮기면 안내는 사라진다
     commit_dir(&mut panel, r"C:\Users", &mut icons);
     assert!(!panel.shows_denied(), "안내가 그대로 남았다");
+}
+
+#[test]
+fn 즐겨찾기는_드라이브_뿌리보다_위에_구분선과_함께_선다() {
+    // FR-56 — 트리 맨 위가 바로가기 자리다. 구분선이 그 아래를 가른다
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let favorites = [
+        std::path::PathBuf::from(r"D:\작업"),
+        std::path::PathBuf::from(r"C:\Users"),
+    ];
+
+    let output = draw_once_with_favorites(&mut panel, &SiteStore::new(), &favorites);
+    let texts = drawn_text_positions(&output);
+
+    let 작업 = texts
+        .iter()
+        .find(|(text, pos)| text == "작업" && pos.x < TREE_WIDTH)
+        .expect("즐겨찾기 `작업` 줄")
+        .1;
+    let users = texts
+        .iter()
+        .find(|(text, pos)| text == "Users" && pos.x < TREE_WIDTH)
+        .expect("즐겨찾기 `Users` 줄")
+        .1;
+    // 더한 차례 그대로다 (사용자 결정: 이름순이 아니다)
+    assert!(작업.y < users.y, "추가한 차례가 뒤바뀌었다");
+
+    // 드라이브 뿌리는 그 아래에 선다 — 주소창에도 `C:\` 같은 경로가 있어 **트리 구역만** 본다
+    // (트리는 상태 줄 아래에서 시작한다)
+    let 토글 = texts
+        .iter()
+        .find(|(text, _)| text == TREE_TOGGLE_ICON)
+        .expect("트리 토글 아이콘")
+        .1;
+    let 드라이브 = texts
+        .iter()
+        .filter(|(text, pos)| pos.x < TREE_WIDTH && pos.y > 토글.y && text.ends_with(":\\"))
+        .map(|(_, pos)| pos.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        드라이브.is_finite(),
+        "드라이브 뿌리가 그려지지 않았다: {texts:?}"
+    );
+    assert!(
+        users.y < 드라이브,
+        "즐겨찾기가 드라이브 아래로 내려갔다 (즐겨찾기 {}, 드라이브 {드라이브})",
+        users.y
+    );
+}
+
+#[test]
+fn 즐겨찾기가_없으면_구분선도_그리지_않는다() {
+    // 사용자 결정 — 쓰지 않는 사람의 화면은 지금과 똑같아야 한다
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+
+    let 빈_즐겨찾기 = separator_count(&draw_once_with_favorites(
+        &mut panel,
+        &SiteStore::new(),
+        &[],
+    ));
+    let 한_건 = separator_count(&draw_once_with_favorites(
+        &mut panel,
+        &SiteStore::new(),
+        &[std::path::PathBuf::from(r"D:\작업")],
+    ));
+
+    assert_eq!(
+        한_건,
+        빈_즐겨찾기 + 1,
+        "즐겨찾기 구분선이 하나 늘지 않았다 (빈 {빈_즐겨찾기}, 한 건 {한_건})"
+    );
+}
+
+#[test]
+fn 원격_트리에는_즐겨찾기가_서지_않는다() {
+    // 사용자 명시 제외 — 원격 패널에서는 바로가기 자체가 뜻이 없다(로컬 경로다)
+    let (mut panel, sites) = remote_panel_in(TabPhase::Ok);
+    panel.tree_visible = true;
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+
+    let texts = drawn_texts(&draw_once_with_favorites(&mut panel, &sites, &favorites));
+
+    assert!(
+        !texts.iter().any(|text| text == "작업"),
+        "원격 트리에 즐겨찾기가 그려졌다: {texts:?}"
+    );
+}
+
+#[test]
+fn 즐겨찾기를_누르면_그_폴더로_옮겨간다() {
+    // 바로가기의 본래 목적 — 누르면 활성 탭이 그리로 간다
+    let ctx = egui::Context::default();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.deferred_start = None;
+
+    // 트리가 올린 선택을 패널이 어떻게 다루는지 본다 — 그리기는 위 시험들이 덮는다
+    panel.navigate(std::path::PathBuf::from(r"D:\작업"), &ctx);
+
+    assert_eq!(
+        panel.pending_dir,
+        std::path::PathBuf::from(r"D:\작업"),
+        "고른 폴더로 열거를 걸지 않았다"
+    );
+    assert!(
+        matches!(panel.pending_nav, PendingNav::Push),
+        "히스토리에 쌓지 않았다"
+    );
 }
 
 #[test]
