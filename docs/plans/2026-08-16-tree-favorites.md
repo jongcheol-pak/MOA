@@ -202,7 +202,7 @@
     - (ii-a) `Session` 직렬화 계약 확장(비파괴) → `## 사전 승인 항목`
   - **Depends on**: -
 
-- [ ] T2. 트리 위쪽 즐겨찾기 목록과 구분선 + 전달 배선
+- [x] T2. 트리 위쪽 즐겨찾기 목록과 구분선 + 전달 배선
   - **Type**: D
   - **Design**: ① `src/ui/tree.rs`의 `show`가 **로컬 소스일 때만** 즐겨찾기 줄들과 구분선을 드라이브 뿌리보다 먼저 그린다 ② 신규 심볼은 비공개 `show_favorites`(줄 그리기)와 `FolderTreeView::show`의 인자 `favorites: &[PathBuf]` ③ 의존은 단방향으로 내려간다 — `ui::app`(소유) → `splitter::show_layout` → `PanelState::show` → `FolderTreeView::show`. 트리는 저장소 타입을 모르고 `&[PathBuf]`만 본다 ④ 비추상화 선언: 즐겨찾기 전용 위젯·트레이트를 만들지 않고(기존 `selectable_label` 한 줄과 `ui.separator()` 그대로), 즐겨찾기 항목에 펼침 화살표를 두지 않는다(사용자 결정 — 평면 목록)
   - **Acceptance**:
@@ -306,6 +306,10 @@
 ## Retry Ledger
 
 ## Progress Log
+- T1-T2 완료 (커밋 d8e98e9, 474770c): `app::favorites`에 저장소·액션·적용 규칙을 두고 세션에 `favorites`(문자열 목록)를 더했다. 트리 맨 위에 즐겨찾기 줄과 구분선을 그리고 앱→splitter→panel→tree로 목록을 내려보낸다.
+  - 결정: `collect_session`이 스프레드라 컴파일러가 못 잡는 자리를 순수 함수 `with_favorites`로 떼어 시험이 직접 부르게 했다(D7 실행).
+  - 리뷰: T1 spec/quality 각 MINOR 1(큐 단언·주석 수치 — 반영). T2 quality OK(SUGGEST 1 등록), spec MAJOR 1 — 클릭 경로가 시험에 안 걸린다는 지적을 받아 **클릭 이벤트 주입 시험으로 교체**했고, 그 시험이 죽어 있지 않음을 클릭 처리 임시 제거로 확인했다.
+  - 관측: `remote::connection`의 시간 마감(2초) 의존 시험 1건이 전체 실행에서 간헐 실패한다(단독 통과 — 이번 변경과 무관, 대장의 기존 항목과 같은 성질).
 
 ## Next Steps
 
