@@ -1516,6 +1516,78 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
 }
 
 #[test]
+fn 바깥을_누르거나_esc를_치면_메뉴가_닫힌다() {
+    // 메뉴가 화면에 눌어붙지 않게 한다 — 원격 목록 메뉴와 같은 규칙이다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+
+    /// 즐겨찾기 줄에서 메뉴를 연 상태를 만든다
+    fn open_menu(
+        harness: &mut FavoriteHarness,
+        panel: &mut PanelState,
+        favorites: &[std::path::PathBuf],
+    ) {
+        let first = harness.frame(panel, favorites);
+        let at = tree_text_spot(&first, "작업");
+        harness.click(panel, favorites, at, egui::PointerButton::Secondary, 0.05);
+        let opened = harness.frame(panel, favorites);
+        assert!(
+            drawn_texts(&opened).iter().any(|text| text == "해제"),
+            "메뉴가 열리지 않아 이 시험이 무의미하다"
+        );
+    }
+
+    fn panel_with_tree() -> PanelState {
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+        panel.tree_visible = true;
+        panel.deferred_start = None;
+        panel
+    }
+
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+
+    // ① 메뉴 바깥을 누르면 닫힌다 — 목록 쪽 빈자리를 누른다
+    let mut harness = FavoriteHarness::new();
+    let mut panel = panel_with_tree();
+    open_menu(&mut harness, &mut panel, &favorites);
+    harness.click(
+        &mut panel,
+        &favorites,
+        egui::pos2(TREE_WIDTH + 240.0, 420.0),
+        egui::PointerButton::Primary,
+        0.20,
+    );
+    let after_outside = harness.frame(&mut panel, &favorites);
+    assert!(
+        !drawn_texts(&after_outside)
+            .iter()
+            .any(|text| text == "해제"),
+        "바깥을 눌렀는데 메뉴가 남아 있다"
+    );
+
+    // ② Esc를 쳐도 닫힌다
+    let mut harness = FavoriteHarness::new();
+    let mut panel = panel_with_tree();
+    open_menu(&mut harness, &mut panel, &favorites);
+    let esc = egui::RawInput {
+        time: Some(0.30),
+        events: vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        ..Default::default()
+    };
+    harness.draw(&mut panel, &favorites, esc);
+    let after_esc = harness.frame(&mut panel, &favorites);
+    assert!(
+        !drawn_texts(&after_esc).iter().any(|text| text == "해제"),
+        "Esc를 쳤는데 메뉴가 남아 있다"
+    );
+}
+
+#[test]
 fn 트리를_감추면_열린_메뉴가_닫힌다() {
     // 트리가 그려지지 않는 프레임에는 메뉴 코드가 통째로 건너뛰어져 스스로 닫지 못한다
     let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);

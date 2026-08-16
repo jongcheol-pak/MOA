@@ -29,6 +29,7 @@
 ## Deferred / Follow-up
 - 즐겨찾기가 가리키는 폴더가 사라졌을 때의 표시(흐린 글씨·자동 정리) — 이번에는 눌렀을 때 기존 실패 안내로만 알린다(시작할 때 전건을 확인하면 네트워크 드라이브에서 창이 늦게 뜬다)
 - 즐겨찾기 순서 바꾸기 — 항목이 많아지면 필요해진다
+- [SUGGEST] `tree.rs::menu_row`가 `remote_menu.rs::menu_row`와 본문·상수까지 같다 — 도메인 지식이 없는 순수 렌더링 헬퍼라 `clamp_menu_pos`처럼 공용화할 여지가 있다. 지금은 2곳이라 문턱(3회) 미달 (T3 quality 리뷰 S1)
 - [SUGGEST] `tree.rs`의 즐겨찾기 줄과 하위 없는 잎 노드가 "들여쓰기 + `selectable_label` + 클릭 시 `select`"로 거의 같은 모양이다 — 지금은 2곳이라 공통화 문턱(3회)에 못 미친다. 세 번째 유사 지점이 생기면 헬퍼로 뽑을지 재검토 (T2 quality 리뷰 S1)
 
 ## Investigation Log

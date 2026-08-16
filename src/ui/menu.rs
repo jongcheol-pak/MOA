@@ -350,7 +350,7 @@ fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
 ///
 /// **패널과 트리가 함께 쓴다** — 패널의 원격 목록 메뉴와 트리의 즐겨찾기 메뉴가 같은 보정을
 /// 받아야 해서, 어느 한쪽에 두지 않고 명령만 값으로 돌려주는 이 모듈에 둔다 (plan D6)
-pub fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
+pub(crate) fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
     egui::pos2(
         at.x.min(screen.right() - size.x).max(screen.left()),
         at.y.min(screen.bottom() - size.y).max(screen.top()),
