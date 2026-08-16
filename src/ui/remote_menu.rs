@@ -10,6 +10,7 @@ use crate::ui::dialog;
 use crate::ui::list_common::ConflictChoice;
 use crate::ui::tabs::TransferTargets;
 use crate::ui::theme;
+use crate::ui::widgets;
 use eframe::egui;
 
 /// 메뉴 폭 — 일반 메뉴와 같은 값 (`FileExplorer-FTP.dc.html:355` 계열)
@@ -21,6 +22,9 @@ const TITLE_FONT_PX: f32 = 16.0;
 
 /// 이름·권한 대화의 본문 폭 — 한 줄짜리 입력과 체크박스 세 줄이 드는 너비
 const INPUT_BODY_WIDTH: f32 = 360.0;
+
+/// 권한 대화의 8진 세 자리 입력칸 폭
+const OCTAL_FIELD_WIDTH: f32 = 80.0;
 
 /// 목록을 보이는 확인 대화의 본문 폭 — 경로가 길어 입력 대화보다 넓다
 const LIST_BODY_WIDTH: f32 = 420.0;
@@ -330,7 +334,16 @@ pub fn show_name_dialog(
                     .color(theme::TEXT),
             );
             ui.add_space(10.0);
-            ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
+            // 앱 공통 입력 필드를 쓴다 — egui 기본 `TextEdit`은 포커스가 없을 때 테두리가
+            // 없고 배경도 대화와 같아, 어디에 입력하는지 보이지 않았다(사용자 보고)
+            widgets::text_field(
+                ui,
+                "remote_name",
+                name,
+                egui::vec2(ui.available_width(), widgets::FORM_FIELD_HEIGHT),
+                true,
+                false,
+            );
             if let Some(message) = error.as_ref() {
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new(message).color(theme::ERROR_TEXT));
@@ -413,9 +426,17 @@ pub fn show_chmod_dialog(
                     egui::RichText::new(crate::i18n::remote_chmod_octal())
                         .color(theme::HEADER_TEXT),
                 );
-                if ui
-                    .add(egui::TextEdit::singleline(octal).desired_width(80.0))
-                    .changed()
+                // 이름 대화와 같은 앱 공통 입력 필드다 — 테두리가 있어 포커스가 없어도
+                // 입력 자리가 보인다
+                if widgets::text_field(
+                    ui,
+                    "remote_octal",
+                    octal,
+                    egui::vec2(OCTAL_FIELD_WIDTH, widgets::FORM_FIELD_HEIGHT),
+                    true,
+                    false,
+                )
+                .changed()
                     && let Some(parsed) = Permissions::from_octal_text(octal)
                 {
                     // 숫자를 고치면 체크가 따라간다 — 잘못 적은 동안에는 그대로 둔다
