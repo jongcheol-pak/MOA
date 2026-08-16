@@ -1456,8 +1456,11 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
     // 구분할 수 없어 시험이 죽은 채 통과한다
     let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
 
-    /// 트리의 첫 드라이브 줄을 우클릭하고, 뜬 `즐겨찾기` 줄을 눌러 그 결과를 돌려준다
-    fn pick_on_first_drive(favorites: &[std::path::PathBuf]) -> (String, Option<FavoriteAction>) {
+    /// 트리의 **맨 아래** 드라이브 줄을 우클릭하고, 뜬 `즐겨찾기` 줄을 눌러 그 결과를 돌려준다.
+    ///
+    /// 맨 아래를 고르는 이유는 즐겨찾기 줄이 위에 서면 같은 이름이 화면에 둘이 되기 때문이다 —
+    /// 두 실행이 같은 규칙을 쓰므로 ①②가 같은 줄을 누른다
+    fn pick_on_last_drive(favorites: &[std::path::PathBuf]) -> (String, Option<FavoriteAction>) {
         let mut harness = FavoriteHarness::new();
         let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
         panel.tree_visible = true;
@@ -1503,7 +1506,7 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
     }
 
     // ① 아직 담기지 않았으면 눌러서 담긴다 — 이 좌표가 실제로 그 줄을 누른다는 증거다
-    let (이름, picked) = pick_on_first_drive(&[]);
+    let (이름, picked) = pick_on_last_drive(&[]);
     assert_eq!(
         picked,
         Some(FavoriteAction::Add(std::path::PathBuf::from(&이름))),
@@ -1511,7 +1514,7 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
     );
 
     // ② 이미 담겼으면 같은 자리를 눌러도 아무것도 올라오지 않는다
-    let (_, picked) = pick_on_first_drive(&[std::path::PathBuf::from(&이름)]);
+    let (_, picked) = pick_on_last_drive(&[std::path::PathBuf::from(&이름)]);
     assert_eq!(picked, None, "이미 담긴 폴더인데 다시 담겼다");
 }
 

@@ -459,4 +459,53 @@ mod tests {
             requests.into_iter().map(|r| (id, r)).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn 즐겨찾기_조작은_어느_패널에서_왔는지와_함께_한_건만_올라간다() {
+        // 이 홉은 **컴파일러가 잡아 주지 않는다**(`LayoutOutcome`은 `default()`로 만들어져
+        // 필드별로 대입된다 — plan 전제 4-b). 한 줄을 빠뜨려도 빌드가 통과하므로 시험이 지킨다.
+        // 메뉴는 한 프레임에 하나만 떠 있으니 다른 필드와 같은 first-wins다
+        let mut outcome = LayoutOutcome::default();
+        merge_panel_outcome(
+            &mut outcome,
+            PanelId(1),
+            PanelOutcome {
+                menu: None,
+                command: None,
+                remote: None,
+                remote_url: None,
+                closed_conn: None,
+                drop: None,
+                remote_menu: None,
+                favorite: Some(FavoriteAction::Add(std::path::PathBuf::from(r"D:\작업"))),
+                tree_requests: Vec::new(),
+            },
+        );
+        merge_panel_outcome(
+            &mut outcome,
+            PanelId(2),
+            PanelOutcome {
+                menu: None,
+                command: None,
+                remote: None,
+                remote_url: None,
+                closed_conn: None,
+                drop: None,
+                remote_menu: None,
+                favorite: Some(FavoriteAction::Remove(std::path::PathBuf::from(
+                    r"C:\Users",
+                ))),
+                tree_requests: Vec::new(),
+            },
+        );
+
+        assert_eq!(
+            outcome.favorite,
+            Some((
+                PanelId(1),
+                FavoriteAction::Add(std::path::PathBuf::from(r"D:\작업"))
+            )),
+            "먼저 올라온 조작이 어느 패널 것인지와 함께 남아야 한다"
+        );
+    }
 }

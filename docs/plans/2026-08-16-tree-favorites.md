@@ -29,6 +29,7 @@
 ## Deferred / Follow-up
 - 즐겨찾기가 가리키는 폴더가 사라졌을 때의 표시(흐린 글씨·자동 정리) — 이번에는 눌렀을 때 기존 실패 안내로만 알린다(시작할 때 전건을 확인하면 네트워크 드라이브에서 창이 늦게 뜬다)
 - 즐겨찾기 순서 바꾸기 — 항목이 많아지면 필요해진다
+- 트리 메뉴의 화면 밖 보정에 넘기는 크기가 실측이 아니라 어림값이다(`MENU_WIDTH + PAD*2` 등) — 원격 메뉴는 `remote_menu::menu_size()`처럼 실측 상수를 쓴다. 창 하단에서 몇 px 넘칠 여지가 있으나 "열자마자 닫힘" 같은 동작 결함은 없다(보정은 포인터 쪽으로만 당긴다) (F-7 m4)
 - [SUGGEST] `tree.rs::menu_row`가 `remote_menu.rs::menu_row`와 본문·상수까지 같다 — 도메인 지식이 없는 순수 렌더링 헬퍼라 `clamp_menu_pos`처럼 공용화할 여지가 있다. 지금은 2곳이라 문턱(3회) 미달 (T3 quality 리뷰 S1)
 - [SUGGEST] `tree.rs`의 즐겨찾기 줄과 하위 없는 잎 노드가 "들여쓰기 + `selectable_label` + 클릭 시 `select`"로 거의 같은 모양이다 — 지금은 2곳이라 공통화 문턱(3회)에 못 미친다. 세 번째 유사 지점이 생기면 헬퍼로 뽑을지 재검토 (T2 quality 리뷰 S1)
 
@@ -91,7 +92,7 @@
 - `src/app/settings.rs`의 `mod tests` — `sample()` 갱신 + `favorites` 없는 JSON·깨진 `favorites` JSON 복원 시험
 - `src/ui/session.rs`의 `mod tests` — `with_favorites`의 직렬화 왕복(D7 seam)
 - `src/ui/menu.rs`의 `mod tests` — `panel/tests.rs`에서 옮겨 온 `clamp_menu_pos` 시험(D6)
-- `src/ui/tree.rs`의 `mod tests` — 즐겨찾기 구역 렌더·메뉴 줄 활성 규칙·액션 생성
+- ~~`src/ui/tree.rs`의 `mod tests`~~ → **실제 위치는 `src/ui/panel/tests.rs`** — 트리를 패널 경유로 실제로 그려야 좌표를 얻고 클릭·우클릭 이벤트를 주입할 수 있어, 계획한 자리보다 실물에 가까운 검증이 됐다(F-7 m1 정정)
 - `src/ui/panel/tests.rs` — `draw_once` 헬퍼의 `PanelState::show` 호출 갱신, 액션이 `PanelOutcome`으로 올라오는지
 - `src/ui/splitter.rs`의 `mod tests` — 액션 병합
 
@@ -322,6 +323,29 @@ PRD FR-56·README에 적은 각 서술이 실제 구현과 1:1로 맞는지 대�
 
 ## Phase Ledger
 
+Phase F 통과 (HEAD 838d31e + F-7 지적 반영분)
+Phase G 통과 (커버 대상 FR 100% — 아래 충족표)
+
+### Phase G — PRD 요구 재대조
+
+| FR | 우선순위 | 요건 | 충족 근거 | 판정 |
+|---|---|---|---|---|
+| FR-56 | Should | 로컬 트리 맨 위에 더한 차례대로 | `tree.rs` `show`의 Local 분기가 `show_favorites`를 뿌리보다 먼저 부른다 · `FavoriteStore::add`가 push | ✅ |
+| FR-56 | Should | 아래를 가로 구분선으로 가름 | `show_favorites` 끝의 `ui.separator()` · 시험 `즐겨찾기는_드라이브_뿌리보다_위에_구분선과_함께_선다` | ✅ |
+| FR-56 | Should | 하나도 없으면 목록·구분선 미표시 | `if favorites.is_empty() { return; }` · 시험 `즐겨찾기가_없으면_구분선도_그리지_않는다` | ✅ |
+| FR-56 | Should | 우클릭 메뉴 `즐겨찾기`로 담기 | `open_node_menu` → `MenuTarget::Node` · 시험 `트리_노드를_우클릭하면_즐겨찾기_메뉴가_뜬다` | ✅ |
+| FR-56 | Should | 이미 담긴 폴더면 그 줄 비활성 | `let enabled = !favorites.iter().any(..)` · 시험 `이미_담긴_폴더는_즐겨찾기_줄이_비활성이다`(미등록/등록 대조) | ✅ |
+| FR-56 | Should | 즐겨찾기 줄 우클릭 `해제` | `MenuTarget::Favorite` · 시험 `즐겨찾기_줄의_메뉴는_해제다` | ✅ |
+| FR-56 | Should | 이름만 표시, 경로는 툴팁 | `display_name` + `on_hover_text` · 툴팁은 수동 확인 항목(hover 필요) | ✅ (툴팁 ⏳ HUMAN-VERIFY) |
+| FR-56 | Should | 누르면 활성 탭이 그 폴더로 | `select` → `TreeChoice::Local` → `navigate` · 시험 `즐겨찾기를_누르면_그_폴더로_옮겨간다`(클릭 주입) | ✅ |
+| FR-56 | Should | 목록은 앱 하나, 모든 탭 공통 | `ExplorerApp.favorites` 한 필드를 `show_layout`이 모든 패널에 전달 | ✅ |
+| FR-56 | Should | 세션에 담겨 재시작해도 남음 | `Session.favorites` + `with_favorites` + `from_paths` · 시험 `즐겨찾기가_세션에_실려_왕복한다` | ✅ (재시작 실물은 ⏳ HUMAN-VERIFY) |
+| FR-56 | Should | 원격 트리는 대상 아님(메뉴도 없음) | Remote 분기가 `show_favorites`를 안 부르고 `menu_at`을 비운다 · 시험 2건 | ✅ |
+| FR-9 | Should | 폴더 트리 토글·지연 확장(기존) | 상단 구역만 더했고 드라이브 열거·지연 확장·토글 동작 무변경 · 기존 시험 전건 통과 | ✅ 보존 |
+
+- **커버 대상 FR 충족률 100%** (FR-56 11개 요건 + FR-9 보존)
+- ⏳ HUMAN-VERIFY 2건(툴팁 표시·재시작 후 목록 유지)은 기계 검증이 불가한 항목이라 사용자 확인 대상이다 — ✅로 둔갑시키지 않는다
+
 ## Retry Ledger
 
 ## Progress Log
@@ -329,8 +353,15 @@ PRD FR-56·README에 적은 각 서술이 실제 구현과 1:1로 맞는지 대�
   - 결정: `collect_session`이 스프레드라 컴파일러가 못 잡는 자리를 순수 함수 `with_favorites`로 떼어 시험이 직접 부르게 했다(D7 실행).
   - 리뷰: T1 spec/quality 각 MINOR 1(큐 단언·주석 수치 — 반영). T2 quality OK(SUGGEST 1 등록), spec MAJOR 1 — 클릭 경로가 시험에 안 걸린다는 지적을 받아 **클릭 이벤트 주입 시험으로 교체**했고, 그 시험이 죽어 있지 않음을 클릭 처리 임시 제거로 확인했다.
   - 관측: `remote::connection`의 시간 마감(2초) 의존 시험 1건이 전체 실행에서 간헐 실패한다(단독 통과 — 이번 변경과 무관, 대장의 기존 항목과 같은 성질).
+- T3-T4 완료 (커밋 55b6166, 838d31e): 트리 우클릭 메뉴로 담기·빼기를 붙이고(`clamp_menu_pos`를 `ui::menu`로 이관), PRD FR-56 신설·README·위키 큐까지 문서를 맞췄다.
+  - 결정: 메뉴 상태(`menu_at`)는 **네 갈래로 정리**한다 — 고름·바깥 클릭/Esc·트리 감춤(`close_menu`)·원격 분기 진입. 앞 둘만으로는 트리를 끄거나 원격 탭으로 갔을 때 메뉴가 되살아난다.
+  - 리뷰: T3 spec MAJOR 1(바깥클릭/Esc 시험 누락)·MINOR 2 → 전건 반영 후 재리뷰 OK. quality OK(SUGGEST 1 등록).
+  - F-7(전체 완료 검증) MAJOR 1 — plan 4-C가 약속한 **splitter 병합 시험**이 실제로는 빠져 있었다. 그 자리가 컴파일러가 못 잡는 홉이라 시험을 채우고(임시 제거로 죽지 않음도 확인), 4-C의 시험 위치 기록도 실제와 맞췄다.
 
 ## Next Steps
+- 권장 다음 액션: 사용자 화면 확인(툴팁·메뉴 자리·비활성 표시·등록/해제 반영·재시작 유지) 후 `master` 병합·push 승인
+- Suggested skills: 공식 `/code-review`
+- 위키 갱신: 이번 회차 사실 2건·결정 1건을 vault `pending.md`에 큐로 남겼다(`[PROJECT-FACT]`·`[DECISION]`) — 반영은 위키 세션에서
 
 ## Open Questions
 - [x] Q1: PRD Out of Scope의 `즐겨찾기` 처리 → **PRD 갱신 후 구현**(FR-56 Should 신설)
