@@ -175,7 +175,7 @@
 
 ## Tasks
 
-- [ ] T1. 즐겨찾기 저장소와 세션 스키마
+- [x] T1. 즐겨찾기 저장소와 세션 스키마
   - **Type**: C
   - **Design**: ① `src/app/favorites.rs` 신규 — `app` 계층(순수 로직, `ui`를 모른다) ② 신규 심볼 — `FavoriteStore`(추가한 차례를 지키는 폴더 목록: `add`(이미 있으면 무시)·`remove`·`contains`·`paths`·`from_paths`/`into_paths`)와 **`FavoriteAction { Add(PathBuf), Remove(PathBuf) }` · `FavoriteStore::apply(action)`**(D8 — 적용 규칙을 이 계층에 둬야 시험에 덮인다), 그리고 `src/ui/session.rs`의 **`pub fn with_favorites(session, favorites) -> Session`**(D7 — 스프레드 사각지대를 덮는 순수 seam) ③ `app::settings::Session`이 `Vec<String>`으로 담고(D9) `ui::app`이 `FavoriteStore`를 소유한다. **경로↔문자열 변환은 `ui::session` 한 곳에서 한다** — 내보낼 때 `with_favorites`가 `to_string_lossy()`로 바꾸고(`to_tab_session`의 선례 `src/ui/session.rs:144`), 되살릴 때 `ui::app` 복원부가 `FavoriteStore::from_paths(session.favorites.iter().map(PathBuf::from))`로 받는다. `FavoriteStore`는 언제나 `PathBuf`만 다룬다. `app::favorites`는 아무것도 참조하지 않고, `ui::tree`가 `FavoriteAction`을 만들어 올린다 ④ 비추상화 선언: 트레이트·옵저버·정렬 옵션·개수 상한을 두지 않는다(`AppSettings`와 같은 판단 — 값 하나를 매 프레임 읽으면 충분하다)
   - **Acceptance**:

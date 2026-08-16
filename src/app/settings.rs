@@ -886,6 +886,15 @@ mod tests {
         // 손으로 편집돼 타입이 어긋난 경우 — 그 자리만 비우고 탐색 상태는 지킨다 (plan D5)
         let mut session = sample();
         session.favorites = vec![r"D:\작업".to_owned()];
+        // 큐도 함께 지켜지는지 본다 — 비어 있으면 "살아남았다"가 공허하게 참이 된다
+        session.queue = vec![QueueSession {
+            direction: "download".to_owned(),
+            site: 1,
+            local: r"D:\받은 것pp.js".to_owned(),
+            remote: "/var/www/app.js".to_owned(),
+            size: 1234,
+            error: String::new(),
+        }];
         let text = serde_json::to_string(&session).expect("직렬화");
         let mut value: serde_json::Value = serde_json::from_str(&text).expect("값");
         value["favorites"] = serde_json::Value::String("망가짐".to_owned());
@@ -896,6 +905,7 @@ mod tests {
             back.workspaces, session.workspaces,
             "워크스페이스까지 잃었다"
         );
+        assert_eq!(back.queue, session.queue, "전송 큐까지 잃었다");
         assert_eq!(back.window, session.window);
     }
 }
