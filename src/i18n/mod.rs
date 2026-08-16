@@ -192,6 +192,7 @@ strings! {
     tree_loading => "읽는 중…" / "Loading…";
 
     // ── 패널·목록·상태 줄 ──
+    /// 트리 토글의 툴팁 — 아이콘은 로컬·원격이 같고 이 문구만 갈린다
     panel_folder_tree => "폴더 트리" / "Folder tree";
     panel_remote_tree => "원격 트리" / "Remote tree";
     /// 새로 만들 대상 — 실패 문구에 끼워 넣는다
@@ -209,6 +210,10 @@ strings! {
     /// 다 읽었는데 보일 것이 없을 때 (2026-08-16 검토) — 종전에는 빈칸만 남아,
     /// 다 읽은 것인지 실패한 것인지 화면으로 가릴 수 없었다
     list_empty_folder => "이 폴더는 비어 있습니다" / "This folder is empty";
+    /// 권한이 막혀 목록을 읽지 못했을 때 그 자리에 적는 말 (2026-08-16 사용자 요청) —
+    /// 폴더 이름은 주소창이 이미 보여 주므로 문장에 넣지 않는다
+    list_access_denied => "이 폴더를 열 권한이 없어 내용을 표시할 수 없습니다"
+        / "You do not have permission to view the contents of this folder";
     /// 폴더를 펼치는 중임을 알리는 문구
     status_expanding => "펼치는 중…" / "Expanding…";
     /// 새로 만드는 폴더·파일의 기본 이름 — 화면 언어를 따라 실제 이름이 정해진다.
@@ -532,14 +537,9 @@ pub mod dynamic {
         }
     }
 
-    /// 폴더를 열지 못한 사유 — 경로 이름이 문장 안에 들어간다
-    pub fn open_denied(name: &str) -> String {
-        match current() {
-            Language::Korean => format!("'{name}' 폴더를 열 권한이 없습니다"),
-            Language::English => format!("You do not have permission to open '{name}'"),
-        }
-    }
-
+    /// 폴더를 열지 못한 사유 — 경로 이름이 문장 안에 들어간다.
+    /// 권한이 막힌 경우는 여기 오지 않는다 — 그 폴더로 옮긴 뒤 목록 자리에
+    /// `list_access_denied`를 적는다 (2026-08-16 사용자 요청)
     pub fn open_not_found(name: &str) -> String {
         match current() {
             Language::Korean => format!("'{name}' 폴더를 찾을 수 없습니다"),
@@ -1193,10 +1193,6 @@ mod tests {
     fn 값이_끼어드는_문구의_한국어는_이관_전_그대로다() {
         // 이관하며 조사·어순이 바뀌면 화면이 조용히 달라진다 — 문장 전체를 고정한다
         let _guard = LanguageGuard::lock(LanguageSetting::Korean);
-        assert_eq!(
-            dynamic::open_denied("문서"),
-            "'문서' 폴더를 열 권한이 없습니다"
-        );
         assert_eq!(
             dynamic::open_not_found("문서"),
             "'문서' 폴더를 찾을 수 없습니다"

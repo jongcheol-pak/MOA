@@ -43,20 +43,41 @@ mod workers;
 #[cfg(test)]
 mod tests;
 
+/// 트리 토글 아이콘 — 로컬·원격이 같은 표식을 쓰고, 무엇의 트리인지는 툴팁이 말한다.
+///
+/// 문구(`폴더 트리`·`원격 트리`)를 그대로 두면 좁은 패널에서 상태 줄의 절반을 먹는다
+const TREE_TOGGLE_ICON: &str = egui_phosphor::regular::TREE_VIEW;
+
 /// 트리와 목록을 가르는 세로 선 두께 — 현행 판 트리의 테두리(`WS_EX_CLIENTEDGE`)를 대신한다
 const TREE_BORDER: f32 = 1.0;
 
 /// 트리 영역 안쪽 여백 — 항목이 패널 가장자리에 붙지 않게 한다
 const TREE_PAD: f32 = 4.0;
 
+/// 항목 수 표기와 패널 오른쪽 경계 사이 여백 — 경계선에 글자가 붙어 보이지 않게 한다
+const COUNT_RIGHT_PAD: f32 = 6.0;
+
 /// 썸네일 도착을 확인하러 스스로 깨어나는 간격 (FR-24).
 ///
 /// 매 프레임 깨우면 만드는 동안 앱이 쉬지 않고 그려 배터리를 먹고, 너무 길면 사진이
 /// 뒤늦게 뜬다. 20장 남짓이 수백 ms 안에 만들어지므로 그 사이 몇 번 확인하는 값으로 잡았다
 const THUMB_POLL_INTERVAL: Duration = Duration::from_millis(50);
-/// 빈 폴더 안내가 목록 위쪽에서 떨어지는 거리 — 가운데에 두면 목록이 짧은 창에서 잘린다
-const EMPTY_HINT_TOP: f32 = 28.0;
+/// 안내 문구와 목록 첫 줄(`..`) 사이의 틈 — 가운데에 두면 목록이 짧은 창에서 잘리므로
+/// 위쪽에 두되, 첫 줄과 겹치지 않을 만큼만 내린다 (2026-08-16 사용자 보고)
+const EMPTY_HINT_GAP: f32 = 12.0;
 const EMPTY_HINT_FONT_PX: f32 = 13.0;
+
+/// 안내 문구가 목록 영역 위쪽에서 떨어지는 거리 — **첫 줄 아래**다.
+///
+/// 첫 줄 높이는 보기 모드마다 다르다 — 자세히 보기는 머리글과 한 행, 나머지는 격자 한 칸이다
+fn empty_hint_top(mode: ViewMode) -> f32 {
+    let first_row = if mode.is_details() {
+        crate::ui::list_details::HEADER_HEIGHT + crate::ui::list_details::ROW_HEIGHT
+    } else {
+        mode.cell_size().y
+    };
+    first_row + EMPTY_HINT_GAP
+}
 
 /// 열거 성공 시 히스토리에 적용할 동작
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,6 +182,11 @@ pub struct PanelState {
     pending_nav: PendingNav,
     /// 열거 실패 사유 — 성공 시 빈 문자열
     status: String,
+    /// 권한이 없어 내용을 읽지 못한 폴더 (2026-08-16 사용자 요청).
+    ///
+    /// **경로째로 담는다** — 활성 탭이 여기를 볼 때만 안내를 띄우려면 깃발 하나로는 모자란다.
+    /// 탭을 옮기거나 원격을 보는 동안 옛 안내가 남는 것을 이 대조가 막는다
+    denied_dir: Option<PathBuf>,
     /// 첫 프레임을 그린 뒤 열거를 시작하기 위한 대기 경로.
     /// 생성자에서 바로 열거하면 창이 늦게 뜬다
     deferred_start: Option<PathBuf>,
@@ -233,6 +259,7 @@ impl PanelState {
             pending_dir: PathBuf::new(),
             pending_nav: PendingNav::None,
             status: String::new(),
+            denied_dir: None,
             deferred_start: Some(start),
             tree: FolderTreeView::new(),
             tree_visible: false,
@@ -395,6 +422,31 @@ impl PanelState {
         self.apply_enumerated(outcome, icons);
     }
 
+    /// 탐색을 커밋한다 — 활성 탭의 경로·히스토리와 썸네일 세대를 새 폴더에 맞춘다.
+    ///
+    /// 목록과 감시는 부르는 쪽이 정한다 — 읽어 낸 폴더와 권한이 막힌 폴더가 서로 다르다
+    fn commit_navigation(&mut self, dir: &Path) {
+        let tab = self.tabs.active_mut();
+        tab.set_committed(dir.to_path_buf());
+        match self.pending_nav {
+            PendingNav::None => {}
+            PendingNav::Push => tab.history.push(dir.to_path_buf()),
+            PendingNav::Back => {
+                tab.history.back();
+            }
+            PendingNav::Forward => {
+                tab.history.forward();
+            }
+        }
+        // 폴더가 바뀌면 이전 폴더의 썸네일을 즉시 놓는다 (NFR-9).
+        // **판정은 캐시가 한다** — 탐색·탭 전환·탭 닫기가 각자 다른 순서로 폴더를
+        // 바꾸므로, 여기서 비교하면 한 경로만 빠뜨려도 조용히 새어나간다(F-7 B1·m1).
+        // 이 해제는 세대를 올리는 지점이기도 해서, 늦게 도착한 이전 폴더의 결과도 함께 걸러진다
+        if self.thumbs.set_folder(dir) {
+            self.thumb_textures.clear();
+        }
+    }
+
     /// 열거 결과 하나를 상태에 반영한다.
     ///
     /// `poll_load`에서 갈라낸 이유는 **테스트가 이 경로를 실제로 지나게** 하기 위해서다 —
@@ -410,39 +462,31 @@ impl PanelState {
         }
         match outcome {
             EnumOutcome::Ok(entries) => {
-                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다.
-                // **이전 경로를 커밋 전에 잡아 둔다** — 커밋한 뒤에 비교하면 항상 같아져
-                // "폴더가 바뀌었다"가 영영 성립하지 않는다
+                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
                 let dir = std::mem::take(&mut self.pending_dir);
-                let tab = self.tabs.active_mut();
-                tab.set_committed(dir.clone());
-                match self.pending_nav {
-                    PendingNav::None => {}
-                    PendingNav::Push => tab.history.push(dir.clone()),
-                    PendingNav::Back => {
-                        tab.history.back();
-                    }
-                    PendingNav::Forward => {
-                        tab.history.forward();
-                    }
-                }
-                // 폴더가 바뀌면 이전 폴더의 썸네일을 즉시 놓는다 (NFR-9).
-                // **판정은 캐시가 한다** — 탐색·탭 전환·탭 닫기가 각자 다른 순서로 폴더를
-                // 바꾸므로, 여기서 비교하면 한 경로만 빠뜨려도 조용히 새어나간다(F-7 B1·m1).
-                // 이 해제는 세대를 올리는 지점이기도 해서, 늦게 도착한 이전 폴더의 결과도 함께 걸러진다
-                if self.thumbs.set_folder(&dir) {
-                    self.thumb_textures.clear();
-                }
-                // 감시 대상도 이 시점에 맞춘다 — 커밋된 폴더만 감시한다(열거 실패한 곳은 아니다)
+                self.commit_navigation(&dir);
+                self.denied_dir = None;
+                // 감시 대상도 이 시점에 맞춘다 — 읽어 낸 폴더만 감시한다
                 self.watch(&dir);
                 // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
                 let entries = with_local_parent_first(&dir, entries);
                 self.list.set_entries(dir, entries, icons);
             }
-            // 실패해도 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋)
+            // 권한이 없어도 **그 폴더로 옮긴다** (2026-08-16 사용자 요청) — 이전 목록을
+            // 그대로 두면 주소창·트리가 가리키는 곳과 목록이 갈리고, 사유는 상태 줄이 아니라
+            // 빈 목록 자리에 적는다. 상위로 되돌아갈 `..` 줄만 남긴다
             EnumOutcome::AccessDenied => {
-                self.status = crate::i18n::dynamic::open_denied(&self.pending_name());
+                let dir = std::mem::take(&mut self.pending_dir);
+                self.commit_navigation(&dir);
+                self.denied_dir = Some(dir.clone());
+                // 읽지 못한 폴더는 감시하지 않는다 — 이전 폴더의 감시도 함께 놓는다.
+                // 남겨 두면 그 폴더가 바뀔 때마다 여기를 다시 읽어 실패를 되풀이한다
+                self.watch = None;
+                let entries = with_local_parent_first(&dir, Vec::new());
+                self.list.set_entries(dir, entries, icons);
             }
+            // 나머지 실패는 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋).
+            // 없는 폴더로는 옮길 자리가 없다
             EnumOutcome::NotFound => {
                 self.status = crate::i18n::dynamic::open_not_found(&self.pending_name());
             }
@@ -934,16 +978,16 @@ impl PanelState {
             }
             TabAction::New => {
                 // 새 탭은 지금 보고 있는 곳을 복제해 연다 (탐색기 관례).
-                // 원격 탭이면 **같은 원격 위치**를 복제한다 — 로컬 폴더로 떨어지면 맥락이 끊긴다
-                match self.tabs.active().source.clone() {
-                    TabSource::Local(path) => {
-                        self.tabs.add(TabState::new(path.clone()));
-                        self.start_load(path, PendingNav::None, ctx);
-                    }
-                    TabSource::Remote { site, path, .. } => {
-                        self.tabs.add(TabState::remote(site, path));
-                    }
-                }
+                //
+                // **원격 탭은 복제하지 않는다** — 복제해 봐야 연결이 없는(`conn: None`) 원격
+                // 탭이 서고, 사용자가 `다시 연결`을 누르기 전까지 목록이 빈 채로 남는다
+                // (사용자 보고). 그 자리에는 시작 폴더를 가리키는 로컬 탭을 연다
+                let path = match self.tabs.active().source.clone() {
+                    TabSource::Local(path) => path,
+                    TabSource::Remote { .. } => crate::ui::app::start_dir(),
+                };
+                self.tabs.add(TabState::new(path.clone()));
+                self.start_load(path, PendingNav::None, ctx);
             }
         }
         None
@@ -1055,7 +1099,7 @@ impl PanelState {
     }
 
     /// 패널 하나를 그리고 이번 프레임의 조작을 처리한다.
-    /// 세로 구성은 탭 스트립 / 주소창 / (폴더 트리 | 상태 · 파일 목록)이며,
+    /// 세로 구성은 탭 스트립 / 주소창 / 상태 줄 / (폴더 트리 | 파일 목록)이며,
     /// 트리를 숨기면 목록이 그 폭까지 차지한다 (FR-9).
     ///
     /// 셸 메뉴 요청과 분할 요청은 실행하지 않고 반환한다 — 셸 메뉴는 모달이라 그리기가 끝난 뒤에
@@ -1077,11 +1121,22 @@ impl PanelState {
         let tab = self.tabs.active();
         let nav = self.address.show(ui, tab.committed(), &tab.history);
 
-        // 트리는 주소창 아래 좌측 고정폭을 차지한다 — 현행 Win32 판의 배치와 같다
+        // 상태 줄은 트리 위까지 걸쳐 **패널 전폭**을 쓴다 — 트리 토글이 자기가 여는 트리
+        // 위쪽에 서야 무엇을 여는 버튼인지 읽힌다 (2026-08-16 사용자 결정).
+        // 연결되지 않은 원격 탭은 항목 수를 모른다 (인벤토리 #95)
+        let connected = !matches!(
+            &self.tabs.active().source,
+            TabSource::Remote { phase, .. } if *phase != TabPhase::Ok
+        );
+        self.show_status_bar(ui, connected);
+        ui.separator();
+
+        // 트리는 상태 줄 아래 좌측 고정폭을 차지한다 — 현행 Win32 판의 배치와 같다.
+        // 여기서 나뉘므로 트리와 목록은 저절로 같은 높이에서 시작한다
         let area = ui.available_rect_before_wrap();
+        let split_x = area.left() + TREE_WIDTH.min(area.width());
         let mut tree_outcome = None;
         let content = if self.tree_visible {
-            let split_x = area.left() + TREE_WIDTH.min(area.width());
             let tree_rect = egui::Rect::from_min_max(area.min, egui::pos2(split_x, area.bottom()));
             ui.painter().rect_filled(tree_rect, 0.0, theme::SURFACE_BG);
             ui.painter().vline(
@@ -1089,7 +1144,7 @@ impl PanelState {
                 area.y_range(),
                 egui::Stroke::new(TREE_BORDER, theme::TREE_LINE),
             );
-            // 원격 탭이면 지금 보는 곳의 최상단을 뿌리로 삼는다 (#94 — 라벨도 함께 갈린다)
+            // 원격 탭이면 지금 보는 곳의 최상단을 뿌리로 삼는다 (#94 — 툴팁도 함께 갈린다)
             let source = match self.remote_tree_root() {
                 Some((conn, root)) => TreeSource::Remote {
                     conn,
@@ -1189,7 +1244,67 @@ impl PanelState {
         self.set_remote_path(path);
     }
 
-    /// 트리를 뺀 나머지 — 트리 토글·상태 줄과 본문.
+    /// 트리 토글 아이콘에 붙는 툴팁 — 아이콘만으로는 무엇의 트리인지 알 수 없다.
+    ///
+    /// 로컬·원격이 같은 자리를 쓰므로 문구가 갈린다 (인벤토리 #94)
+    fn tree_toggle_tooltip(&self) -> &'static str {
+        if self.is_remote() {
+            crate::i18n::panel_remote_tree()
+        } else {
+            crate::i18n::panel_folder_tree()
+        }
+    }
+
+    /// 패널 상태 줄 — 트리 토글·진행 상황과 항목 수를 **패널 전폭**에 둔다.
+    ///
+    /// 트리 위가 아니라 트리를 포함한 폭을 쓰는 이유는, 토글이 여는 것이 왼쪽 트리라서
+    /// 버튼이 그 트리 위쪽에 있어야 무엇을 여는지 읽히기 때문이다 (2026-08-16 사용자 결정)
+    fn show_status_bar(&mut self, ui: &mut egui::Ui, connected: bool) {
+        // 클로저 밖에서 정한다 — `Sides`의 클로저가 `self`를 통째로 빌린다 (인벤토리 #94)
+        let tree_tip = self.tree_toggle_tooltip();
+        // 왼쪽에 트리 토글·진행 상황, 오른쪽 끝에 항목 수를 둔다 (사용자 요청 7).
+        // `Sides`는 오른쪽 것을 먼저 자리잡게 하므로, 오류 문구가 길어져도 항목 수가 밀리지 않는다
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                if ui
+                    .selectable_label(self.tree_visible, TREE_TOGGLE_ICON)
+                    .on_hover_text(tree_tip)
+                    .clicked()
+                {
+                    // `Sides` 클로저 안이라 `&mut self` 메서드를 부를 수 없어 필드를 직접 뒤집는다.
+                    // 토글 진입점이 이 버튼 하나뿐이라 규칙이 흩어질 여지도 없다
+                    self.tree_visible = !self.tree_visible;
+                }
+                if self.load.is_loading() {
+                    ui.spinner();
+                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::tree_loading());
+                }
+                if !self.status.is_empty() {
+                    ui.colored_label(theme::TEXT_MUTED, &self.status);
+                }
+            },
+            |ui| {
+                // 오른쪽 경계에 붙지 않게 띄운다 (2026-08-16 사용자 요청) —
+                // 이 클로저는 오른쪽에서 왼쪽으로 쌓이므로 먼저 넣은 공백이 바깥 여백이 된다
+                ui.add_space(COUNT_RIGHT_PAD);
+                if !connected {
+                    // 연결되지 않은 원격 패널은 항목 수를 모른다 — 0으로 보이면
+                    // "빈 폴더"라는 없는 말을 하게 된다 (인벤토리 #95)
+                    ui.colored_label(theme::TEXT_MUTED, remote_states::UNKNOWN_COUNT);
+                } else if !self.load.is_loading() {
+                    // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
+                    let (dirs, files) = self.list.counts();
+                    ui.colored_label(
+                        theme::TEXT_MUTED,
+                        crate::i18n::dynamic::item_counts(dirs, files),
+                    );
+                }
+            },
+        );
+    }
+
+    /// 상태 줄 아래의 본문 — 트리 오른쪽 자리를 채운다.
     ///
     /// 원격 탭의 본문은 **연결 단계에 따라 통째로 달라진다**(README §4·§5) — 아직 연결하지
     /// 않았으면 안내 문구(또는 `다시 연결`), 연결 중이면 자리 표시 막대, 실패했으면 사유와 조치,
@@ -1213,48 +1328,6 @@ impl PanelState {
             &self.tabs.active().source,
             TabSource::Remote { site, .. } if remote.sites.get(*site).is_some()
         );
-        let connected = !matches!(phase, Some(ref phase) if *phase != TabPhase::Ok);
-        // 원격 패널에서는 트리 토글의 라벨이 갈린다 (인벤토리 #94).
-        // 클로저 밖에서 정한다 — `Sides`의 클로저가 `self`를 통째로 빌린다
-        let tree_label = if self.is_remote() {
-            crate::i18n::panel_remote_tree()
-        } else {
-            crate::i18n::panel_folder_tree()
-        };
-        // 왼쪽에 트리 토글·진행 상황, 오른쪽 끝에 항목 수를 둔다 (사용자 요청 7).
-        // `Sides`는 오른쪽 것을 먼저 자리잡게 하므로, 오류 문구가 길어져도 항목 수가 밀리지 않는다
-        egui::Sides::new().show(
-            ui,
-            |ui| {
-                if ui.selectable_label(self.tree_visible, tree_label).clicked() {
-                    // `Sides` 클로저 안이라 `&mut self` 메서드를 부를 수 없어 필드를 직접 뒤집는다.
-                    // 토글 진입점이 이 버튼 하나뿐이라 규칙이 흩어질 여지도 없다
-                    self.tree_visible = !self.tree_visible;
-                }
-                if self.load.is_loading() {
-                    ui.spinner();
-                    ui.colored_label(theme::TEXT_MUTED, crate::i18n::tree_loading());
-                }
-                if !self.status.is_empty() {
-                    ui.colored_label(theme::TEXT_MUTED, &self.status);
-                }
-            },
-            |ui| {
-                if !connected {
-                    // 연결되지 않은 원격 패널은 항목 수를 모른다 — 0으로 보이면
-                    // "빈 폴더"라는 없는 말을 하게 된다 (인벤토리 #95)
-                    ui.colored_label(theme::TEXT_MUTED, remote_states::UNKNOWN_COUNT);
-                } else if !self.load.is_loading() {
-                    // 읽는 중에는 세지 않는다 — 이전 폴더의 수가 남아 새 폴더의 것처럼 보인다
-                    let (dirs, files) = self.list.counts();
-                    ui.colored_label(
-                        theme::TEXT_MUTED,
-                        crate::i18n::dynamic::item_counts(dirs, files),
-                    );
-                }
-            },
-        );
-        ui.separator();
         match phase {
             Some(TabPhase::New) => {
                 let action = if site_known {
@@ -1306,6 +1379,16 @@ impl PanelState {
         }
     }
 
+    /// 지금 보고 있는 곳이 **권한이 막힌 그 폴더**인가.
+    ///
+    /// 깃발이 아니라 경로로 견주므로, 탭을 옮기거나 원격을 보는 동안에는 저절로 꺼진다
+    fn shows_denied(&self) -> bool {
+        match (&self.denied_dir, self.tabs.active().source.local_path()) {
+            (Some(denied), Some(here)) => denied == here,
+            _ => false,
+        }
+    }
+
     /// 파일 목록 본문 — 로컬 탭과 연결된 원격 탭이 함께 쓴다.
     ///
     /// 목록 위에서 시작한 끌기와 이 목록에 놓인 드롭도 여기서 다룬다 (FR-38) —
@@ -1332,10 +1415,19 @@ impl PanelState {
         // 빈 폴더에 파일을 끌어다 놓을 수 있다.
         // 세는 것은 `counts()`다 — `..` 줄은 항목이 아니라 거기에 들지 않는다
         if self.list.counts() == (0, 0) && !self.load.is_loading() {
+            // 비어 있어서인지 권한이 막혀서인지 갈라 적는다 (2026-08-16 사용자 요청)
+            let hint = if self.shows_denied() {
+                crate::i18n::list_access_denied()
+            } else {
+                crate::i18n::list_empty_folder()
+            };
             ui.painter().text(
-                egui::pos2(list_rect.center().x, list_rect.top() + EMPTY_HINT_TOP),
+                egui::pos2(
+                    list_rect.center().x,
+                    list_rect.top() + empty_hint_top(self.list.view_mode()),
+                ),
                 egui::Align2::CENTER_TOP,
-                crate::i18n::list_empty_folder(),
+                hint,
                 egui::FontId::proportional(EMPTY_HINT_FONT_PX),
                 theme::TEXT_MUTED,
             );

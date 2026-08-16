@@ -244,10 +244,14 @@ impl WorkspaceView {
         place: SplitPlace,
         area: LayoutRect,
     ) -> Option<PanelId> {
+        // 원격 탭을 보고 있는 패널은 로컬 자리가 없다 — `dir()`이 빈 경로다.
+        // 그대로 물려주면 새 패널이 열거할 수 없는 곳을 가리켜 목록이 빈 채로 선다
+        // (사용자 보고) — 그때는 시작 폴더에서 시작한다
         let start = self
             .panels
             .get(&target)
             .map(|p| p.dir().to_path_buf())
+            .filter(|dir| !dir.as_os_str().is_empty())
             .unwrap_or_else(start_dir);
         // 공간이 부족하면 나눌 수 없다 (사용자는 창을 키우면 된다)
         let new_id = self.layout.split(target, dir, place, area).ok()?;
@@ -2964,8 +2968,11 @@ enum RemoteDialog {
 type ExpandResult = (SiteId, Vec<(PathBuf, RemotePath, u64)>, usize);
 
 /// 시작 폴더 — 인자로 폴더를 받으면 그곳에서, 없으면 홈 폴더에서 시작한다
-/// (탐색기의 "여기서 열기"처럼 쓰이며, 대량 폴더 성능 측정에도 이 경로를 쓴다)
-fn start_dir() -> PathBuf {
+/// (탐색기의 "여기서 열기"처럼 쓰이며, 대량 폴더 성능 측정에도 이 경로를 쓴다).
+///
+/// 패널이 **로컬 자리를 잃었을 때의 폴백**이기도 하다 — 원격 탭에서 새 탭을 열 때와
+/// 원격 탭만 보고 있는 패널을 나눌 때 갈 곳이 여기다
+pub(crate) fn start_dir() -> PathBuf {
     let from_arg = std::env::args().nth(1).filter(|a| !a.starts_with("--"));
     if let Some(arg) = from_arg {
         let path = PathBuf::from(arg);
@@ -3012,6 +3019,35 @@ mod tests {
             "대상이 아닌 활성 패널이 닫혔다"
         );
         assert!(!view.panels.contains_key(&right), "닫힌 패널 상태가 남았다");
+    }
+
+    #[test]
+    fn 원격_패널을_나누면_새_패널은_시작_폴더를_연다() {
+        // 사용자 보고 — 원격 탭을 보던 패널을 나누면 새 패널의 목록이 비어 있었다.
+        // 원격 탭은 로컬 자리가 없어(`dir()`이 빈 경로) 그 값을 그대로 물려받았기 때문이다
+        let area = rect(0, 0, 1200, 800);
+        let mut view = WorkspaceView::new(PathBuf::from(r"C:\"));
+        let target = view.active;
+        view.panels
+            .get_mut(&target)
+            .expect("패널")
+            .open_remote_tab_only(SiteId(1), RemotePath::new("/var/www"));
+
+        let added = view
+            .split_panel(target, SplitDir::Horizontal, SplitPlace::After, area)
+            .expect("나뉘어야 한다");
+
+        let dir = view
+            .panels
+            .get(&added)
+            .expect("새 패널")
+            .dir()
+            .to_path_buf();
+        assert!(
+            !dir.as_os_str().is_empty(),
+            "새 패널이 열거할 수 없는 빈 경로를 가리킨다"
+        );
+        assert_eq!(dir, start_dir(), "새 패널이 시작 폴더에서 시작하지 않는다");
     }
 
     #[test]

@@ -40,6 +40,26 @@ fn drawn_texts(output: &eframe::egui::FullOutput) -> Vec<String> {
     found
 }
 
+/// 한 프레임에 그려진 글과 그 왼쪽 위 자리 — 배치를 견주는 시험이 쓴다
+fn drawn_text_positions(output: &eframe::egui::FullOutput) -> Vec<(String, egui::Pos2)> {
+    fn collect(shape: &egui::Shape, found: &mut Vec<(String, egui::Pos2)>) {
+        match shape {
+            egui::Shape::Text(text) => found.push((text.galley.text().to_owned(), text.pos)),
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect(shape, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for clipped in &output.shapes {
+        collect(&clipped.shape, &mut found);
+    }
+    found
+}
+
 /// 한 프레임에 그려진 자리표시 막대 수 — 목록 자리에 자리표시가 섰는지 판정한다.
 /// 막대는 글자가 아니라 사각형이라 `drawn_texts`로는 보이지 않는다
 fn skeleton_bars(output: &eframe::egui::FullOutput) -> usize {
@@ -934,27 +954,167 @@ fn 가장자리에서_연_메뉴는_화면_안으로_당겨진다() {
 }
 
 #[test]
+fn 권한이_없으면_그_폴더로_옮기고_목록_자리에_사유를_적는다() {
+    // 2026-08-16 사용자 요청 — 종전에는 이전 목록을 그대로 둔 채 상태 줄에만 사유를 적어,
+    // 주소창·트리가 가리키는 곳과 목록이 갈렸다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    // 첫 프레임의 시작 열거를 걸지 않는다 — 그 결과가 오면 이 시험이 만든 상태를 덮는다
+    panel.deferred_start = None;
+    commit_dir(&mut panel, r"C:\Users", &mut icons);
+
+    let denied = std::path::PathBuf::from(r"C:\Documents and Settings");
+    panel.pending_dir = denied.clone();
+    panel.pending_nav = PendingNav::Push;
+    panel.apply_enumerated(EnumOutcome::AccessDenied, &mut icons);
+
+    assert_eq!(
+        panel.tabs.active().source.local_path(),
+        Some(denied.as_path()),
+        "권한이 막힌 폴더로 옮기지 않았다"
+    );
+    assert!(
+        panel.status.is_empty(),
+        "상태 줄에 사유가 남았다: {}",
+        panel.status
+    );
+    assert_eq!(panel.list.counts(), (0, 0), "이전 목록이 남았다");
+    assert!(panel.shows_denied(), "사유를 적을 상태가 아니다");
+    assert!(panel.watch.is_none(), "읽지 못한 폴더를 감시하고 있다");
+
+    // 그린 화면에도 그 말이 있다 — 판정 헬퍼만 보면 그리기가 죽어도 통과한다(F-7 B1)
+    let texts = drawn_texts(&draw_once(&mut panel, &SiteStore::new()));
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "이 폴더를 열 권한이 없어 내용을 표시할 수 없습니다"),
+        "목록 자리에 사유가 없다: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|text| text.contains("권한이 없습니다")),
+        "상태 줄 문구가 남아 있다: {texts:?}"
+    );
+
+    // 안내는 `..` 줄과 겹치지 않는다 — 겹치면 두 글이 포개져 둘 다 읽히지 않는다
+    // (2026-08-16 사용자 보고)
+    let placed = drawn_text_positions(&draw_once(&mut panel, &SiteStore::new()));
+    let 안내 = placed
+        .iter()
+        .find(|(text, _)| text.starts_with("이 폴더를 열 권한이"))
+        .expect("권한 안내")
+        .1;
+    let 첫줄 = placed
+        .iter()
+        .find(|(text, _)| text == "..")
+        .expect("`..` 줄")
+        .1;
+    assert!(
+        안내.y > 첫줄.y + crate::ui::list_details::ROW_HEIGHT,
+        "안내가 `..` 줄과 겹친다 (안내 {}, 첫 줄 {})",
+        안내.y,
+        첫줄.y
+    );
+
+    // 읽어 낸 폴더로 옮기면 안내는 사라진다
+    commit_dir(&mut panel, r"C:\Users", &mut icons);
+    assert!(!panel.shows_denied(), "안내가 그대로 남았다");
+}
+
+#[test]
+fn 트리_토글은_트리_위쪽_왼쪽_끝에_선다() {
+    // 2026-08-16 사용자 결정 — 토글이 목록 쪽(트리 오른쪽)에 있으면 무엇을 여는 버튼인지
+    // 읽히지 않는다. 상태 줄이 패널 전폭을 쓰고 토글은 트리 폭 안에 선다
+    let (mut panel, sites) = remote_panel_in(TabPhase::Ok);
+    panel.tree_visible = true;
+    let texts = drawn_text_positions(&draw_once(&mut panel, &sites));
+    let 토글 = texts
+        .iter()
+        .find(|(text, _)| text == TREE_TOGGLE_ICON)
+        .expect("트리 토글 아이콘")
+        .1;
+    assert!(
+        토글.x < TREE_WIDTH,
+        "토글이 트리 폭({TREE_WIDTH}) 밖에 있다: {}",
+        토글.x
+    );
+}
+
+#[test]
+fn 트리는_파일_목록과_같은_높이에서_시작한다() {
+    // 2026-08-16 사용자 보고 — 트리 첫 줄이 상태 줄 옆까지 올라가 목록보다 위에 떠 있었다.
+    // 트리 폭 안(왼쪽)에 그려진 글과 목록 열 머리글의 높이를 견준다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let (mut panel, sites) = remote_panel_in(TabPhase::Ok);
+    panel.tree_visible = true;
+    let output = draw_once(&mut panel, &sites);
+    let texts = drawn_text_positions(&output);
+
+    let 토글 = texts
+        .iter()
+        .find(|(text, _)| text == TREE_TOGGLE_ICON)
+        .expect("트리 토글 아이콘")
+        .1;
+    let 머리글 = texts
+        .iter()
+        .find(|(text, pos)| text.starts_with("이름") && pos.x > TREE_WIDTH)
+        .expect("목록의 `이름` 열 머리글")
+        .1;
+    // 원격 트리의 뿌리 줄 — 이름이 없는 루트는 경로 그대로(`/`) 그려진다
+    let 첫줄 = texts
+        .iter()
+        .find(|(text, pos)| text == "/" && pos.x < TREE_WIDTH)
+        .expect("트리 뿌리 줄")
+        .1
+        .y;
+
+    assert!(
+        첫줄 > 토글.y,
+        "트리가 상태 줄까지 올라와 있다 (트리 {첫줄}, 토글 {})",
+        토글.y
+    );
+    // 열 머리글과 나란하다 — 위젯 안쪽 여백만큼의 차이는 남는다
+    assert!(
+        (첫줄 - 머리글.y).abs() < 12.0,
+        "트리 첫 줄과 목록 머리글의 높이가 어긋난다 (트리 {첫줄}, 머리글 {})",
+        머리글.y
+    );
+}
+
+#[test]
 fn 원격_패널의_트리_토글은_원격_트리다() {
-    // Acceptance ① (인벤토리 #94) — 같은 자리의 라벨이 소스에 따라 갈린다.
+    // Acceptance ① (인벤토리 #94) — 같은 자리의 **툴팁**이 소스에 따라 갈린다.
     // 문구는 카탈로그가 정하므로 한국어로 고정하고 원문과 견준다
     let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
-    let 로컬 = drawn_texts(&draw_once(
-        &mut PanelState::new(std::path::PathBuf::from(r"C:\")),
-        &SiteStore::new(),
-    ));
-    assert!(
-        로컬.iter().any(|text| text == "폴더 트리"),
-        "로컬 패널의 토글이 `폴더 트리`가 아니다: {로컬:?}"
-    );
-    let 원격 = remote_screen_texts(TabPhase::Ok);
-    assert!(
-        원격.iter().any(|text| text == "원격 트리"),
-        "원격 패널의 토글이 `원격 트리`가 아니다: {원격:?}"
-    );
-    assert!(
-        !원격.iter().any(|text| text == "폴더 트리"),
-        "원격 패널에 `폴더 트리`가 남아 있다"
-    );
+    let 로컬 = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    assert_eq!(로컬.tree_toggle_tooltip(), "폴더 트리");
+    let (원격, _) = remote_panel_in(TabPhase::Ok);
+    assert_eq!(원격.tree_toggle_tooltip(), "원격 트리");
+}
+
+#[test]
+fn 트리_토글은_문구가_아니라_아이콘으로_그린다() {
+    // 사용자 요청 — 상태 줄의 `폴더 트리`·`원격 트리` 문구를 아이콘 하나로 줄였다.
+    // 툴팁은 hover해야 뜨므로 그려진 글에는 문구가 남지 않아야 한다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    for 화면 in [
+        drawn_texts(&draw_once(
+            &mut PanelState::new(std::path::PathBuf::from(r"C:\")),
+            &SiteStore::new(),
+        )),
+        remote_screen_texts(TabPhase::Ok),
+    ] {
+        assert!(
+            화면.iter().any(|text| text == TREE_TOGGLE_ICON),
+            "트리 토글 아이콘이 없다: {화면:?}"
+        );
+        assert!(
+            !화면
+                .iter()
+                .any(|text| text == "폴더 트리" || text == "원격 트리"),
+            "트리 토글 문구가 남아 있다: {화면:?}"
+        );
+    }
 }
 
 #[test]
@@ -1089,15 +1249,34 @@ fn 조회가_실패하면_옮기기를_무른다() {
 }
 
 #[test]
+fn 원격_탭에서_연_새_탭은_로컬_시작_폴더다() {
+    // 사용자 보고 — 원격 탭에서 `+`를 누르면 연결이 없는 원격 탭이 복제돼 목록이 빈 채로 섰다.
+    // 새 탭은 로컬 시작 폴더를 가리켜야 한다
+    let ctx = egui::Context::default();
+    let (mut panel, _) = remote_panel_in(TabPhase::Ok);
+
+    panel.handle_tab(TabAction::New, &ctx);
+
+    let source = &panel.tabs.active().source;
+    assert!(!source.is_remote(), "원격 탭이 그대로 복제됐다");
+    let path = source.local_path().expect("로컬 탭이어야 한다");
+    assert!(
+        !path.as_os_str().is_empty(),
+        "새 탭이 열거할 수 없는 빈 경로를 가리킨다"
+    );
+}
+
+#[test]
 fn 원격_탭을_바꾸면_그_탭의_목록을_다시_읽는다() {
     // F-7 3라운드 B1 — 목록은 탭이 아니라 패널 하나가 든다. 탭만 바꾸고 목록을 그대로 두면
     // 주소창은 이 탭을, 목록은 저 탭의 폴더를 보인다 — 그 위에서 연 원격 메뉴가
     // **화면에 없는 경로**에 삭제·권한 변경을 건다
     let ctx = egui::Context::default();
     let (mut panel, _) = remote_panel_in(TabPhase::Ok);
-    // 원격 탭 하나를 더 연다 (`Ctrl+T`는 지금 보는 원격 위치를 복제한다)
-    panel.handle_tab(TabAction::New, &ctx);
-    panel.set_remote_path(RemotePath::new("/var/log"));
+    // 같은 사이트의 다른 폴더를 원격 탭으로 하나 더 연다
+    // (`Ctrl+T`는 원격 위치를 복제하지 않는다 — 로컬 시작 폴더를 연다)
+    let site = panel.active_site().expect("원격 탭");
+    panel.open_remote_tab(site, RemotePath::new("/var/log"));
     panel.take_remote_dirty();
 
     // 첫 원격 탭으로 돌아간다 — 그 탭이 보는 곳을 다시 읽어야 한다
