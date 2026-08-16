@@ -258,7 +258,7 @@
     - (ii-a) `TreeOutcome`·`PanelOutcome`·`LayoutOutcome` 구조체 확장, `clamp_menu_pos` 이동 → `## 사전 승인 항목`
   - **Depends on**: T2
 
-- [ ] T4. PRD·README 갱신과 위키 큐
+- [x] T4. PRD·README 갱신과 위키 큐
   - **Type**: A
   - **Acceptance**:
     - `docs/prd.md`의 Out of Scope에서 `즐겨찾기` 줄이 사라지고, FR 표에 **FR-56(폴더 트리 즐겨찾기, Should)** 한 행이 생기며, `## 성공 기준`의 Should 목록과 `## 결정 이력`에 2026-08-16 한 줄이 함께 갱신된다
@@ -301,6 +301,24 @@
 
 - **동일 지적 잔존 0** — 매 라운드 지적이 전부 신규였다(리뷰어도 RECURRING 없음으로 판정). 라운드를 더 열지 않은 이유는 스킬 규약의 상한(재호출 2회)이며, 그 구간의 수정이 새 결함을 만드는 사례가 관측됐기 때문이다
 - 3라운드 지적은 **기각 0 · 수용 7**(MAJOR 1 + MINOR 6)이고, 각 근거를 코드에서 직접 확인한 뒤 반영했다
+
+## 문서 역대조 (T4)
+
+PRD FR-56·README에 적은 각 서술이 실제 구현과 1:1로 맞는지 대조했다 — 누락·잔존·변형 0건.
+
+| # | 문서 서술 | 구현 지점 | 판정 |
+|---|---|---|---|
+| 1 | 로컬 트리 맨 위에 더한 차례대로 보인다 | `tree.rs` `show`의 Local 분기가 `show_favorites`를 드라이브 뿌리보다 먼저 부르고, 순서는 `FavoriteStore`가 지킨다(`add`는 push) | ✅ |
+| 2 | 그 아래를 가로 구분선으로 가른다 | `tree.rs` `show_favorites` 끝의 `ui.separator()` | ✅ |
+| 3 | 하나도 없으면 목록도 구분선도 그리지 않는다 | `show_favorites` 첫 줄 `if favorites.is_empty() { return; }` (구분선이 그 뒤라 함께 생략) | ✅ |
+| 4 | 트리 항목 우클릭 메뉴의 `즐겨찾기`로 담는다 | `tree.rs` `open_node_menu` → `show_menu`의 `MenuTarget::Node` 분기 | ✅ |
+| 5 | 이미 담긴 폴더면 그 줄이 비활성 | `show_menu`의 `let enabled = !favorites.iter().any(...)` | ✅ |
+| 6 | 즐겨찾기 줄 우클릭 메뉴의 `해제`로 뺀다 | `show_menu`의 `MenuTarget::Favorite` 분기 | ✅ |
+| 7 | 이름만 보이고 전체 경로는 툴팁 | `show_favorites`의 `display_name(path)` + `.on_hover_text(path.to_string_lossy())` | ✅ |
+| 8 | 누르면 활성 탭이 그 폴더로 간다 | `show_favorites`의 `response.clicked() → select` → `panel.rs`의 `TreeChoice::Local => navigate` | ✅ |
+| 9 | 목록은 앱에 하나뿐이라 모든 워크스페이스·패널·탭이 같은 것을 본다 | `ui::app`의 `favorites: FavoriteStore` 한 필드를 `show_layout`이 모든 패널에 내려보낸다 | ✅ |
+| 10 | 세션 파일에 담겨 재시작해도 남는다 | `Session.favorites` + `collect_session`의 `with_favorites` + 복원부의 `FavoriteStore::from_paths` | ✅ |
+| 11 | 원격 트리는 대상이 아니다(메뉴도 뜨지 않는다) | `show`의 Remote 분기가 `show_favorites`를 부르지 않고 `menu_at`을 비운다 | ✅ |
 
 ## Phase Ledger
 
