@@ -29,6 +29,7 @@
 ## Deferred / Follow-up
 - 즐겨찾기가 가리키는 폴더가 사라졌을 때의 표시(흐린 글씨·자동 정리) — 이번에는 눌렀을 때 기존 실패 안내로만 알린다(시작할 때 전건을 확인하면 네트워크 드라이브에서 창이 늦게 뜬다)
 - 즐겨찾기 순서 바꾸기 — 항목이 많아지면 필요해진다
+- [SUGGEST] `tree.rs`의 즐겨찾기 줄과 하위 없는 잎 노드가 "들여쓰기 + `selectable_label` + 클릭 시 `select`"로 거의 같은 모양이다 — 지금은 2곳이라 공통화 문턱(3회)에 못 미친다. 세 번째 유사 지점이 생기면 헬퍼로 뽑을지 재검토 (T2 quality 리뷰 S1)
 
 ## Investigation Log
 - 위키 참조: `20_projects/personal/moa/conventions.md` — ① `ExplorerApp`은 단위 시험에서 만들 수 없다(생성자가 `eframe::CreationContext`를 받는다) → 판정 로직은 그 밖의 타입에 둬야 검증된다 ② `src/app/window.rs` 등 구 Win32 코드가 **여전히 컴파일 대상**이라 `Session` 같은 공용 타입을 바꾸면 그 파일도 함께 고쳐야 한다 ③ 함수를 사이에 끼워 넣을 때 앞 함수의 doc 주석이 딸려 붙지 않게 빈 줄을 확인한다

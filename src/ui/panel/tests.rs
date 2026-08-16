@@ -1156,25 +1156,86 @@ fn 원격_트리에는_즐겨찾기가_서지_않는다() {
 
 #[test]
 fn 즐겨찾기를_누르면_그_폴더로_옮겨간다() {
-    // 바로가기의 본래 목적 — 누르면 활성 탭이 그리로 간다
-    let ctx = egui::Context::default();
+    // 바로가기의 본래 목적 — 그 줄을 실제로 눌러 활성 탭이 그리로 가는지 본다.
+    // `navigate`를 직접 부르면 트리의 클릭 처리(그 줄 → `TreeChoice` → 이동)가 시험을 비켜간다
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    let favorite = std::path::PathBuf::from(r"D:\작업");
+    let favorites = [favorite.clone()];
+    let sites = SiteStore::new();
     let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
     panel.deferred_start = None;
 
-    // 트리가 올린 선택을 패널이 어떻게 다루는지 본다 — 그리기는 위 시험들이 덮는다
-    panel.navigate(std::path::PathBuf::from(r"D:\작업"), &ctx);
+    // 첫 프레임 — 즐겨찾기 줄이 어디에 그려졌는지 얻는다
+    let ctx = egui::Context::default();
+    let mut icons = crate::fs::icons::IconCache::new();
+    let mut textures = crate::ui::icon_tex::IconTextures::new();
+    let tree_cache = crate::remote::tree_cache::TreeCache::new();
+    let draw = |input: egui::RawInput,
+                panel: &mut PanelState,
+                icons: &mut crate::fs::icons::IconCache,
+                textures: &mut crate::ui::icon_tex::IconTextures| {
+        let remote = RemoteView {
+            sites: &sites,
+            connected: &[],
+            tree: &tree_cache,
+        };
+        ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let inner = ui.ctx().clone();
+                panel.show(
+                    ui,
+                    &inner,
+                    icons,
+                    textures,
+                    remote,
+                    PanelMenuState::for_panes(1, ViewMode::Details),
+                    crate::ui::tabs::TransferTargets::default(),
+                    &favorites,
+                );
+            });
+        })
+    };
+
+    let first = draw(Default::default(), &mut panel, &mut icons, &mut textures);
+    let spot = drawn_text_positions(&first)
+        .into_iter()
+        .find(|(text, pos)| text == "작업" && pos.x < TREE_WIDTH)
+        .expect("즐겨찾기 줄")
+        .1;
+    // 글의 왼쪽 위 자리다 — 글자 높이의 절반쯤 내려 그 줄 한가운데를 누른다
+    let spot = egui::pos2(spot.x + 8.0, spot.y + 6.0);
+    assert_ne!(
+        panel.pending_dir, favorite,
+        "누르기도 전에 그 폴더로 향했다"
+    );
+
+    for (time, event) in [(0.05, press(spot, true)), (0.10, press(spot, false))] {
+        let input = egui::RawInput {
+            time: Some(time),
+            events: vec![event],
+            ..Default::default()
+        };
+        let _ = draw(input, &mut panel, &mut icons, &mut textures);
+    }
 
     assert_eq!(
-        panel.pending_dir,
-        std::path::PathBuf::from(r"D:\작업"),
-        "고른 폴더로 열거를 걸지 않았다"
+        panel.pending_dir, favorite,
+        "즐겨찾기를 눌렀는데 그 폴더로 열거를 걸지 않았다"
     );
     assert!(
         matches!(panel.pending_nav, PendingNav::Push),
         "히스토리에 쌓지 않았다"
     );
 }
-
 #[test]
 fn 트리_토글은_트리_위쪽_왼쪽_끝에_선다() {
     // 2026-08-16 사용자 결정 — 토글이 목록 쪽(트리 오른쪽)에 있으면 무엇을 여는 버튼인지
