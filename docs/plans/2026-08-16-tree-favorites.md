@@ -228,7 +228,7 @@
     - (ii-a) `FolderTreeView::show`·`PanelState::show`·`splitter::show_layout` 시그니처 변경 → `## 사전 승인 항목`
   - **Depends on**: T1
 
-- [ ] T3. 트리 우클릭 컨텍스트 메뉴(`즐겨찾기`·`해제`)와 적용
+- [x] T3. 트리 우클릭 컨텍스트 메뉴(`즐겨찾기`·`해제`)와 적용
   - **Type**: D
   - **Design**: ① 메뉴는 `src/ui/tree.rs`가 트리의 `ScrollArea` **밖** `egui::Area(Foreground)`에 그린다(원격 메뉴와 같은 방식). 메뉴는 **로컬 분기에서만** 열리고 그려지며, **원격 분기에 들어서면 `menu_at`을 비운다**(상태 누수 방지 — Edge Cases) ② 신규 심볼 — 비공개 `menu_at: Option<(egui::Pos2, MenuTarget)>` — `MenuTarget`은 `ui::tree`의 비공개 enum `{ Node(PathBuf), Favorite(PathBuf) }`이고, 이 둘이 곧 메뉴 두 종류(`즐겨찾기` / `해제`)를 가른다, `pub fn close_menu(&mut self)`(트리를 감출 때 패널이 부른다), `TreeOutcome.favorite: Option<FavoriteAction>`. **`FavoriteAction` 자체는 T1이 `app::favorites`에 둔다**(D8) — 트리는 그것을 만들어 올리기만 한다 ③ 값은 트리 → `PanelOutcome.favorite` → `LayoutOutcome.favorite` → `ui::app`이 **`self.favorites.apply(action)` 한 줄**로 반영하고 다음 저장 때 세션에 실린다(D3·D8). `LayoutOutcome` 단은 컴파일러가 잡지 않으므로(전제 4-b) 그 한 줄의 존재는 수동 확인 항목이다 ④ 비추상화 선언: `remote_menu.rs`와 공통 메뉴 부품으로 묶지 않는다(대상·항목이 다르다 — 그 모듈 주석의 판단과 같다). 다만 위치 보정 `clamp_menu_pos`는 공용으로 올려 **같은 함수**를 쓴다
   - **Acceptance**:
