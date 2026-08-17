@@ -93,6 +93,16 @@ fn separator_count(output: &eframe::egui::FullOutput) -> usize {
     found
 }
 
+/// 이 PC 드라이브의 **셸 표시 이름** 목록 — 시험이 드라이브 줄을 가려내는 기준.
+///
+/// 패턴 매칭(`ends_with(":\\")`)을 쓰지 않는다. 표시 이름에는 규칙이 없고(`로컬 디스크 (C:)`·
+/// 볼륨 레이블·네트워크 이름), "토글 아래 + 트리 폭 안"으로만 좁히면 제목 줄·즐겨찾기 줄까지
+/// 걸려 첫 매치를 쓰는 자리가 엉뚱한 줄을 드라이브로 오인한다
+fn drive_labels() -> Vec<(std::path::PathBuf, String)> {
+    let mut icons = crate::fs::icons::IconCache::new();
+    crate::ui::tree::drive_roots(&mut icons)
+}
+
 /// **트리 구역**(x < `TREE_WIDTH`)에 그려진 아이콘 수.
 ///
 /// 목록도 같은 프레임에 아이콘을 그리므로 구역으로 좁혀 센다. 아이콘은 텍스처를 입힌
@@ -1106,9 +1116,12 @@ fn 즐겨찾기는_드라이브_뿌리보다_위에_구분선과_함께_선다()
         .find(|(text, _)| text == TREE_TOGGLE_ICON)
         .expect("트리 토글 아이콘")
         .1;
+    let 이름들 = drive_labels();
     let 드라이브 = texts
         .iter()
-        .filter(|(text, pos)| pos.x < TREE_WIDTH && pos.y > 토글.y && text.ends_with(":\\"))
+        .filter(|(text, pos)| {
+            pos.x < TREE_WIDTH && pos.y > 토글.y && 이름들.iter().any(|(_, label)| label == text)
+        })
         .map(|(_, pos)| pos.y)
         .fold(f32::INFINITY, f32::min);
     assert!(
@@ -1367,9 +1380,12 @@ fn 트리_노드를_우클릭하면_즐겨찾기_메뉴가_뜬다() {
         .find(|(text, _)| text == TREE_TOGGLE_ICON)
         .expect("트리 토글 아이콘")
         .1;
+    let 이름들 = drive_labels();
     let 드라이브 = texts
         .iter()
-        .find(|(text, pos)| text.ends_with(":\\") && pos.x < TREE_WIDTH && pos.y > 토글.y)
+        .find(|(text, pos)| {
+            pos.x < TREE_WIDTH && pos.y > 토글.y && 이름들.iter().any(|(_, label)| label == text)
+        })
         .expect("트리의 드라이브 줄")
         .1;
     let at = egui::pos2(드라이브.x + 8.0, 드라이브.y + 6.0);
@@ -1495,7 +1511,9 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
     ///
     /// 맨 아래를 고르는 이유는 즐겨찾기 줄이 위에 서면 같은 이름이 화면에 둘이 되기 때문이다 —
     /// 두 실행이 같은 규칙을 쓰므로 ①②가 같은 줄을 누른다
-    fn pick_on_last_drive(favorites: &[std::path::PathBuf]) -> (String, Option<FavoriteAction>) {
+    fn pick_on_last_drive(
+        favorites: &[std::path::PathBuf],
+    ) -> (std::path::PathBuf, Option<FavoriteAction>) {
         let mut harness = FavoriteHarness::new();
         let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
         panel.tree_visible = true;
@@ -1508,13 +1526,24 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
             .find(|(text, _)| text == TREE_TOGGLE_ICON)
             .expect("트리 토글 아이콘")
             .1;
-        // 즐겨찾기 줄과 트리 줄에 같은 이름이 함께 있을 수 있다 — **아래쪽**이 트리 줄이다
+        // 즐겨찾기 줄과 트리 줄에 같은 이름이 함께 있을 수 있다 — **아래쪽**이 트리 줄이다.
+        // 드라이브 판정은 `drive_roots`가 준 (경로, 표시 이름) 쌍으로 한다 — 표시 이름에는
+        // 규칙이 없어 패턴으로는 가려낼 수 없고, **기대 경로도 그 쌍에서 가져와야** 한다
+        // (그려진 글자로 경로를 만들면 표시 이름이 그대로 경로가 되어 어긋난다)
+        let 이름들 = drive_labels();
         let (이름, 자리) = texts
             .iter()
-            .filter(|(text, pos)| text.ends_with(":\\") && pos.x < TREE_WIDTH && pos.y > 토글.y)
+            .filter(|(text, pos)| {
+                pos.x < TREE_WIDTH && pos.y > 토글.y && 이름들.iter().any(|(_, l)| l == text)
+            })
             .max_by(|a, b| a.1.y.total_cmp(&b.1.y))
             .cloned()
             .expect("트리의 드라이브 줄");
+        let 경로 = 이름들
+            .iter()
+            .find(|(_, label)| *label == 이름)
+            .map(|(path, _)| path.clone())
+            .expect("그 이름의 드라이브 경로");
 
         harness.click(
             &mut panel,
@@ -1537,19 +1566,19 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
             egui::PointerButton::Primary,
             0.20,
         );
-        (이름, picked)
+        (경로, picked)
     }
 
     // ① 아직 담기지 않았으면 눌러서 담긴다 — 이 좌표가 실제로 그 줄을 누른다는 증거다
-    let (이름, picked) = pick_on_last_drive(&[]);
+    let (경로, picked) = pick_on_last_drive(&[]);
     assert_eq!(
         picked,
-        Some(FavoriteAction::Add(std::path::PathBuf::from(&이름))),
+        Some(FavoriteAction::Add(경로.clone())),
         "미등록 폴더인데 `즐겨찾기`를 눌러도 조작이 올라오지 않았다"
     );
 
     // ② 이미 담겼으면 같은 자리를 눌러도 아무것도 올라오지 않는다
-    let (_, picked) = pick_on_last_drive(&[std::path::PathBuf::from(&이름)]);
+    let (_, picked) = pick_on_last_drive(&[경로]);
     assert_eq!(picked, None, "이미 담긴 폴더인데 다시 담겼다");
 }
 
@@ -2212,7 +2241,11 @@ fn 트리_줄에는_셸_아이콘이_붙는다() {
         std::path::PathBuf::from(r"C:\Users"),
         std::path::PathBuf::from(r"C:\Windows"),
     ];
-    let 예상 = favorites.len() + crate::ui::tree::drive_roots().len();
+    let 드라이브 = {
+        let mut icons = crate::fs::icons::IconCache::new();
+        crate::ui::tree::drive_roots(&mut icons).len()
+    };
+    let 예상 = favorites.len() + 드라이브;
 
     // 텍스처는 프레임당 8개까지만 새로 만들어진다(`icon_tex`) — 몇 프레임 돌려 채운다
     let mut 그려진 = 0;
@@ -2226,8 +2259,7 @@ fn 트리_줄에는_셸_아이콘이_붙는다() {
     assert_eq!(
         그려진,
         예상,
-        "트리 구역 아이콘 수가 즐겨찾기 {}개 + 드라이브 {}개와 다르다",
-        favorites.len(),
-        crate::ui::tree::drive_roots().len()
+        "트리 구역 아이콘 수가 즐겨찾기 {}개 + 드라이브 {드라이브}개와 다르다",
+        favorites.len()
     );
 }

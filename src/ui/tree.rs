@@ -120,7 +120,12 @@ enum Node {
 ///
 /// 확장 상태(열림/닫힘)는 egui가 위젯 id로 보관하고, 이 구조체는 **무엇을 읽었는지**만 갖는다
 pub struct FolderTreeView {
-    roots: Rc<Vec<PathBuf>>,
+    /// 드라이브 목록 `(경로, 셸 표시 이름)` — **첫 프레임에 한 번** 만든다.
+    ///
+    /// `None`이면 아직 읽지 않은 것이다(드라이브가 없는 PC의 빈 목록과 구분된다).
+    /// 표시 이름 조회에 `IconCache`가 필요한데 그것은 그릴 때에야 손에 들어오므로,
+    /// 생성자가 아니라 첫 그리기에서 채운다 — 어차피 한 번뿐이라 결과는 같다
+    roots: Option<Rc<Vec<(PathBuf, String)>>>,
     /// 펼친 적이 있는 폴더의 하위 목록. 한 번 읽으면 다시 읽지 않는다
     nodes: HashMap<PathBuf, Node>,
     /// 트리에서 마지막으로 고른 폴더 — 강조 표시용. 원격 트리도 이 자리를 쓴다
@@ -161,7 +166,7 @@ impl FolderTreeView {
     pub fn new() -> FolderTreeView {
         let (tx, rx) = channel();
         FolderTreeView {
-            roots: Rc::new(drive_roots()),
+            roots: None,
             icon_indices: HashMap::new(),
             nodes: HashMap::new(),
             selected: None,
@@ -215,9 +220,16 @@ impl FolderTreeView {
                 TreeSource::Local => {
                     // 즐겨찾기는 **로컬 트리에만** 선다 (사용자 결정 — 원격은 제외)
                     self.show_favorites(ui, favorites, &mut outcome, icons, &mut row);
-                    let roots = Rc::clone(&self.roots);
-                    for root in roots.iter() {
-                        self.show_node(ui, root, &mut outcome, icons, &mut row);
+                    let roots = match &self.roots {
+                        Some(roots) => Rc::clone(roots),
+                        None => {
+                            let roots = Rc::new(drive_roots(icons));
+                            self.roots = Some(Rc::clone(&roots));
+                            roots
+                        }
+                    };
+                    for (root, label) in roots.iter() {
+                        self.show_node(ui, root, label, &mut outcome, icons, &mut row);
                     }
                 }
                 TreeSource::Remote { conn, root, cache } => {
@@ -479,11 +491,11 @@ impl FolderTreeView {
         &mut self,
         ui: &mut egui::Ui,
         path: &Path,
+        label: &str,
         outcome: &mut TreeOutcome,
         icons: &mut IconCache,
         row: &mut RowCtx<'_>,
     ) {
-        let label = display_name(path);
         let choice = TreeChoice::Local(path.to_path_buf());
         let is_selected = self.selected.as_ref() == Some(&choice);
         let icon = self.icon_for(path, icons);
@@ -493,7 +505,7 @@ impl FolderTreeView {
         if matches!(self.nodes.get(path), Some(Node::Loaded(children)) if children.is_empty()) {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                let response = tree_row(ui, row, icon, &label, is_selected);
+                let response = tree_row(ui, row, icon, label, is_selected);
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -505,7 +517,7 @@ impl FolderTreeView {
         let id = ui.make_persistent_id(path);
         let header =
             CollapsingState::load_with_default_open(ui.ctx(), id, false).show_header(ui, |ui| {
-                let response = tree_row(ui, row, icon, &label, is_selected);
+                let response = tree_row(ui, row, icon, label, is_selected);
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -526,7 +538,9 @@ impl FolderTreeView {
             match children {
                 Some(children) => {
                     for child in children.iter() {
-                        self.show_node(ui, child, outcome, icons, row);
+                        // 하위는 셸 이름이 아니라 폴더명이다 — 탐색기도 그렇게 보인다
+                        let child_label = display_name(child);
+                        self.show_node(ui, child, &child_label, outcome, icons, row);
                     }
                 }
                 None => {
@@ -603,12 +617,22 @@ fn remote_display_name(path: &RemotePath) -> String {
 
 /// 드라이브 루트 (`C:\`, `D:\` …).
 /// 비트마스크의 비트 순서가 곧 알파벳 순이라 따로 정렬하지 않는다
-pub fn drive_roots() -> Vec<PathBuf> {
+pub fn drive_roots(icons: &mut IconCache) -> Vec<(PathBuf, String)> {
     // 안전성: 인자 없는 조회 — 현재 드라이브 비트마스크만 반환한다
     let mask = unsafe { GetLogicalDrives() };
     (0..26u32)
         .filter(|i| mask & (1 << i) != 0)
         .map(|i| PathBuf::from(format!("{}:\\", (b'A' + i as u8) as char)))
+        .map(|path| {
+            // 탐색기처럼 `로컬 디스크 (C:)`로 보인다 — 이름을 우리가 조립하지 않으므로
+            // 드라이브 종류(고정·이동식·네트워크)도 판정할 필요가 없다.
+            // **시작할 때 한 번만** 묻는다(목록을 다시 만들지 않는다) — 끊긴 네트워크
+            // 드라이브의 조회가 늦어도 그 한 번에 그친다
+            let label = icons
+                .shell_display_name(&path.to_string_lossy())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            (path, label)
+        })
         .collect()
 }
 
@@ -813,9 +837,30 @@ mod tests {
     #[test]
     fn 드라이브_루트는_루트_경로_형태다() {
         // 실제 구성은 PC마다 다르므로 형태만 검증한다 (C: 드라이브는 항상 있다)
-        let roots = drive_roots();
-        assert!(roots.iter().any(|r| r == Path::new(r"C:\")));
-        assert!(roots.iter().all(|r| r.parent().is_none()));
+        let _shell = crate::fs::icons::shell_test_guard();
+        let mut icons = IconCache::new();
+        let roots = drive_roots(&mut icons);
+        assert!(roots.iter().any(|(path, _)| path == Path::new(r"C:\")));
+        assert!(roots.iter().all(|(path, _)| path.parent().is_none()));
+    }
+
+    #[test]
+    fn 드라이브는_셸_표시_이름으로_보인다() {
+        // T3 Acceptance — `C:\`가 아니라 `로컬 디스크 (C:)` 같은 이름이다.
+        // 값 자체는 OS 언어·볼륨 레이블을 따르므로 "경로와 다르다"만 본다
+        let _shell = crate::fs::icons::shell_test_guard();
+        let mut icons = IconCache::new();
+        let roots = drive_roots(&mut icons);
+        let (path, label) = roots
+            .iter()
+            .find(|(path, _)| path == Path::new(r"C:\"))
+            .expect("C 드라이브");
+        assert!(!label.is_empty(), "이름이 비었다");
+        assert_ne!(
+            label.as_str(),
+            path.to_string_lossy(),
+            "경로가 그대로 왔다 — 셸 표시 이름을 거치지 않았다"
+        );
     }
 
     /// 원격 트리를 한 프레임 그리고 결과를 돌려준다
