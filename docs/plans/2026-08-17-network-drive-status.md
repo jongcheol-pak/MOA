@@ -367,6 +367,9 @@
 ## Retry Ledger
 
 ## Progress Log
+- T1-T2 (커밋 7700e8d, T2는 리뷰 중): 열거 결과에 `network: bool`을 싣고(오류 코드 8종 목록), 목록 자리에 사유를 적는 규칙을 권한 없음 → 네트워크 끊김·그 밖의 실패까지 넓혔다. `denied_dir` → `blocked: Option<(PathBuf, ListBlock)>`. 시험 787건 통과.
+  - 결정: `EnumOutcome::Error`에 **변형을 더하지 않고 필드를 붙였다** — 컴파일러가 매치 지점 4곳을 모두 짚어 주게 하려는 것(`_ =>`가 있는 곳을 조용히 지나는 것을 막는다). plan D2 그대로.
+  - 결정: 세 사유의 공통 처리를 `block_list`로 모으고 갈라지는 것은 문구뿐으로 두었다(plan 비추상화 선언 — 전략 트레이트 없음).
 
 ## Next Steps
 

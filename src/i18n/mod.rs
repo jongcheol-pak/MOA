@@ -563,13 +563,6 @@ pub mod dynamic {
         }
     }
 
-    pub fn open_failed(name: &str) -> String {
-        match current() {
-            Language::Korean => format!("'{name}' 폴더를 여는 중 문제가 발생했습니다"),
-            Language::English => format!("Something went wrong while opening '{name}'"),
-        }
-    }
-
     /// 새로 만들기 실패 — 한국어는 조사가 붙고 영어는 관사가 붙는다 (D2).
     /// `kind`는 `폴더`·`파일` 둘 중 하나라 받침이 갈린다 — 조사를 그때그때 고른다
     pub fn create_failed(kind: &str, error: &str) -> String {
@@ -1213,10 +1206,6 @@ mod tests {
         assert_eq!(
             dynamic::open_not_found("문서"),
             "'문서' 폴더를 찾을 수 없습니다"
-        );
-        assert_eq!(
-            dynamic::open_failed("문서"),
-            "'문서' 폴더를 여는 중 문제가 발생했습니다"
         );
         assert_eq!(
             dynamic::create_failed("폴더", "접근 거부"),
