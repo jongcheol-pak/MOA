@@ -175,6 +175,13 @@
 
 **기준**: 사용자 제공 탐색기 스크린샷 (`%USERPROFILE%\Desktop\2.png`)
 
+### V-9 대조 결과 (T5, 2026-08-17)
+정적 축 8행은 **✅ 일치** — 구현 위치를 각각 지목했다(`ui/tree.rs`의 `draw_offline_badge`·`BADGE_RATIO`·`theme::OFFLINE_BADGE`). spec 리뷰가 같은 대조를 독립적으로 확인했다.
+
+**F-8 인계 (⏳ 미확인 2행)** — 아래 표에 `⚠ 어림값`으로 표시한 두 행은 배지가 9px 남짓이라 기준 스크린샷에서 정밀 측정이 불가능하다. 값은 코드에 반영됐으나(`BADGE_STROKE_RATIO = 0.15`·`BADGE_MARK_RATIO = 0.5`) **눈으로 보는 판정은 완료 선언 직전 F-8에서 사용자 확인으로 한다**:
+- X 선 굵기 (배지 지름의 0.15배)
+- X 선 길이 (배지 지름의 0.5배)
+
 ### 시각 속성
 | 요소 | 속성 | 디자인 값 | 확인 방법 |
 |------|------|----------|-----------|
@@ -286,7 +293,7 @@
     - (ii-a) `PanelState::show`·`FolderTreeView::show`·`show_node`의 시그니처가 바뀐다 → `## 사전 승인 항목`에 등록
   - **Depends on**: T3
 
-- [ ] T5. 끊긴 네트워크 드라이브 줄에 X 배지를 그린다
+- [x] T5. 끊긴 네트워크 드라이브 줄에 X 배지를 그린다
   - **Type**: C
   - **Design**: ① `src/ui/tree.rs`의 `tree_row`에 배지 그리기를 더하고, 색 상수는 `src/ui/theme.rs`. ② 신규 심볼 — `theme::OFFLINE_BADGE`(색 상수), `fn draw_offline_badge(painter: &egui::Painter, icon_rect: egui::Rect)`(`ui::tree` 안 비공개 — 아이콘 자리를 받아 배지를 그린다). `tree_row`는 인자 `offline: bool`을 받는다. ③ 의존 방향 — `ui::tree`가 `ui::theme`를 참조한다(이미 그렇다). ④ 비추상화 선언 — 배지 종류를 열거형으로 일반화하지 않는다(그릴 배지가 이번엔 하나다).
   - **Design (배지 값이 흐르는 길)**: `tree_row` 호출 **5곳** 중 배지를 켤 수 있는 것은 `show_node`의 두 자리(`tree.rs:531`·`:543`)뿐이고, 그 값은 T4가 더한 `drive: Option<&DriveRow>`에서 온다 — `Some(d) => d.offline`, `None => false`. 즐겨찾기(`:377`)와 원격(`:435`·`:448`)은 `false`를 넘긴다. 배지는 `tree_row`가 **아이콘을 그린 그 사각형**(`icon_rect`)을 그대로 넘겨 받아 그린다 — 자리를 두 번 계산하면 아이콘과 어긋난다.
@@ -369,6 +376,7 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- T5: 수정 사이클 2/5 (1라운드 MAJOR — 하위 폴더 갈래 미검증 / 2라운드 MAJOR — 배지-텍스처 분리의 회귀 방지선 없음). 동일 지적 재발 0, 3라운드 quality OK·2라운드 spec OK.
 - T4: 수정 사이클 1/5 (quality M1 — plan이 동반 변경으로 명시한 `fs/icons.rs` doc 주석 갱신 누락). 주석만 바뀌어 증분 재리뷰 ① 판정으로 quality 재실행 생략, spec이 현재 트리에서 반영을 재확인. spec은 판정문 빈 응답 1회 → 재요청으로 회수(D 분기).
 - T3: 수정 사이클 1/5 (spec B1 — task 경계 선취. 코드 변경 없이 plan 경계 갱신으로 해소, 재리뷰 BLOCKER 0 / MINOR 2건도 그 자리에서 반영). quality MINOR 1건은 `(판정 유보)` 표시라 대장 미등재.
 - T2: 수정 사이클 1/5 (quality M1 — 고아 심볼 `dynamic::open_failed` 제거). 동일 지적 재발 0, 재리뷰 OK.
