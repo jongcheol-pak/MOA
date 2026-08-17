@@ -712,11 +712,12 @@ fn tree_row(
             egui::StrokeKind::Inside,
         );
     }
+    // 아이콘 자리는 텍스처가 있든 없든 같다 — 배지가 그 자리에 겹치므로 밖에서 정한다
+    let icon_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y - ROW_ICON / 2.0),
+        egui::vec2(ROW_ICON, ROW_ICON),
+    );
     if let Some(tex) = row.textures.get(row.ctx, row.himl, icon) {
-        let icon_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.left(), rect.center().y - ROW_ICON / 2.0),
-            egui::vec2(ROW_ICON, ROW_ICON),
-        );
         // painter를 다시 얻는다 — textures가 ui를 빌리는 사이 앞의 painter가 무효화된다
         ui.painter().image(
             tex.id(),
@@ -724,12 +725,16 @@ fn tree_row(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
-        // 연결 끊김 배지는 **아이콘을 그린 그 사각형 안에** 겹친다 (FR-9) — 자리를 다시
-        // 계산하면 아이콘과 어긋난다. 아이콘이 아직 안 올라온 프레임에는 배지도 그리지
-        // 않는다(허공에 배지만 뜨지 않게 — 텍스처는 프레임당 8개까지만 만들어진다)
-        if offline {
-            draw_offline_badge(ui.painter(), icon_rect);
-        }
+    }
+    // 연결 끊김 배지는 **아이콘 자리 안에** 겹친다 (FR-9) — 자리를 따로 계산하면 어긋난다.
+    //
+    // **텍스처와 묶지 않는다**: 아이콘 변환이 실패한 인덱스는 `IconTextures`가 `None`으로
+    // 기억해 다시 시도하지 않으므로, 묶어 두면 그 드라이브는 아이콘도 배지도 영영 없어
+    // **끊긴 것을 화면으로 알 수 없다**(이 기능의 목적이 통째로 무력해진다). 텍스처는 대개
+    // 몇 프레임 안에 올라오므로 배지만 보이는 프레임은 스쳐 지나가고, 영구 실패한 자리에서는
+    // 아무것도 없는 것보다 배지만이라도 보이는 편이 낫다 (2026-08-17 판정 — plan T5 Edge)
+    if offline {
+        draw_offline_badge(ui.painter(), icon_rect);
     }
     let text_color = if selected {
         ui.visuals().selection.stroke.color
@@ -825,6 +830,111 @@ fn display_name(path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::remote::types::RemoteEntry;
+
+    /// 시험용 드라이브 줄 — 아이콘 인덱스는 셸이 준 실값을 쓴다(화면과 같은 값으로 그린다)
+    fn offline_drive(icons: &mut IconCache) -> DriveRow {
+        DriveRow {
+            path: PathBuf::from(r"C:\"),
+            label: "드라이브".to_owned(),
+            icon: icons.icon_index_for_path(r"C:\"),
+            network: true,
+            offline: true,
+        }
+    }
+
+    /// 그려진 셰이프에서 연결 끊김 배지 수를 센다 — 배지는 글자가 아니라 채워진 원이다
+    fn count_badges(output: &egui::FullOutput) -> usize {
+        fn count(shape: &egui::Shape, found: &mut usize) {
+            match shape {
+                egui::Shape::Circle(circle) if circle.fill == theme::OFFLINE_BADGE => *found += 1,
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        count(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = 0;
+        for clipped in &output.shapes {
+            count(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    /// `show_node`를 직접 그려 배지 수를 돌려준다 (T5).
+    ///
+    /// **`show`를 거치지 않는 이유**: 드라이브 뿌리는 기본 접힌 상태로 그려지므로
+    /// (`CollapsingState::load_with_default_open(.., false)`) 화면을 몇 프레임 돌려도
+    /// **하위 폴더 재귀 호출부를 지나지 않는다**. 그 갈래(`drive: None`)에서 배지가
+    /// 꺼지는지 보려면 이렇게 직접 부르는 수밖에 없다 (2026-08-17 리뷰 지적)
+    fn badges_of_node(drive: Option<&DriveRow>, icons: &mut IconCache) -> usize {
+        let ctx = egui::Context::default();
+        let mut view = FolderTreeView::new();
+        let mut textures = IconTextures::new();
+        let himl = icons.himl();
+        let mut badges = 0;
+        // 한 프레임이면 충분하다 — 배지는 아이콘 텍스처와 묶여 있지 않다(`tree_row`).
+        // 그래도 몇 프레임 돌리는 것은 첫 프레임에 글꼴·레이아웃이 준비되는 egui의
+        // 성질에 기대지 않으려는 것이다
+        for _ in 0..8 {
+            let output = ctx.run_ui(Default::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    textures.begin_frame();
+                    let inner = ui.ctx().clone();
+                    let mut row = RowCtx {
+                        textures: &mut textures,
+                        ctx: &inner,
+                        himl,
+                    };
+                    let mut outcome = TreeOutcome::default();
+                    view.show_node(
+                        ui,
+                        Path::new(r"C:\"),
+                        "드라이브",
+                        drive,
+                        &mut outcome,
+                        icons,
+                        &mut row,
+                    );
+                });
+            });
+            badges = count_badges(&output);
+            if badges > 0 {
+                break;
+            }
+        }
+        badges
+    }
+
+    #[test]
+    fn 드라이브_갈래는_끊긴_상태를_배지로_그린다() {
+        // 이 시험이 짝의 기준선이다 — 하네스가 배지를 그릴 수 있음을 먼저 입증한다.
+        // 그러지 않으면 아래 시험의 `0`이 "갈래가 꺼져서"인지 "아이콘이 안 올라와서"인지
+        // 가릴 수 없다
+        let _shell = crate::fs::icons::shell_test_guard();
+        let mut icons = IconCache::new();
+        let drive = offline_drive(&mut icons);
+        assert_eq!(
+            badges_of_node(Some(&drive), &mut icons),
+            1,
+            "끊긴 드라이브 갈래에 배지가 그려지지 않았다"
+        );
+    }
+
+    #[test]
+    fn 하위_폴더_갈래에는_배지가_꺼진다() {
+        // T5 Acceptance — 하위 폴더는 드라이브 줄과 **같은 `show_node`**를 지나므로,
+        // 그 자리에서 `false`가 흐르는지 본다. 위 시험이 같은 하네스로 배지 1을 관측하므로
+        // 여기의 0은 갈래가 꺼진 결과다
+        let _shell = crate::fs::icons::shell_test_guard();
+        let mut icons = IconCache::new();
+        assert_eq!(
+            badges_of_node(None, &mut icons),
+            0,
+            "하위 폴더 갈래에 배지가 그려졌다"
+        );
+    }
 
     fn entry(name: &str, is_dir: bool) -> FileEntry {
         let mut n: Vec<u16> = name.encode_utf16().collect();
