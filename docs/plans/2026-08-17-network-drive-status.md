@@ -313,7 +313,7 @@
     - (i) 배지 색·크기 → `## 시각 요소 분해`와 D8에서 확정
   - **Depends on**: T4
 
-- [ ] T6. 열어 본 결과로 드라이브 상태를 갱신한다
+- [x] T6. 열어 본 결과로 드라이브 상태를 갱신한다
   - **Type**: D
   - **Design**: ① 관측은 `src/ui/panel.rs`(열거 결과를 받는 자리), 반영은 `src/ui/app.rs`. ② 신규 심볼 — `PanelState::observed_drive: Option<(PathBuf, bool)>`(**중간 보관 필드** — `apply_enumerated`(`panel.rs:447`)는 `poll_load` 안에서 돌아 그 자리에서 `PanelOutcome`을 만들 수 없다. 여기 담아 두었다가 `PanelState::show`가 끝나며 `take()`로 옮긴다), `PanelOutcome::drive_observed: Option<(PathBuf, bool)>`(연 경로와 닿았는지), `LayoutOutcome::drive_observed: Vec<(PathBuf, bool)>`(패널 여럿의 관측을 모은다 — `tree_requests` 선례). ③ 의존 방향 — 패널이 값으로 올리고 앱이 `DriveList::observe`로 반영한다(패널은 `DriveList`를 모른다). ④ 비추상화 선언 — 관측 이벤트를 열거형·버스로 만들지 않는다(한 종류뿐이다).
   - **Design (갈래 규칙)**: 배지는 **`network` 깃발이 아니라 "열어서 닿았는가"로 판정한다** — `apply_enumerated`의 다섯 갈래를 이렇게 가른다. `Ok` → `(dir, true)` · `AccessDenied` → `(dir, true)`(권한이 없을 뿐 드라이브에는 닿았다) · `NotFound` → `(dir, false)` · `Error { network: true }` → `(dir, false)` · `Error { network: false }` → `(dir, false)`. **`network` 깃발은 T2의 문구 고르기에만 쓴다** — 배지까지 그 깃발에 걸면 T1의 오류 코드 목록에서 빠진 실패 하나가 곧 "X가 영영 안 붙는" 결함이 된다(Risks 참조). 로컬 드라이브의 실패는 `DriveList::observe`가 걸러낸다(T3).
@@ -376,6 +376,7 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- T6: 수정 사이클 1/5 (quality MAJOR — 주석이 없는 시험 보호를 주장 / MINOR — 루프 시험 메시지). 재리뷰 OK, spec은 1라운드 OK.
 - T5: 수정 사이클 2/5 (1라운드 MAJOR — 하위 폴더 갈래 미검증 / 2라운드 MAJOR — 배지-텍스처 분리의 회귀 방지선 없음). 동일 지적 재발 0, 3라운드 quality OK·2라운드 spec OK.
 - T4: 수정 사이클 1/5 (quality M1 — plan이 동반 변경으로 명시한 `fs/icons.rs` doc 주석 갱신 누락). 주석만 바뀌어 증분 재리뷰 ① 판정으로 quality 재실행 생략, spec이 현재 트리에서 반영을 재확인. spec은 판정문 빈 응답 1회 → 재요청으로 회수(D 분기).
 - T3: 수정 사이클 1/5 (spec B1 — task 경계 선취. 코드 변경 없이 plan 경계 갱신으로 해소, 재리뷰 BLOCKER 0 / MINOR 2건도 그 자리에서 반영). quality MINOR 1건은 `(판정 유보)` 표시라 대장 미등재.
