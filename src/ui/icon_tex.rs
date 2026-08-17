@@ -24,6 +24,10 @@ pub struct IconTextures {
     by_key: HashMap<(isize, i32), Option<egui::TextureHandle>>,
     /// 이번 프레임에 만든 수 — 한 프레임에 몰리면 렌더가 수 초 멈춘다(PoC 실측 3096ms)
     created_this_frame: usize,
+    /// 이번 프레임에 **다시** 시도한 수 — 처음 보는 아이콘의 몫과 따로 센다
+    retried_this_frame: usize,
+    /// 실패한 인덱스별 재시도 횟수. 성공하면 지운다 — 늘 실패하는 자리를 키당 상한으로 끊는다
+    retries: HashMap<(isize, i32), u8>,
 }
 
 /// 한 프레임에 새로 올릴 썸네일 텍스처 수 상한.
@@ -34,6 +38,16 @@ const MAX_NEW_THUMBS_PER_FRAME: usize = 4;
 /// 실측에서 텍스처 다수가 한 프레임에 생성되며 3초급 스파이크가 났다 —
 /// 넘치는 것은 다음 프레임으로 미루고 그 프레임에는 아이콘 없이 그린다(몇 프레임 안에 채워진다)
 const MAX_NEW_TEXTURES_PER_FRAME: usize = 8;
+
+/// 한 프레임에 **다시** 시도할 실패 인덱스 수 상한.
+/// 처음 보는 아이콘의 몫(`MAX_NEW_TEXTURES_PER_FRAME`)과 예산을 나눈다 — 같은 예산을 쓰면
+/// 요청 순서가 프레임마다 같아 앞선 실패가 매번 그것을 소진하고, 뒤쪽 아이콘은 영영 못 올라온다
+const MAX_FAILED_RETRIES_PER_FRAME: usize = 2;
+
+/// 한 인덱스를 다시 시도할 횟수 상한.
+/// 1bpp 마스크만 있는 흑백 아이콘처럼 **늘** 실패하는 자리가 재시도 예산을 영구 점유하고
+/// 매 프레임 GDI 호출을 남기는 것을 막는다 — 이 횟수를 넘기면 포기한다
+const MAX_RETRIES_PER_KEY: u8 = 3;
 
 impl Default for IconTextures {
     fn default() -> IconTextures {
@@ -46,15 +60,25 @@ impl IconTextures {
         IconTextures {
             by_key: HashMap::new(),
             created_this_frame: 0,
+            retried_this_frame: 0,
+            retries: HashMap::new(),
         }
     }
 
-    /// 프레임 시작 시 호출 — 프레임당 생성 상한을 초기화한다
+    /// 프레임 시작 시 호출 — 프레임당 생성·재시도 상한을 초기화한다.
+    /// `retries`는 **키의 이력**이라 프레임 경계로 지우지 않는다
     pub fn begin_frame(&mut self) {
         self.created_this_frame = 0;
+        self.retried_this_frame = 0;
     }
 
-    /// 인덱스에 해당하는 텍스처. 변환 실패한 인덱스는 `None`으로 기억해 재시도하지 않는다
+    /// 인덱스에 해당하는 텍스처.
+    ///
+    /// **한 번 실패한 인덱스도 다시 시도한다** — 셸 경합 같은 일시적 실패가 영구가 되지
+    /// 않게 하기 위함이다. 재시도는 둘로 제한한다: 프레임당 `MAX_FAILED_RETRIES_PER_FRAME`회
+    /// (처음 보는 아이콘의 몫을 잠식하지 않게) · 키당 `MAX_RETRIES_PER_KEY`회(늘 실패하는
+    /// 자리가 그 예산을 영구 점유하지 않게). 그래서 실패 키가 여럿이면 한 프레임에는 앞쪽
+    /// 몇 개만 차례가 오지만, 앞쪽이 키 상한으로 비켜 주므로 뒤쪽도 몇 프레임 뒤 차례를 받는다
     pub fn get(
         &mut self,
         ctx: &egui::Context,
@@ -62,23 +86,48 @@ impl IconTextures {
         index: i32,
     ) -> Option<&egui::TextureHandle> {
         let key = (himl.0, index);
-        if !self.by_key.contains_key(&key) {
+        let entry = self.by_key.get(&key);
+        let unseen = entry.is_none();
+        let known_failure = matches!(entry, Some(None));
+
+        if unseen {
             // 상한을 넘으면 이번 프레임에는 만들지 않는다 — 캐시에 넣지도 않으므로 다음 프레임에 재시도된다
-            if self.created_this_frame >= MAX_NEW_TEXTURES_PER_FRAME {
-                return None;
+            if self.created_this_frame < MAX_NEW_TEXTURES_PER_FRAME {
+                self.convert_into(ctx, himl, index, key);
             }
-            let image = icon_to_image(himl, index);
-            let handle = image.map(|img| {
-                self.created_this_frame += 1;
-                ctx.load_texture(
-                    format!("icon{}_{index}", key.0),
-                    img,
-                    egui::TextureOptions::LINEAR,
-                )
-            });
-            self.by_key.insert(key, handle);
+        } else if known_failure {
+            let tried = self.retries.get(&key).copied().unwrap_or(0);
+            if tried < MAX_RETRIES_PER_KEY && self.retried_this_frame < MAX_FAILED_RETRIES_PER_FRAME
+            {
+                self.retried_this_frame += 1;
+                self.retries.insert(key, tried + 1);
+                self.convert_into(ctx, himl, index, key);
+            }
         }
         self.by_key.get(&key).and_then(|h| h.as_ref())
+    }
+
+    /// 변환해 캐시에 담는다 — 실패도 `None`으로 담아 다음 프레임이 재시도 대상으로 알아본다.
+    /// 성공하면 `created_this_frame`을 올리고(업로드 비용은 첫 시도와 같다) 재시도 이력을 지운다
+    fn convert_into(
+        &mut self,
+        ctx: &egui::Context,
+        himl: HIMAGELIST,
+        index: i32,
+        key: (isize, i32),
+    ) {
+        let handle = icon_to_image(himl, index).map(|img| {
+            self.created_this_frame += 1;
+            ctx.load_texture(
+                format!("icon{}_{index}", key.0),
+                img,
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        if handle.is_some() {
+            self.retries.remove(&key);
+        }
+        self.by_key.insert(key, handle);
     }
 }
 
@@ -316,6 +365,144 @@ unsafe fn read_raw_bgra(hbm: HBITMAP, width: usize, height: usize) -> Option<Vec
 mod tests {
     use super::*;
     use crate::fs::thumbnail::ThumbnailImage;
+
+    /// 반드시 실패하는 인덱스 — 음수는 `icon_to_image`가 첫 줄에서 걸러낸다
+    fn 실패_인덱스(n: i32) -> i32 {
+        -1 - n
+    }
+
+    /// 실패 키 `count`개를 캐시에 담은 상태를 만든다 (다음 프레임의 재시도 대상이 된다)
+    fn 실패_키를_담는다(
+        textures: &mut IconTextures,
+        ctx: &egui::Context,
+        himl: HIMAGELIST,
+        count: i32,
+    ) {
+        textures.begin_frame();
+        for n in 0..count {
+            textures.get(ctx, himl, 실패_인덱스(n));
+        }
+    }
+
+    #[test]
+    fn 한_번_실패한_아이콘도_다음_프레임에_다시_시도한다() {
+        let ctx = egui::Context::default();
+        // 음수 인덱스는 이미지 리스트에 닿기 전에 걸러지므로 핸들이 유효하지 않아도 안전하다
+        let himl = HIMAGELIST(1);
+        let mut textures = IconTextures::new();
+
+        textures.begin_frame();
+        assert!(textures.get(&ctx, himl, 실패_인덱스(0)).is_none());
+        assert_eq!(
+            textures.retried_this_frame, 0,
+            "첫 프레임은 처음 보는 키라 재시도가 아니다"
+        );
+
+        textures.begin_frame();
+        assert!(textures.get(&ctx, himl, 실패_인덱스(0)).is_none());
+        assert_eq!(
+            textures.retried_this_frame, 1,
+            "실패로 아는 키는 다음 프레임에 다시 시도된다 (종전에는 영영 시도하지 않았다)"
+        );
+    }
+
+    #[test]
+    fn 성공한_아이콘은_다시_변환하지_않는다() {
+        let _shell = crate::fs::icons::shell_test_guard();
+        let ctx = egui::Context::default();
+        let icons = crate::fs::icons::IconCache::new();
+        let (himl, index) = (icons.himl(), icons.dir_icon());
+
+        let mut probe = IconTextures::new();
+        probe.begin_frame();
+        if probe.get(&ctx, himl, index).is_none() {
+            // 셸에서 이미지 리스트를 얻지 못하는 환경 — 이 시험은 성립하지 않는다.
+            // 조용히 지나가면 "검증했다"와 구분되지 않으므로 건너뛴 사실을 남긴다
+            eprintln!("[skip] 성공한_아이콘은_다시_변환하지_않는다 — 이미지 리스트 미가용");
+            return;
+        }
+
+        let mut textures = IconTextures::new();
+        textures.begin_frame();
+        assert!(textures.get(&ctx, himl, index).is_some());
+        assert_eq!(textures.created_this_frame, 1);
+
+        textures.begin_frame();
+        assert!(textures.get(&ctx, himl, index).is_some());
+        assert_eq!(
+            textures.created_this_frame, 0,
+            "캐시 히트는 변환하지 않는다"
+        );
+    }
+
+    #[test]
+    fn 재시도는_프레임당_두_번까지만_한다() {
+        let ctx = egui::Context::default();
+        let himl = HIMAGELIST(1);
+        let mut textures = IconTextures::new();
+
+        실패_키를_담는다(&mut textures, &ctx, himl, 8);
+
+        textures.begin_frame();
+        for n in 0..8 {
+            textures.get(&ctx, himl, 실패_인덱스(n));
+        }
+        assert_eq!(
+            textures.retried_this_frame, MAX_FAILED_RETRIES_PER_FRAME,
+            "재시도가 프레임 예산을 넘지 않는다"
+        );
+    }
+
+    #[test]
+    fn 재시도가_처음_보는_아이콘을_굶기지_않는다() {
+        let _shell = crate::fs::icons::shell_test_guard();
+        let ctx = egui::Context::default();
+        let icons = crate::fs::icons::IconCache::new();
+        let (himl, index) = (icons.himl(), icons.dir_icon());
+
+        let mut probe = IconTextures::new();
+        probe.begin_frame();
+        if probe.get(&ctx, himl, index).is_none() {
+            // 셸 미가용 환경 — 성공 변환을 전제로 하는 시험이라 성립하지 않는다
+            eprintln!("[skip] 재시도가_처음_보는_아이콘을_굶기지_않는다 — 이미지 리스트 미가용");
+            return;
+        }
+
+        let mut textures = IconTextures::new();
+        실패_키를_담는다(&mut textures, &ctx, himl, 8);
+
+        textures.begin_frame();
+        for n in 0..8 {
+            textures.get(&ctx, himl, 실패_인덱스(n)); // 실패 재시도가 **먼저** 온다
+        }
+        assert!(
+            textures.get(&ctx, himl, index).is_some(),
+            "재시도는 별도 예산을 쓰므로 처음 보는 아이콘이 같은 프레임에 올라간다"
+        );
+    }
+
+    #[test]
+    fn 늘_실패하는_아이콘은_세_번_뒤_재시도를_멈춘다() {
+        let ctx = egui::Context::default();
+        let himl = HIMAGELIST(1);
+        let mut textures = IconTextures::new();
+        let index = 실패_인덱스(0);
+
+        textures.begin_frame();
+        textures.get(&ctx, himl, index); // 첫 시도 — 재시도가 아니다
+
+        let mut 재시도 = Vec::new();
+        for _ in 0..5 {
+            textures.begin_frame();
+            textures.get(&ctx, himl, index);
+            재시도.push(textures.retried_this_frame);
+        }
+        assert_eq!(
+            재시도,
+            vec![1, 1, 1, 0, 0],
+            "키당 세 번까지만 다시 시도하고 그 뒤로는 예산도 GDI 호출도 쓰지 않는다"
+        );
+    }
 
     fn image() -> ThumbnailImage {
         ThumbnailImage {
