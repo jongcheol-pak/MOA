@@ -243,7 +243,7 @@
     - (ii-a) `fs::icons`에 crate 범위 공개 심볼 2개(`shell_guard`·`ShellGuard`)가 생기고 `shell_test_guard`(기존 `pub(crate)` 심볼)가 제거되며, `IconCache`의 다섯 메서드와 `known_folder` 본문에 잠금 획득 줄이 들어간다 → `## 사전 승인 항목`에 등록
   - **Depends on**: T2
 
-- [ ] T4. 위키 큐에 정정을 남긴다
+- [x] T4. 위키 큐에 정정을 남긴다
   - **Type**: A
   - **Acceptance**:
     - 위키 vault 루트 `pending.md`에 `[K-DRIFT]` 1줄 — `moa/conventions.md`의 "`IconTextures`의 아이콘 변환은 셸 잠금 밖이라 병렬 시험에서 경합한다" 항목이 **미검증 가설을 사실처럼 적었고**, T1의 실측 결과와 이번 수정으로 정정이 필요하다는 것
