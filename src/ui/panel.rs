@@ -91,6 +91,31 @@ enum PendingNav {
     Forward,
 }
 
+/// 목록을 읽지 못한 사유 — 그 자리에 적을 말이 이것으로 갈린다 (2026-08-17 사용자 결정).
+///
+/// 사유마다 사용자가 할 일이 다르다 — 권한은 관리자에게, 네트워크는 연결을 살피고,
+/// 그 밖은 다시 열어 본다. 세 갈래가 문구 하나씩만 달라 전략 트레이트를 두지 않았다
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ListBlock {
+    /// 권한이 없다 (2026-08-16)
+    AccessDenied,
+    /// 네트워크 드라이브·서버에 닿지 못했다
+    NetworkUnavailable,
+    /// 그 밖의 사유로 열지 못했다
+    OpenFailed,
+}
+
+impl ListBlock {
+    /// 목록 자리에 적을 말
+    fn hint(self) -> &'static str {
+        match self {
+            ListBlock::AccessDenied => crate::i18n::list_access_denied(),
+            ListBlock::NetworkUnavailable => crate::i18n::list_network_unavailable(),
+            ListBlock::OpenFailed => crate::i18n::list_open_failed(),
+        }
+    }
+}
+
 /// 원격 목록 메뉴에서 고른 것과 그때의 대상들 (FR-39)
 pub type RemoteMenuPick = (RemoteMenuAction, Vec<RemoteTarget>);
 
@@ -175,11 +200,11 @@ pub struct PanelState {
     pending_nav: PendingNav,
     /// 열거 실패 사유 — 성공 시 빈 문자열
     status: String,
-    /// 권한이 없어 내용을 읽지 못한 폴더 (2026-08-16 사용자 요청).
+    /// 내용을 읽지 못한 폴더와 그 사유 (2026-08-16·2026-08-17 사용자 요청).
     ///
     /// **경로째로 담는다** — 활성 탭이 여기를 볼 때만 안내를 띄우려면 깃발 하나로는 모자란다.
     /// 탭을 옮기거나 원격을 보는 동안 옛 안내가 남는 것을 이 대조가 막는다
-    denied_dir: Option<PathBuf>,
+    blocked: Option<(PathBuf, ListBlock)>,
     /// 첫 프레임을 그린 뒤 열거를 시작하기 위한 대기 경로.
     /// 생성자에서 바로 열거하면 창이 늦게 뜬다
     deferred_start: Option<PathBuf>,
@@ -252,7 +277,7 @@ impl PanelState {
             pending_dir: PathBuf::new(),
             pending_nav: PendingNav::None,
             status: String::new(),
-            denied_dir: None,
+            blocked: None,
             deferred_start: Some(start),
             tree: FolderTreeView::new(),
             tree_visible: false,
@@ -458,37 +483,44 @@ impl PanelState {
                 // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
                 let dir = std::mem::take(&mut self.pending_dir);
                 self.commit_navigation(&dir);
-                self.denied_dir = None;
+                self.blocked = None;
                 // 감시 대상도 이 시점에 맞춘다 — 읽어 낸 폴더만 감시한다
                 self.watch(&dir);
                 // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
                 let entries = with_local_parent_first(&dir, entries);
                 self.list.set_entries(dir, entries, icons);
             }
-            // 권한이 없어도 **그 폴더로 옮긴다** (2026-08-16 사용자 요청) — 이전 목록을
-            // 그대로 두면 주소창·트리가 가리키는 곳과 목록이 갈리고, 사유는 상태 줄이 아니라
-            // 빈 목록 자리에 적는다. 상위로 되돌아갈 `..` 줄만 남긴다
-            EnumOutcome::AccessDenied => {
-                let dir = std::mem::take(&mut self.pending_dir);
-                self.commit_navigation(&dir);
-                self.denied_dir = Some(dir.clone());
-                // 읽지 못한 폴더는 감시하지 않는다 — 이전 폴더의 감시도 함께 놓는다.
-                // 남겨 두면 그 폴더가 바뀔 때마다 여기를 다시 읽어 실패를 되풀이한다
-                self.watch = None;
-                let entries = with_local_parent_first(&dir, Vec::new());
-                self.list.set_entries(dir, entries, icons);
+            // 읽지 못했어도 **그 폴더로 옮긴다** (2026-08-16·2026-08-17 사용자 요청) —
+            // 이전 목록을 그대로 두면 주소창·트리가 가리키는 곳과 목록이 갈린다. 사유는
+            // 상태 줄이 아니라 빈 목록 자리에 적고, 상위로 되돌아갈 `..` 줄만 남긴다
+            EnumOutcome::AccessDenied => self.block_list(ListBlock::AccessDenied, icons),
+            EnumOutcome::Error { network: true } => {
+                self.block_list(ListBlock::NetworkUnavailable, icons)
             }
-            // 나머지 실패는 목록·경로·히스토리를 그대로 둔다 — 사유만 알린다(pending-커밋).
-            // 없는 폴더로는 옮길 자리가 없다
+            EnumOutcome::Error { network: false } => self.block_list(ListBlock::OpenFailed, icons),
+            // **찾을 수 없는 폴더만** 현 위치를 지킨다 (2026-08-17 사용자 결정) —
+            // 실재하지 않는 곳에는 옮길 자리가 없어, 그리로 주소창을 옮기면 `..`말고는
+            // 할 수 있는 것이 없는 화면이 된다. 사유는 종전대로 상태 줄에 적는다
             EnumOutcome::NotFound => {
                 self.status = crate::i18n::dynamic::open_not_found(&self.pending_name());
             }
-            // 네트워크 여부로 사유를 갈라 적는 것은 T2가 한다 — 여기서는 종전 문구를 지킨다
-            EnumOutcome::Error { .. } => {
-                self.status = crate::i18n::dynamic::open_failed(&self.pending_name());
-            }
         }
         self.pending_nav = PendingNav::None;
+    }
+
+    /// 읽지 못한 폴더로 옮기고 목록 자리에 사유를 적을 상태를 세운다.
+    ///
+    /// 세 사유(권한·네트워크·그 밖)가 **같은 처리**를 거치므로 한 자리에 모았다 —
+    /// 갈라지는 것은 목록 자리에 적을 말뿐이다
+    fn block_list(&mut self, reason: ListBlock, icons: &mut IconCache) {
+        let dir = std::mem::take(&mut self.pending_dir);
+        self.commit_navigation(&dir);
+        self.blocked = Some((dir.clone(), reason));
+        // 읽지 못한 폴더는 감시하지 않는다 — 이전 폴더의 감시도 함께 놓는다.
+        // 남겨 두면 그 폴더가 바뀔 때마다 여기를 다시 읽어 실패를 되풀이한다
+        self.watch = None;
+        let entries = with_local_parent_first(&dir, Vec::new());
+        self.list.set_entries(dir, entries, icons);
     }
 
     /// 도착한 썸네일을 텍스처로 올린다 (FR-24).
@@ -1381,13 +1413,13 @@ impl PanelState {
         }
     }
 
-    /// 지금 보고 있는 곳이 **권한이 막힌 그 폴더**인가.
+    /// 지금 보고 있는 곳이 **읽지 못한 그 폴더**면 목록 자리에 적을 말.
     ///
     /// 깃발이 아니라 경로로 견주므로, 탭을 옮기거나 원격을 보는 동안에는 저절로 꺼진다
-    fn shows_denied(&self) -> bool {
-        match (&self.denied_dir, self.tabs.active().source.local_path()) {
-            (Some(denied), Some(here)) => denied == here,
-            _ => false,
+    fn blocked_hint(&self) -> Option<&'static str> {
+        match (&self.blocked, self.tabs.active().source.local_path()) {
+            (Some((blocked, reason)), Some(here)) if blocked == here => Some(reason.hint()),
+            _ => None,
         }
     }
 
@@ -1417,12 +1449,11 @@ impl PanelState {
         // 빈 폴더에 파일을 끌어다 놓을 수 있다.
         // 세는 것은 `counts()`다 — `..` 줄은 항목이 아니라 거기에 들지 않는다
         if self.list.counts() == (0, 0) && !self.load.is_loading() {
-            // 비어 있어서인지 권한이 막혀서인지 갈라 적는다 (2026-08-16 사용자 요청)
-            let hint = if self.shows_denied() {
-                crate::i18n::list_access_denied()
-            } else {
-                crate::i18n::list_empty_folder()
-            };
+            // 비어 있어서인지 읽지 못해서인지, 읽지 못했다면 왜인지를 갈라 적는다
+            // (2026-08-16·2026-08-17 사용자 요청)
+            let hint = self
+                .blocked_hint()
+                .unwrap_or_else(crate::i18n::list_empty_folder);
             ui.painter().text(
                 egui::pos2(
                     list_rect.center().x,

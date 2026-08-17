@@ -1068,7 +1068,11 @@ fn 권한이_없으면_그_폴더로_옮기고_목록_자리에_사유를_적는
         panel.status
     );
     assert_eq!(panel.list.counts(), (0, 0), "이전 목록이 남았다");
-    assert!(panel.shows_denied(), "사유를 적을 상태가 아니다");
+    assert_eq!(
+        panel.blocked_hint(),
+        Some("이 폴더를 열 권한이 없어 내용을 표시할 수 없습니다"),
+        "사유를 적을 상태가 아니다"
+    );
     assert!(panel.watch.is_none(), "읽지 못한 폴더를 감시하고 있다");
 
     // 그린 화면에도 그 말이 있다 — 판정 헬퍼만 보면 그리기가 죽어도 통과한다(F-7 B1)
@@ -1106,7 +1110,103 @@ fn 권한이_없으면_그_폴더로_옮기고_목록_자리에_사유를_적는
 
     // 읽어 낸 폴더로 옮기면 안내는 사라진다
     commit_dir(&mut panel, r"C:\Users", &mut icons);
-    assert!(!panel.shows_denied(), "안내가 그대로 남았다");
+    assert!(panel.blocked_hint().is_none(), "안내가 그대로 남았다");
+}
+
+/// 열거 실패 하나를 겪은 패널을 돌려준다 — 사유별 시험이 같은 무대를 쓴다
+fn panel_after_failure(
+    outcome: EnumOutcome,
+    icons: &mut IconCache,
+) -> (PanelState, std::path::PathBuf) {
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    // 첫 프레임의 시작 열거를 걸지 않는다 — 그 결과가 오면 이 시험이 만든 상태를 덮는다
+    panel.deferred_start = None;
+    commit_dir(&mut panel, r"C:\Users", icons);
+
+    let target = std::path::PathBuf::from(r"Z:\");
+    panel.pending_dir = target.clone();
+    panel.pending_nav = PendingNav::Push;
+    panel.apply_enumerated(outcome, icons);
+    (panel, target)
+}
+
+#[test]
+fn 네트워크가_끊기면_그_경로로_옮기고_목록_자리에_사유를_적는다() {
+    // T2 Acceptance — 종전에는 이전 폴더의 목록이 그대로 남아, 트리에서 끊긴 드라이브를
+    // 눌러도 오른쪽에는 엉뚱한 폴더가 보였다 (2026-08-17 사용자 요청)
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut icons = IconCache::new();
+    let (mut panel, target) = panel_after_failure(EnumOutcome::Error { network: true }, &mut icons);
+
+    assert_eq!(
+        panel.tabs.active().source.local_path(),
+        Some(target.as_path()),
+        "끊긴 드라이브로 옮기지 않았다"
+    );
+    assert!(
+        panel.status.is_empty(),
+        "상태 줄에 사유가 남았다: {}",
+        panel.status
+    );
+    assert_eq!(panel.list.counts(), (0, 0), "이전 목록이 남았다");
+    assert!(panel.watch.is_none(), "읽지 못한 폴더를 감시하고 있다");
+
+    // 그린 화면에도 그 말이 있다 — 판정 헬퍼만 보면 그리기가 죽어도 통과한다(F-7 B1)
+    let texts = drawn_texts(&draw_once(&mut panel, &SiteStore::new()));
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "네트워크 드라이브에 연결할 수 없어 내용을 표시할 수 없습니다"),
+        "목록 자리에 네트워크 사유가 없다: {texts:?}"
+    );
+}
+
+#[test]
+fn 그_밖의_열기_실패도_같은_자리에_사유를_적는다() {
+    // T2 Acceptance — 네트워크가 아닌 실패는 문구만 다르고 처리는 같다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut icons = IconCache::new();
+    let (mut panel, target) =
+        panel_after_failure(EnumOutcome::Error { network: false }, &mut icons);
+
+    assert_eq!(
+        panel.tabs.active().source.local_path(),
+        Some(target.as_path()),
+        "실패한 경로로 옮기지 않았다"
+    );
+    assert!(panel.status.is_empty(), "상태 줄에 사유가 남았다");
+    let texts = drawn_texts(&draw_once(&mut panel, &SiteStore::new()));
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "이 폴더를 여는 중 문제가 생겨 내용을 표시할 수 없습니다"),
+        "목록 자리에 일반 실패 사유가 없다: {texts:?}"
+    );
+}
+
+#[test]
+fn 찾을_수_없는_폴더는_현_위치를_지킨다() {
+    // T2 Acceptance — 실재하지 않는 곳에는 옮길 자리가 없어 종전 규칙을 지킨다.
+    // 사유는 목록 자리가 아니라 상태 줄에 적힌다
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut icons = IconCache::new();
+    let here = std::path::PathBuf::from(r"C:\Users");
+    let (panel, _) = panel_after_failure(EnumOutcome::NotFound, &mut icons);
+
+    assert_eq!(
+        panel.tabs.active().source.local_path(),
+        Some(here.as_path()),
+        "없는 폴더로 옮겼다"
+    );
+    assert!(
+        panel.status.contains("찾을 수 없습니다"),
+        "상태 줄에 사유가 없다: {}",
+        panel.status
+    );
+    assert!(
+        panel.blocked_hint().is_none(),
+        "목록 자리에 사유를 적을 상태가 됐다"
+    );
 }
 
 #[test]

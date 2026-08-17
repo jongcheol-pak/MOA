@@ -222,6 +222,14 @@ strings! {
     /// 폴더 이름은 주소창이 이미 보여 주므로 문장에 넣지 않는다
     list_access_denied => "이 폴더를 열 권한이 없어 내용을 표시할 수 없습니다"
         / "You do not have permission to view the contents of this folder";
+    /// 네트워크 드라이브가 끊겨 목록을 읽지 못했을 때 (2026-08-17 사용자 요청) —
+    /// 일반 실패와 갈라 적는다. 연결을 살피는 것과 다시 열어 보는 것은 할 일이 다르다
+    list_network_unavailable => "네트워크 드라이브에 연결할 수 없어 내용을 표시할 수 없습니다"
+        / "Cannot connect to the network drive, so its contents cannot be shown";
+    /// 그 밖의 사유로 폴더를 열지 못했을 때 (2026-08-17 사용자 요청).
+    /// 폴더 이름은 주소창이 이미 보여 주므로 문장에 넣지 않는다
+    list_open_failed => "이 폴더를 여는 중 문제가 생겨 내용을 표시할 수 없습니다"
+        / "Something went wrong while opening this folder, so its contents cannot be shown";
     /// 폴더를 펼치는 중임을 알리는 문구
     status_expanding => "펼치는 중…" / "Expanding…";
     /// 새로 만드는 폴더·파일의 기본 이름 — 화면 언어를 따라 실제 이름이 정해진다.
