@@ -208,7 +208,7 @@
     - (i) 구 Win32 `panel/panel.rs`가 이 타입을 쓰는지 몰라 빌드가 깨진다 → 4-A 표에 그 자리(`:284`)를 이미 적었다
   - **Depends on**: -
 
-- [ ] T2. 목록 자리에 열기 실패 사유를 적는다
+- [x] T2. 목록 자리에 열기 실패 사유를 적는다
   - **Type**: C
   - **Design**: ① `src/ui/panel.rs`의 기존 `denied_dir` 자리를 넓힌다. ② 신규 심볼 — `enum ListBlock { AccessDenied, NetworkUnavailable, OpenFailed }`(그 파일 안 비공개), 필드 `blocked: Option<(PathBuf, ListBlock)>`(`denied_dir`을 대체), `fn blocked_hint(&self) -> Option<&'static str>`(`shows_denied`를 대체 — 지금 보는 곳이 막힌 그곳이면 적을 문구를 돌려준다). ③ 의존 방향 — `ui::panel`이 `i18n`을 부르고, 아무도 이 열거형을 밖에서 보지 않는다. ④ 비추상화 선언 — 사유별 표시 전략을 트레이트로 만들지 않는다(세 갈래가 문구 하나씩만 다르다).
   - **Acceptance**:
@@ -365,6 +365,7 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- T2: 수정 사이클 1/5 (quality M1 — 고아 심볼 `dynamic::open_failed` 제거). 동일 지적 재발 0, 재리뷰 OK.
 
 ## Progress Log
 - T1-T2 (커밋 7700e8d, T2는 리뷰 중): 열거 결과에 `network: bool`을 싣고(오류 코드 8종 목록), 목록 자리에 사유를 적는 규칙을 권한 없음 → 네트워크 끊김·그 밖의 실패까지 넓혔다. `denied_dir` → `blocked: Option<(PathBuf, ListBlock)>`. 시험 787건 통과.
