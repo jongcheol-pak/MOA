@@ -833,13 +833,40 @@ mod tests {
 
     /// 시험용 드라이브 줄 — 아이콘 인덱스는 셸이 준 실값을 쓴다(화면과 같은 값으로 그린다)
     fn offline_drive(icons: &mut IconCache) -> DriveRow {
+        offline_drive_with_icon(icons.icon_index_for_path(r"C:\"))
+    }
+
+    /// 아이콘 인덱스를 손으로 지정한 시험용 드라이브 줄 — **없는 인덱스**를 주어
+    /// 텍스처 변환이 실패하는 상황을 만드는 데 쓴다
+    fn offline_drive_with_icon(icon: i32) -> DriveRow {
         DriveRow {
             path: PathBuf::from(r"C:\"),
             label: "드라이브".to_owned(),
-            icon: icons.icon_index_for_path(r"C:\"),
+            icon,
             network: true,
             offline: true,
         }
+    }
+
+    /// 그려진 셰이프에서 **아이콘 수**를 센다 — 아이콘은 텍스처를 입힌 사각형이라 `Mesh`다.
+    /// 배지 시험이 "텍스처가 정말 없었는가"를 가리는 데 쓴다
+    fn count_icons(output: &egui::FullOutput) -> usize {
+        fn count(shape: &egui::Shape, found: &mut usize) {
+            match shape {
+                egui::Shape::Mesh(_) => *found += 1,
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        count(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = 0;
+        for clipped in &output.shapes {
+            count(&clipped.shape, &mut found);
+        }
+        found
     }
 
     /// 그려진 셰이프에서 연결 끊김 배지 수를 센다 — 배지는 글자가 아니라 채워진 원이다
@@ -868,12 +895,12 @@ mod tests {
     /// (`CollapsingState::load_with_default_open(.., false)`) 화면을 몇 프레임 돌려도
     /// **하위 폴더 재귀 호출부를 지나지 않는다**. 그 갈래(`drive: None`)에서 배지가
     /// 꺼지는지 보려면 이렇게 직접 부르는 수밖에 없다 (2026-08-17 리뷰 지적)
-    fn badges_of_node(drive: Option<&DriveRow>, icons: &mut IconCache) -> usize {
+    fn badges_of_node(drive: Option<&DriveRow>, icons: &mut IconCache) -> (usize, usize) {
         let ctx = egui::Context::default();
         let mut view = FolderTreeView::new();
         let mut textures = IconTextures::new();
         let himl = icons.himl();
-        let mut badges = 0;
+        let mut counted = (0, 0);
         // 한 프레임이면 충분하다 — 배지는 아이콘 텍스처와 묶여 있지 않다(`tree_row`).
         // 그래도 몇 프레임 돌리는 것은 첫 프레임에 글꼴·레이아웃이 준비되는 egui의
         // 성질에 기대지 않으려는 것이다
@@ -899,12 +926,14 @@ mod tests {
                     );
                 });
             });
-            badges = count_badges(&output);
-            if badges > 0 {
+            counted = (count_badges(&output), count_icons(&output));
+            // 아이콘까지 올라온 프레임을 기다린다 — 배지만 보고 끝내면 "텍스처가 없었다"와
+            // "아직 안 올라왔다"를 가릴 수 없다
+            if counted.1 > 0 {
                 break;
             }
         }
-        badges
+        counted
     }
 
     #[test]
@@ -916,9 +945,30 @@ mod tests {
         let mut icons = IconCache::new();
         let drive = offline_drive(&mut icons);
         assert_eq!(
-            badges_of_node(Some(&drive), &mut icons),
+            badges_of_node(Some(&drive), &mut icons).0,
             1,
             "끊긴 드라이브 갈래에 배지가 그려지지 않았다"
+        );
+    }
+
+    #[test]
+    fn 아이콘_텍스처가_없어도_배지는_그려진다() {
+        // **이 시험이 배지를 텍스처와 분리한 이유 그 자체다** (2026-08-17 리뷰 지적).
+        // `IconTextures`는 변환에 실패한 인덱스를 `None`으로 기억해 다시 시도하지 않는다 —
+        // 배지를 텍스처 성공에 묶어 두면 그 드라이브는 아이콘도 배지도 영영 없어
+        // **끊긴 것을 화면으로 알 수 없다**. 없는 인덱스로 그 상황을 만들어 확인한다.
+        // 이 시험이 없으면 분리가 실수로 되돌아가도 `cargo test`가 잡지 못한다
+        let _shell = crate::fs::icons::shell_test_guard();
+        let mut icons = IconCache::new();
+        let drive = offline_drive_with_icon(i32::MAX);
+        let (배지, 아이콘) = badges_of_node(Some(&drive), &mut icons);
+        assert_eq!(
+            아이콘, 0,
+            "없는 인덱스인데 텍스처가 만들어졌다 — 이 시험이 겨냥한 상황이 아니다"
+        );
+        assert_eq!(
+            배지, 1,
+            "텍스처가 없는 줄에서 배지가 사라졌다 — 배지가 다시 텍스처에 묶였다"
         );
     }
 
@@ -930,7 +980,7 @@ mod tests {
         let _shell = crate::fs::icons::shell_test_guard();
         let mut icons = IconCache::new();
         assert_eq!(
-            badges_of_node(None, &mut icons),
+            badges_of_node(None, &mut icons).0,
             0,
             "하위 폴더 갈래에 배지가 그려졌다"
         );
