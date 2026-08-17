@@ -100,9 +100,7 @@ fn separator_count(output: &eframe::egui::FullOutput) -> usize {
 /// 볼륨 레이블·네트워크 이름), "토글 아래 + 트리 폭 안"으로만 좁히면 제목 줄·즐겨찾기 줄까지
 /// 걸려 첫 매치를 쓰는 자리가 엉뚱한 줄을 드라이브로 오인한다
 ///
-/// **셸 잠금을 잡는다** — `SHGetFileInfoW`는 프로세스 전역 셸 상태를 함께 쓰고 시험은
-/// 기본이 병렬이라, `fs` 밖의 시험도 같은 잠금을 잡아야 한다(`fs::icons`의 규약).
-/// 잠금은 이 함수 안에서 잡고 놓는다 — 조회가 끝나면 더 쥐고 있을 이유가 없다
+/// 잠금·조회는 `drive_rows`가 한다 — 이 함수는 그 결과에서 `(경로, 표시 이름)`만 뽑는다
 fn drive_labels() -> Vec<(std::path::PathBuf, String)> {
     drive_rows()
         .iter()

@@ -70,18 +70,21 @@ pub fn spawn_scan(ctx: &egui::Context) -> Receiver<DriveScan> {
         // (`fs::thumbnail`의 썸네일 워커와 같은 방식). 실패해도 조회만 폴백되고 앱은 계속 돈다
         // 안전성: 이 스레드에서 열고 끝에서 반드시 닫는다
         let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-        scan_into(&tx);
+        scan_into(&tx, &ctx);
         if com {
             // 안전성: 위에서 성공한 초기화와 짝을 맞춘다
             unsafe { CoUninitialize() };
         }
-        ctx.request_repaint();
     });
     rx
 }
 
-/// 워커 본체 — 목록을 보낸 뒤 판정을 보낸다. 받는 쪽이 사라지면 조용히 멎는다
-fn scan_into(tx: &Sender<DriveScan>) {
+/// 워커 본체 — 목록을 보낸 뒤 판정을 보낸다. 받는 쪽이 사라지면 조용히 멎는다.
+///
+/// **보낼 때마다 화면을 깨운다** — 이 앱은 입력이 없으면 프레임을 돌리지 않으므로,
+/// 마지막에 한 번만 깨우면 목록을 먼저 보낸 것이 헛일이 된다(드라이브 줄이 무거운
+/// 접근 판정이 끝날 때까지 화면에 서지 않는다 — 조회를 둘로 나눈 이유가 사라진다)
+fn scan_into(tx: &Sender<DriveScan>, ctx: &egui::Context) {
     let mut icons = IconCache::new();
     let rows = list_drives(&mut icons);
     // 판정할 것을 먼저 챈다 — 목록은 곧 소유권을 넘긴다
@@ -94,6 +97,7 @@ fn scan_into(tx: &Sender<DriveScan>) {
     if tx.send(DriveScan::Listed(rows)).is_err() {
         return;
     }
+    ctx.request_repaint();
     if network.is_empty() {
         return;
     }
@@ -104,7 +108,9 @@ fn scan_into(tx: &Sender<DriveScan>) {
             (root, reachable)
         })
         .collect();
-    let _ = tx.send(DriveScan::Reachability(judged));
+    if tx.send(DriveScan::Reachability(judged)).is_ok() {
+        ctx.request_repaint();
+    }
 }
 
 /// 이 PC의 논리 드라이브 목록 (`C:\`, `D:\` …).
