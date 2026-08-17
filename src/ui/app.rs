@@ -613,11 +613,15 @@ impl ExplorerApp {
         let (tray_tx, tray_rx) = std::sync::mpsc::channel();
         crate::ui::tray::install_channel(tray_tx, cc.egui_ctx.clone());
 
+        // 셸에서 아이콘·이름을 얻는 자리라 즐겨찾기 기본 항목보다 먼저 만든다
+        let mut icons = IconCache::new();
+        let default_favorites = crate::fs::known_folders::default_favorites(&mut icons);
+
         let mut app = ExplorerApp {
             com,
             shell,
             korean_font,
-            icons: IconCache::new(),
+            icons,
             textures: IconTextures::new(),
             app_icon: app_icon::load_texture(&cc.egui_ctx, APP_ICON_TEXTURE_PX),
             workspaces: WorkspaceList::new(),
@@ -637,7 +641,9 @@ impl ExplorerApp {
                 Arc::new(move || ctx.request_repaint())
             }),
             sites: SiteStore::new(),
-            favorites: FavoriteStore::new(),
+            // 즐겨찾기 맨 위에 바탕 화면·다운로드가 선다 (FR-56). 셸에 물어 얻으므로
+            // 그 폴더를 다른 드라이브로 옮겼어도 옮긴 자리를 가리킨다
+            favorites: FavoriteStore::with_defaults(default_favorites, []),
             hostkey: HostKeyGate::new(),
             site_manager: SiteManager::new(),
             toast: Toast::new(),
@@ -709,8 +715,13 @@ impl ExplorerApp {
         // 사이트·큐·도크를 되살린다 (FR-44) — **연결은 열지 않고 전송도 시작하지 않는다**.
         // 원격 탭은 `연결 없음`으로 서 있고, 큐는 대기·실패인 채로 기다린다
         self.sites = session.sites.clone();
-        // 즐겨찾기는 문자열로 담겨 있다(D9) — 여기서 경로로 되돌린다
-        self.favorites = FavoriteStore::from_paths(session.favorites.iter().map(PathBuf::from));
+        // 즐겨찾기는 문자열로 담겨 있다(D9) — 여기서 경로로 되돌린다.
+        // **기본 항목을 다시 싣는다** — `from_paths`로 통째로 갈아치우면 설정 파일이 있는
+        // 모든 사용자(=정상 경로)에게서 바탕 화면·다운로드가 사라진다
+        self.favorites = FavoriteStore::with_defaults(
+            crate::fs::known_folders::default_favorites(&mut self.icons),
+            session.favorites.iter().map(PathBuf::from),
+        );
         self.queue = session::restore_queue(&session);
         self.dock = DockState::from_session(&session.dock);
         self.settings = session.settings.clone();
@@ -2695,7 +2706,7 @@ impl eframe::App for ExplorerApp {
                             show_hidden: self.settings.show_hidden,
                         },
                         targets,
-                        self.favorites.paths(),
+                        &self.favorites.entries(),
                     );
                     // 이번 프레임에 눌린 패널이 다음 전송의 대상이 된다 — 팝업에 가린 클릭은
                     // 여기 오지 않는다(`pressed_panel` 설명). 메뉴 실행보다 **앞서** 반영해야

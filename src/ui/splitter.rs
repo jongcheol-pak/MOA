@@ -3,7 +3,7 @@
 //! 배치 계산은 `app::layout::LayoutTree`(순수 로직·단위 테스트 완비)가 그대로 하고,
 //! 이 파일은 그 결과를 egui 좌표로 옮겨 그리고 입력을 되돌려주는 일만 한다.
 //! egui의 `SidePanel`류 도킹 컨테이너는 쓰지 않는다 — 중첩 자유 분할을 표현하지 못한다.
-use crate::app::favorites::FavoriteAction;
+use crate::app::favorites::{FavoriteAction, FavoriteEntry};
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
 use crate::fs::icons::IconCache;
 use crate::remote::connection::ConnectionId;
@@ -20,7 +20,6 @@ use crate::ui::theme;
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// 스플리터 히트 영역을 좌우(상하)로 넓히는 여유.
 /// 경계선은 얇아야 하고 잡기는 쉬워야 한다 — **조작 영역만** 넓힌다(그리기는 그 두께 그대로)
@@ -168,7 +167,7 @@ pub fn show_layout(
     display: DisplayRules,
     targets: TransferTargets,
     // 폴더 트리 맨 위에 설 즐겨찾기 (FR-56) — 앱에 하나뿐이라 모든 패널이 같은 것을 받는다
-    favorites: &[PathBuf],
+    favorites: &[FavoriteEntry],
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();

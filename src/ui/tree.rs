@@ -11,7 +11,7 @@
 //! 읽는가"뿐이라, 화면 코드를 두 벌로 두면 들여쓰기·선택 강조·`읽는 중…` 같은 것이 곧
 //! 어긋난다. 로컬은 이 모듈이 워커 스레드로 직접 읽고, 원격은 **읽어 달라는 요청을 값으로
 //! 올려보낸다**(연결을 아는 것은 앱이다 — `remote::tree_cache`가 받아 둔다).
-use crate::app::favorites::FavoriteAction;
+use crate::app::favorites::{FavoriteAction, FavoriteEntry};
 use crate::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, compare_entries};
@@ -33,6 +33,9 @@ use windows::Win32::UI::Controls::HIMAGELIST;
 /// 트리 고정 폭 — 현행 Win32 판(`panel::folder_tree::TREE_WIDTH`)과 같은 값.
 /// 폭 조절은 요구에 없다(FR-9는 표시 토글까지)
 pub const TREE_WIDTH: f32 = 200.0;
+
+/// 즐겨찾기 제목 글자 크기 — 항목보다 작고 흐리다(묶음 이름이지 항목이 아니다)
+const FAVORITES_TITLE_PX: f32 = 11.0;
 
 /// 트리 줄의 아이콘 한 변 — 목록의 작은 아이콘과 같은 16px (탐색기와 같은 눈높이)
 const ROW_ICON: f32 = 16.0;
@@ -201,7 +204,7 @@ impl FolderTreeView {
         &mut self,
         ui: &mut egui::Ui,
         source: TreeSource<'_>,
-        favorites: &[PathBuf],
+        favorites: &[FavoriteEntry],
         icons: &mut IconCache,
         textures: &mut IconTextures,
     ) -> TreeOutcome {
@@ -271,7 +274,12 @@ impl FolderTreeView {
     /// 원격 목록 메뉴(`ui::remote_menu`)와 **부품을 나누지 않는다**(plan 비추상화 선언) —
     /// 다루는 것도 항목도 달라서다. 다만 화면 밖으로 나가지 않게 당기는 계산만은 같은
     /// 함수(`ui::menu::clamp_menu_pos`)를 쓴다
-    fn show_menu(&mut self, ui: &mut egui::Ui, favorites: &[PathBuf], outcome: &mut TreeOutcome) {
+    fn show_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        favorites: &[FavoriteEntry],
+        outcome: &mut TreeOutcome,
+    ) {
         let Some((at, target)) = self.menu_at.clone() else {
             return;
         };
@@ -296,7 +304,7 @@ impl FolderTreeView {
                             MenuTarget::Node(path) => {
                                 // 이미 담긴 폴더면 비활성 — 눌러도 되지 않는 것을 눌리게 두면
                                 // 사용자는 눌렀다가 아무 일도 안 일어나는 것을 본다
-                                let enabled = !favorites.iter().any(|known| known == path);
+                                let enabled = !favorites.iter().any(|e| &e.path == path);
                                 if menu_row(ui, crate::i18n::tree_favorite_add(), enabled) {
                                     chosen = Some(FavoriteAction::Add(path.clone()));
                                 }
@@ -339,7 +347,7 @@ impl FolderTreeView {
     fn show_favorites(
         &mut self,
         ui: &mut egui::Ui,
-        favorites: &[PathBuf],
+        favorites: &[FavoriteEntry],
         outcome: &mut TreeOutcome,
         icons: &mut IconCache,
         row: &mut RowCtx<'_>,
@@ -347,20 +355,35 @@ impl FolderTreeView {
         if favorites.is_empty() {
             return;
         }
-        for path in favorites {
+        // 목록 위 제목 — 흐린 작은 글씨다(사용자 결정). 폴더 구역에는 제목을 두지 않는다
+        ui.label(
+            egui::RichText::new(crate::i18n::tree_favorites_title())
+                .size(FAVORITES_TITLE_PX)
+                .color(theme::TEXT_MUTED),
+        );
+        for entry in favorites {
+            let path = &entry.path;
             let choice = TreeChoice::Local(path.clone());
             let is_selected = self.selected.as_ref() == Some(&choice);
             let icon = self.icon_for(path, icons);
+            // 기본 항목은 셸 표시 이름(`바탕 화면`), 사용자 항목은 폴더명이다
+            let label = match &entry.label {
+                Some(label) => label.clone(),
+                None => display_name(path),
+            };
             // 펼침 화살표가 없는 줄이라 그 자리만큼 들여쓴다 — 하위 없는 트리 잎과 같은 자리다
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                let response = tree_row(ui, row, icon, &display_name(path), is_selected)
+                let response = tree_row(ui, row, icon, &label, is_selected)
                     .on_hover_text(path.to_string_lossy());
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
-                // 즐겨찾기 줄의 메뉴는 `해제` 하나다 (FR-56)
-                if response.secondary_clicked()
+                // 즐겨찾기 줄의 메뉴는 `해제` 하나다 (FR-56).
+                // **기본 항목에는 메뉴 자체를 띄우지 않는다**(사용자 결정: 해제할 수 없음) —
+                // 그 줄만 빼고 빈 상자를 띄우면 눌러도 아무 일이 없는 화면이 된다
+                if entry.removable
+                    && response.secondary_clicked()
                     && let Some(at) = response.interact_pointer_pos()
                 {
                     self.menu_at = Some((at, MenuTarget::Favorite(path.clone())));
@@ -881,7 +904,11 @@ mod tests {
                         cache,
                     },
                     // 원격 트리에는 즐겨찾기가 서지 않는다 — 그래도 인자는 받는다
-                    &[PathBuf::from(r"D:\작업")],
+                    &[FavoriteEntry {
+                        path: PathBuf::from(r"D:\작업"),
+                        label: None,
+                        removable: true,
+                    }],
                     &mut icons,
                     &mut textures,
                 );

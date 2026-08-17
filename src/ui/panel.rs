@@ -7,7 +7,7 @@
 //! 실패(삭제·권한)하면 사유만 표시하고 현 위치·목록을 그대로 둔다.
 //!
 //! 워커 스레드에 맡기는 일(열거·만들기)은 `workers`가, 테스트는 `tests`가 든다.
-use crate::app::favorites::FavoriteAction;
+use crate::app::favorites::{FavoriteAction, FavoriteEntry};
 use crate::fs::create;
 use crate::fs::enumerate::{EnumOutcome, FileEntry};
 use crate::fs::icons::IconCache;
@@ -1109,7 +1109,7 @@ impl PanelState {
         remote: RemoteView<'_>,
         menu_state: PanelMenuState,
         targets: TransferTargets,
-        favorites: &[PathBuf],
+        favorites: &[FavoriteEntry],
     ) -> PanelOutcome {
         let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, remote, menu_state, targets);
         let tab = self.tabs.active();

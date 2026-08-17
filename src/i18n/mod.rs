@@ -193,7 +193,9 @@ strings! {
 
     /// 트리 항목 우클릭 메뉴 — 이 폴더를 즐겨찾기에 담는다 (FR-56).
     /// 이미 담긴 폴더면 비활성으로 보인다
-    tree_favorite_add => "즐겨찾기" / "Add to favorites";
+    /// 즐겨찾기 목록 위 제목 — 목록과 같은 낱말이라 메뉴 쪽을 `…에 담기`로 갈랐다
+    tree_favorites_title => "즐겨찾기" / "Favorites";
+    tree_favorite_add => "즐겨찾기에 담기" / "Add to favorites";
     /// 즐겨찾기 줄 우클릭 메뉴 — 목록에서 뺀다
     tree_favorite_remove => "해제" / "Remove from favorites";
 
