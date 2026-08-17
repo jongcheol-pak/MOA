@@ -23,6 +23,7 @@
 - 트리 항목의 썸네일·오버레이 아이콘(공유·바로가기 화살표 등)
 
 ## Deferred / Follow-up
+- [SUGGEST] `show_remote_node`에 남은 `#[allow(clippy::too_many_arguments)]` — `conn`·`cache`·`folder`도 재귀 내내 불변이라 원격 전용 컨텍스트를 하나 더 두면 9개 → 6개로 줄일 수 있다. 다만 그 셋은 로컬 경로에 없어 `RowCtx`에 그대로 얹으면 로컬 호출에 빈 필드가 생긴다 (T2 quality 2라운드 S1)
 - 트리 메뉴의 화면 밖 보정 크기가 실측이 아니라 어림값이다 (대장에 이미 등재 — 이번 작업과 무관)
 - 트리 아이콘·표시 이름 조회를 워커 스레드로 옮기기 — 끊긴 네트워크 드라이브에서 첫 조회가 UI를 멈출 수 있다(이번에는 기존 exe/lnk 실조회와 같은 수준으로 받아들이고 캐시로 반복을 없앤다)
 - [SUGGEST] 즐겨찾기 줄·잎 노드·기본 항목 줄이 "들여쓰기 + 아이콘 + 라벨 + 클릭" 모양을 공유한다 — **이번에 세 번째 유사 지점이 생기므로 T2에서 공통 헬퍼로 뽑는다**(대장 항목의 재검토 조건이 충족됐다)
@@ -193,7 +194,7 @@
     - (ii-a) 없음 — 필요한 셸 심볼이 이미 활성화된 기능 안에 있어 `Cargo.toml`을 건드리지 않는다(전제 5)
   - **Depends on**: -
 
-- [ ] T2. 트리 줄에 아이콘 붙이기 + 줄 그리기 공통화
+- [x] T2. 트리 줄에 아이콘 붙이기 + 줄 그리기 공통화
   - **Type**: D
   - **Design**: ① 조회는 `src/fs/icons.rs`(셸 연동 계층), 그리기는 `src/ui/tree.rs` ② 신규 심볼 — **`IconCache::icon_index_for_path(path) -> i32`는 T1에서 이미 만들었다**(같은 파일의 셸 조회 계열이라 함께 구현 — T1 Design ② 참조). 이 task는 그것을 *쓰는* 쪽만 만든다. 그 함수의 성질은 다음과 같다(경로로 셸에 직접 물어 아이콘 인덱스를 얻는다 — `SHGFI_SYSICONINDEX|SHGFI_SMALLICON`을 `USEFILEATTRIBUTES` **없이** 실제 경로에 건다. 기존 `icon_index`는 `is_dir`을 먼저 걸러 드라이브를 구분하지 못한다 — 전제 1-b. 실패하면 `dir_icon`으로 폴백하고 경로별 결과를 `IconCache`가 캐시한다) · `fn tree_row(ui, icon, label, selected) -> egui::Response`(아이콘 + 라벨을 한 줄로 그린다) · `FolderTreeView`의 `icon_indices: HashMap<PathBuf, i32>`(노드별 조회 결과 캐시) ③ `panel.rs`가 이미 가진 `icons`·`textures`를 `show`에 넘긴다(전제 2) — 트리는 `IconCache`·`IconTextures`만 알고 파일시스템은 모른다 ④ 비추상화 선언: 아이콘 종류별 분기를 만들지 않는다(셸이 경로 하나로 정해 준다). 원격은 `dir_icon()` 하나로 고정한다(사용자 결정)
   - **Acceptance**:
@@ -320,9 +321,15 @@
 
 ## Retry Ledger
 - T1: 리뷰 수정 사이클 1/5 (1라운드 BLOCKER 1 — task 경계 침범, 코드 대신 plan 귀속 정정으로 해소). 동일 BLOCKER 재발 0.
+- T2: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 2 — 하네스 begin_frame 누락 2곳·tree_row의 포커스 표시 상실). 리뷰어 둘 다 판정문 없이 끝나 D 분기로 1회씩 재요청.
 
 
 ## Progress Log
+- T1-T2 완료 (커밋 e6237d6, 다음 커밋): 셸 조회 둘(표시 이름·기본 폴더) → 트리 줄에 아이콘.
+  - 결정: T1이 T2 몫(`icon_index_for_path`·`shell_queries`)을 선구현한 것을 코드로 되돌리지 않고 plan 귀속을 T1로 옮겼다 — 같은 파일·같은 API 계열이라 되돌리면 T2에서 동일 코드를 다시 만들게 된다.
+  - 결정: 줄 그리기를 `selectable_label`에서 직접 그리기(`tree_row`)로 바꾸면서 잃은 **시각적 포커스 표시**를 `has_focus()` 테두리로 되살렸다(키보드 조작 자체는 `Sense::click()`이 보존).
+  - 결정: 늘 함께 다니는 `textures`·`ctx`·`himl`을 `RowCtx`로 묶어 `#[allow(too_many_arguments)]` 두 곳을 없앴다.
+  - 시험 하네스 3곳이 프레임마다 `textures.begin_frame()`을 부르게 했다 — 빠뜨리면 텍스처 생성 상한(프레임당 8개)이 하네스 수명 전체로 굳는다.
 
 ## Next Steps
 
