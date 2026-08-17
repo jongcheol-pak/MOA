@@ -173,7 +173,8 @@
 
 - [ ] T1. 셸에서 표시 이름과 기본 폴더 경로 얻기
   - **Type**: C
-  - **Design**: ① 둘 다 **`fs/` 계층**에 둔다 — 표시 이름 조회는 `src/fs/icons.rs`(같은 셸 API를 이미 쓴다), 기본 폴더 조회는 **`src/fs/known_folders.rs`(신규)**. `app/`은 AGENTS.md가 "순수 로직"으로 선언한 계층이고 `app::favorites` 모듈 주석도 화면·OS를 모르는 순수 계층임을 명시하므로, unsafe 셸 호출을 그리로 넣지 않는다 ② 신규 심볼 — `icons::shell_display_name(path) -> Option<String>`(셸 표시 이름, 실패하면 `None`. **`tree.rs`에 이미 비공개 `display_name`이 있어 이름을 달리 둔다**) · `known_folders::default_favorites() -> Vec<(PathBuf, String)>`(존재하는 기본 폴더의 경로와 표시 이름 — **라벨은 `shell_display_name`으로 얻는다**. 그래야 `바탕 화면`처럼 지역화된 이름이 나오고, 폴더명 그대로면 `Desktop`이 된다) ③ 둘 다 화면을 모르고 `windows` crate만 참조한다. `app::favorites`(T4)가 이 결과를 받아 담는다 — 셸 호출과 목록 규칙이 계층으로 갈린다 ④ 비추상화 선언: 셸 조회를 트레이트로 감싸지 않는다(호출부가 각각 하나이고, 감싸면 unsafe 격리 지점만 늘어난다)
+  - **Design**: ① 둘 다 **`fs/` 계층**에 둔다 — 표시 이름 조회는 `src/fs/icons.rs`(같은 셸 API를 이미 쓴다), 기본 폴더 조회는 **`src/fs/known_folders.rs`(신규)**. `app/`은 AGENTS.md가 "순수 로직"으로 선언한 계층이고 `app::favorites` 모듈 주석도 화면·OS를 모르는 순수 계층임을 명시하므로, unsafe 셸 호출을 그리로 넣지 않는다 ② 신규 심볼 — `icons::shell_display_name(&mut self, path) -> Option<String>`(셸 표시 이름, 실패하면 `None`. **`tree.rs`에 이미 비공개 `display_name`이 있어 이름을 달리 둔다**) · `known_folders::default_favorites(icons: &mut IconCache) -> Vec<(PathBuf, String)>`(존재하는 기본 폴더의 경로와 표시 이름 — **라벨은 `shell_display_name`으로 얻는다**. 그래야 `바탕 화면`처럼 지역화된 이름이 나오고, 폴더명 그대로면 `Desktop`이 된다. 그 조회가 `&mut self` 메서드라 캐시를 쥔 `IconCache`를 인자로 받는다 — 자기 캐시를 새로 만들면 호출마다 셸을 다시 묻는다)
+    - **함께 넣은 것(원래 T2 몫)**: `IconCache::icon_index_for_path`와 `#[cfg(test)] shell_queries` 카운터. 셸 조회 인프라가 `shell_display_name`과 같은 파일·같은 API 계열이라 한자리에서 만드는 편이 자연스러워 T1에서 함께 구현했다(2026-08-17 T1 spec 리뷰 B1로 드러나 귀속을 여기로 옮김) ③ 둘 다 화면을 모르고 `windows` crate만 참조한다. `app::favorites`(T4)가 이 결과를 받아 담는다 — 셸 호출과 목록 규칙이 계층으로 갈린다 ④ 비추상화 선언: 셸 조회를 트레이트로 감싸지 않는다(호출부가 각각 하나이고, 감싸면 unsafe 격리 지점만 늘어난다)
   - **Acceptance**:
     - Given 실재하는 드라이브 경로(`C:\`), When `display_name`, Then 빈 문자열이 아닌 이름을 준다(값 자체는 OS 언어에 따라 다르므로 단언하지 않는다)
     - Given 존재하지 않는 경로, When `display_name`, Then `None`이거나 그 경로 문자열이며 **패닉하지 않는다**
@@ -194,12 +195,12 @@
 
 - [ ] T2. 트리 줄에 아이콘 붙이기 + 줄 그리기 공통화
   - **Type**: D
-  - **Design**: ① 조회는 `src/fs/icons.rs`(셸 연동 계층), 그리기는 `src/ui/tree.rs` ② 신규 심볼 — **`IconCache::icon_index_for_path(path) -> i32`**(경로로 셸에 직접 물어 아이콘 인덱스를 얻는다 — `SHGFI_SYSICONINDEX|SHGFI_SMALLICON`을 `USEFILEATTRIBUTES` **없이** 실제 경로에 건다. 기존 `icon_index`는 `is_dir`을 먼저 걸러 드라이브를 구분하지 못한다 — 전제 1-b. 실패하면 `dir_icon`으로 폴백하고 경로별 결과를 `IconCache`가 캐시한다) · `fn tree_row(ui, icon, label, selected) -> egui::Response`(아이콘 + 라벨을 한 줄로 그린다) · `FolderTreeView`의 `icon_indices: HashMap<PathBuf, i32>`(노드별 조회 결과 캐시) ③ `panel.rs`가 이미 가진 `icons`·`textures`를 `show`에 넘긴다(전제 2) — 트리는 `IconCache`·`IconTextures`만 알고 파일시스템은 모른다 ④ 비추상화 선언: 아이콘 종류별 분기를 만들지 않는다(셸이 경로 하나로 정해 준다). 원격은 `dir_icon()` 하나로 고정한다(사용자 결정)
+  - **Design**: ① 조회는 `src/fs/icons.rs`(셸 연동 계층), 그리기는 `src/ui/tree.rs` ② 신규 심볼 — **`IconCache::icon_index_for_path(path) -> i32`는 T1에서 이미 만들었다**(같은 파일의 셸 조회 계열이라 함께 구현 — T1 Design ② 참조). 이 task는 그것을 *쓰는* 쪽만 만든다. 그 함수의 성질은 다음과 같다(경로로 셸에 직접 물어 아이콘 인덱스를 얻는다 — `SHGFI_SYSICONINDEX|SHGFI_SMALLICON`을 `USEFILEATTRIBUTES` **없이** 실제 경로에 건다. 기존 `icon_index`는 `is_dir`을 먼저 걸러 드라이브를 구분하지 못한다 — 전제 1-b. 실패하면 `dir_icon`으로 폴백하고 경로별 결과를 `IconCache`가 캐시한다) · `fn tree_row(ui, icon, label, selected) -> egui::Response`(아이콘 + 라벨을 한 줄로 그린다) · `FolderTreeView`의 `icon_indices: HashMap<PathBuf, i32>`(노드별 조회 결과 캐시) ③ `panel.rs`가 이미 가진 `icons`·`textures`를 `show`에 넘긴다(전제 2) — 트리는 `IconCache`·`IconTextures`만 알고 파일시스템은 모른다 ④ 비추상화 선언: 아이콘 종류별 분기를 만들지 않는다(셸이 경로 하나로 정해 준다). 원격은 `dir_icon()` 하나로 고정한다(사용자 결정)
   - **Acceptance**:
     - Given 로컬 트리, When 프레임을 몇 번 그림, Then **트리 구역(x < `TREE_WIDTH`)에 그려진 이미지 셰이프 수**가 **즐겨찾기 항목 수 + 보이는 드라이브 수**와 같다(목록도 같은 프레임에 아이콘을 그리므로 구역으로 좁혀 센다 — 이를 세는 헬퍼를 시험에 새로 둔다).
       **비교 대상을 "그려진 줄 수"가 아니라 입력에서 계산한다** — T4가 아이콘 없는 **제목 줄**을 더하므로, 줄을 세는 방식이면 그때 `이미지 = 줄 − 1`이 되어 이 시험이 T4에서 깨진다(M3). 제목·구분선은 애초에 세지 않는다
     - Given 원격 트리, When 그림, Then 모든 줄에 **같은 폴더 아이콘**이 그려진다(사용자 결정 — 서버 아이콘은 얻을 수 없다)
-    - Given 같은 경로를 두 번 요청, When `IconCache::icon_index_for_path`, Then **셸 조회는 한 번만 일어난다** — `IconCache`에 `#[cfg(test)] shell_queries: usize`(실제 `SHGetFileInfoW` 호출에서 +1)를 두고 `src/fs/icons.rs` 시험이 그 값을 단언한다.
+    - Given 같은 경로를 두 번 요청, When `IconCache::icon_index_for_path`, Then **셸 조회는 한 번만 일어난다** — `IconCache`에 `#[cfg(test)] shell_queries: usize`(실제 `SHGetFileInfoW` 호출에서 +1)를 두고 `src/fs/icons.rs` 시험이 그 값을 단언한다. **이 시험은 T1에서 이미 통과했다**(선구현 — T1 Design ②) — T2 diff에는 이 항목의 신규 코드가 없으며, T2가 검증할 것은 트리가 그 함수를 실제로 쓰는가다.
       **맵 크기(`len`)로는 이것을 관측할 수 없다** — 매 프레임 다시 조회해 다시 넣어도 키가 같아 크기가 그대로이기 때문이다(2라운드 지적)
     - 아이콘이 붙어도 클릭·펼침·우클릭 메뉴가 종전대로 동작한다(기존 시험 전건 통과)
     - `cargo test` 통과, clippy 경고 0

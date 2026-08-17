@@ -190,7 +190,8 @@ impl IconCache {
             return idx;
         }
         let mut info = SHFILEINFOW::default();
-        // 안전성: 실제 경로 조회 — 실패해도 `iIcon`은 0(기본 아이콘)이라 그리기가 깨지지 않는다
+        // 안전성: 실제 경로 조회 — 실패는 반환값 0으로 오고, 그때는 아래에서 `dir_icon`으로
+        // 갈아 끼우므로 `info`의 값을 읽지 않는다
         let ok = unsafe {
             SHGetFileInfoW(
                 &HSTRING::from(path),
@@ -460,7 +461,15 @@ mod tests {
     fn 없는_경로의_표시_이름은_없음이거나_패닉하지_않는다() {
         let _shell = shell_test_guard();
         let mut icons = IconCache::new();
-        // 실재하지 않는 드라이브 — 셸이 무엇을 주든 앱이 죽지 않아야 한다
-        let _ = icons.shell_display_name(r"QQ:\없는폴더\깊이");
+        // 실재하지 않는 드라이브 — 셸이 무엇을 주든 앱이 죽지 않아야 한다.
+        // 돌려주는 값도 계약대로여야 한다: 없거나(None), 있다면 경로에서 온 이름이다
+        let path = r"QQ:\없는폴더\깊이";
+        if let Some(name) = icons.shell_display_name(path) {
+            assert!(!name.is_empty(), "빈 이름을 돌려줬다");
+            assert!(
+                path.contains(name.as_str()),
+                "실재하지 않는 경로인데 경로와 무관한 이름이 왔다: {name:?}"
+            );
+        }
     }
 }

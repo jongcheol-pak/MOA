@@ -30,7 +30,10 @@ pub fn default_favorites(icons: &mut IconCache) -> Vec<(PathBuf, String)> {
         .collect()
 }
 
-/// 등록된 특별 폴더의 경로 — 얻지 못하면 `None`
+/// 등록된 특별 폴더의 경로 — 얻지 못하면 `None`.
+///
+/// 셸 조회를 트레이트로 감싸지 않는다 — 부르는 곳이 이 파일 하나뿐이라, 감싸면 갈아 끼울
+/// 일도 없이 `unsafe` 격리 지점만 하나 늘어난다 (계획 T1 Design ④)
 fn known_folder(id: &windows::core::GUID) -> Option<PathBuf> {
     // 안전성: 셸이 할당한 문자열을 받아 즉시 복사하고 `CoTaskMemFree`로 돌려준다.
     // 실패는 `Result`로 오므로 널 포인터를 역참조할 일이 없다
