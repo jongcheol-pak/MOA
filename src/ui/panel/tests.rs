@@ -104,9 +104,28 @@ fn separator_count(output: &eframe::egui::FullOutput) -> usize {
 /// 기본이 병렬이라, `fs` 밖의 시험도 같은 잠금을 잡아야 한다(`fs::icons`의 규약).
 /// 잠금은 이 함수 안에서 잡고 놓는다 — 조회가 끝나면 더 쥐고 있을 이유가 없다
 fn drive_labels() -> Vec<(std::path::PathBuf, String)> {
-    let _shell = crate::fs::icons::shell_test_guard();
-    let mut icons = crate::fs::icons::IconCache::new();
-    crate::ui::tree::drive_roots(&mut icons)
+    drive_rows()
+        .iter()
+        .map(|row| (row.path.clone(), row.label.clone()))
+        .collect()
+}
+
+/// 트리에 내려보낼 드라이브 줄 — 앱이 워커로 만드는 것을 시험에서는 곧바로 만든다 (T4).
+///
+/// **접근 판정을 하지 않는 `list_drives`를 쓴다** — 판정까지 하면 끊긴 네트워크
+/// 드라이브가 있는 PC에서 시험 하나가 초 단위로 늘어진다
+fn drive_rows() -> &'static [crate::fs::drives::DriveRow] {
+    // **프로세스에 한 번만 조회한다.** 그리기 하네스가 프레임마다 이것을 부르는데,
+    // 매번 새로 조회하면 ⓐ `IconCache`를 새로 만들어 캐시가 비고 ⓑ 드라이브마다 셸을
+    // 다시 물으며 ⓒ 셸 잠금을 프레임마다 잡아 다른 시험과 직렬화된다. 실측으로 전체
+    // 스위트가 10분을 넘겼다 — 드라이브 구성은 시험이 도는 동안 바뀌지 않으므로
+    // 한 번 만들어 나눠 쓴다
+    static ROWS: std::sync::OnceLock<Vec<crate::fs::drives::DriveRow>> = std::sync::OnceLock::new();
+    ROWS.get_or_init(|| {
+        let _shell = crate::fs::icons::shell_test_guard();
+        let mut icons = crate::fs::icons::IconCache::new();
+        crate::fs::drives::list_drives(&mut icons)
+    })
 }
 
 /// **트리 구역**(x < `TREE_WIDTH`)에 그려진 아이콘 수.
@@ -226,6 +245,7 @@ fn draw_once_with_favorites(
                 // 전송 대상이 없는 상태 — 이 시험들은 탭 아이콘이 아니라 배치·상태를 본다
                 crate::ui::tabs::TransferTargets::default(),
                 favorites,
+                drive_rows(),
             );
         });
     })
@@ -1346,6 +1366,7 @@ fn 즐겨찾기를_누르면_그_폴더로_옮겨간다() {
                     PanelMenuState::for_panes(1, ViewMode::Details),
                     crate::ui::tabs::TransferTargets::default(),
                     &favorites,
+                    drive_rows(),
                 );
             });
         })
@@ -1432,6 +1453,7 @@ impl FavoriteHarness {
                     PanelMenuState::for_panes(1, ViewMode::Details),
                     crate::ui::tabs::TransferTargets::default(),
                     favorites,
+                    drive_rows(),
                 );
                 picked = outcome.favorite;
             });
@@ -1747,7 +1769,7 @@ fn 이미_담긴_폴더는_즐겨찾기_줄이_비활성이다() {
             .expect("트리 토글 아이콘")
             .1;
         // 즐겨찾기 줄과 트리 줄에 같은 이름이 함께 있을 수 있다 — **아래쪽**이 트리 줄이다.
-        // 드라이브 판정은 `drive_roots`가 준 (경로, 표시 이름) 쌍으로 한다 — 표시 이름에는
+        // 드라이브 판정은 `drive_labels`가 준 (경로, 표시 이름) 쌍으로 한다 — 표시 이름에는
         // 규칙이 없어 패턴으로는 가려낼 수 없고, **기대 경로도 그 쌍에서 가져와야** 한다
         // (그려진 글자로 경로를 만들면 표시 이름이 그대로 경로가 되어 어긋난다)
         let 이름들 = drive_labels();
@@ -2458,10 +2480,7 @@ fn 트리_줄에는_셸_아이콘이_붙는다() {
     panel.tree_visible = true;
     panel.deferred_start = None;
     let favorites = [user_favorite(r"C:\Users"), user_favorite(r"C:\Windows")];
-    let 드라이브 = {
-        let mut icons = crate::fs::icons::IconCache::new();
-        crate::ui::tree::drive_roots(&mut icons).len()
-    };
+    let 드라이브 = { drive_rows().len() };
     let 예상 = favorites.len() + 드라이브;
 
     // 텍스처는 프레임당 8개까지만 새로 만들어진다(`icon_tex`) — 몇 프레임 돌려 채운다

@@ -5,6 +5,7 @@
 //! egui의 `SidePanel`류 도킹 컨테이너는 쓰지 않는다 — 중첩 자유 분할을 표현하지 못한다.
 use crate::app::favorites::{FavoriteAction, FavoriteEntry};
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir};
+use crate::fs::drives::DriveRow;
 use crate::fs::icons::IconCache;
 use crate::remote::connection::ConnectionId;
 use crate::remote::url::RemoteUrl;
@@ -168,6 +169,8 @@ pub fn show_layout(
     targets: TransferTargets,
     // 폴더 트리 맨 위에 설 즐겨찾기 (FR-56) — 앱에 하나뿐이라 모든 패널이 같은 것을 받는다
     favorites: &[FavoriteEntry],
+    // 트리의 드라이브 줄과 그 연결 상태 (T4) — 즐겨찾기와 같은 이유로 앱에 하나뿐이다
+    drives: &[DriveRow],
 ) -> LayoutOutcome {
     let mut outcome = LayoutOutcome::default();
     let area = ui.available_rect_before_wrap();
@@ -212,7 +215,7 @@ pub fn show_layout(
                 {
                     panel.apply_display_rules(display, ctx);
                     panel.show(
-                        ui, ctx, icons, textures, remote, menu_state, targets, favorites,
+                        ui, ctx, icons, textures, remote, menu_state, targets, favorites, drives,
                     )
                 }
             })

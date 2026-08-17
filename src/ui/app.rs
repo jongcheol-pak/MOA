@@ -2,6 +2,7 @@
 //!
 //! 실제 탐색은 `ui::panel::PanelState`가 담당하고, 그 패널들을 담은 분할 화면 한 벌이
 //! `WorkspaceView`다. 이 구조체는 워크스페이스 목록(사이드바)과 뷰들을 잇는 그릇이다.
+use crate::app::drives::DriveList;
 use crate::app::favorites::FavoriteStore;
 use crate::app::layout::TreeShape;
 use crate::app::layout::{LayoutTree, PanelId, Rect as LayoutRect, SplitDir, SplitPlace};
@@ -516,6 +517,11 @@ pub struct ExplorerApp {
     sites: SiteStore,
     /// 폴더 트리 즐겨찾기 (FR-56) — 앱에 하나뿐이라 모든 패널·탭이 같은 목록을 본다
     favorites: FavoriteStore,
+    /// 트리의 드라이브 줄과 그 연결 상태 (T4) — 즐겨찾기와 같은 이유로 앱에 하나뿐이다.
+    /// 값은 시작할 때 띄운 워커가 채우고, 사용자가 드라이브를 열어 볼 때 갱신된다
+    drives: DriveList,
+    /// 그 워커의 결과를 받는 통로 — 목록과 접근 판정이 따로 도착한다
+    drive_scan: Option<std::sync::mpsc::Receiver<crate::fs::drives::DriveScan>>,
     /// SFTP 지문 확인 대화와 연결 워커를 잇는 통로 (D15)
     hostkey: HostKeyGate,
     /// 사이트 관리자 대화 (FR-27) — 연결 메뉴의 `새 사이트 추가…`와 실패 화면의 `설정 열기`가 연다
@@ -644,6 +650,10 @@ impl ExplorerApp {
             // 즐겨찾기 맨 위에 바탕 화면·다운로드가 선다 (FR-56). 셸에 물어 얻으므로
             // 그 폴더를 다른 드라이브로 옮겼어도 옮긴 자리를 가리킨다
             favorites: FavoriteStore::with_defaults(default_favorites, []),
+            // 드라이브 줄은 **워커가 만든다** — 끊긴 네트워크 드라이브의 접근 판정이
+            // 첫 시도에 2.8초까지 걸려(실측) UI 스레드에서는 할 수 없다 (T4)
+            drives: DriveList::default(),
+            drive_scan: Some(crate::fs::drives::spawn_scan(&cc.egui_ctx)),
             hostkey: HostKeyGate::new(),
             site_manager: SiteManager::new(),
             toast: Toast::new(),
@@ -1820,6 +1830,37 @@ impl ExplorerApp {
         }
     }
 
+    /// 드라이브 줄 워커의 결과를 거둔다 (T4).
+    ///
+    /// **두 번 온다** — 목록이 먼저, 네트워크 드라이브의 접근 판정이 뒤이어. 둘 다 받으면
+    /// 통로를 놓아 다음 프레임부터는 아무 일도 하지 않는다(시작할 때 한 번뿐인 조회다).
+    /// 이후 상태 갱신은 사용자가 그 드라이브를 열어 볼 때 `DriveList::observe`가 한다
+    fn poll_drives(&mut self) {
+        let Some(rx) = &self.drive_scan else {
+            return;
+        };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::fs::drives::DriveScan::Listed(rows)) => self.drives.replace(rows),
+                Ok(crate::fs::drives::DriveScan::Reachability(judged)) => {
+                    self.drives.apply_reachable(&judged);
+                    // 판정이 마지막 소식이다 — 더 기다릴 것이 없다
+                    done = true;
+                }
+                // 워커가 보낼 것을 다 보내고 끝났다(네트워크 드라이브가 없으면 판정도 없다)
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            }
+        }
+        if done {
+            self.drive_scan = None;
+        }
+    }
+
     /// 트레이에서 온 통지를 처리한다 — 창을 띄우는 일은 프로시저가 이미 끝냈다
     fn poll_tray(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.tray_rx.try_recv() {
@@ -2553,6 +2594,8 @@ impl eframe::App for ExplorerApp {
         // 보이지 않는 워크스페이스의 원격 탭이 옛 단계로 굳는다
         let now = ctx.input(|input| input.time);
         self.poll_remote(now);
+        // 드라이브 줄·연결 상태 (T4) — 워커가 두 번에 나눠 올린다
+        self.poll_drives();
         // 펼쳐진 로컬 폴더를 큐로 옮긴다 (FR-38)
         while let Ok((site, files, skipped)) = self.expand_rx.try_recv() {
             // 이 펼치기가 끝났다 — 상태 줄의 `펼치는 중`이 그만큼 줄어든다
@@ -2707,6 +2750,7 @@ impl eframe::App for ExplorerApp {
                         },
                         targets,
                         &self.favorites.entries(),
+                        self.drives.rows(),
                     );
                     // 이번 프레임에 눌린 패널이 다음 전송의 대상이 된다 — 팝업에 가린 클릭은
                     // 여기 오지 않는다(`pressed_panel` 설명). 메뉴 실행보다 **앞서** 반영해야

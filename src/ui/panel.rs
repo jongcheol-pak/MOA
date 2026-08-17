@@ -9,6 +9,7 @@
 //! 워커 스레드에 맡기는 일(열거·만들기)은 `workers`가, 테스트는 `tests`가 든다.
 use crate::app::favorites::{FavoriteAction, FavoriteEntry};
 use crate::fs::create;
+use crate::fs::drives::DriveRow;
 use crate::fs::enumerate::{EnumOutcome, FileEntry};
 use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
@@ -1143,6 +1144,7 @@ impl PanelState {
         menu_state: PanelMenuState,
         targets: TransferTargets,
         favorites: &[FavoriteEntry],
+        drives: &[DriveRow],
     ) -> PanelOutcome {
         let strip = crate::ui::tabs::show_tab_strip(ui, &self.tabs, remote, menu_state, targets);
         let tab = self.tabs.active();
@@ -1189,7 +1191,8 @@ impl PanelState {
                         .max_rect(tree_rect.shrink(TREE_PAD)),
                     |ui| {
                         ui.set_clip_rect(tree_rect);
-                        self.tree.show(ui, source, favorites, icons, textures)
+                        self.tree
+                            .show(ui, source, favorites, drives, icons, textures)
                     },
                 )
                 .inner

@@ -9,10 +9,13 @@
 //! 2.8초**다(실측). 한 함수로 묶으면 드라이브 줄이 화면에 서는 것 자체가 그만큼 늦고,
 //! 시험도 끊긴 드라이브가 있는 PC에서 초 단위로 늘어진다.
 use crate::fs::icons::IconCache;
+use eframe::egui;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use windows::Win32::Storage::FileSystem::{
     GetDriveTypeW, GetFileAttributesW, GetLogicalDrives, INVALID_FILE_ATTRIBUTES,
 };
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::System::WindowsProgramming::DRIVE_REMOTE;
 use windows::core::HSTRING;
 
@@ -50,6 +53,58 @@ pub enum DriveScan {
     Listed(Vec<DriveRow>),
     /// 네트워크 드라이브의 접근 판정 `(뿌리 경로, 닿았는가)` (뒤이어 온다)
     Reachability(Vec<(PathBuf, bool)>),
+}
+
+/// 드라이브 줄을 워커 스레드에서 만들고, 결과를 받을 채널을 돌려준다.
+///
+/// **두 번 보낸다** — 목록(`Listed`)을 먼저, 네트워크 드라이브의 접근 판정(`Reachability`)을
+/// 뒤이어. 한 번에 묶으면 끊긴 드라이브 하나가 화면의 드라이브 줄 전체를 몇 초씩 붙든다.
+///
+/// 도착할 때마다 `request_repaint`로 화면을 깨운다 — 워커는 프레임 흐름을 모르므로
+/// 이 신호가 없으면 사용자가 마우스를 움직일 때까지 결과가 화면에 오르지 않는다
+pub fn spawn_scan(ctx: &egui::Context) -> Receiver<DriveScan> {
+    let (tx, rx) = channel();
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        // 셸 조회(`SHGetFileInfoW`)는 COM을 쓴다 — 스레드마다 초기화가 필요하다
+        // (`fs::thumbnail`의 썸네일 워커와 같은 방식). 실패해도 조회만 폴백되고 앱은 계속 돈다
+        // 안전성: 이 스레드에서 열고 끝에서 반드시 닫는다
+        let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        scan_into(&tx);
+        if com {
+            // 안전성: 위에서 성공한 초기화와 짝을 맞춘다
+            unsafe { CoUninitialize() };
+        }
+        ctx.request_repaint();
+    });
+    rx
+}
+
+/// 워커 본체 — 목록을 보낸 뒤 판정을 보낸다. 받는 쪽이 사라지면 조용히 멎는다
+fn scan_into(tx: &Sender<DriveScan>) {
+    let mut icons = IconCache::new();
+    let rows = list_drives(&mut icons);
+    // 판정할 것을 먼저 챈다 — 목록은 곧 소유권을 넘긴다
+    let network: Vec<PathBuf> = rows
+        .iter()
+        .filter(|row| row.network)
+        .map(|row| row.path.clone())
+        .collect();
+    // 수신부가 이미 버려졌으면(앱 종료) 더 할 일이 없다 — 무거운 판정을 시작하지 않는다
+    if tx.send(DriveScan::Listed(rows)).is_err() {
+        return;
+    }
+    if network.is_empty() {
+        return;
+    }
+    let judged = network
+        .into_iter()
+        .map(|root| {
+            let reachable = is_reachable(&root);
+            (root, reachable)
+        })
+        .collect();
+    let _ = tx.send(DriveScan::Reachability(judged));
 }
 
 /// 이 PC의 논리 드라이브 목록 (`C:\`, `D:\` …).

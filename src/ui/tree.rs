@@ -12,6 +12,7 @@
 //! 어긋난다. 로컬은 이 모듈이 워커 스레드로 직접 읽고, 원격은 **읽어 달라는 요청을 값으로
 //! 올려보낸다**(연결을 아는 것은 앱이다 — `remote::tree_cache`가 받아 둔다).
 use crate::app::favorites::{FavoriteAction, FavoriteEntry};
+use crate::fs::drives::DriveRow;
 use crate::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, compare_entries};
@@ -27,7 +28,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use windows::Win32::Storage::FileSystem::GetLogicalDrives;
 use windows::Win32::UI::Controls::HIMAGELIST;
 
 /// 트리 고정 폭 — 현행 Win32 판(`panel::folder_tree::TREE_WIDTH`)과 같은 값.
@@ -123,12 +123,6 @@ enum Node {
 ///
 /// 확장 상태(열림/닫힘)는 egui가 위젯 id로 보관하고, 이 구조체는 **무엇을 읽었는지**만 갖는다
 pub struct FolderTreeView {
-    /// 드라이브 목록 `(경로, 셸 표시 이름)` — **첫 프레임에 한 번** 만든다.
-    ///
-    /// `None`이면 아직 읽지 않은 것이다(드라이브가 없는 PC의 빈 목록과 구분된다).
-    /// 표시 이름 조회에 `IconCache`가 필요한데 그것은 그릴 때에야 손에 들어오므로,
-    /// 생성자가 아니라 첫 그리기에서 채운다 — 어차피 한 번뿐이라 결과는 같다
-    roots: Option<Rc<Vec<(PathBuf, String)>>>,
     /// 펼친 적이 있는 폴더의 하위 목록. 한 번 읽으면 다시 읽지 않는다
     nodes: HashMap<PathBuf, Node>,
     /// 트리에서 마지막으로 고른 폴더 — 강조 표시용. 원격 트리도 이 자리를 쓴다
@@ -169,7 +163,6 @@ impl FolderTreeView {
     pub fn new() -> FolderTreeView {
         let (tx, rx) = channel();
         FolderTreeView {
-            roots: None,
             icon_indices: HashMap::new(),
             nodes: HashMap::new(),
             selected: None,
@@ -199,12 +192,18 @@ impl FolderTreeView {
     /// 이동도 조회도 호출부의 몫이다 — 트리는 목록도 연결도 모른다.
     ///
     /// `favorites`는 **로컬 트리 맨 위에 설 바로가기들**이다 (FR-56) — 앱이 하나만 들고
-    /// 모든 패널에 같은 것을 내려보낸다. 트리는 저장소 타입을 모르고 경로 목록만 본다
+    /// 모든 패널에 같은 것을 내려보낸다. 트리는 저장소 타입을 모르고 경로 목록만 본다.
+    ///
+    /// `drives`도 같은 모양이다 (T4) — 드라이브 줄과 그 연결 상태를 앱이 워커로 만들어
+    /// 내려보낸다. 트리가 각자 조회하지 않는 이유는 패널마다 트리가 있어 조회가
+    /// 되풀이되고, 연결 상태가 패널마다 갈리면 같은 드라이브에 X가 있는 트리와 없는
+    /// 트리가 한 화면에 서기 때문이다. 원격 트리에는 쓰이지 않는다(빈 슬라이스여도 된다)
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         source: TreeSource<'_>,
         favorites: &[FavoriteEntry],
+        drives: &[DriveRow],
         icons: &mut IconCache,
         textures: &mut IconTextures,
     ) -> TreeOutcome {
@@ -223,16 +222,18 @@ impl FolderTreeView {
                 TreeSource::Local => {
                     // 즐겨찾기는 **로컬 트리에만** 선다 (사용자 결정 — 원격은 제외)
                     self.show_favorites(ui, favorites, &mut outcome, icons, &mut row);
-                    let roots = match &self.roots {
-                        Some(roots) => Rc::clone(roots),
-                        None => {
-                            let roots = Rc::new(drive_roots(icons));
-                            self.roots = Some(Rc::clone(&roots));
-                            roots
-                        }
-                    };
-                    for (root, label) in roots.iter() {
-                        self.show_node(ui, root, label, &mut outcome, icons, &mut row);
+                    // 드라이브 줄은 **앱이 워커로 만들어 내려보낸다** — 트리는 패널마다
+                    // 있어 각자 조회하면 셸·네트워크 왕복이 그만큼 되풀이된다 (T4)
+                    for drive in drives {
+                        self.show_node(
+                            ui,
+                            &drive.path,
+                            &drive.label,
+                            Some(drive),
+                            &mut outcome,
+                            icons,
+                            &mut row,
+                        );
                     }
                 }
                 TreeSource::Remote { conn, root, cache } => {
@@ -509,19 +510,29 @@ impl FolderTreeView {
         }
     }
 
-    /// 노드 하나와 (펼쳐져 있으면) 그 하위를 그린다
+    /// 노드 하나와 (펼쳐져 있으면) 그 하위를 그린다.
+    ///
+    /// **드라이브 뿌리와 하위 폴더가 같은 이 함수를 지난다** — `drive`가 그 둘을 가른다.
+    /// 뿌리 호출은 `Some`이라 아이콘을 워커가 준 값에서 얻고, 하위 재귀 호출은 `None`이라
+    /// 지금처럼 `icon_for`로 UI 스레드에서 얻는다(하위는 로컬 경로라 대개 빠르다).
+    /// 연결 끊김 배지도 이 갈림에서 켜진다 — 그것을 그리는 것은 T5의 몫이다
+    #[allow(clippy::too_many_arguments)]
     fn show_node(
         &mut self,
         ui: &mut egui::Ui,
         path: &Path,
         label: &str,
+        drive: Option<&DriveRow>,
         outcome: &mut TreeOutcome,
         icons: &mut IconCache,
         row: &mut RowCtx<'_>,
     ) {
         let choice = TreeChoice::Local(path.to_path_buf());
         let is_selected = self.selected.as_ref() == Some(&choice);
-        let icon = self.icon_for(path, icons);
+        let icon = match drive {
+            Some(drive) => drive.icon,
+            None => self.icon_for(path, icons),
+        };
 
         // 하위 폴더가 없다고 확인된 노드는 펼침 화살표를 그리지 않는다
         // (현행 Win32 판의 `set_no_children`과 같은 동작). 화살표 자리만큼 들여쓴다
@@ -563,7 +574,7 @@ impl FolderTreeView {
                     for child in children.iter() {
                         // 하위는 셸 이름이 아니라 폴더명이다 — 탐색기도 그렇게 보인다
                         let child_label = display_name(child);
-                        self.show_node(ui, child, &child_label, outcome, icons, row);
+                        self.show_node(ui, child, &child_label, None, outcome, icons, row);
                     }
                 }
                 None => {
@@ -636,27 +647,6 @@ fn remote_display_name(path: &RemotePath) -> String {
     path.file_name()
         .map(str::to_owned)
         .unwrap_or_else(|| path.as_str().to_owned())
-}
-
-/// 드라이브 루트 (`C:\`, `D:\` …).
-/// 비트마스크의 비트 순서가 곧 알파벳 순이라 따로 정렬하지 않는다
-pub fn drive_roots(icons: &mut IconCache) -> Vec<(PathBuf, String)> {
-    // 안전성: 인자 없는 조회 — 현재 드라이브 비트마스크만 반환한다
-    let mask = unsafe { GetLogicalDrives() };
-    (0..26u32)
-        .filter(|i| mask & (1 << i) != 0)
-        .map(|i| PathBuf::from(format!("{}:\\", (b'A' + i as u8) as char)))
-        .map(|path| {
-            // 탐색기처럼 `로컬 디스크 (C:)`로 보인다 — 이름을 우리가 조립하지 않으므로
-            // 드라이브 종류(고정·이동식·네트워크)도 판정할 필요가 없다.
-            // **시작할 때 한 번만** 묻는다(목록을 다시 만들지 않는다) — 끊긴 네트워크
-            // 드라이브의 조회가 늦어도 그 한 번에 그친다
-            let label = icons
-                .shell_display_name(&path.to_string_lossy())
-                .unwrap_or_else(|| path.to_string_lossy().into_owned());
-            (path, label)
-        })
-        .collect()
 }
 
 /// 열거 결과에서 하위 폴더만 골라 이름 자연 정렬로 돌려준다.
@@ -857,35 +847,6 @@ mod tests {
         assert_eq!(display_name(Path::new(r"C:\")), r"C:\");
     }
 
-    #[test]
-    fn 드라이브_루트는_루트_경로_형태다() {
-        // 실제 구성은 PC마다 다르므로 형태만 검증한다 (C: 드라이브는 항상 있다)
-        let _shell = crate::fs::icons::shell_test_guard();
-        let mut icons = IconCache::new();
-        let roots = drive_roots(&mut icons);
-        assert!(roots.iter().any(|(path, _)| path == Path::new(r"C:\")));
-        assert!(roots.iter().all(|(path, _)| path.parent().is_none()));
-    }
-
-    #[test]
-    fn 드라이브는_셸_표시_이름으로_보인다() {
-        // T3 Acceptance — `C:\`가 아니라 `로컬 디스크 (C:)` 같은 이름이다.
-        // 값 자체는 OS 언어·볼륨 레이블을 따르므로 "경로와 다르다"만 본다
-        let _shell = crate::fs::icons::shell_test_guard();
-        let mut icons = IconCache::new();
-        let roots = drive_roots(&mut icons);
-        let (path, label) = roots
-            .iter()
-            .find(|(path, _)| path == Path::new(r"C:\"))
-            .expect("C 드라이브");
-        assert!(!label.is_empty(), "이름이 비었다");
-        assert_ne!(
-            label.as_str(),
-            path.to_string_lossy(),
-            "경로가 그대로 왔다 — 셸 표시 이름을 거치지 않았다"
-        );
-    }
-
     /// 원격 트리를 한 프레임 그리고 결과를 돌려준다
     fn draw_remote(cache: &TreeCache, root: &str) -> TreeOutcome {
         let ctx = egui::Context::default();
@@ -909,6 +870,8 @@ mod tests {
                         label: None,
                         removable: true,
                     }],
+                    // 드라이브 줄도 로컬 트리의 것이라 원격에는 서지 않는다
+                    &[],
                     &mut icons,
                     &mut textures,
                 );
