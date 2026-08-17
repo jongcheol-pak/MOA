@@ -253,7 +253,7 @@
     - (i) `ExplorerApp`을 시험에서 만들 수 없어 배선을 못 덮는다 → 갱신 규칙을 이 순수 모듈에 둬서 해소(위키 규약 ⓑ)
   - **Depends on**: -
 
-- [ ] T4. 드라이브 줄을 워커가 만들어 앱이 소유하게 한다
+- [x] T4. 드라이브 줄을 워커가 만들어 앱이 소유하게 한다
   - **Type**: D
   > **T3 선취 반영 (2026-08-17)**: 아래 Design ②가 열거한 `list_drives`·`is_reachable`·`DriveScan`은 **T3에서 이미 만들었다**(T3 「경계 갱신」 참조). **이 task에 남은 fs 쪽 몫은 워커 `spawn_scan` 하나**이고, 나머지(트리 소유 이동·`show_node` 홉·`ui/app.rs` 배선·시험 헬퍼 대체·`draw_remote` 갱신)는 그대로다. Files의 `Cargo.toml`도 T3으로 옮겨 갔다.
 
@@ -368,6 +368,7 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- T4: 수정 사이클 1/5 (quality M1 — plan이 동반 변경으로 명시한 `fs/icons.rs` doc 주석 갱신 누락). 주석만 바뀌어 증분 재리뷰 ① 판정으로 quality 재실행 생략, spec이 현재 트리에서 반영을 재확인. spec은 판정문 빈 응답 1회 → 재요청으로 회수(D 분기).
 - T3: 수정 사이클 1/5 (spec B1 — task 경계 선취. 코드 변경 없이 plan 경계 갱신으로 해소, 재리뷰 BLOCKER 0 / MINOR 2건도 그 자리에서 반영). quality MINOR 1건은 `(판정 유보)` 표시라 대장 미등재.
 - T2: 수정 사이클 1/5 (quality M1 — 고아 심볼 `dynamic::open_failed` 제거). 동일 지적 재발 0, 재리뷰 OK.
 
