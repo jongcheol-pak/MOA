@@ -1156,7 +1156,7 @@ impl PanelState {
                         .max_rect(tree_rect.shrink(TREE_PAD)),
                     |ui| {
                         ui.set_clip_rect(tree_rect);
-                        self.tree.show(ui, source, favorites)
+                        self.tree.show(ui, source, favorites, icons, textures)
                     },
                 )
                 .inner

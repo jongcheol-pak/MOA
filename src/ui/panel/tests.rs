@@ -93,6 +93,34 @@ fn separator_count(output: &eframe::egui::FullOutput) -> usize {
     found
 }
 
+/// **트리 구역**(x < `TREE_WIDTH`)에 그려진 아이콘 수.
+///
+/// 목록도 같은 프레임에 아이콘을 그리므로 구역으로 좁혀 센다. 아이콘은 텍스처를 입힌
+/// 사각형이라 `egui::Shape::Mesh`로 나온다(글자·선은 다른 종류라 섞이지 않는다)
+fn tree_icon_count(output: &eframe::egui::FullOutput) -> usize {
+    fn count(shape: &egui::Shape, found: &mut usize) {
+        match shape {
+            egui::Shape::Mesh(mesh) => {
+                let bounds = mesh.calc_bounds();
+                if bounds.max.x < crate::ui::tree::TREE_WIDTH {
+                    *found += 1;
+                }
+            }
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    count(shape, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = 0;
+    for clipped in &output.shapes {
+        count(&clipped.shape, &mut found);
+    }
+    found
+}
+
 /// 한 프레임에 그려진 자리표시 막대 수 — 목록 자리에 자리표시가 섰는지 판정한다.
 /// 막대는 글자가 아니라 사각형이라 `drawn_texts`로는 보이지 않는다
 fn skeleton_bars(output: &eframe::egui::FullOutput) -> usize {
@@ -148,6 +176,9 @@ fn draw_once_with_favorites(
     ctx.run_ui(Default::default(), |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
             let ctx = ui.ctx().clone();
+            // 앱은 프레임마다 이것을 부른다(`ui::app`) — 하네스가 빠뜨리면 텍스처 생성
+            // 상한(프레임당 8개)이 통틀어 8개로 굳어 아이콘이 많은 PC에서 시험이 어긋난다
+            textures.begin_frame();
             panel.show(
                 ui,
                 &ctx,
@@ -2161,5 +2192,38 @@ fn 다_읽고_나면_자리표시를_거둔다() {
     assert!(
         !panel.shows_loading_placeholder(),
         "다 읽었는데 자리표시가 남았다"
+    );
+}
+
+#[test]
+fn 트리_줄에는_셸_아이콘이_붙는다() {
+    // T2 Acceptance — 즐겨찾기 줄과 보이는 드라이브 줄마다 아이콘 하나씩.
+    // 비교 대상을 "그려진 줄 수"가 아니라 **입력에서 계산한다** — T4가 아이콘 없는 제목
+    // 줄을 더하므로 줄을 세는 방식이면 그때 이 시험이 깨진다(계획 M3)
+    let _shell = crate::fs::icons::shell_test_guard();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let favorites = [
+        std::path::PathBuf::from(r"C:\Users"),
+        std::path::PathBuf::from(r"C:\Windows"),
+    ];
+    let 예상 = favorites.len() + crate::ui::tree::drive_roots().len();
+
+    // 텍스처는 프레임당 8개까지만 새로 만들어진다(`icon_tex`) — 몇 프레임 돌려 채운다
+    let mut 그려진 = 0;
+    for _ in 0..8 {
+        let output = draw_once_with_favorites(&mut panel, &SiteStore::new(), &favorites);
+        그려진 = tree_icon_count(&output);
+        if 그려진 >= 예상 {
+            break;
+        }
+    }
+    assert_eq!(
+        그려진,
+        예상,
+        "트리 구역 아이콘 수가 즐겨찾기 {}개 + 드라이브 {}개와 다르다",
+        favorites.len(),
+        crate::ui::tree::drive_roots().len()
     );
 }

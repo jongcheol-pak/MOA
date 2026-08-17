@@ -13,10 +13,12 @@
 //! 올려보낸다**(연결을 아는 것은 앱이다 — `remote::tree_cache`가 받아 둔다).
 use crate::app::favorites::FavoriteAction;
 use crate::fs::enumerate::{EnumOutcome, FileEntry, enumerate_dir};
+use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, compare_entries};
 use crate::remote::connection::ConnectionId;
 use crate::remote::tree_cache::{TreeCache, TreeNode};
 use crate::remote::types::RemotePath;
+use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::clamp_menu_pos;
 use crate::ui::theme;
 use eframe::egui;
@@ -26,10 +28,16 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use windows::Win32::Storage::FileSystem::GetLogicalDrives;
+use windows::Win32::UI::Controls::HIMAGELIST;
 
 /// 트리 고정 폭 — 현행 Win32 판(`panel::folder_tree::TREE_WIDTH`)과 같은 값.
 /// 폭 조절은 요구에 없다(FR-9는 표시 토글까지)
 pub const TREE_WIDTH: f32 = 200.0;
+
+/// 트리 줄의 아이콘 한 변 — 목록의 작은 아이콘과 같은 16px (탐색기와 같은 눈높이)
+const ROW_ICON: f32 = 16.0;
+/// 아이콘과 글자 사이
+const ROW_ICON_GAP: f32 = 4.0;
 
 /// 이 트리가 보여 주는 것 (T24).
 ///
@@ -136,6 +144,11 @@ pub struct FolderTreeView {
     /// 트리만 따로 두면 같은 창에서 목록의 숨긴 폴더는 사라지는데 트리에는 남아,
     /// 설정이 반만 듣는 것처럼 보인다
     show_hidden: bool,
+    /// 줄마다 쓸 셸 아이콘 인덱스 — **보이는 줄만** 조회하고 그 결과를 여기 담는다.
+    ///
+    /// `IconCache`도 경로별로 캐시하지만 그쪽은 프로세스 전체가 함께 쓰는 자리라,
+    /// 트리가 매 프레임 다시 묻지 않으려면 이 맵이 먼저 답해야 한다
+    icon_indices: HashMap<PathBuf, i32>,
 }
 
 impl Default for FolderTreeView {
@@ -149,6 +162,7 @@ impl FolderTreeView {
         let (tx, rx) = channel();
         FolderTreeView {
             roots: Rc::new(drive_roots()),
+            icon_indices: HashMap::new(),
             nodes: HashMap::new(),
             selected: None,
             menu_at: None,
@@ -183,18 +197,22 @@ impl FolderTreeView {
         ui: &mut egui::Ui,
         source: TreeSource<'_>,
         favorites: &[PathBuf],
+        icons: &mut IconCache,
+        textures: &mut IconTextures,
     ) -> TreeOutcome {
         self.poll();
         let mut outcome = TreeOutcome::default();
+        let ctx = ui.ctx().clone();
+        let himl = icons.himl();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match source {
                 TreeSource::Local => {
                     // 즐겨찾기는 **로컬 트리에만** 선다 (사용자 결정 — 원격은 제외)
-                    self.show_favorites(ui, favorites, &mut outcome);
+                    self.show_favorites(ui, favorites, &mut outcome, icons, textures, &ctx, himl);
                     let roots = Rc::clone(&self.roots);
                     for root in roots.iter() {
-                        self.show_node(ui, root, &mut outcome);
+                        self.show_node(ui, root, &mut outcome, icons, textures, &ctx, himl);
                     }
                 }
                 TreeSource::Remote { conn, root, cache } => {
@@ -202,7 +220,21 @@ impl FolderTreeView {
                     // 여기서 비운다. 안 그러면 로컬 탭으로 돌아올 때 옛 메뉴가 되살아난다
                     self.menu_at = None;
                     self.menu_opened_this_frame = false;
-                    self.show_remote_node(ui, conn, &root, 0, cache, &mut outcome);
+                    // 원격은 서버 아이콘을 얻을 수 없다 — 모든 줄에 같은 폴더 아이콘을 쓴다
+                    // (사용자 결정)
+                    let folder = icons.dir_icon();
+                    self.show_remote_node(
+                        ui,
+                        conn,
+                        &root,
+                        0,
+                        cache,
+                        &mut outcome,
+                        textures,
+                        &ctx,
+                        himl,
+                        folder,
+                    );
                 }
             });
         // 메뉴는 **스크롤 영역 밖**에 그린다 — 안에 그리면 스크롤에 딸려가고 잘린다
@@ -289,11 +321,16 @@ impl FolderTreeView {
     /// **비어 있으면 줄도 구분선도 그리지 않는다**(사용자 결정) — 쓰지 않는 사람의 화면에
     /// 빈 자리가 남지 않는다. 항목은 폴더 이름만 보이고 전체 경로는 툴팁이 든다 —
     /// 트리 폭이 200px이라 경로를 그대로 적으면 대부분 잘린다
+    #[allow(clippy::too_many_arguments)]
     fn show_favorites(
         &mut self,
         ui: &mut egui::Ui,
         favorites: &[PathBuf],
         outcome: &mut TreeOutcome,
+        icons: &mut IconCache,
+        textures: &mut IconTextures,
+        ctx: &egui::Context,
+        himl: HIMAGELIST,
     ) {
         if favorites.is_empty() {
             return;
@@ -301,12 +338,20 @@ impl FolderTreeView {
         for path in favorites {
             let choice = TreeChoice::Local(path.clone());
             let is_selected = self.selected.as_ref() == Some(&choice);
+            let icon = self.icon_for(path, icons);
             // 펼침 화살표가 없는 줄이라 그 자리만큼 들여쓴다 — 하위 없는 트리 잎과 같은 자리다
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                let response = ui
-                    .selectable_label(is_selected, display_name(path))
-                    .on_hover_text(path.to_string_lossy());
+                let response = tree_row(
+                    ui,
+                    textures,
+                    ctx,
+                    himl,
+                    icon,
+                    &display_name(path),
+                    is_selected,
+                )
+                .on_hover_text(path.to_string_lossy());
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -322,11 +367,22 @@ impl FolderTreeView {
         ui.separator();
     }
 
+    /// 이 경로에 쓸 셸 아이콘 인덱스 — 한 번 물으면 담아 두고 다시 묻지 않는다
+    fn icon_for(&mut self, path: &Path, icons: &mut IconCache) -> i32 {
+        if let Some(idx) = self.icon_indices.get(path) {
+            return *idx;
+        }
+        let idx = icons.icon_index_for_path(&path.to_string_lossy());
+        self.icon_indices.insert(path.to_path_buf(), idx);
+        idx
+    }
+
     /// 원격 노드 하나와 (펼쳐져 있으면) 그 하위를 그린다.
     ///
     /// 하위 목록은 캐시에서만 읽는다 — 없으면 요청을 올려보내고 이번 프레임에는 `읽는 중…`을
     /// 보인다. 조회가 도는 동안에도 이 트리는 계속 그려지므로 목록·다른 패널이 멈추지 않는다
     /// (Acceptance ③)
+    #[allow(clippy::too_many_arguments)]
     fn show_remote_node(
         &mut self,
         ui: &mut egui::Ui,
@@ -335,6 +391,10 @@ impl FolderTreeView {
         depth: usize,
         cache: &TreeCache,
         outcome: &mut TreeOutcome,
+        textures: &mut IconTextures,
+        ctx: &egui::Context,
+        himl: HIMAGELIST,
+        folder: i32,
     ) {
         let choice = TreeChoice::Remote(path.clone());
         let is_selected = self.selected.as_ref() == Some(&choice);
@@ -347,7 +407,7 @@ impl FolderTreeView {
         {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                if ui.selectable_label(is_selected, label).clicked() {
+                if tree_row(ui, textures, ctx, himl, folder, &label, is_selected).clicked() {
                     self.select(choice, outcome);
                 }
             });
@@ -360,7 +420,7 @@ impl FolderTreeView {
         let header = CollapsingState::load_with_default_open(ui.ctx(), id, depth == 0).show_header(
             ui,
             |ui| {
-                if ui.selectable_label(is_selected, label).clicked() {
+                if tree_row(ui, textures, ctx, himl, folder, &label, is_selected).clicked() {
                     self.select(choice, outcome);
                 }
             },
@@ -374,7 +434,18 @@ impl FolderTreeView {
                         .map(|entry| path.join(&entry.name))
                         .collect();
                     for child in paths {
-                        self.show_remote_node(ui, conn, &child, depth + 1, cache, outcome);
+                        self.show_remote_node(
+                            ui,
+                            conn,
+                            &child,
+                            depth + 1,
+                            cache,
+                            outcome,
+                            textures,
+                            ctx,
+                            himl,
+                            folder,
+                        );
                     }
                 }
                 Some(TreeNode::Failed(detail)) => {
@@ -416,17 +487,28 @@ impl FolderTreeView {
     }
 
     /// 노드 하나와 (펼쳐져 있으면) 그 하위를 그린다
-    fn show_node(&mut self, ui: &mut egui::Ui, path: &Path, outcome: &mut TreeOutcome) {
+    #[allow(clippy::too_many_arguments)]
+    fn show_node(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &Path,
+        outcome: &mut TreeOutcome,
+        icons: &mut IconCache,
+        textures: &mut IconTextures,
+        ctx: &egui::Context,
+        himl: HIMAGELIST,
+    ) {
         let label = display_name(path);
         let choice = TreeChoice::Local(path.to_path_buf());
         let is_selected = self.selected.as_ref() == Some(&choice);
+        let icon = self.icon_for(path, icons);
 
         // 하위 폴더가 없다고 확인된 노드는 펼침 화살표를 그리지 않는다
         // (현행 Win32 판의 `set_no_children`과 같은 동작). 화살표 자리만큼 들여쓴다
         if matches!(self.nodes.get(path), Some(Node::Loaded(children)) if children.is_empty()) {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                let response = ui.selectable_label(is_selected, label);
+                let response = tree_row(ui, textures, ctx, himl, icon, &label, is_selected);
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -438,7 +520,7 @@ impl FolderTreeView {
         let id = ui.make_persistent_id(path);
         let header =
             CollapsingState::load_with_default_open(ui.ctx(), id, false).show_header(ui, |ui| {
-                let response = ui.selectable_label(is_selected, label);
+                let response = tree_row(ui, textures, ctx, himl, icon, &label, is_selected);
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -459,7 +541,7 @@ impl FolderTreeView {
             match children {
                 Some(children) => {
                     for child in children.iter() {
-                        self.show_node(ui, child, outcome);
+                        self.show_node(ui, child, outcome, icons, textures, ctx, himl);
                     }
                 }
                 None => {
@@ -560,6 +642,60 @@ fn child_dirs(parent: &Path, mut entries: Vec<FileEntry>, show_hidden: bool) -> 
 ///
 /// 원격 목록 메뉴의 같은 이름 함수와 값·모양을 맞췄다(plan 4-D) — 부품을 공유하지 않는
 /// 이유는 그 모듈 주석과 같다(대상·항목이 다르다)
+/// 트리 줄 하나 — 아이콘과 라벨을 나란히 그리고 그 줄 전체의 반응을 돌려준다.
+///
+/// 아이콘을 `selectable_label` **밖에** 두면 강조 배경이 라벨에만 깔려 탐색기와 달라 보인다.
+/// 그래서 줄 전체를 한 번에 잡고(`allocate_at_least`) 배경·아이콘·글자를 직접 그린다
+fn tree_row(
+    ui: &mut egui::Ui,
+    textures: &mut IconTextures,
+    ctx: &egui::Context,
+    himl: HIMAGELIST,
+    icon: i32,
+    label: &str,
+    selected: bool,
+) -> egui::Response {
+    let height = ui.spacing().interact_size.y.max(ROW_ICON);
+    let (rect, response) = ui.allocate_at_least(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    if selected || response.hovered() {
+        let fill = if selected {
+            ui.visuals().selection.bg_fill
+        } else {
+            ui.visuals().widgets.hovered.bg_fill
+        };
+        ui.painter().rect_filled(rect, 2.0, fill);
+    }
+    if let Some(tex) = textures.get(ctx, himl, icon) {
+        let icon_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.center().y - ROW_ICON / 2.0),
+            egui::vec2(ROW_ICON, ROW_ICON),
+        );
+        // painter를 다시 얻는다 — textures가 ui를 빌리는 사이 앞의 painter가 무효화된다
+        ui.painter().image(
+            tex.id(),
+            icon_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+    let text_color = if selected {
+        ui.visuals().selection.stroke.color
+    } else {
+        ui.visuals().text_color()
+    };
+    ui.painter().text(
+        egui::pos2(rect.left() + ROW_ICON + ROW_ICON_GAP, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::TextStyle::Body.resolve(ui.style()),
+        text_color,
+    );
+    response
+}
+
 fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), MENU_ROW_HEIGHT),
@@ -682,9 +818,12 @@ mod tests {
     fn draw_remote(cache: &TreeCache, root: &str) -> TreeOutcome {
         let ctx = egui::Context::default();
         let mut view = FolderTreeView::new();
+        let mut icons = IconCache::new();
+        let mut textures = IconTextures::new();
         let mut outcome = TreeOutcome::default();
         let _ = ctx.run_ui(Default::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
+                textures.begin_frame();
                 outcome = view.show(
                     ui,
                     TreeSource::Remote {
@@ -694,6 +833,8 @@ mod tests {
                     },
                     // 원격 트리에는 즐겨찾기가 서지 않는다 — 그래도 인자는 받는다
                     &[PathBuf::from(r"D:\작업")],
+                    &mut icons,
+                    &mut textures,
                 );
             });
         });
