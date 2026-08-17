@@ -216,6 +216,8 @@ fn icon_to_image(himl: HIMAGELIST, index: i32) -> Option<egui::ColorImage> {
     if index < 0 {
         return None;
     }
+    // `ImageList_GetIcon`도 프로세스 전역 셸 상태를 만진다 — 조기 반환 뒤에 잡는다
+    let _guard = crate::fs::icons::shell_guard();
     // 안전성: 이미지 리스트에서 아이콘 사본을 얻고, 이 함수를 벗어나기 전에 반드시 해제한다.
     // 중간 실패 경로에서도 DestroyIcon이 호출되도록 결과를 받아 마지막에 정리한다
     unsafe {
@@ -408,7 +410,6 @@ mod tests {
 
     #[test]
     fn 성공한_아이콘은_다시_변환하지_않는다() {
-        let _shell = crate::fs::icons::shell_test_guard();
         let ctx = egui::Context::default();
         let icons = crate::fs::icons::IconCache::new();
         let (himl, index) = (icons.himl(), icons.dir_icon());
@@ -455,7 +456,6 @@ mod tests {
 
     #[test]
     fn 재시도가_처음_보는_아이콘을_굶기지_않는다() {
-        let _shell = crate::fs::icons::shell_test_guard();
         let ctx = egui::Context::default();
         let icons = crate::fs::icons::IconCache::new();
         let (himl, index) = (icons.himl(), icons.dir_icon());

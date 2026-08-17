@@ -166,12 +166,10 @@ pub fn is_reachable(root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::icons::shell_test_guard;
 
     #[test]
     fn 드라이브_루트는_루트_경로_형태다() {
         // 실제 구성은 PC마다 다르므로 형태만 검증한다 (C: 드라이브는 항상 있다)
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let rows = list_drives(&mut icons);
         assert!(rows.iter().any(|row| row.path == Path::new(r"C:\")));
@@ -182,7 +180,6 @@ mod tests {
     fn 드라이브는_셸_표시_이름으로_보인다() {
         // `C:\`가 아니라 `로컬 디스크 (C:)` 같은 이름이다.
         // 값 자체는 OS 언어·볼륨 레이블을 따르므로 "경로와 다르다"만 본다
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let rows = list_drives(&mut icons);
         let row = rows
@@ -200,7 +197,6 @@ mod tests {
     #[test]
     fn 목록은_판정_전이라_아무것도_끊긴_것으로_두지_않는다() {
         // T3·T4 — `list_drives`는 접근을 시도하지 않는다. 배지는 판정이 온 뒤에만 붙는다
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let rows = list_drives(&mut icons);
         assert!(
@@ -212,7 +208,6 @@ mod tests {
     #[test]
     fn 로컬_드라이브는_네트워크가_아니고_닿는다() {
         // C:는 이 PC의 고정 디스크다 — 두 판정의 기준선이 된다
-        let _shell = shell_test_guard();
         let root = Path::new(r"C:\");
         assert!(!is_network_drive(root), "고정 디스크를 네트워크로 봤다");
         assert!(is_reachable(root), "C 드라이브에 닿지 못했다");

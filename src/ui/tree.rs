@@ -943,7 +943,6 @@ mod tests {
         // 이 시험이 짝의 기준선이다 — 하네스가 배지를 그릴 수 있음을 먼저 입증한다.
         // 그러지 않으면 아래 시험의 `0`이 "갈래가 꺼져서"인지 "아이콘이 안 올라와서"인지
         // 가릴 수 없다
-        let _shell = crate::fs::icons::shell_test_guard();
         let mut icons = IconCache::new();
         let drive = offline_drive(&mut icons);
         assert_eq!(
@@ -960,7 +959,6 @@ mod tests {
         // 자리는 끝내 포기한다** — 배지를 텍스처 성공에 묶어 두면 그 드라이브는 아이콘도
         // 배지도 없어 **끊긴 것을 화면으로 알 수 없다**. 없는 인덱스로 그 상황을 만들어
         // 확인한다. 이 시험이 없으면 분리가 실수로 되돌아가도 `cargo test`가 잡지 못한다
-        let _shell = crate::fs::icons::shell_test_guard();
         let mut icons = IconCache::new();
         let drive = offline_drive_with_icon(i32::MAX);
         let (배지, 아이콘) = badges_of_node(Some(&drive), &mut icons);
@@ -979,7 +977,6 @@ mod tests {
         // T5 Acceptance — 하위 폴더는 드라이브 줄과 **같은 `show_node`**를 지나므로,
         // 그 자리에서 `false`가 흐르는지 본다. 위 시험이 같은 하네스로 배지 1을 관측하므로
         // 여기의 0은 갈래가 꺼진 결과다
-        let _shell = crate::fs::icons::shell_test_guard();
         let mut icons = IconCache::new();
         assert_eq!(
             badges_of_node(None, &mut icons).0,

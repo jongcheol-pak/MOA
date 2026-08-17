@@ -19,7 +19,7 @@
 - **`IconTextures`의 축출·상한 정책 변경** — 프레임당 생성 상한(8개)과 썸네일 LRU는 이번 대상이 아니다.
 
 ## Deferred / Follow-up
-- (이번 계획에서 새로 생기는 것이 없으면 비움 — 구현 중 생기면 여기 적는다)
+- `[SUGGEST]` `icon_index_for_path`·`shell_display_name`의 잠금도 `icon_index`·`type_name`처럼 블록 스코프로 좁히면 네 곳의 해제 시점이 통일된다(T3 quality 리뷰 S1 — 기능 차이는 없고, 두 곳은 여러 지역 변수를 써서 블록으로 감싸면 오히려 길어진다)
 
 ## Investigation Log
 - 위키 참조: `20_projects/personal/moa/conventions.md` — 직전 회차가 넣은 3항목이 이 작업의 배경이다. 그중 **"`IconTextures`의 아이콘 변환은 셸 잠금 밖이라 병렬 시험에서 경합한다"** 항목이 미검증 가설을 사실처럼 적었다(아래 전제 4) — 이번 조사로 재현되지 않음을 확인했으므로 정정 대상이다(동반 변경).
@@ -206,7 +206,7 @@
     - (i) 세 갈래를 어떻게 가르는가 → 위 Design에서 확정(성공 캐시 / 처음 보는 키 / 실패로 아는 키)
   - **Depends on**: T1
 
-- [ ] T3. 셸 잠금의 소유를 자원 함수로 옮긴다
+- [x] T3. 셸 잠금의 소유를 자원 함수로 옮긴다
   - **Type**: D
   - **Design**: ① 잠금 획득 함수는 `src/fs/icons.rs`(잠금이 사는 곳), 획득 지점은 `fs/icons.rs`·`fs/known_folders.rs`·`ui/icon_tex.rs`. ② 신규 심볼 — `pub(crate) fn shell_guard() -> ShellGuard`와 **`pub(crate)`** 로 공개된 빌드별 `ShellGuard`(`#[cfg(test)]`는 `MutexGuard<'static, ()>`를 감싸고, `#[cfg(not(test))]`는 빈 구조체 — 가시성을 맞추지 않으면 `private_interfaces` 경고로 `-D warnings`가 깨진다). **`SHELL_LOCK`은 그대로 재사용**하고 **poison을 관용한다**(`unwrap_or_else(|p| p.into_inner())` — 전제 9. `.unwrap()`은 AGENTS 금지). `shell_test_guard`와 `use` 2줄은 제거한다. ③ 의존 방향 — `ui::icon_tex`가 `fs::icons`를 참조한다(이미 `IconCache`로 그렇다). `fs::known_folders`도 이미 `fs::icons`를 쓴다. ④ 비추상화 선언 — 잠금을 트레이트·RAII 계층으로 감싸지 않는다. ⑤ **잠금 추가와 시험 guard 제거를 한 편집으로 끝낸다** — 중간 상태(잠금은 들어갔는데 guard가 남은 상태)에서 검증을 돌리면 그 자리에서 멎는다.
   - **Design (잠그는 곳 · 잠그지 않는 곳 · 잠그는 위치)**:

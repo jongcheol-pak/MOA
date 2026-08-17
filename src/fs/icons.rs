@@ -89,6 +89,9 @@ impl Default for IconCache {
 
 impl IconCache {
     pub fn new() -> IconCache {
+        // 본문이 통째로 셸 호출이라 첫 줄에서 잡는다 (`system_image_list`는 이 잠금 안에서
+        // 불리므로 그쪽은 잠그지 않는다 — 잠그면 재진입 데드락)
+        let _guard = shell_guard();
         // 시스템 작은 아이콘 이미지 리스트 핸들 확보 (폴더 속성 기준 1회 조회)
         let mut info = SHFILEINFOW::default();
         // 안전성: info는 스택 소유, USEFILEATTRIBUTES라 실제 디스크 접근 없음
@@ -156,6 +159,7 @@ impl IconCache {
                 return idx;
             }
             let mut info = SHFILEINFOW::default();
+            let _guard = shell_guard();
             // 안전성: 실제 파일 경로 조회 — 실패 시 iIcon 0(기본)이 그대로 쓰인다
             unsafe {
                 SHGetFileInfoW(
@@ -172,7 +176,10 @@ impl IconCache {
         if let Some(&idx) = self.icon_by_ext.get(ext) {
             return idx;
         }
-        let (idx, type_name) = lookup_by_attributes(ext);
+        let (idx, type_name) = {
+            let _guard = shell_guard();
+            lookup_by_attributes(ext)
+        };
         self.icon_by_ext.insert(ext.to_string(), idx);
         self.type_by_ext.insert(ext.to_string(), type_name);
         idx
@@ -190,6 +197,7 @@ impl IconCache {
             return idx;
         }
         let mut info = SHFILEINFOW::default();
+        let _guard = shell_guard();
         // 안전성: 실제 경로 조회 — 실패는 반환값 0으로 오고, 그때는 아래에서 `dir_icon`으로
         // 갈아 끼우므로 `info`의 값을 읽지 않는다
         let ok = unsafe {
@@ -226,6 +234,7 @@ impl IconCache {
             return Some(name.clone());
         }
         let mut info = SHFILEINFOW::default();
+        let _guard = shell_guard();
         // 안전성: 실제 경로 조회 — 실패하면 0을 돌려주고 `szDisplayName`은 비어 있다
         let ok = unsafe {
             SHGetFileInfoW(
@@ -266,7 +275,10 @@ impl IconCache {
         if let Some(t) = self.type_by_ext.get(ext) {
             return t.clone();
         }
-        let (idx, type_name) = lookup_by_attributes(ext);
+        let (idx, type_name) = {
+            let _guard = shell_guard();
+            lookup_by_attributes(ext)
+        };
         self.icon_by_ext.insert(ext.to_string(), idx);
         self.type_by_ext.insert(ext.to_string(), type_name.clone());
         type_name
@@ -314,25 +326,50 @@ fn wide_to_string(buf: &[u16]) -> String {
     String::from_utf16_lossy(&buf[..len])
 }
 
-/// 셸을 실제로 부르는 **시험들**의 직렬화 잠금.
+/// 셸을 만지는 **함수들**의 직렬화 잠금.
 ///
-/// `SHGetFileInfoW`·`SHGetKnownFolderPath`·`SHGetImageList`는 프로세스 전역 셸 상태를 함께
-/// 쓰는데, Rust 시험은 기본이 병렬이라 서로 다른 스레드에서 동시에 부르면 `SHGetImageList`가
-/// 실패해 **16px로 폴백**한다(그러면 크기별 리스트 시험이 깨진다).
+/// `SHGetFileInfoW`·`SHGetKnownFolderPath`·`SHGetImageList`·`ImageList_GetIcon`은 프로세스
+/// 전역 셸 상태를 함께 쓰는데, Rust 시험은 기본이 병렬이라 서로 다른 스레드에서 동시에
+/// 부르면 `SHGetImageList`가 실패해 **16px로 폴백**한다(그러면 크기별 리스트 시험이 깨진다).
 ///
-/// **`fs` 안의 다른 모듈 시험도 이 잠금을 잡아야 한다** — 시험 바이너리가 하나라 한쪽만
-/// 직렬화하면 경합이 절반만 막힌다(`known_folders`가 그 경우였다). 언어 전환 시험이
-/// `i18n::LanguageGuard`로 같은 문제를 푸는 것과 같은 방식이다
+/// **잠금은 시험이 아니라 자원을 만지는 함수가 잡는다** — 호출부가 잡으면 계층마다 재진입
+/// 위험이 생기고, `std::sync::Mutex`는 재진입 불가라 그 자리에서 **타임아웃 없이 멎는다**.
+///
+/// **잡는 곳(7)**: `IconCache::new` · `icon_index` · `icon_index_for_path` ·
+/// `shell_display_name` · `type_name`(이 파일) · `known_folders::known_folder` ·
+/// `ui::icon_tex::icon_to_image`. 잡는 자리는 **셸 호출 직전**이다 — 캐시 히트 앞에 두면
+/// 렌더 경로가 프레임마다 전역 잠금을 잡아 시험 스위트가 10분을 넘긴다(실측).
+///
+/// **잡지 않는 곳(4)**: `system_image_list`·`lookup_by_attributes`(위 함수들 안에서만 불리는
+/// private) · `fs::drives::list_drives`·`fs::known_folders::default_favorites`(안에서 잠금
+/// 함수를 부르는 조합 함수). **이 넷을 잠그면 재진입 데드락이다.**
 #[cfg(test)]
-pub(crate) static SHELL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static SHELL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// 셸 시험 잠금을 잡는다 — 앞선 시험이 패닉해 독이 올랐어도 이어서 쓴다
+/// 셸 잠금을 쥔 표시 — 시험 빌드에서만 실제로 잠근다
+#[cfg(test)]
+pub(crate) struct ShellGuard {
+    _inner: std::sync::MutexGuard<'static, ()>,
+}
+
+/// 실행 파일에서는 빈 구조체다 — UI 스레드 하나가 그리므로 겨룰 상대가 없어 잠글 이유도 없다
+#[cfg(not(test))]
+pub(crate) struct ShellGuard;
+
+/// 셸 호출 직전에 잡는다. 앞선 시험이 패닉해 독이 올랐어도 이어서 쓴다
 /// (그 시험의 실패만으로 충분하고, 여기서 또 패닉하면 원인이 가려진다)
 #[cfg(test)]
-pub(crate) fn shell_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    SHELL_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+pub(crate) fn shell_guard() -> ShellGuard {
+    ShellGuard {
+        _inner: SHELL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn shell_guard() -> ShellGuard {
+    ShellGuard
 }
 
 #[cfg(test)]
@@ -364,7 +401,6 @@ mod tests {
     fn 크기별로_서로_다른_이미지_리스트를_얻는다() {
         // 이 획득이 실패하면 모든 단계가 16px로 폴백해 보기 모드를 바꿔도 아이콘이 그대로다.
         // 화면 표시는 T10(격자 렌더)에서 확인하고, 여기서는 **리스트를 실제로 얻었는지**만 본다
-        let _shell = shell_test_guard();
         let cache = IconCache::new();
         assert_eq!(
             cache.himl_for(IconSize::Small),
@@ -416,7 +452,6 @@ mod tests {
     fn 드라이브는_일반_폴더와_다른_아이콘을_받는다() {
         // 요구의 핵심 — 탐색기처럼 드라이브가 제 아이콘을 갖는다.
         // `icon_index`는 `is_dir`을 먼저 걸러 폴더 아이콘 하나만 주므로 그것으로는 안 된다
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let drive = icons.icon_index_for_path("C:\\");
         let folder = icons.dir_icon();
@@ -431,7 +466,6 @@ mod tests {
     fn 같은_경로는_한_번만_셸에_묻는다() {
         // 실경로 조회는 끊긴 네트워크 드라이브에서 UI를 멈출 수 있어 캐시가 성능의 전제다.
         // **맵 크기로는 이것을 볼 수 없다** — 다시 물어 다시 넣어도 크기가 그대로다 (plan D9)
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let before = icons.shell_queries();
 
@@ -451,7 +485,6 @@ mod tests {
     #[test]
     fn 드라이브의_셸_표시_이름을_얻는다() {
         // `로컬 디스크 (C:)`처럼 화면 언어를 따르는 문자열이라 값 자체는 단언하지 않는다
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let name = icons
             .shell_display_name("C:\\")
@@ -465,7 +498,6 @@ mod tests {
 
     #[test]
     fn 없는_경로의_표시_이름은_없음이거나_패닉하지_않는다() {
-        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         // 실재하지 않는 드라이브 — 셸이 무엇을 주든 앱이 죽지 않아야 한다.
         // 돌려주는 값도 계약대로여야 한다: 없거나(None), 있다면 경로에서 온 이름이다

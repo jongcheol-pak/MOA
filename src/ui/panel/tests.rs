@@ -100,7 +100,7 @@ fn separator_count(output: &eframe::egui::FullOutput) -> usize {
 /// 볼륨 레이블·네트워크 이름), "토글 아래 + 트리 폭 안"으로만 좁히면 제목 줄·즐겨찾기 줄까지
 /// 걸려 첫 매치를 쓰는 자리가 엉뚱한 줄을 드라이브로 오인한다
 ///
-/// 잠금·조회는 `drive_rows`가 한다 — 이 함수는 그 결과에서 `(경로, 표시 이름)`만 뽑는다
+/// 조회는 `drive_rows`가 한다 — 이 함수는 그 결과에서 `(경로, 표시 이름)`만 뽑는다
 fn drive_labels() -> Vec<(std::path::PathBuf, String)> {
     drive_rows()
         .iter()
@@ -115,12 +115,11 @@ fn drive_labels() -> Vec<(std::path::PathBuf, String)> {
 fn drive_rows() -> &'static [crate::fs::drives::DriveRow] {
     // **프로세스에 한 번만 조회한다.** 그리기 하네스가 프레임마다 이것을 부르는데,
     // 매번 새로 조회하면 ⓐ `IconCache`를 새로 만들어 캐시가 비고 ⓑ 드라이브마다 셸을
-    // 다시 물으며 ⓒ 셸 잠금을 프레임마다 잡아 다른 시험과 직렬화된다. 실측으로 전체
-    // 스위트가 10분을 넘겼다 — 드라이브 구성은 시험이 도는 동안 바뀌지 않으므로
+    // 다시 물으며 ⓒ 그 셸 호출마다 전역 잠금을 잡아 다른 시험과 직렬화된다. 실측으로
+    // 전체 스위트가 10분을 넘겼다 — 드라이브 구성은 시험이 도는 동안 바뀌지 않으므로
     // 한 번 만들어 나눠 쓴다
     static ROWS: std::sync::OnceLock<Vec<crate::fs::drives::DriveRow>> = std::sync::OnceLock::new();
     ROWS.get_or_init(|| {
-        let _shell = crate::fs::icons::shell_test_guard();
         let mut icons = crate::fs::icons::IconCache::new();
         crate::fs::drives::list_drives(&mut icons)
     })
@@ -2508,7 +2507,6 @@ fn 트리_줄에는_셸_아이콘이_붙는다() {
     // T2 Acceptance — 즐겨찾기 줄과 보이는 드라이브 줄마다 아이콘 하나씩.
     // 비교 대상을 "그려진 줄 수"가 아니라 **입력에서 계산한다** — T4가 아이콘 없는 제목
     // 줄을 더하므로 줄을 세는 방식이면 그때 이 시험이 깨진다(계획 M3)
-    let _shell = crate::fs::icons::shell_test_guard();
     let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
     panel.tree_visible = true;
     panel.deferred_start = None;
