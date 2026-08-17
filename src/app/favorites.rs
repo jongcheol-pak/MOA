@@ -18,13 +18,34 @@ pub enum FavoriteAction {
     Remove(PathBuf),
 }
 
+/// 화면에 설 즐겨찾기 한 줄 (FR-56).
+///
+/// **라벨은 기본 항목만 갖는다** — 바탕 화면·다운로드는 셸 표시 이름을 쓰기 때문이다
+/// (`바탕 화면`처럼 화면 언어를 따른다). 사용자가 담은 항목은 `None`이고 화면이
+/// 폴더명으로 그린다 — 폴더명을 뽑는 규칙을 이 계층에 복제하지 않으려는 것이다
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavoriteEntry {
+    pub path: PathBuf,
+    pub label: Option<String>,
+    /// 우클릭으로 뺄 수 있는가 — 기본 항목은 `false`다(사용자 결정: 해제할 수 없음)
+    pub removable: bool,
+}
+
 /// 즐겨찾기 목록 — **더한 차례를 그대로 지킨다**(사용자 결정: 이름순이 아니라 추가순).
+///
+/// 기본 항목(바탕 화면·다운로드)이 맨 위에 서고 사용자가 담은 것이 그 아래 온다.
+/// **둘은 저장 경계가 다르다** — `paths()`는 사용자 항목만 주고(세션에 담기는 것),
+/// `entries()`는 기본까지 합쳐 준다(화면에 그리는 것). 기본을 저장하면 그 폴더가
+/// 옮겨졌을 때 옛 경로가 파일에 굳는다
 ///
 /// 정렬 옵션·개수 상한·변경 통지를 두지 않는다(plan 비추상화 선언) — 사용자가 손으로
 /// 몇 개 넣는 목록이라 매 프레임 그대로 읽으면 충분하다
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FavoriteStore {
+    /// 사용자가 담은 것 — 이것만 세션에 저장된다
     paths: Vec<PathBuf>,
+    /// 윈도우가 정해 준 기본 항목 `(경로, 셸 표시 이름)` — 저장하지 않는다
+    defaults: Vec<(PathBuf, String)>,
 }
 
 impl FavoriteStore {
@@ -32,9 +53,12 @@ impl FavoriteStore {
         FavoriteStore::default()
     }
 
-    /// 세션에서 되살린다 — 저장은 문자열이므로 경로로 바꿔 받는다.
-    /// **손으로 편집된 파일에 중복이 들어 있을 수 있어** 여기서도 한 번 걸러 낸다
-    pub fn from_paths(paths: impl IntoIterator<Item = PathBuf>) -> FavoriteStore {
+    /// 사용자 항목만으로 만든다 — 저장은 문자열이므로 경로로 바꿔 받는다.
+    /// **손으로 편집된 파일에 중복이 들어 있을 수 있어** 여기서도 한 번 걸러 낸다.
+    ///
+    /// **모듈 밖으로 열지 않는다** — 이 길로 복원하면 기본 항목이 통째로 사라진다.
+    /// 바깥은 언제나 `with_defaults`를 쓴다
+    fn from_paths(paths: impl IntoIterator<Item = PathBuf>) -> FavoriteStore {
         let mut store = FavoriteStore::new();
         for path in paths {
             store.add(path);
@@ -42,14 +66,66 @@ impl FavoriteStore {
         store
     }
 
-    /// 저장할 목록 — 순서 그대로다
+    /// 기본 항목을 얹어 되살린다 — **복원도 이 길을 쓴다**.
+    ///
+    /// 세션에는 사용자 항목만 담기므로, 복원할 때마다 기본을 다시 실어야 한다.
+    /// `from_paths`로 통째로 갈아치우면 settings.json이 있는 모든 사용자에게서
+    /// 기본 둘이 사라진다
+    pub fn with_defaults(
+        defaults: impl IntoIterator<Item = (PathBuf, String)>,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) -> FavoriteStore {
+        let mut store = FavoriteStore::from_paths(paths);
+        store.defaults = defaults.into_iter().collect();
+        store
+    }
+
+    /// **저장할 목록** — 사용자가 담은 것만이다(기본 항목은 빠진다).
+    ///
+    /// 기본은 시작할 때 셸에 다시 물으므로 파일에 남길 이유가 없고, 남기면 그 폴더를
+    /// 옮겼을 때 옛 경로가 굳는다
     pub fn paths(&self) -> &[PathBuf] {
         &self.paths
     }
 
-    /// 이미 담긴 폴더인가 — 메뉴의 `즐겨찾기` 줄을 비활성으로 할지 정한다
+    /// **화면에 그릴 목록** — 기본이 앞, 사용자가 뒤다(사용자 결정: 한 목록).
+    ///
+    /// 사용자 항목에 기본과 같은 경로가 들어 있으면(이 기능 전에 담았을 수 있다)
+    /// 기본 쪽만 남긴다 — 같은 폴더가 두 줄로 서면 어느 것이 해제되는지 알 수 없다
+    pub fn entries(&self) -> Vec<FavoriteEntry> {
+        let mut entries: Vec<FavoriteEntry> = self
+            .defaults
+            .iter()
+            .map(|(path, label)| FavoriteEntry {
+                path: path.clone(),
+                label: Some(label.clone()),
+                removable: false,
+            })
+            .collect();
+        for path in &self.paths {
+            if self.is_default(path) {
+                continue;
+            }
+            entries.push(FavoriteEntry {
+                path: path.clone(),
+                label: None,
+                removable: true,
+            });
+        }
+        entries
+    }
+
+    /// 윈도우가 정해 준 기본 항목인가 — 목록 합치기·해제 판정이 같은 규칙을 본다
+    fn is_default(&self, path: &Path) -> bool {
+        self.defaults.iter().any(|(known, _)| known == path)
+    }
+
+    /// 이미 담긴 폴더인가 — 메뉴의 `즐겨찾기에 담기` 줄을 비활성으로 할지 정한다.
+    ///
+    /// **기본 항목도 담긴 것으로 본다** — 바탕 화면이 이미 목록에 서 있는데 그 폴더의
+    /// 트리 노드에서 다시 담을 수 있으면 같은 줄이 둘이 된다
     pub fn contains(&self, path: &Path) -> bool {
-        self.paths.iter().any(|known| known == path)
+        self.paths.iter().any(|known| known == path) || self.is_default(path)
     }
 
     /// 맨 아래에 더한다. **이미 있으면 아무 일도 하지 않는다** —
@@ -61,8 +137,15 @@ impl FavoriteStore {
         self.paths.push(path);
     }
 
-    /// 목록에서 뺀다 — 없는 폴더면 아무 일도 하지 않는다
+    /// 목록에서 뺀다 — 없는 폴더면 아무 일도 하지 않는다.
+    ///
+    /// **기본 항목은 빠지지 않는다**(사용자 결정: 해제할 수 없음). 화면이 그 메뉴를
+    /// 아예 보이지 않지만, 규칙은 순수 계층에도 둔다 — 화면만 막으면 다른 경로로
+    /// 요청이 올라왔을 때 조용히 지워진다
     pub fn remove(&mut self, path: &Path) {
+        if self.is_default(path) {
+            return;
+        }
         self.paths.retain(|known| known != path);
     }
 
@@ -150,5 +233,82 @@ mod tests {
 
         store.apply(FavoriteAction::Remove(path(r"D:\작업")));
         assert_eq!(store.paths(), [path(r"C:\Users")]);
+    }
+
+    fn 기본() -> Vec<(PathBuf, String)> {
+        vec![
+            (path(r"C:\Users\누구\Desktop"), "바탕 화면".to_owned()),
+            (path(r"C:\Users\누구\Downloads"), "다운로드".to_owned()),
+        ]
+    }
+
+    #[test]
+    fn 기본_항목이_사용자_항목보다_앞에_선다() {
+        // 사용자 결정 — 한 목록이고 기본이 위다
+        let store = FavoriteStore::with_defaults(기본(), [path(r"D:\작업")]);
+        let entries = store.entries();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].label.as_deref(), Some("바탕 화면"));
+        assert_eq!(entries[1].label.as_deref(), Some("다운로드"));
+        assert_eq!(entries[2].path, path(r"D:\작업"));
+        assert_eq!(entries[2].label, None, "사용자 항목은 라벨을 갖지 않는다");
+    }
+
+    #[test]
+    fn 기본_항목은_해제할_수_없다() {
+        // 사용자 결정 — 화면이 메뉴를 감추지만 규칙은 여기에도 둔다
+        let mut store = FavoriteStore::with_defaults(기본(), []);
+        let desktop = path(r"C:\Users\누구\Desktop");
+
+        store.apply(FavoriteAction::Remove(desktop.clone()));
+
+        assert!(store.contains(&desktop), "기본 항목이 빠졌다");
+        assert_eq!(store.entries().len(), 2);
+        assert!(
+            !store.entries()[0].removable,
+            "기본 항목이 해제 가능으로 표시됐다"
+        );
+    }
+
+    #[test]
+    fn 사용자가_담은_기본_경로는_한_줄로_합쳐진다() {
+        // 이 기능 전에 바탕 화면을 손으로 담아 둔 세션 — 같은 폴더가 두 줄이 되면 안 된다
+        let desktop = path(r"C:\Users\누구\Desktop");
+        let store = FavoriteStore::with_defaults(기본(), [desktop.clone(), path(r"D:\작업")]);
+        let entries = store.entries();
+
+        assert_eq!(entries.len(), 3, "바탕 화면이 두 줄이 됐다");
+        assert_eq!(entries.iter().filter(|e| e.path == desktop).count(), 1);
+        assert!(!entries[0].removable, "합쳐진 줄은 기본 쪽 규칙을 따른다");
+    }
+
+    #[test]
+    fn 저장_목록에는_기본_항목이_실리지_않는다() {
+        // `paths()`(저장)와 `entries()`(화면)의 경계 — 기본을 저장하면 그 폴더가
+        // 옮겨졌을 때 옛 경로가 파일에 굳는다
+        let store = FavoriteStore::with_defaults(기본(), [path(r"D:\작업")]);
+
+        assert_eq!(store.paths(), [path(r"D:\작업")]);
+        assert_eq!(store.entries().len(), 3);
+    }
+
+    #[test]
+    fn 복원해도_기본_항목이_남는다() {
+        // 저장 → 복원 왕복. `from_paths`로 통째로 갈아치우면 기본이 사라지던 자리다
+        let store = FavoriteStore::with_defaults(기본(), [path(r"D:\작업")]);
+        let 저장된: Vec<PathBuf> = store.paths().to_vec();
+
+        let 복원 = FavoriteStore::with_defaults(기본(), 저장된);
+
+        assert_eq!(복원.entries().len(), 3, "기본 항목이 복원에서 사라졌다");
+        assert_eq!(복원.paths().len(), 1, "기본 항목이 저장 목록에 섞였다");
+    }
+
+    #[test]
+    fn 기본_항목은_이미_담긴_것으로_본다() {
+        // 트리 메뉴의 `즐겨찾기에 담기`가 비활성이어야 한다 — 아니면 같은 줄이 둘이 된다
+        let store = FavoriteStore::with_defaults(기본(), []);
+        assert!(store.contains(&path(r"C:\Users\누구\Desktop")));
     }
 }

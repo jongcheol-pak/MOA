@@ -2,6 +2,7 @@
 pub mod create;
 pub mod enumerate;
 pub mod icons;
+pub mod known_folders;
 pub mod shell_menu;
 pub mod thumbnail;
 pub mod watcher;

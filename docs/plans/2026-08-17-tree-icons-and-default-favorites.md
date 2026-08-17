@@ -23,9 +23,11 @@
 - 트리 항목의 썸네일·오버레이 아이콘(공유·바로가기 화살표 등)
 
 ## Deferred / Follow-up
+> Phase F-7에서 **전부 `docs/plans/deferred.md`로 옮겼다**(plan은 다음 계획 때 교체되므로 여기 두면 소실된다). 아래는 그 회차 기록이다.
+
+- [SUGGEST] `show_remote_node`에 남은 `#[allow(clippy::too_many_arguments)]` — `conn`·`cache`·`folder`도 재귀 내내 불변이라 원격 전용 컨텍스트를 하나 더 두면 9개 → 6개로 줄일 수 있다. 다만 그 셋은 로컬 경로에 없어 `RowCtx`에 그대로 얹으면 로컬 호출에 빈 필드가 생긴다 (T2 quality 2라운드 S1)
 - 트리 메뉴의 화면 밖 보정 크기가 실측이 아니라 어림값이다 (대장에 이미 등재 — 이번 작업과 무관)
 - 트리 아이콘·표시 이름 조회를 워커 스레드로 옮기기 — 끊긴 네트워크 드라이브에서 첫 조회가 UI를 멈출 수 있다(이번에는 기존 exe/lnk 실조회와 같은 수준으로 받아들이고 캐시로 반복을 없앤다)
-- [SUGGEST] 즐겨찾기 줄·잎 노드·기본 항목 줄이 "들여쓰기 + 아이콘 + 라벨 + 클릭" 모양을 공유한다 — **이번에 세 번째 유사 지점이 생기므로 T2에서 공통 헬퍼로 뽑는다**(대장 항목의 재검토 조건이 충족됐다)
 
 ## Investigation Log
 - 위키 참조: `20_projects/personal/moa/conventions.md` — ① `ExplorerApp`은 단위 시험에서 만들 수 없어 판정 로직은 그 밖의 타입에 둔다 ② 화면 결과를 위로 올리는 네 홉 중 컴파일러가 잡는 것은 `PanelOutcome` 하나뿐이다 ③ 함수를 끼워 넣을 때 앞 함수의 doc 주석이 딸려 붙지 않게 빈 줄을 확인한다
@@ -171,9 +173,10 @@
 
 ## Tasks
 
-- [ ] T1. 셸에서 표시 이름과 기본 폴더 경로 얻기
+- [x] T1. 셸에서 표시 이름과 기본 폴더 경로 얻기
   - **Type**: C
-  - **Design**: ① 둘 다 **`fs/` 계층**에 둔다 — 표시 이름 조회는 `src/fs/icons.rs`(같은 셸 API를 이미 쓴다), 기본 폴더 조회는 **`src/fs/known_folders.rs`(신규)**. `app/`은 AGENTS.md가 "순수 로직"으로 선언한 계층이고 `app::favorites` 모듈 주석도 화면·OS를 모르는 순수 계층임을 명시하므로, unsafe 셸 호출을 그리로 넣지 않는다 ② 신규 심볼 — `icons::shell_display_name(path) -> Option<String>`(셸 표시 이름, 실패하면 `None`. **`tree.rs`에 이미 비공개 `display_name`이 있어 이름을 달리 둔다**) · `known_folders::default_favorites() -> Vec<(PathBuf, String)>`(존재하는 기본 폴더의 경로와 표시 이름 — **라벨은 `shell_display_name`으로 얻는다**. 그래야 `바탕 화면`처럼 지역화된 이름이 나오고, 폴더명 그대로면 `Desktop`이 된다) ③ 둘 다 화면을 모르고 `windows` crate만 참조한다. `app::favorites`(T4)가 이 결과를 받아 담는다 — 셸 호출과 목록 규칙이 계층으로 갈린다 ④ 비추상화 선언: 셸 조회를 트레이트로 감싸지 않는다(호출부가 각각 하나이고, 감싸면 unsafe 격리 지점만 늘어난다)
+  - **Design**: ① 둘 다 **`fs/` 계층**에 둔다 — 표시 이름 조회는 `src/fs/icons.rs`(같은 셸 API를 이미 쓴다), 기본 폴더 조회는 **`src/fs/known_folders.rs`(신규)**. `app/`은 AGENTS.md가 "순수 로직"으로 선언한 계층이고 `app::favorites` 모듈 주석도 화면·OS를 모르는 순수 계층임을 명시하므로, unsafe 셸 호출을 그리로 넣지 않는다 ② 신규 심볼 — `icons::shell_display_name(&mut self, path) -> Option<String>`(셸 표시 이름, 실패하면 `None`. **`tree.rs`에 이미 비공개 `display_name`이 있어 이름을 달리 둔다**) · `known_folders::default_favorites(icons: &mut IconCache) -> Vec<(PathBuf, String)>`(존재하는 기본 폴더의 경로와 표시 이름 — **라벨은 `shell_display_name`으로 얻는다**. 그래야 `바탕 화면`처럼 지역화된 이름이 나오고, 폴더명 그대로면 `Desktop`이 된다. 그 조회가 `&mut self` 메서드라 캐시를 쥔 `IconCache`를 인자로 받는다 — 자기 캐시를 새로 만들면 호출마다 셸을 다시 묻는다)
+    - **함께 넣은 것(원래 T2 몫)**: `IconCache::icon_index_for_path`와 `#[cfg(test)] shell_queries` 카운터. 셸 조회 인프라가 `shell_display_name`과 같은 파일·같은 API 계열이라 한자리에서 만드는 편이 자연스러워 T1에서 함께 구현했다(2026-08-17 T1 spec 리뷰 B1로 드러나 귀속을 여기로 옮김) ③ 둘 다 화면을 모르고 `windows` crate만 참조한다. `app::favorites`(T4)가 이 결과를 받아 담는다 — 셸 호출과 목록 규칙이 계층으로 갈린다 ④ 비추상화 선언: 셸 조회를 트레이트로 감싸지 않는다(호출부가 각각 하나이고, 감싸면 unsafe 격리 지점만 늘어난다)
   - **Acceptance**:
     - Given 실재하는 드라이브 경로(`C:\`), When `display_name`, Then 빈 문자열이 아닌 이름을 준다(값 자체는 OS 언어에 따라 다르므로 단언하지 않는다)
     - Given 존재하지 않는 경로, When `display_name`, Then `None`이거나 그 경로 문자열이며 **패닉하지 않는다**
@@ -192,19 +195,19 @@
     - (ii-a) 없음 — 필요한 셸 심볼이 이미 활성화된 기능 안에 있어 `Cargo.toml`을 건드리지 않는다(전제 5)
   - **Depends on**: -
 
-- [ ] T2. 트리 줄에 아이콘 붙이기 + 줄 그리기 공통화
+- [x] T2. 트리 줄에 아이콘 붙이기 + 줄 그리기 공통화
   - **Type**: D
-  - **Design**: ① 조회는 `src/fs/icons.rs`(셸 연동 계층), 그리기는 `src/ui/tree.rs` ② 신규 심볼 — **`IconCache::icon_index_for_path(path) -> i32`**(경로로 셸에 직접 물어 아이콘 인덱스를 얻는다 — `SHGFI_SYSICONINDEX|SHGFI_SMALLICON`을 `USEFILEATTRIBUTES` **없이** 실제 경로에 건다. 기존 `icon_index`는 `is_dir`을 먼저 걸러 드라이브를 구분하지 못한다 — 전제 1-b. 실패하면 `dir_icon`으로 폴백하고 경로별 결과를 `IconCache`가 캐시한다) · `fn tree_row(ui, icon, label, selected) -> egui::Response`(아이콘 + 라벨을 한 줄로 그린다) · `FolderTreeView`의 `icon_indices: HashMap<PathBuf, i32>`(노드별 조회 결과 캐시) ③ `panel.rs`가 이미 가진 `icons`·`textures`를 `show`에 넘긴다(전제 2) — 트리는 `IconCache`·`IconTextures`만 알고 파일시스템은 모른다 ④ 비추상화 선언: 아이콘 종류별 분기를 만들지 않는다(셸이 경로 하나로 정해 준다). 원격은 `dir_icon()` 하나로 고정한다(사용자 결정)
+  - **Design**: ① 조회는 `src/fs/icons.rs`(셸 연동 계층), 그리기는 `src/ui/tree.rs` ② 신규 심볼 — **`IconCache::icon_index_for_path(path) -> i32`는 T1에서 이미 만들었다**(같은 파일의 셸 조회 계열이라 함께 구현 — T1 Design ② 참조). 이 task는 그것을 *쓰는* 쪽만 만든다. 그 함수의 성질은 다음과 같다(경로로 셸에 직접 물어 아이콘 인덱스를 얻는다 — `SHGFI_SYSICONINDEX|SHGFI_SMALLICON`을 `USEFILEATTRIBUTES` **없이** 실제 경로에 건다. 기존 `icon_index`는 `is_dir`을 먼저 걸러 드라이브를 구분하지 못한다 — 전제 1-b. 실패하면 `dir_icon`으로 폴백하고 경로별 결과를 `IconCache`가 캐시한다) · `fn tree_row(ui, icon, label, selected) -> egui::Response`(아이콘 + 라벨을 한 줄로 그린다) · `FolderTreeView`의 `icon_indices: HashMap<PathBuf, i32>`(노드별 조회 결과 캐시) ③ `panel.rs`가 이미 가진 `icons`·`textures`를 `show`에 넘긴다(전제 2) — 트리는 `IconCache`·`IconTextures`만 알고 파일시스템은 모른다 ④ 비추상화 선언: 아이콘 종류별 분기를 만들지 않는다(셸이 경로 하나로 정해 준다). 원격은 `dir_icon()` 하나로 고정한다(사용자 결정)
   - **Acceptance**:
     - Given 로컬 트리, When 프레임을 몇 번 그림, Then **트리 구역(x < `TREE_WIDTH`)에 그려진 이미지 셰이프 수**가 **즐겨찾기 항목 수 + 보이는 드라이브 수**와 같다(목록도 같은 프레임에 아이콘을 그리므로 구역으로 좁혀 센다 — 이를 세는 헬퍼를 시험에 새로 둔다).
       **비교 대상을 "그려진 줄 수"가 아니라 입력에서 계산한다** — T4가 아이콘 없는 **제목 줄**을 더하므로, 줄을 세는 방식이면 그때 `이미지 = 줄 − 1`이 되어 이 시험이 T4에서 깨진다(M3). 제목·구분선은 애초에 세지 않는다
     - Given 원격 트리, When 그림, Then 모든 줄에 **같은 폴더 아이콘**이 그려진다(사용자 결정 — 서버 아이콘은 얻을 수 없다)
-    - Given 같은 경로를 두 번 요청, When `IconCache::icon_index_for_path`, Then **셸 조회는 한 번만 일어난다** — `IconCache`에 `#[cfg(test)] shell_queries: usize`(실제 `SHGetFileInfoW` 호출에서 +1)를 두고 `src/fs/icons.rs` 시험이 그 값을 단언한다.
+    - Given 같은 경로를 두 번 요청, When `IconCache::icon_index_for_path`, Then **셸 조회는 한 번만 일어난다** — `IconCache`에 `#[cfg(test)] shell_queries: usize`(실제 `SHGetFileInfoW` 호출에서 +1)를 두고 `src/fs/icons.rs` 시험이 그 값을 단언한다. **이 시험은 T1에서 이미 통과했다**(선구현 — T1 Design ②) — T2 diff에는 이 항목의 신규 코드가 없으며, T2가 검증할 것은 트리가 그 함수를 실제로 쓰는가다.
       **맵 크기(`len`)로는 이것을 관측할 수 없다** — 매 프레임 다시 조회해 다시 넣어도 키가 같아 크기가 그대로이기 때문이다(2라운드 지적)
     - 아이콘이 붙어도 클릭·펼침·우클릭 메뉴가 종전대로 동작한다(기존 시험 전건 통과)
     - `cargo test` 통과, clippy 경고 0
   - **Files**:
-    - 주: `src/fs/icons.rs`(경로 실조회 신규 + 시험용 조회 카운터) · `src/ui/tree.rs` · `src/ui/panel.rs`(`show` 호출에 `icons`·`textures` 전달)
+    - 주: `src/ui/tree.rs` · `src/ui/panel.rs`(`show` 호출에 `icons`·`textures` 전달) — **`src/fs/icons.rs`는 T1에서 이미 끝났다**(경로 실조회·시험용 조회 카운터). 이 task가 그 파일을 다시 건드릴 일은 없다
     - 테스트: `src/fs/icons.rs`의 `mod tests`(실 드라이브 조회가 `dir_icon`과 다른 값 + 조회 카운터로 캐시 적중) · `src/ui/tree.rs`의 `mod tests`(헬퍼 호출 갱신) · `src/ui/panel/tests.rs`(아이콘 그려짐 + **하네스가 프레임마다 `begin_frame()`을 부르게 수정** — M2)
   - **Edge Cases**:
     - 셸 아이콘 조회 실패 → 아이콘 없이 라벨만(줄이 사라지지 않는다)
@@ -219,7 +222,7 @@
     - (ii-a) `FolderTreeView::show` 시그니처에 인자 2개 추가(계획된 공개 API 변경) → `## 사전 승인 항목`
   - **Depends on**: T1
 
-- [ ] T3. 드라이브를 셸 표시 이름으로 보이기
+- [x] T3. 드라이브를 셸 표시 이름으로 보이기
   - **Type**: C
   - **Design**: ① `src/ui/tree.rs`의 `drive_roots`가 경로만 주던 것을 **경로와 표시 이름 쌍**으로 넓힌다 ② 신규 심볼 없음 — 기존 함수의 반환 타입 변경과 `roots` 필드 타입 변경 ③ `fs::icons::display_name`(T1)을 시작 시 한 번 부른다 — 매 프레임 셸에 묻지 않는다 ④ 비추상화 선언: 드라이브 종류(고정·이동식·네트워크)를 우리가 판정하지 않는다(셸 이름이 이미 그것을 담는다)
   - **Acceptance**:
@@ -241,7 +244,7 @@
     - (ii-a) `drive_roots` 반환 타입 변경(계획된 공개 API 변경) → `## 사전 승인 항목`
   - **Depends on**: T1
 
-- [ ] T4. 즐겨찾기 제목과 기본 항목(바탕 화면·다운로드)
+- [x] T4. 즐겨찾기 제목과 기본 항목(바탕 화면·다운로드)
   - **Type**: D
   - **Design**: ① 기본 항목 판정은 `src/app/favorites.rs`(순수 계층), 제목 그리기는 `src/ui/tree.rs` ② 신규 심볼 — `FavoriteStore::with_defaults(defaults, 사용자 경로들)`(기본 항목을 함께 든다 — 복원도 이 길을 쓴다) · `FavoriteStore::entries() -> Vec<FavoriteEntry>`(기본이 앞, 사용자가 뒤. 중복 경로는 기본 쪽만 남긴다) · `FavoriteEntry { path, label: Option<String>, removable }` — **라벨은 기본 항목만 갖는다**(셸 표시 이름). 사용자 항목은 `None`이고 화면이 기존 `tree.rs::display_name`으로 폴백한다. 그래야 폴더명 산출 로직이 `app/` 계층에 복제되지 않는다(m1) · i18n `tree_favorites_title`(`즐겨찾기` / `Favorites` — **`strings!`는 한쪽을 빠뜨리면 컴파일 오류다**). **같은 회차에 `tree_favorite_add`의 값을 `즐겨찾기에 담기`로 바꾼다**(D7) — 제목과 메뉴가 같은 리터럴이면 화면 문자열로 둘을 가를 수 없어 기존 시험 3건이 깨지거나 죽는다 ③ **`paths()`는 사용자 항목만 준다(세션 저장용), `entries()`는 기본+사용자를 준다(화면용)** — 지금 `app.rs:789`(세션 저장)와 `:2698`(화면 전달)이 둘 다 `paths()`를 쓰므로, 화면 쪽만 `entries()`로 바꾸고 저장 쪽은 그대로 둔다. 이 경계가 없으면 기본 항목이 저장 파일에 섞여 **D4가 B안을 버린 사유가 그대로 되살아난다**(m2).
     `ui::app`이 시작할 때 `default_favorites()`(T1)로 저장소를 만들고, **세션 복원 지점(`app.rs:713`)도 기본 항목을 유지한다** — 지금은 `FavoriteStore::from_paths(...)`가 저장소를 통째로 갈아치우므로 그대로 두면 settings.json이 있는 모든 사용자(=정상 경로)에서 기본 둘이 사라진다. 복원은 `FavoriteStore::with_defaults(defaults, 사용자 경로들)` 한 줄로 바꿔 기본을 다시 싣는다. 트리는 `entries()` 결과만 그리고 무엇이 기본인지 판정하지 않는다(`removable`만 본다) ④ 비추상화 선언: 기본 항목을 사용자가 설정으로 바꾸는 길을 만들지 않는다(Out of Scope)
@@ -270,7 +273,7 @@
     - (ii-a) `FavoriteStore` 공개 API 확장 → `## 사전 승인 항목`
   - **Depends on**: T1
 
-- [ ] T5. PRD·README 갱신과 위키 큐
+- [x] T5. PRD·README 갱신과 위키 큐
   - **Type**: A
   - **Acceptance**:
     - `docs/prd.md` FR-56 문면에 **제목 표시·기본 항목(해제 불가)**이 더해진다
@@ -317,9 +320,55 @@
 
 ## Phase Ledger
 
+## T5 역대조 표 (문서 문장 ↔ 실제 동작)
+
+| # | 문서·위치 | 적은 문장 | 실제 근거 | 판정 |
+|---|---|---|---|---|
+| 1 | PRD FR-9 | 로컬 트리의 모든 줄에 셸 아이콘이 붙는다 | `tree.rs`의 `icon_for` → `IconCache::icon_index_for_path`, 시험 `트리_줄에는_셸_아이콘이_붙는다` | ✅ |
+| 2 | PRD FR-9 | 원격 트리는 모두 같은 폴더 아이콘 | `tree.rs:245` `icons.dir_icon()` 한 값을 모든 줄에 넘김 | ✅ |
+| 3 | PRD FR-9 | 드라이브는 `로컬 디스크 (C:)` 같은 셸 표시 이름 | `tree.rs`의 `drive_roots` → `shell_display_name` | ✅ |
+| 4 | PRD FR-9 | 이름을 얻지 못하면 경로 문자열로 폴백 | 같은 자리의 `unwrap_or_else(|| path.to_string_lossy())` | ✅ |
+| 5 | PRD FR-56 | 맨 위에 `즐겨찾기` 제목(흐린 작은 글씨) | `tree.rs:359` `FAVORITES_TITLE_PX`·`theme::TEXT_MUTED` | ✅ |
+| 6 | PRD FR-56 | 하나도 없으면 제목·목록·구분선을 그리지 않는다 | `tree.rs:355` `if favorites.is_empty() { return; }` | ✅ |
+| 7 | PRD FR-56 | 바탕 화면·다운로드가 기본으로 서고 해제할 수 없다 | `known_folders::default_favorites` + `FavoriteEntry.removable=false` + `FavoriteStore::remove`가 기본을 무시 | ✅ |
+| 8 | PRD FR-56 | 그 줄은 우클릭해도 메뉴가 뜨지 않는다 | `tree.rs:385` `entry.removable && response.secondary_clicked()` | ✅ |
+| 9 | PRD FR-56 | 실재하지 않는 폴더는 빠진다 | `known_folders.rs:23` `.filter(|path| path.is_dir())` | ✅ |
+| 10 | PRD FR-56 | 옮긴 자리를 가리킨다 | `SHGetKnownFolderPath`가 매 실행 시 현재 위치를 준다 | ✅ |
+| 11 | PRD FR-56 | 세션 파일에 담기지 않는다 | 저장은 `paths()`(사용자 항목만), 화면만 `entries()` — `app.rs:800` vs `:2709` | ✅ |
+| 12 | PRD FR-56 | 담기 메뉴 문구 `즐겨찾기에 담기` | `i18n::tree_favorite_add` | ⚠️→✅ (리뷰 M1: 옛 `즐겨찾기`가 남아 있어 정정) |
+| 13 | README 25 | 탐색기와 같은 셸 아이콘·드라이브 표시 이름 | 1~4와 같음 | ✅ |
+| 14 | README 26 | 기본 두 줄은 윈도우가 쓰는 이름으로 보인다 | `FavoriteEntry.label`(셸 표시 이름), 사용자 항목은 `None`이라 폴더명 | ✅ |
+| 15 | README 26 | 그 폴더가 없는 PC에서는 해당 줄만 빠진다 | 9와 같음 | ✅ |
+| 16 | README 아키텍처 | `fs/known_folders.rs` 행 신설 | 실제 신규 파일(T1) | ✅ |
+| 17 | 위키 큐 | 구현 함정 + 서술 드리프트 2줄 | vault `pending.md` `[PROJECT-FACT]`·`[K-DRIFT]` | ✅ (리뷰 N2로 드리프트 줄 추가) |
+
+**누락·잔존·변형**: 잔존 1건(12번 — 옛 메뉴 문구)을 정정했다. 변형·누락 없음. 문서에만 있고 코드에 없는 서술은 발견하지 못했다.
+
+## Phase Ledger
+- Phase F 통과 (2026-08-17) — F-7 판정 BLOCKER 0 / MAJOR 2 / MINOR 5. MAJOR 둘(대장 미이관·PRD 결정 이력 미갱신)과 m1·m4를 그 자리에서 반영했고, 나머지 MINOR 넷(m2 원격 아이콘 시험 공백·m3 실패 미캐시·m5 FR-53 예외)은 대장에 등재했다.
+- Phase G 통과 (2026-08-17) — PRD FR-9·FR-56 문면이 실동작과 1:1로 맞음을 F-7이 항목별로 확인. 갭으로 추가한 task 없음.
+
 ## Retry Ledger
+- T1: 리뷰 수정 사이클 1/5 (1라운드 BLOCKER 1 — task 경계 침범, 코드 대신 plan 귀속 정정으로 해소). 동일 BLOCKER 재발 0.
+- T3: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 1 — 시험 헬퍼가 셸 잠금을 빠뜨림).
+- T5: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 1 — PRD FR-56에 옛 메뉴 문구 잔존 · MINOR 2 — 역대조 표 산출물 부재·위키 큐가 서술 드리프트를 안 짚음). 셋 다 반영.
+- T4: 리뷰 수정 사이클 1/5 (1라운드 MINOR 2 — `from_paths` 과도한 공개·기본 항목 판정식 3회 중복). spec 리뷰는 지적 0건. 품질 리뷰어가 판정문 없이 끝나 D 분기로 1회 재요청.
+- T2: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 2 — 하네스 begin_frame 누락 2곳·tree_row의 포커스 표시 상실). 리뷰어 둘 다 판정문 없이 끝나 D 분기로 1회씩 재요청.
+
 
 ## Progress Log
+- T1-T2 완료 (커밋 e6237d6, 다음 커밋): 셸 조회 둘(표시 이름·기본 폴더) → 트리 줄에 아이콘.
+  - 결정: T1이 T2 몫(`icon_index_for_path`·`shell_queries`)을 선구현한 것을 코드로 되돌리지 않고 plan 귀속을 T1로 옮겼다 — 같은 파일·같은 API 계열이라 되돌리면 T2에서 동일 코드를 다시 만들게 된다.
+  - 결정: 줄 그리기를 `selectable_label`에서 직접 그리기(`tree_row`)로 바꾸면서 잃은 **시각적 포커스 표시**를 `has_focus()` 테두리로 되살렸다(키보드 조작 자체는 `Sense::click()`이 보존).
+  - 결정: 늘 함께 다니는 `textures`·`ctx`·`himl`을 `RowCtx`로 묶어 `#[allow(too_many_arguments)]` 두 곳을 없앴다.
+  - 시험 하네스 3곳이 프레임마다 `textures.begin_frame()`을 부르게 했다 — 빠뜨리면 텍스처 생성 상한(프레임당 8개)이 하네스 수명 전체로 굳는다.
+- T3-T4 완료: 드라이브 셸 표시 이름 → 즐겨찾기 제목·기본 항목(바탕 화면·다운로드).
+  - 결정: `ExplorerApp` 생성자에서 `IconCache`를 구조체 리터럴 앞으로 꺼냈다 — 기본 항목이 셸 표시 이름을 필요로 하는데 리터럴 안에서는 다른 필드를 참조할 수 없다.
+  - 결정: 시험 하네스에 `user_favorite`·`default_favorite` 두 헬퍼를 두고 **인자로 받은 항목만 그린다** — 하네스가 기본 둘을 자동으로 실으면 메뉴 시험이 제목만으로 통과한다(B1).
+  - 리뷰 반영(MINOR 2건): `from_paths`를 비공개로 낮췄다(공개로 두면 복원 지점이 다시 그 길을 골라 기본 항목을 잃는다) · 기본 항목 판정식이 세 곳에 반복돼 `is_default` 헬퍼로 모았다.
+- T5 완료: PRD FR-9·FR-56 문면 보완, README 폴더 트리·즐겨찾기·아키텍처 트리 갱신, 위키 큐 1줄.
+  - 역대조에서 한 문장을 고쳤다 — 셸 표시 이름은 **윈도우 표시 언어**를 따르지 앱의 i18n 언어를 따르지 않는다("화면 언어를 따르고" → "윈도우가 쓰는 것을 그대로 보이고").
+  - T1이 만든 `src/fs/known_folders.rs`가 README 아키텍처 트리에 없어 함께 더했다.
 
 ## Next Steps
 
