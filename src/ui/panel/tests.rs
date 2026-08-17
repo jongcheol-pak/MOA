@@ -1199,6 +1199,7 @@ fn 즐겨찾기를_누르면_그_폴더로_옮겨간다() {
         ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let inner = ui.ctx().clone();
+                textures.begin_frame();
                 panel.show(
                     ui,
                     &inner,
@@ -1282,6 +1283,9 @@ impl FavoriteHarness {
         let output = self.ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let inner = ui.ctx().clone();
+                // 앱과 같은 자리에서 프레임 상한을 푼다 — 이 하네스는 한 인스턴스로 여러
+                // 프레임을 그리므로, 빠뜨리면 텍스처 8개가 하네스 수명 전체의 상한이 된다
+                textures.begin_frame();
                 let outcome = panel.show(
                     ui,
                     &inner,
