@@ -171,7 +171,7 @@
 
 ## Tasks
 
-- [ ] T1. 셸에서 표시 이름과 기본 폴더 경로 얻기
+- [x] T1. 셸에서 표시 이름과 기본 폴더 경로 얻기
   - **Type**: C
   - **Design**: ① 둘 다 **`fs/` 계층**에 둔다 — 표시 이름 조회는 `src/fs/icons.rs`(같은 셸 API를 이미 쓴다), 기본 폴더 조회는 **`src/fs/known_folders.rs`(신규)**. `app/`은 AGENTS.md가 "순수 로직"으로 선언한 계층이고 `app::favorites` 모듈 주석도 화면·OS를 모르는 순수 계층임을 명시하므로, unsafe 셸 호출을 그리로 넣지 않는다 ② 신규 심볼 — `icons::shell_display_name(&mut self, path) -> Option<String>`(셸 표시 이름, 실패하면 `None`. **`tree.rs`에 이미 비공개 `display_name`이 있어 이름을 달리 둔다**) · `known_folders::default_favorites(icons: &mut IconCache) -> Vec<(PathBuf, String)>`(존재하는 기본 폴더의 경로와 표시 이름 — **라벨은 `shell_display_name`으로 얻는다**. 그래야 `바탕 화면`처럼 지역화된 이름이 나오고, 폴더명 그대로면 `Desktop`이 된다. 그 조회가 `&mut self` 메서드라 캐시를 쥔 `IconCache`를 인자로 받는다 — 자기 캐시를 새로 만들면 호출마다 셸을 다시 묻는다)
     - **함께 넣은 것(원래 T2 몫)**: `IconCache::icon_index_for_path`와 `#[cfg(test)] shell_queries` 카운터. 셸 조회 인프라가 `shell_display_name`과 같은 파일·같은 API 계열이라 한자리에서 만드는 편이 자연스러워 T1에서 함께 구현했다(2026-08-17 T1 spec 리뷰 B1로 드러나 귀속을 여기로 옮김) ③ 둘 다 화면을 모르고 `windows` crate만 참조한다. `app::favorites`(T4)가 이 결과를 받아 담는다 — 셸 호출과 목록 규칙이 계층으로 갈린다 ④ 비추상화 선언: 셸 조회를 트레이트로 감싸지 않는다(호출부가 각각 하나이고, 감싸면 unsafe 격리 지점만 늘어난다)
@@ -205,7 +205,7 @@
     - 아이콘이 붙어도 클릭·펼침·우클릭 메뉴가 종전대로 동작한다(기존 시험 전건 통과)
     - `cargo test` 통과, clippy 경고 0
   - **Files**:
-    - 주: `src/fs/icons.rs`(경로 실조회 신규 + 시험용 조회 카운터) · `src/ui/tree.rs` · `src/ui/panel.rs`(`show` 호출에 `icons`·`textures` 전달)
+    - 주: `src/ui/tree.rs` · `src/ui/panel.rs`(`show` 호출에 `icons`·`textures` 전달) — **`src/fs/icons.rs`는 T1에서 이미 끝났다**(경로 실조회·시험용 조회 카운터). 이 task가 그 파일을 다시 건드릴 일은 없다
     - 테스트: `src/fs/icons.rs`의 `mod tests`(실 드라이브 조회가 `dir_icon`과 다른 값 + 조회 카운터로 캐시 적중) · `src/ui/tree.rs`의 `mod tests`(헬퍼 호출 갱신) · `src/ui/panel/tests.rs`(아이콘 그려짐 + **하네스가 프레임마다 `begin_frame()`을 부르게 수정** — M2)
   - **Edge Cases**:
     - 셸 아이콘 조회 실패 → 아이콘 없이 라벨만(줄이 사라지지 않는다)
@@ -319,6 +319,8 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- T1: 리뷰 수정 사이클 1/5 (1라운드 BLOCKER 1 — task 경계 침범, 코드 대신 plan 귀속 정정으로 해소). 동일 BLOCKER 재발 0.
+
 
 ## Progress Log
 

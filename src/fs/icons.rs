@@ -215,6 +215,9 @@ impl IconCache {
     ///
     /// 볼륨 레이블을 읽어 우리가 조립하지 않는 이유는 `로컬 디스크`·`(C:)` 같은 표기가
     /// 언어마다 다르기 때문이다. 얻지 못하면 `None`이고 부르는 쪽이 경로로 폴백한다
+    /// 셸 조회를 트레이트로 감싸지 않는다 — 이 메서드와 `icon_index_for_path` 모두 부르는
+    /// 곳이 하나씩뿐이라, 감싸면 갈아 끼울 일도 없이 `unsafe` 격리 지점만 늘어난다
+    /// (계획 T1 Design ④)
     pub fn shell_display_name(&mut self, path: &str) -> Option<String> {
         if let Some(name) = self.name_by_path.get(path) {
             return Some(name.clone());
