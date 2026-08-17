@@ -375,7 +375,7 @@ impl FolderTreeView {
             // 펼침 화살표가 없는 줄이라 그 자리만큼 들여쓴다 — 하위 없는 트리 잎과 같은 자리다
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                let response = tree_row(ui, row, icon, &label, is_selected)
+                let response = tree_row(ui, row, icon, &label, is_selected, false)
                     .on_hover_text(path.to_string_lossy());
                 if response.clicked() {
                     self.select(choice, outcome);
@@ -433,7 +433,7 @@ impl FolderTreeView {
         {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                if tree_row(ui, row, folder, &label, is_selected).clicked() {
+                if tree_row(ui, row, folder, &label, is_selected, false).clicked() {
                     self.select(choice, outcome);
                 }
             });
@@ -446,7 +446,7 @@ impl FolderTreeView {
         let header = CollapsingState::load_with_default_open(ui.ctx(), id, depth == 0).show_header(
             ui,
             |ui| {
-                if tree_row(ui, row, folder, &label, is_selected).clicked() {
+                if tree_row(ui, row, folder, &label, is_selected, false).clicked() {
                     self.select(choice, outcome);
                 }
             },
@@ -529,9 +529,11 @@ impl FolderTreeView {
     ) {
         let choice = TreeChoice::Local(path.to_path_buf());
         let is_selected = self.selected.as_ref() == Some(&choice);
-        let icon = match drive {
-            Some(drive) => drive.icon,
-            None => self.icon_for(path, icons),
+        // 드라이브 뿌리는 워커가 준 아이콘과 연결 상태를 쓰고, 하위 폴더는 종전처럼
+        // UI 스레드에서 아이콘을 얻고 배지도 없다 (T4·T5)
+        let (icon, offline) = match drive {
+            Some(drive) => (drive.icon, drive.offline),
+            None => (self.icon_for(path, icons), false),
         };
 
         // 하위 폴더가 없다고 확인된 노드는 펼침 화살표를 그리지 않는다
@@ -539,7 +541,7 @@ impl FolderTreeView {
         if matches!(self.nodes.get(path), Some(Node::Loaded(children)) if children.is_empty()) {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                let response = tree_row(ui, row, icon, label, is_selected);
+                let response = tree_row(ui, row, icon, label, is_selected, offline);
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -551,7 +553,7 @@ impl FolderTreeView {
         let id = ui.make_persistent_id(path);
         let header =
             CollapsingState::load_with_default_open(ui.ctx(), id, false).show_header(ui, |ui| {
-                let response = tree_row(ui, row, icon, label, is_selected);
+                let response = tree_row(ui, row, icon, label, is_selected, offline);
                 if response.clicked() {
                     self.select(choice, outcome);
                 }
@@ -684,6 +686,7 @@ fn tree_row(
     icon: i32,
     label: &str,
     selected: bool,
+    offline: bool,
 ) -> egui::Response {
     let height = ui.spacing().interact_size.y.max(ROW_ICON);
     let (rect, response) = ui.allocate_at_least(
@@ -721,6 +724,12 @@ fn tree_row(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        // 연결 끊김 배지는 **아이콘을 그린 그 사각형 안에** 겹친다 (FR-9) — 자리를 다시
+        // 계산하면 아이콘과 어긋난다. 아이콘이 아직 안 올라온 프레임에는 배지도 그리지
+        // 않는다(허공에 배지만 뜨지 않게 — 텍스처는 프레임당 8개까지만 만들어진다)
+        if offline {
+            draw_offline_badge(ui.painter(), icon_rect);
+        }
     }
     let text_color = if selected {
         ui.visuals().selection.stroke.color
@@ -735,6 +744,48 @@ fn tree_row(
         text_color,
     );
     response
+}
+
+/// 배지 지름 — 아이콘 한 변에 대한 비율.
+///
+/// 탐색기 스크린샷 실측: 배지 높이 10px ÷ 아이콘 높이 18px. 그 상자는 23×18로 정사각이
+/// 아니었는데(드라이브 아이콘이 가로로 넓다) 우리 `icon_rect`는 16×16이라 **세로 축**을 썼다
+const BADGE_RATIO: f32 = 0.55;
+/// X 선 굵기 — 배지 지름에 대한 비율. 배지가 9px 남짓이라 스크린샷에서 정밀히 잴 수 없어
+/// 어림한 값이다(화면 확인으로 판정한다)
+const BADGE_STROKE_RATIO: f32 = 0.15;
+/// X 선의 한 변 길이 — 배지 지름에 대한 비율. 원 안쪽에 여백이 남는다
+const BADGE_MARK_RATIO: f32 = 0.5;
+
+/// 연결 끊김 배지 — 아이콘 오른쪽 아래에 겹치는 **채워진 빨간 원과 흰 X** (FR-9).
+///
+/// 셸에 이 오버레이를 물어보는 길이 없어 직접 그린다 — `SHGFI_OVERLAYINDEX`·
+/// `SHGFI_ADDOVERLAYS`를 경로와 PIDL 두 경로로 물어도 끊긴 드라이브의 오버레이 인덱스가
+/// 전부 0으로 왔다(2026-08-17 실측). 아이콘 글꼴을 쓰지 않는 이유는 phosphor regular의
+/// `X_CIRCLE`이 윤곽선이라 이 크기에서 탐색기의 채워진 배지와 다르게 읽히기 때문이다
+fn draw_offline_badge(painter: &egui::Painter, icon_rect: egui::Rect) {
+    let diameter = icon_rect.height() * BADGE_RATIO;
+    let radius = diameter / 2.0;
+    // 배지의 오른쪽·아래 끝을 아이콘의 오른쪽·아래 끝에 맞춘다 — 아이콘 **안쪽**에
+    // 들어가고 밖으로 넘치지 않는다(탐색기 실측: 두 오른쪽 끝이 같은 자리다)
+    let center = egui::pos2(icon_rect.right() - radius, icon_rect.bottom() - radius);
+    painter.circle_filled(center, radius, theme::OFFLINE_BADGE);
+    let arm = diameter * BADGE_MARK_RATIO / 2.0;
+    let stroke = egui::Stroke::new(diameter * BADGE_STROKE_RATIO, egui::Color32::WHITE);
+    painter.line_segment(
+        [
+            egui::pos2(center.x - arm, center.y - arm),
+            egui::pos2(center.x + arm, center.y + arm),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(center.x - arm, center.y + arm),
+            egui::pos2(center.x + arm, center.y - arm),
+        ],
+        stroke,
+    );
 }
 
 fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {

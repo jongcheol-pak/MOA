@@ -156,6 +156,30 @@ fn tree_icon_count(output: &eframe::egui::FullOutput) -> usize {
     found
 }
 
+/// 트리 구역에 그려진 **연결 끊김 배지** 수 (T5).
+///
+/// 배지는 글자가 아니라 채워진 원이라 `drawn_texts`로는 보이지 않는다 — 색으로 가려낸다
+fn offline_badges(output: &eframe::egui::FullOutput) -> usize {
+    fn count(shape: &egui::Shape, found: &mut usize) {
+        match shape {
+            egui::Shape::Circle(circle) if circle.fill == crate::ui::theme::OFFLINE_BADGE => {
+                *found += 1;
+            }
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    count(shape, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = 0;
+    for clipped in &output.shapes {
+        count(&clipped.shape, &mut found);
+    }
+    found
+}
+
 /// 한 프레임에 그려진 자리표시 막대 수 — 목록 자리에 자리표시가 섰는지 판정한다.
 /// 막대는 글자가 아니라 사각형이라 `drawn_texts`로는 보이지 않는다
 fn skeleton_bars(output: &eframe::egui::FullOutput) -> usize {
@@ -220,6 +244,17 @@ fn draw_once_with_favorites(
     sites: &SiteStore,
     favorites: &[FavoriteEntry],
 ) -> eframe::egui::FullOutput {
+    draw_once_with(panel, sites, favorites, drive_rows())
+}
+
+/// 즐겨찾기와 **드라이브 줄**을 손으로 지정해 한 프레임 그린다 — 연결 끊김 배지를 보는
+/// 시험이 쓴다(실제 PC에 끊긴 네트워크 드라이브가 있어야 하면 시험이 환경에 매인다)
+fn draw_once_with(
+    panel: &mut PanelState,
+    sites: &SiteStore,
+    favorites: &[FavoriteEntry],
+    drives: &[crate::fs::drives::DriveRow],
+) -> eframe::egui::FullOutput {
     let tree = crate::remote::tree_cache::TreeCache::new();
     let remote = RemoteView {
         sites,
@@ -245,7 +280,7 @@ fn draw_once_with_favorites(
                 // 전송 대상이 없는 상태 — 이 시험들은 탭 아이콘이 아니라 배치·상태를 본다
                 crate::ui::tabs::TransferTargets::default(),
                 favorites,
-                drive_rows(),
+                drives,
             );
         });
     })
@@ -2498,4 +2533,84 @@ fn 트리_줄에는_셸_아이콘이_붙는다() {
         "트리 구역 아이콘 수가 즐겨찾기 {}개 + 드라이브 {드라이브}개와 다르다",
         favorites.len()
     );
+}
+
+/// 시험용 드라이브 줄 — 실제 PC 구성과 무관하게 원하는 상태를 만든다 (T5).
+///
+/// 아이콘 인덱스는 셸이 준 실값을 쓴다(0을 넣으면 텍스처가 만들어지지 않아 배지를
+/// 그리는 자리 자체가 사라진다 — 배지는 아이콘이 올라온 프레임에만 그려진다)
+fn drive_row(path: &str, network: bool, offline: bool) -> crate::fs::drives::DriveRow {
+    let icon = drive_rows()
+        .first()
+        .map(|row| row.icon)
+        .expect("이 PC에 드라이브가 하나는 있다");
+    crate::fs::drives::DriveRow {
+        path: std::path::PathBuf::from(path),
+        label: format!("드라이브 ({path})"),
+        icon,
+        network,
+        offline,
+    }
+}
+
+#[test]
+fn 끊긴_네트워크_드라이브_줄에만_배지가_붙는다() {
+    // T5 Acceptance — 탐색기처럼 누르기 전에도 끊긴 것이 보인다 (2026-08-17 사용자 요청)
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let drives = [
+        drive_row(r"C:\", false, false),
+        drive_row(r"Z:\", true, true),
+    ];
+
+    // 텍스처는 프레임당 8개까지만 만들어진다 — 몇 프레임 돌려 아이콘을 채운다
+    let mut 배지 = 0;
+    for _ in 0..8 {
+        let output = draw_once_with(&mut panel, &SiteStore::new(), &[], &drives);
+        배지 = offline_badges(&output);
+        if 배지 > 0 {
+            break;
+        }
+    }
+    assert_eq!(배지, 1, "끊긴 드라이브 줄 하나에만 배지가 붙어야 한다");
+}
+
+#[test]
+fn 닿는_드라이브에는_배지가_없다() {
+    // T5 Acceptance — 로컬 드라이브·연결된 네트워크 드라이브에는 배지를 두지 않는다
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    let drives = [
+        drive_row(r"C:\", false, false),
+        drive_row(r"Z:\", true, false),
+    ];
+
+    for _ in 0..8 {
+        let output = draw_once_with(&mut panel, &SiteStore::new(), &[], &drives);
+        assert_eq!(offline_badges(&output), 0, "배지가 없어야 하는데 그려졌다");
+    }
+}
+
+#[test]
+fn 즐겨찾기와_하위_폴더에는_배지가_붙지_않는다() {
+    // T5 Acceptance — 하위 폴더는 드라이브 줄과 **같은 `show_node`**를 지나므로,
+    // 그 자리에서 `false`가 흐르는지 확인한다. 즐겨찾기는 `tree_row`의 다른 호출부다
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+    // 드라이브는 전부 닿는 상태로 두고 즐겨찾기만 얹는다 — 배지가 그려지면 그것은
+    // 드라이브 줄이 아닌 자리에서 온 것이다
+    let drives = [drive_row(r"C:\", false, false)];
+    let favorites = [user_favorite(r"C:\Users"), user_favorite(r"C:\Windows")];
+
+    for _ in 0..8 {
+        let output = draw_once_with(&mut panel, &SiteStore::new(), &favorites, &drives);
+        assert_eq!(
+            offline_badges(&output),
+            0,
+            "드라이브 줄이 아닌 자리에 배지가 그려졌다"
+        );
+    }
 }

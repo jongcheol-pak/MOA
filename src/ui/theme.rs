@@ -27,6 +27,12 @@ pub const CONTROL_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x45, 0x45, 0x
 pub const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(0x6A, 0x6A, 0x6A);
 /// 타이틀바 닫기 버튼 hover 배경 — Windows 11 캡션 닫기 버튼과 같은 빨강 (FR-22)
 pub const CLOSE_HOT: egui::Color32 = egui::Color32::from_rgb(0xC4, 0x2B, 0x1C);
+/// 끊긴 네트워크 드라이브의 연결 끊김 배지 — 트리 아이콘 오른쪽 아래에 겹치는 원 (FR-9).
+///
+/// `CLOSE_HOT`과 값이 같지만 뜻이 다른 자리라 이름을 따로 둔다(팔레트가 `OK_DOT`·`OK_TEXT`
+/// 처럼 용도별 상수를 두는 관례와 같다) — `ERROR`(#FF6B6B)는 글자용이라 이 크기의 원에
+/// 칠하면 연해서 탐색기 배지와 다르게 읽힌다
+pub const OFFLINE_BADGE: egui::Color32 = egui::Color32::from_rgb(0xC4, 0x2B, 0x1C);
 /// 분할 패널 경계선 — 패널마다 두르는 기본 테두리 (FR-1·FR-2)
 pub const PANE_BORDER: egui::Color32 = egui::Color32::from_rgb(0x33, 0x33, 0x33);
 /// 활성 패널 경계선 — 지금 입력을 받는 패널만 한 단계 밝게 두른다.
