@@ -152,6 +152,9 @@ pub struct PanelOutcome {
     pub remote_menu: Option<RemoteMenuPick>,
     /// 트리 우클릭 메뉴에서 고른 즐겨찾기 조작 (FR-56) — 목록을 고치는 것은 앱이다
     pub favorite: Option<FavoriteAction>,
+    /// 이 패널이 열어 본 드라이브와 그 결과 `(경로, 닿았는가)` (T6) — 드라이브 목록에
+    /// 반영하는 것은 앱이다. 로컬 드라이브의 실패는 `DriveList::observe`가 걸러낸다
+    pub drive_observed: Option<(PathBuf, bool)>,
     /// 원격 트리가 청한 하위 조회들 (FR-9 원격판) — 연결에 보내는 것은 앱이다.
     ///
     /// **여럿을 그대로 올린다** — 한 프레임에 형제 노드 여럿이 펼쳐져 있으면 요청도 여럿이다.
@@ -201,6 +204,12 @@ pub struct PanelState {
     pending_nav: PendingNav,
     /// 열거 실패 사유 — 성공 시 빈 문자열
     status: String,
+    /// 이번 프레임에 열어 본 드라이브와 그 결과 `(경로, 닿았는가)` (T6).
+    ///
+    /// **중간에 담아 두는 이유**: 열거 결과를 받는 `apply_enumerated`는 `poll_load` 안에서
+    /// 돌아 그 자리에서 `PanelOutcome`을 만들 수 없다. 여기 두었다가 `show`가 끝나며
+    /// `take()`로 올려보낸다 — 반영하는 것은 앱이다(패널은 `DriveList`를 모른다)
+    observed_drive: Option<(PathBuf, bool)>,
     /// 내용을 읽지 못한 폴더와 그 사유 (2026-08-16·2026-08-17 사용자 요청).
     ///
     /// **경로째로 담는다** — 활성 탭이 여기를 볼 때만 안내를 띄우려면 깃발 하나로는 모자란다.
@@ -278,6 +287,7 @@ impl PanelState {
             pending_dir: PathBuf::new(),
             pending_nav: PendingNav::None,
             status: String::new(),
+            observed_drive: None,
             blocked: None,
             deferred_start: Some(start),
             tree: FolderTreeView::new(),
@@ -479,6 +489,12 @@ impl PanelState {
             self.abandon_local_load();
             return;
         }
+        // 열어 본 결과를 드라이브 상태에 올려보낸다 (T6) — **`network` 깃발이 아니라
+        // "닿았는가"로 판정한다**. 그 깃발에 배지까지 걸면 T1의 오류 코드 목록에서 빠진
+        // 실패 하나가 곧 "X가 영영 안 붙는" 결함이 된다(plan Risks).
+        // 권한 없음은 **닿은 것**이다 — 권한이 없을 뿐 드라이브에는 닿았다
+        let reachable = matches!(outcome, EnumOutcome::Ok(_) | EnumOutcome::AccessDenied);
+        self.observed_drive = Some((self.pending_dir.clone(), reachable));
         match outcome {
             EnumOutcome::Ok(entries) => {
                 // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
@@ -1258,6 +1274,7 @@ impl PanelState {
             remote_menu,
             favorite,
             tree_requests,
+            drive_observed: self.observed_drive.take(),
         }
     }
 

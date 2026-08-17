@@ -2767,6 +2767,12 @@ impl eframe::App for ExplorerApp {
                     remote_menu = outcome.remote_menu;
                     tree_requests = outcome.tree_requests;
                     favorite = outcome.favorite;
+                    // 열어 본 드라이브의 연결 상태를 드라이브 목록에 반영한다 (T6).
+                    // **이 홉은 컴파일러가 강제하지 않는다**(필드별 대입) — 이 줄을
+                    // 빠뜨리면 갱신이 조용히 끊기므로 프레임을 그리는 시험이 지킨다
+                    for (path, reachable) in outcome.drive_observed {
+                        self.drives.observe(&path, reachable);
+                    }
                 }
                 // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
                 // 이번 프레임의 배치와 어긋나고, `apply_command`가 앱 전체를 빌려야 한다.

@@ -2553,6 +2553,71 @@ fn drive_row(path: &str, network: bool, offline: bool) -> crate::fs::drives::Dri
     }
 }
 
+/// 열거 결과 하나를 겪은 뒤 패널이 올릴 관측을 돌려준다 (T6)
+fn observation_after(
+    outcome: EnumOutcome,
+    icons: &mut IconCache,
+) -> Option<(std::path::PathBuf, bool)> {
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.deferred_start = None;
+    commit_dir(&mut panel, r"C:\Users", icons);
+    panel.pending_dir = std::path::PathBuf::from(r"Z:\Docs");
+    panel.pending_nav = PendingNav::Push;
+    panel.apply_enumerated(outcome, icons);
+    panel.observed_drive.clone()
+}
+
+#[test]
+fn 열어_본_결과를_닿았는가로_갈라_올린다() {
+    // T6 Design(갈래 규칙) — **`network` 깃발이 아니라 "닿았는가"로 판정한다**.
+    // 배지를 그 깃발에 걸면 T1의 오류 코드 목록에서 빠진 실패 하나가 곧
+    // "X가 영영 안 붙는" 결함이 된다(plan Risks)
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let mut icons = IconCache::new();
+    let 경로 = std::path::PathBuf::from(r"Z:\Docs");
+
+    // 닿은 것 — 읽어 냈거나, 권한이 없을 뿐 드라이브에는 닿았다
+    for outcome in [EnumOutcome::Ok(Vec::new()), EnumOutcome::AccessDenied] {
+        assert_eq!(
+            observation_after(outcome, &mut icons),
+            Some((경로.clone(), true)),
+            "닿은 결과를 못 닿은 것으로 올렸다"
+        );
+    }
+
+    // 못 닿은 것 — 네트워크 깃발과 무관하게 열지 못했으면 못 닿았다
+    for outcome in [
+        EnumOutcome::Error { network: true },
+        EnumOutcome::Error { network: false },
+        EnumOutcome::NotFound,
+    ] {
+        assert_eq!(
+            observation_after(outcome, &mut icons),
+            Some((경로.clone(), false)),
+            "열지 못한 결과를 닿은 것으로 올렸다"
+        );
+    }
+}
+
+#[test]
+fn 관측은_한_번_올리면_비워진다() {
+    // T6 — `show`가 `take()`로 가져가므로 다음 프레임에 같은 관측이 되풀이되지 않는다.
+    // 남아 있으면 앱이 매 프레임 같은 값을 반영해 헛일을 한다
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.deferred_start = None;
+    panel.pending_dir = std::path::PathBuf::from(r"Z:\");
+    panel.pending_nav = PendingNav::Push;
+    panel.apply_enumerated(EnumOutcome::Error { network: true }, &mut icons);
+    assert!(panel.observed_drive.is_some(), "관측이 세워지지 않았다");
+
+    let _ = draw_once(&mut panel, &SiteStore::new());
+    assert!(
+        panel.observed_drive.is_none(),
+        "한 프레임을 그린 뒤에도 관측이 남았다"
+    );
+}
+
 #[test]
 fn 끊긴_네트워크_드라이브_줄에만_배지가_붙는다() {
     // T5 Acceptance — 탐색기처럼 누르기 전에도 끊긴 것이 보인다 (2026-08-17 사용자 요청)

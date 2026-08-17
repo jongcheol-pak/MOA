@@ -21,6 +21,7 @@ use crate::ui::theme;
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// 스플리터 히트 영역을 좌우(상하)로 넓히는 여유.
 /// 경계선은 얇아야 하고 잡기는 쉬워야 한다 — **조작 영역만** 넓힌다(그리기는 그 두께 그대로)
@@ -69,6 +70,11 @@ pub struct LayoutOutcome {
     ///
     /// 한 프레임에 메뉴는 하나만 떠 있으므로 first-wins다 — 다른 필드와 같은 규칙이다
     pub favorite: Option<(PanelId, FavoriteAction)>,
+    /// 패널들이 열어 본 드라이브와 그 결과 `(경로, 닿았는가)` (T6) — **모아서** 올린다.
+    ///
+    /// 한 프레임에 두 패널이 서로 다른 드라이브를 열어 볼 수 있어 first-wins로 하나만
+    /// 남기면 한쪽 관측이 버려진다(`tree_requests`와 같은 이유)
+    pub drive_observed: Vec<(PathBuf, bool)>,
     /// 원격 트리가 청한 하위 조회들 (T24) — **모아서** 올린다.
     ///
     /// first-wins로 하나만 남기면 두 패널이 같은 프레임에 노드를 펼쳤을 때 한쪽이 영영
@@ -100,6 +106,7 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
         remote_menu,
         favorite,
         tree_requests,
+        drive_observed,
     } = panel;
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
@@ -146,6 +153,9 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
     outcome
         .tree_requests
         .extend(tree_requests.into_iter().map(|request| (id, request)));
+    // 열어 본 드라이브도 모아서 올린다 (T6) — 어느 패널이 열었는지는 쓰지 않는다
+    // (드라이브 목록이 앱에 하나뿐이라 모든 패널이 같은 것을 본다)
+    outcome.drive_observed.extend(drive_observed);
     // 닫힌 연결은 **모아서** 올린다 — 한 프레임에 여러 패널이 각자의 마지막 원격 탭을 닫을 수
     // 있고, first-wins로 하나만 남기면 나머지 연결의 워커·소켓이 그대로 남는다
     outcome.closed_conns.extend(closed_conn);
@@ -312,6 +322,62 @@ mod tests {
     }
 
     #[test]
+    fn 두_패널이_열어_본_드라이브가_모두_모인다() {
+        // T6 Acceptance — 한 프레임에 두 패널이 서로 다른 드라이브를 열어 볼 수 있다.
+        // first-wins로 하나만 남기면 한쪽 관측이 버려져 그 드라이브의 배지가 어긋난다
+        let mut outcome = LayoutOutcome::default();
+        for (id, path, reachable) in [(PanelId(1), r"Z:\", false), (PanelId(2), r"Y:\", true)] {
+            merge_panel_outcome(
+                &mut outcome,
+                id,
+                PanelOutcome {
+                    menu: None,
+                    command: None,
+                    remote: None,
+                    remote_url: None,
+                    closed_conn: None,
+                    drop: None,
+                    remote_menu: None,
+                    favorite: None,
+                    tree_requests: Vec::new(),
+                    drive_observed: Some((PathBuf::from(path), reachable)),
+                },
+            );
+        }
+        assert_eq!(
+            outcome.drive_observed,
+            vec![
+                (PathBuf::from(r"Z:\"), false),
+                (PathBuf::from(r"Y:\"), true)
+            ],
+            "두 패널의 관측 중 하나가 버려졌다"
+        );
+    }
+
+    #[test]
+    fn 열어_본_것이_없으면_관측도_비어_있다() {
+        // 폴더를 열지 않은 프레임에 빈 관측이 쌓이면 앱이 매 프레임 헛일을 한다
+        let mut outcome = LayoutOutcome::default();
+        merge_panel_outcome(
+            &mut outcome,
+            PanelId(1),
+            PanelOutcome {
+                menu: None,
+                command: None,
+                remote: None,
+                remote_url: None,
+                closed_conn: None,
+                drop: None,
+                remote_menu: None,
+                favorite: None,
+                tree_requests: Vec::new(),
+                drive_observed: None,
+            },
+        );
+        assert!(outcome.drive_observed.is_empty());
+    }
+
+    #[test]
     fn 여러_패널의_서로_다른_결과가_함께_살아남는다() {
         // A패널이 메뉴를, B패널이 명령을 낸 프레임에서 한쪽이 통째로 버려지면 안 된다.
         // relay를 통째로 올리도록 바꾸면서 필드별 first-wins를 유지하는지 고정한다 (plan T9 ⑦)
@@ -333,6 +399,7 @@ mod tests {
                 remote_menu: None,
                 favorite: None,
                 tree_requests: Vec::new(),
+                drive_observed: None,
             },
         );
         merge_panel_outcome(
@@ -348,6 +415,7 @@ mod tests {
                 remote_menu: None,
                 favorite: None,
                 tree_requests: Vec::new(),
+                drive_observed: None,
             },
         );
 
@@ -385,6 +453,7 @@ mod tests {
                     remote_menu: None,
                     favorite: None,
                     tree_requests: Vec::new(),
+                    drive_observed: None,
                 },
             );
         }
@@ -414,6 +483,7 @@ mod tests {
                     remote_menu: None,
                     favorite: None,
                     tree_requests: Vec::new(),
+                    drive_observed: None,
                 },
             );
         }
@@ -454,6 +524,7 @@ mod tests {
                 remote_menu: None,
                 favorite: None,
                 tree_requests: requests.clone(),
+                drive_observed: None,
             },
         );
         assert_eq!(
@@ -481,6 +552,7 @@ mod tests {
                 remote_menu: None,
                 favorite: Some(FavoriteAction::Add(std::path::PathBuf::from(r"D:\작업"))),
                 tree_requests: Vec::new(),
+                drive_observed: None,
             },
         );
         merge_panel_outcome(
@@ -498,6 +570,7 @@ mod tests {
                     r"C:\Users",
                 ))),
                 tree_requests: Vec::new(),
+                drive_observed: None,
             },
         );
 
