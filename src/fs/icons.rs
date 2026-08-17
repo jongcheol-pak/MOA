@@ -214,10 +214,13 @@ impl IconCache {
     /// 셸이 보이는 이름 — 드라이브면 `로컬 디스크 (C:)`처럼 지역화된 문자열이다.
     ///
     /// 볼륨 레이블을 읽어 우리가 조립하지 않는 이유는 `로컬 디스크`·`(C:)` 같은 표기가
-    /// 언어마다 다르기 때문이다. 얻지 못하면 `None`이고 부르는 쪽이 경로로 폴백한다
-    /// 셸 조회를 트레이트로 감싸지 않는다 — 이 메서드와 `icon_index_for_path` 모두 부르는
-    /// 곳이 하나씩뿐이라, 감싸면 갈아 끼울 일도 없이 `unsafe` 격리 지점만 늘어난다
-    /// (계획 T1 Design ④)
+    /// 언어마다 다르기 때문이다. 얻지 못하면 `None`이고 부르는 쪽이 경로로 폴백한다.
+    ///
+    /// 셸 조회를 트레이트로 감싸지 않는다 — 이 메서드와 `icon_index_for_path`를 부르는 곳이
+    /// **여럿이지만 모두 얇은 래퍼일 뿐**이라(`fs::drives`·`fs::known_folders`·`ui::tree`),
+    /// 감싸도 갈아 끼울 구현이 생기지 않고 `unsafe` 격리 지점만 늘어난다
+    /// (2026-08-17: 드라이브 줄 조회가 `fs::drives`로 옮겨오며 호출처가 둘 이상이 됐다 —
+    /// 종전 주석은 "부르는 곳이 하나씩뿐"이라는 전제를 들었는데 그 전제만 바뀌고 판단은 같다)
     pub fn shell_display_name(&mut self, path: &str) -> Option<String> {
         if let Some(name) = self.name_by_path.get(path) {
             return Some(name.clone());
