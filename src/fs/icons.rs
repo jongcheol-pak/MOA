@@ -236,8 +236,8 @@ impl IconCache {
         if ok == 0 {
             return None;
         }
-        let name = String::from_utf16_lossy(&info.szDisplayName);
-        let name = name.trim_end_matches('\0').to_owned();
+        // 같은 파일의 기존 변환을 그대로 쓴다 — 널 앞까지만 디코드한다
+        let name = wide_to_string(&info.szDisplayName);
         if name.is_empty() {
             return None;
         }
@@ -307,24 +307,30 @@ fn wide_to_string(buf: &[u16]) -> String {
     String::from_utf16_lossy(&buf[..len])
 }
 
+/// 셸을 실제로 부르는 **시험들**의 직렬화 잠금.
+///
+/// `SHGetFileInfoW`·`SHGetKnownFolderPath`·`SHGetImageList`는 프로세스 전역 셸 상태를 함께
+/// 쓰는데, Rust 시험은 기본이 병렬이라 서로 다른 스레드에서 동시에 부르면 `SHGetImageList`가
+/// 실패해 **16px로 폴백**한다(그러면 크기별 리스트 시험이 깨진다).
+///
+/// **`fs` 안의 다른 모듈 시험도 이 잠금을 잡아야 한다** — 시험 바이너리가 하나라 한쪽만
+/// 직렬화하면 경합이 절반만 막힌다(`known_folders`가 그 경우였다). 언어 전환 시험이
+/// `i18n::LanguageGuard`로 같은 문제를 푸는 것과 같은 방식이다
+#[cfg(test)]
+pub(crate) static SHELL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 셸 시험 잠금을 잡는다 — 앞선 시험이 패닉해 독이 올랐어도 이어서 쓴다
+/// (그 시험의 실패만으로 충분하고, 여기서 또 패닉하면 원인이 가려진다)
+#[cfg(test)]
+pub(crate) fn shell_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    SHELL_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 셸을 실제로 부르는 시험들의 직렬화 잠금.
-    ///
-    /// `SHGetFileInfoW`·`SHGetKnownFolderPath`·`SHGetImageList`는 프로세스 전역 셸 상태를
-    /// 함께 쓰는데, Rust 시험은 기본이 병렬이라 서로 다른 스레드에서 동시에 부르면
-    /// `SHGetImageList`가 실패해 **16px로 폴백**한다(그러면 크기별 리스트 시험이 깨진다).
-    /// 언어 전환 시험이 `i18n::LanguageGuard`로 같은 문제를 푸는 것과 같은 방식이다
-    static SHELL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// 잠금을 잡는다 — 앞선 시험이 패닉해 독이 올랐어도 이어서 쓴다(그 시험의 실패만으로 충분하다)
-    fn shell_guard() -> std::sync::MutexGuard<'static, ()> {
-        SHELL_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     #[test]
     fn 요청한_크기보다_작지_않은_단계를_고른다() {
@@ -351,7 +357,7 @@ mod tests {
     fn 크기별로_서로_다른_이미지_리스트를_얻는다() {
         // 이 획득이 실패하면 모든 단계가 16px로 폴백해 보기 모드를 바꿔도 아이콘이 그대로다.
         // 화면 표시는 T10(격자 렌더)에서 확인하고, 여기서는 **리스트를 실제로 얻었는지**만 본다
-        let _shell = shell_guard();
+        let _shell = shell_test_guard();
         let cache = IconCache::new();
         assert_eq!(
             cache.himl_for(IconSize::Small),
@@ -403,7 +409,7 @@ mod tests {
     fn 드라이브는_일반_폴더와_다른_아이콘을_받는다() {
         // 요구의 핵심 — 탐색기처럼 드라이브가 제 아이콘을 갖는다.
         // `icon_index`는 `is_dir`을 먼저 걸러 폴더 아이콘 하나만 주므로 그것으로는 안 된다
-        let _shell = shell_guard();
+        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let drive = icons.icon_index_for_path("C:\\");
         let folder = icons.dir_icon();
@@ -418,7 +424,7 @@ mod tests {
     fn 같은_경로는_한_번만_셸에_묻는다() {
         // 실경로 조회는 끊긴 네트워크 드라이브에서 UI를 멈출 수 있어 캐시가 성능의 전제다.
         // **맵 크기로는 이것을 볼 수 없다** — 다시 물어 다시 넣어도 크기가 그대로다 (plan D9)
-        let _shell = shell_guard();
+        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let before = icons.shell_queries();
 
@@ -438,7 +444,7 @@ mod tests {
     #[test]
     fn 드라이브의_셸_표시_이름을_얻는다() {
         // `로컬 디스크 (C:)`처럼 화면 언어를 따르는 문자열이라 값 자체는 단언하지 않는다
-        let _shell = shell_guard();
+        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let name = icons
             .shell_display_name("C:\\")
@@ -452,7 +458,7 @@ mod tests {
 
     #[test]
     fn 없는_경로의_표시_이름은_없음이거나_패닉하지_않는다() {
-        let _shell = shell_guard();
+        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         // 실재하지 않는 드라이브 — 셸이 무엇을 주든 앱이 죽지 않아야 한다
         let _ = icons.shell_display_name(r"QQ:\없는폴더\깊이");

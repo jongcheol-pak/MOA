@@ -52,10 +52,13 @@ fn display_fallback(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::icons::shell_test_guard;
 
     #[test]
     fn 기본_즐겨찾기는_실재하는_폴더만_돌려준다() {
-        // 이 PC의 실제 셸을 부르는 시험이다 — 값 자체는 환경마다 다르므로 성질만 본다
+        // 이 PC의 실제 셸을 부르는 시험이다 — 값 자체는 환경마다 다르므로 성질만 본다.
+        // 셸 전역 상태를 건드리므로 `icons` 쪽 시험과 같은 잠금을 잡는다
+        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let items = default_favorites(&mut icons);
 
@@ -78,6 +81,7 @@ mod tests {
     #[test]
     fn 바탕_화면이_있으면_맨_앞이다() {
         // 순서가 뒤바뀌면 화면에서 다운로드가 위에 선다 (사용자 결정: 바탕 화면 · 다운로드 차례)
+        let _shell = shell_test_guard();
         let mut icons = IconCache::new();
         let items = default_favorites(&mut icons);
         let desktop = known_folder(&FOLDERID_Desktop).filter(|p| p.is_dir());
