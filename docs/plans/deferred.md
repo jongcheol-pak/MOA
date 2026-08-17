@@ -67,10 +67,15 @@
 - [2026-08-17] 즐겨찾기 순서 바꾸기(드래그 정렬) — 항목이 많아지면 필요해진다 (출처: 2026-08-16-tree-favorites)
 - [2026-08-17] 트리 메뉴의 화면 밖 보정 크기가 실측이 아니라 어림값이다 — 원격 메뉴(`remote_menu::menu_size()`)처럼 실측 상수로 둘지 검토. 동작 결함은 없다 (출처: 2026-08-16-tree-favorites F-7 m4)
 - [2026-08-17] [SUGGEST] `ui/tree.rs::menu_row`와 `ui/remote_menu.rs::menu_row`가 본문·상수까지 같다 — 도메인 지식 없는 순수 렌더링 헬퍼라 공용화 여지가 있으나 2곳이라 문턱(3회) 미달 (출처: 2026-08-16-tree-favorites T3 quality S1)
-- [2026-08-17] [SUGGEST] `ui/tree.rs`의 즐겨찾기 줄과 하위 없는 잎 노드가 "들여쓰기 + `selectable_label` + 클릭 시 `select`"로 거의 같다 — 세 번째 유사 지점이 생기면 헬퍼로 뽑을지 재검토 (출처: 2026-08-16-tree-favorites T2 quality S1)
 - [2026-08-17] `remote/connection.rs:1033`도 시간 마감(2초)에 기대는 시험이다 — 2026-08-15 항목의 목록(`remote/manager.rs:248·306`·`remote/transfer.rs:454`·`fs/thumbnail.rs:575`)에 이 자리를 더한다. CPU가 붐빌 때 간헐 실패하며 단독 실행은 통과한다 (출처: 2026-08-16-tree-favorites 관측)
+- [2026-08-17] 트리 아이콘·셸 표시 이름 조회를 워커 스레드로 옮기기 — 끊긴 네트워크 드라이브에서 첫 조회가 UI를 멈출 수 있다. 이번에는 기존 exe/lnk 실조회와 같은 수준으로 받아들이고 캐시(`FolderTreeView.icon_indices` + `IconCache`)로 반복을 없앴다 (출처: 2026-08-17-tree-icons T2 Edge Case)
+- [2026-08-17] [SUGGEST] `show_remote_node`에 남은 `#[allow(clippy::too_many_arguments)]` — `conn`·`cache`·`folder`도 재귀 내내 불변이라 원격 전용 컨텍스트를 하나 더 두면 9개 → 6개로 준다. 다만 그 셋은 로컬 경로에 없어 `RowCtx`에 얹으면 로컬 호출에 빈 필드가 생긴다 (출처: 2026-08-17-tree-icons T2 quality S1)
+- [2026-08-17] 원격 트리가 "모든 줄에 같은 폴더 아이콘"이라는 것을 관측하는 시험이 없다 — `draw_remote`가 `TreeOutcome`만 돌려주고 셰이프를 보지 않아, 원격에 경로별 조회를 끼워도 아무 시험이 붉어지지 않는다 (출처: 2026-08-17-tree-icons F-7 m2)
+- [2026-08-17] `IconCache::shell_display_name`이 실패(빈 이름·조회 실패)를 캐시하지 않아 그 경로는 호출마다 셸을 다시 문다 — 지금 호출부는 시작 시 1회씩이라 실피해가 없다 (출처: 2026-08-17-tree-icons F-7 m3)
+- [2026-08-17] PRD FR-53("고르면 모든 화면 문구가 바뀐다")의 예외에 **셸에서 온 문자열**이 없다 — 목록 `종류`(`icons::type_name`)와 이번에 생긴 드라이브 표시 이름·기본 즐겨찾기 이름은 앱 언어가 아니라 윈도우 표시 언어를 따른다. 한 회차에서 문면을 함께 정리하는 편이 낫다 (출처: 2026-08-17-tree-icons F-7 m5)
 
 ## 종결
+- [2026-08-17 → 2026-08-17] [SUGGEST] `ui/tree.rs`의 즐겨찾기 줄과 잎 노드가 거의 같다(세 번째 지점이면 헬퍼로) — 반영 (2026-08-17-tree-icons T2에서 `tree_row`로 뽑았고 즐겨찾기·잎·드라이브·원격 네 계열이 모두 그것을 쓴다)
 - [2026-07-29 → 2026-08-05] `ui/address_bar.rs`의 rustfmt 드리프트 — 반영 (2026-08-04-ftp-integration T0에서 `cargo fmt` 1회로 해소, 이후 전 task가 `fmt --check` 무차이)
 - [2026-07-23 → 2026-07-26] shell_menu items_menu의 pidls[0] "items 비지 않음" 암묵 계약 — 반영 (doc 주석 + debug_assert, egui 이식 part1 T3)
 - [2026-07-23 → 2026-07-23] part2 실행 — 트리·셸 메뉴·감시·세션·성능 — 반영 (part2 T1~T5 완료, v1 완성)
