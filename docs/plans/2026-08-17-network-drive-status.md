@@ -230,9 +230,9 @@
     - (i) 문구를 어떻게 쓸지 → D3에서 확정(문안은 위 Acceptance에 그대로)
   - **Depends on**: T1
 
-- [ ] T3. 드라이브 줄 자료 타입과 연결 상태를 담는 순수 모델을 만든다
+- [x] T3. 드라이브 줄 자료 타입·조회 함수와 연결 상태 모델을 만든다
   - **Type**: C
-  - **Design**: ① 상태·규칙은 `src/app/drives.rs`(신규 — 순수 로직이라 시험이 덮는다), 자료 타입 `DriveRow`는 **`src/fs/drives.rs`에 둔다**(T4가 만든다 — `app`이 `fs`를 참조하는 것이 이 레포의 기존 방향이다: `src/app/sidebar.rs:10`). ② 신규 심볼 — `struct DriveRow { path: PathBuf, label: String, icon: i32, network: bool, offline: bool }`(**필드는 `pub`** — `fs::drives`가 만들고 `app::drives`·시험이 읽고 짓는다. `list_drives`가 만들 때 `offline`은 **언제나 `false`**로 시작한다: 판정 전에는 배지를 두지 않는다), `struct DriveList { rows: Vec<DriveRow> }`와 그 메서드 셋 — `rows() -> &[DriveRow]` · `replace(Vec<DriveRow>)`(워커의 **첫** 결과인 목록을 담는다) · `apply_reachable(&[(PathBuf, bool)])`(워커의 **둘째** 결과인 접근 판정을 덮는다 — 목록을 다시 만들지 않는다) · `observe(&Path, reachable: bool)`(사용자가 열어 본 결과 하나를 반영한다) · 자유 함수 `fn drive_root_of(path: &Path) -> Option<PathBuf>`(경로에서 드라이브 뿌리를 뽑는다). **`bool`의 뜻은 세 자리 모두 `reachable`(닿았으면 `true`)로 통일한다** — `offline`은 `DriveRow`의 필드 이름으로만 쓰고 인자 이름으로는 쓰지 않는다(극성이 뒤집혀 읽히면 배지가 정반대로 붙는다). ③ 의존 방향 — `app::drives`는 표준 라이브러리와 `fs::drives::DriveRow`만 쓰고, `ui::app`이 소유하며 `ui::tree`가 슬라이스로 읽는다. ④ 비추상화 선언 — 저장소 트레이트를 두지 않는다(구현이 하나뿐이고 `FavoriteStore`도 구조체 하나다).
+  - **Design**: ① 상태·규칙은 `src/app/drives.rs`(신규 — 순수 로직이라 시험이 덮는다), 자료 타입 `DriveRow`·`DriveScan`과 **Win32 조회 함수는 `src/fs/drives.rs`에 둔다**(`app`이 `fs`를 참조하는 것이 이 레포의 기존 방향이다: `src/app/sidebar.rs:10`. 조회 함수가 T4가 아니라 여기 온 경위는 아래 「경계 갱신」). ② 신규 심볼 — `struct DriveRow { path: PathBuf, label: String, icon: i32, network: bool, offline: bool }`(**필드는 `pub`** — `fs::drives`가 만들고 `app::drives`·시험이 읽고 짓는다. `list_drives`가 만들 때 `offline`은 **언제나 `false`**로 시작한다: 판정 전에는 배지를 두지 않는다), `struct DriveList { rows: Vec<DriveRow> }`와 그 메서드 셋 — `rows() -> &[DriveRow]` · `replace(Vec<DriveRow>)`(워커의 **첫** 결과인 목록을 담는다) · `apply_reachable(&[(PathBuf, bool)])`(워커의 **둘째** 결과인 접근 판정을 덮는다 — 목록을 다시 만들지 않는다) · `observe(&Path, reachable: bool)`(사용자가 열어 본 결과 하나를 반영한다) · 자유 함수 `fn drive_root_of(path: &Path) -> Option<PathBuf>`(경로에서 드라이브 뿌리를 뽑는다). **`bool`의 뜻은 세 자리 모두 `reachable`(닿았으면 `true`)로 통일한다** — `offline`은 `DriveRow`의 필드 이름으로만 쓰고 인자 이름으로는 쓰지 않는다(극성이 뒤집혀 읽히면 배지가 정반대로 붙는다). ③ 의존 방향 — `app::drives`는 표준 라이브러리와 `fs::drives::DriveRow`만 쓰고, `ui::app`이 소유하며 `ui::tree`가 슬라이스로 읽는다. ④ 비추상화 선언 — 저장소 트레이트를 두지 않는다(구현이 하나뿐이고 `FavoriteStore`도 구조체 하나다).
   - **Acceptance**:
     - Given `Z:\`가 `offline: false`인 목록, When `observe(Path::new(r"Z:\Docs"), false)`, Then `Z:\` 행만 `offline: true`가 된다
     - Given 같은 목록, When `observe(Path::new(r"C:\Users"), false)`, Then **네트워크가 아닌 드라이브는 바뀌지 않는다**(로컬에는 배지를 두지 않는다 — Out of Scope)
@@ -241,9 +241,10 @@
     - Given `list_drives`가 갓 만든 행, When 접근 판정이 아직 오지 않음, Then `offline`은 `false`다(판정 전에는 배지를 두지 않는다)
     - `drive_root_of`가 `Z:\Docs\a.txt` → `Z:\`, `Z:\` → `Z:\`, UNC 경로(`\\host\share\x`) → `None`을 돌려준다
   - **Files**:
-    - 주: `src/app/drives.rs`(신규 — `DriveList`와 규칙) · `src/fs/drives.rs`(신규 — 이 task는 **`DriveRow` 정의만** 넣는다. Win32 함수는 T4가 같은 파일에 더한다. 타입을 여기서 세우지 않으면 T3이 T4를 기다려야 해 순서가 꼬인다)
-    - 동반: `src/app/mod.rs` · `src/fs/mod.rs`(모듈 등록)
-    - 테스트: `src/app/drives.rs`(같은 파일 `mod tests`)
+    - 주: `src/app/drives.rs`(신규 — `DriveList`와 규칙) · `src/fs/drives.rs`(신규 — `DriveRow`·`DriveScan` 타입과 **조회 함수 `list_drives`·`is_reachable`·`is_network_drive`까지 함께**)
+    - 동반: `src/app/mod.rs` · `src/fs/mod.rs`(모듈 등록) · `Cargo.toml`(`Win32_System_WindowsProgramming` feature — `DRIVE_REMOTE` 상수가 그 모듈에만 있다)
+    - 테스트: `src/fs/drives.rs`(조회 함수 시험 5건) · `src/app/drives.rs`(같은 파일 `mod tests` 8건)
+  > **경계 갱신 (2026-08-17, 구현 중)**: 원안은 이 task를 `DriveRow` **정의만**으로 한정하고 조회 함수를 T4로 미뤘다. 실제로는 한 파일에 함께 만들었고 spec 리뷰가 이 선취를 BLOCKER로 잡았다 — **되돌리지 않고 경계를 여기로 옮긴다**: 코드가 T4 Design ②의 시그니처와 글자 그대로 일치해 품질 문제가 없고, 지웠다가 T4에서 다시 쓰는 것은 순수 낭비다. 원안이 경계를 그은 목적(*"T3이 T4를 기다려 순서가 꼬이는 것"*)은 오히려 이 배치에서 더 잘 지켜진다(기다릴 것이 없다). **T4에 남는 fs 쪽 몫은 워커 `spawn_scan` 하나**이며 나머지(트리 소유 이동·`show_node` 홉·`ui/app.rs` 배선·시험 헬퍼 대체)는 그대로다.
   - **Edge Cases**:
     - 드라이브 문자가 없는 경로(UNC·상대 경로)는 `None`으로 조용히 빠진다
     - 대소문자 — Windows 드라이브 문자는 대소문자를 가리지 않으므로 비교 전에 맞춘다
@@ -254,7 +255,9 @@
 
 - [ ] T4. 드라이브 줄을 워커가 만들어 앱이 소유하게 한다
   - **Type**: D
-  - **Design**: ① Win32 조회는 `src/fs/drives.rs`(신규), 소유·배선은 `src/ui/app.rs`, 트리 쪽 홉은 `src/ui/tree.rs`. ② 신규 심볼 — **조회를 둘로 나눈다**: `fs::drives::list_drives(icons: &mut IconCache) -> Vec<DriveRow>`(논리 드라이브 열거 → `GetDriveTypeW`로 종류 판정 → **기존 `IconCache::shell_display_name`·`icon_index_for_path` 래퍼를 그대로 써서** 표시 이름·아이콘 인덱스를 얻는다. **접근 판정을 하지 않아 빠르다** — 시험도 이것을 쓴다. 지금 `drive_roots(icons)`와 시그니처가 같아 시험 헬퍼가 거의 그대로다)와 `fs::drives::is_reachable(root: &Path) -> bool`(`GetFileAttributesW` 성공 여부 — 끊긴 드라이브에서 초 단위가 걸리는 무거운 쪽. 여기만 새 `unsafe`다). `fs::drives::spawn_scan(tx, ctx)`가 워커에서 **자기 `IconCache::new()`를 만들어** 두 번 보낸다 — ⓐ `list_drives` 결과를 먼저(화면에 드라이브 줄이 곧 선다) ⓑ 네트워크 드라이브만 `is_reachable`로 판정한 결과를 뒤이어. 전송 타입은 `enum DriveScan { Listed(Vec<DriveRow>), Reachability(Vec<(PathBuf, bool)>) }` 하나로 두고 채널도 하나다(둘로 나누면 수신부가 두 곳이 된다). `ui::app`에는 `drives: DriveList` 필드와 `Receiver<DriveScan>` 수신부. ③ 의존 방향 — **`DriveRow`는 `fs::drives`에 둔다**(`app::drives::DriveList`가 그것을 담는다). `app`이 `fs`를 참조하는 것이 이 레포의 기존 방향이고(`src/app/sidebar.rs:10`이 `fs::icons`를 쓴다), 반대로 두면 `fs`가 처음으로 `app`을 보게 된다. `fs::drives`는 `ui`를 모른다(AGENTS 단방향). ④ 비추상화 선언 — 드라이브 조회를 트레이트로 감싸지 않는다. **셸 조회 래퍼를 새로 짓지도 않는다** — `IconCache`의 두 메서드가 이미 그 일을 하고, 새로 지으면 `unsafe SHGetFileInfoW`가 한 벌 더 생긴다(그 메서드들의 doc 주석이 "부르는 곳이 하나씩뿐"이라 적은 근거도 깨진다).
+  > **T3 선취 반영 (2026-08-17)**: 아래 Design ②가 열거한 `list_drives`·`is_reachable`·`DriveScan`은 **T3에서 이미 만들었다**(T3 「경계 갱신」 참조). **이 task에 남은 fs 쪽 몫은 워커 `spawn_scan` 하나**이고, 나머지(트리 소유 이동·`show_node` 홉·`ui/app.rs` 배선·시험 헬퍼 대체·`draw_remote` 갱신)는 그대로다. Files의 `Cargo.toml`도 T3으로 옮겨 갔다.
+
+  - **Design**: ① Win32 조회는 `src/fs/drives.rs`(T3이 만든 파일), 소유·배선은 `src/ui/app.rs`, 트리 쪽 홉은 `src/ui/tree.rs`. ② 신규 심볼 — **조회를 둘로 나눈다**: `fs::drives::list_drives(icons: &mut IconCache) -> Vec<DriveRow>`(논리 드라이브 열거 → `GetDriveTypeW`로 종류 판정 → **기존 `IconCache::shell_display_name`·`icon_index_for_path` 래퍼를 그대로 써서** 표시 이름·아이콘 인덱스를 얻는다. **접근 판정을 하지 않아 빠르다** — 시험도 이것을 쓴다. 지금 `drive_roots(icons)`와 시그니처가 같아 시험 헬퍼가 거의 그대로다)와 `fs::drives::is_reachable(root: &Path) -> bool`(`GetFileAttributesW` 성공 여부 — 끊긴 드라이브에서 초 단위가 걸리는 무거운 쪽. 여기만 새 `unsafe`다). `fs::drives::spawn_scan(tx, ctx)`가 워커에서 **자기 `IconCache::new()`를 만들어** 두 번 보낸다 — ⓐ `list_drives` 결과를 먼저(화면에 드라이브 줄이 곧 선다) ⓑ 네트워크 드라이브만 `is_reachable`로 판정한 결과를 뒤이어. 전송 타입은 `enum DriveScan { Listed(Vec<DriveRow>), Reachability(Vec<(PathBuf, bool)>) }` 하나로 두고 채널도 하나다(둘로 나누면 수신부가 두 곳이 된다). `ui::app`에는 `drives: DriveList` 필드와 `Receiver<DriveScan>` 수신부. ③ 의존 방향 — **`DriveRow`는 `fs::drives`에 둔다**(`app::drives::DriveList`가 그것을 담는다). `app`이 `fs`를 참조하는 것이 이 레포의 기존 방향이고(`src/app/sidebar.rs:10`이 `fs::icons`를 쓴다), 반대로 두면 `fs`가 처음으로 `app`을 보게 된다. `fs::drives`는 `ui`를 모른다(AGENTS 단방향). ④ 비추상화 선언 — 드라이브 조회를 트레이트로 감싸지 않는다. **셸 조회 래퍼를 새로 짓지도 않는다** — `IconCache`의 두 메서드가 이미 그 일을 하고, 새로 지으면 `unsafe SHGetFileInfoW`가 한 벌 더 생긴다(그 메서드들의 doc 주석이 "부르는 곳이 하나씩뿐"이라 적은 근거도 깨진다).
   - **Design (트리 홉)**: `show_node`는 **드라이브 뿌리와 하위 폴더가 함께 지나는 함수**다(호출 `tree.rs:235`·`:566`). 인자 `drive: Option<&DriveRow>`를 더해 갈라 쓴다 — 드라이브 뿌리 호출은 `Some(row)`라 아이콘을 `row.icon`에서 얻고(워커가 준 값), 하위 재귀 호출은 `None`이라 지금처럼 `icon_for(path, icons)`로 얻는다. 배지 여부(`row.offline`)도 같은 자리에서 갈린다(T5가 쓴다). `FolderTreeView::roots` 필드와 그것을 채우는 `tree.rs:224-234` 분기는 사라지고, `show`가 받은 슬라이스를 그대로 훑는다. **인자가 8개가 되어 `clippy::too_many_arguments`에 걸리므로** 같은 파일의 `show_remote_node`(`tree.rs:412`)처럼 `#[allow(clippy::too_many_arguments)]`를 단다 — `-D warnings`라 달지 않으면 빌드가 깨진다.
   - **Acceptance**:
     - `src/ui/tree.rs`에서 `drive_roots` 함수와 `FolderTreeView::roots` 필드가 사라지고, `FolderTreeView::show`가 드라이브 줄(`&[DriveRow]`)을 **인자로** 받는다
@@ -263,7 +266,7 @@
     - Given 워커의 둘째 결과(접근 판정) 도착, When 다음 프레임, Then 끊긴 네트워크 드라이브의 `offline`이 `true`가 된다
     - 드라이브 줄의 표시 이름·아이콘은 지금과 같다(끊긴 드라이브도 이름을 얻는다 — 실측)
     - **`src/ui/panel/tests.rs:106-110`의 헬퍼 `drive_labels`와 `:2363`의 인라인 조회가 `fs::drives::list_drives()`를 부르도록 바뀌고**(접근 판정이 없어 시험이 느려지지 않는다), 그것을 쓰는 시험 4건(`:1143`·`:1407`·`:1653`·`:2363`)이 통과한다
-    - `src/ui/tree.rs:865,876`의 드라이브 시험 2건이 `src/fs/drives.rs`로 옮겨가 통과한다
+    - `src/ui/tree.rs`의 드라이브 시험 2건(`드라이브_루트는_루트_경로_형태다`·`드라이브는_셸_표시_이름으로_보인다`)이 사라진다 — **T3이 `src/fs/drives.rs`에 같은 이름으로 대체본을 이미 만들었으므로 여기서는 원본을 지우기만 한다**(새로 쓰려 하면 이름이 겹친다)
     - `src/ui/tree.rs:899`의 시험 헬퍼 `draw_remote`가 새 인자를 넘기도록 갱신된다(원격 트리는 빈 슬라이스)
   - **Files**:
     - 주: `src/fs/drives.rs`(신규) · `src/ui/tree.rs` · `src/ui/app.rs`
@@ -365,6 +368,7 @@
 ## Phase Ledger
 
 ## Retry Ledger
+- T3: 수정 사이클 1/5 (spec B1 — task 경계 선취. 코드 변경 없이 plan 경계 갱신으로 해소, 재리뷰 BLOCKER 0 / MINOR 2건도 그 자리에서 반영). quality MINOR 1건은 `(판정 유보)` 표시라 대장 미등재.
 - T2: 수정 사이클 1/5 (quality M1 — 고아 심볼 `dynamic::open_failed` 제거). 동일 지적 재발 0, 재리뷰 OK.
 
 ## Progress Log

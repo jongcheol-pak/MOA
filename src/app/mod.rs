@@ -1,5 +1,6 @@
 //! 앱 셸 — 메인 창·레이아웃·설정
 pub mod autostart;
+pub mod drives;
 pub mod favorites;
 pub mod fonts;
 pub mod layout;

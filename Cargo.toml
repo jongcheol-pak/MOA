@@ -30,6 +30,10 @@ windows = { version = "0.62.2", features = [
     # 이벤트·대기 (CreateEventW·WaitForMultipleObjects) — 변경 감시 정지 신호
     "Win32_System_Threading",
     "Win32_System_Time",
+    # DRIVE_REMOTE — 네트워크 드라이브를 가려내 그 줄에만 연결 끊김 표식을 붙인다
+    # (`fs::drives`). `GetDriveTypeW`는 Storage_FileSystem에 있는데 그 반환값을 견줄
+    # 상수만 이 모듈에 있다
+    "Win32_System_WindowsProgramming",
     "Win32_UI_Controls",
     # GetDpiForMonitor — 창을 만들기 전 그 모니터의 배율을 알아야 작업 영역(물리 픽셀)을
     # 논리 픽셀로 옮길 수 있다 (`ui::window_start`)
