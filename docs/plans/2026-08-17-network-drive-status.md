@@ -335,7 +335,7 @@
     - (ii-a) `PanelOutcome`·`LayoutOutcome`에 공개 필드가 는다 → `## 사전 승인 항목`에 등록
   - **Depends on**: T1, T3, T4
 
-- [ ] T7. PRD·README 문면을 맞추고 위키에 큐를 남긴다
+- [x] T7. PRD·README 문면을 맞추고 위키에 큐를 남긴다
   - **Type**: A
   - **Acceptance**:
     - `docs/prd.md` FR-6 문면에 **열기 실패 표시 규칙**이 더해진다 — 권한 없음·네트워크 끊김·그 밖의 실패는 그 경로로 옮겨 목록 자리에 사유를 적고, 폴더를 찾을 수 없으면 현 위치를 지킨다
