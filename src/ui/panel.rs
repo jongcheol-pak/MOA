@@ -509,7 +509,8 @@ impl PanelState {
             }
             // 읽지 못했어도 **그 폴더로 옮긴다** (2026-08-16·2026-08-17 사용자 요청) —
             // 이전 목록을 그대로 두면 주소창·트리가 가리키는 곳과 목록이 갈린다. 사유는
-            // 상태 줄이 아니라 빈 목록 자리에 적고, 상위로 되돌아갈 `..` 줄만 남긴다
+            // 상태 줄이 아니라 빈 목록 자리에 적는다 — 올라갈 곳이 있으면 `..` 줄만
+            // 남고, 드라이브 뿌리에는 그 줄도 없다(`with_local_parent_first`)
             EnumOutcome::AccessDenied => self.block_list(ListBlock::AccessDenied, icons),
             EnumOutcome::Error { network: true } => {
                 self.block_list(ListBlock::NetworkUnavailable, icons)
