@@ -1591,6 +1591,55 @@ fn 바깥을_누르거나_esc를_치면_메뉴가_닫힌다() {
 }
 
 #[test]
+fn 화면_가장자리에서_연_메뉴가_그_자리에서_닫히지_않는다() {
+    // 2026-08-17 사용자 보고 — 메뉴가 떴다가 곧바로 사라졌다.
+    //
+    // 메뉴는 우클릭을 **받은 그 프레임에** 그려지는데, 그 프레임의 `any_click()`은 방금 그
+    // 우클릭이라 참이다. 그래서 메뉴가 클릭 자리를 품지 못하면(화면 가장자리라 위치가 안으로
+    // 당겨진 경우) 자기를 연 클릭을 "바깥 클릭"으로 세어 즉시 닫혔다.
+    //
+    // 창을 좁게 잡아 그 당김을 강제한다 — 종전 시험들은 클릭 좌표가 메뉴 왼쪽 위 **모서리에
+    // 정확히 걸쳐** 간신히 통과했다(1px만 밀리면 깨지는 자리였다)
+    let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+    let favorites = [std::path::PathBuf::from(r"D:\작업")];
+    let mut harness = FavoriteHarness::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\"));
+    panel.tree_visible = true;
+    panel.deferred_start = None;
+
+    let screen = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(500.0, 160.0));
+    let base = || egui::RawInput {
+        screen_rect: Some(screen),
+        ..Default::default()
+    };
+
+    let first = harness.draw(&mut panel, &favorites, base()).0;
+    let spot = tree_text_spot(&first, "작업");
+
+    for (time, pressed) in [(0.05, true), (0.10, false)] {
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            time: Some(time),
+            events: vec![egui::Event::PointerButton {
+                pos: spot,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        harness.draw(&mut panel, &favorites, input);
+    }
+
+    let opened = harness.draw(&mut panel, &favorites, base()).0;
+    assert!(
+        drawn_texts(&opened).iter().any(|text| text == "해제"),
+        "우클릭한 그 자리에서 메뉴가 곧바로 닫혔다: {:?}",
+        drawn_texts(&opened)
+    );
+}
+
+#[test]
 fn 트리를_감추면_열린_메뉴가_닫힌다() {
     // 트리가 그려지지 않는 프레임에는 메뉴 코드가 통째로 건너뛰어져 스스로 닫지 못한다
     let _guard = crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);

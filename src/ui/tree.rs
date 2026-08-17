@@ -124,6 +124,13 @@ pub struct FolderTreeView {
     /// **트리를 감출 때 패널이 `close_menu`로 비운다** — 트리가 그려지지 않는 프레임에는
     /// 이 안의 어떤 코드도 돌지 않아 스스로 닫을 수 없기 때문이다
     menu_at: Option<(egui::Pos2, MenuTarget)>,
+    /// 메뉴를 **이번 프레임에 막 열었는가** — 그 프레임의 닫기 판정을 건너뛰는 데 쓴다.
+    ///
+    /// 메뉴는 우클릭을 받은 **그 프레임에** 그려지는데 그 프레임의 `any_click()`은 방금 그
+    /// 우클릭이다. 그대로 판정하면 **자기를 연 클릭을 바깥 클릭으로 세어** 열리자마자 닫힌다
+    /// (2026-08-17 사용자 보고 — 화면 가장자리라 메뉴가 안으로 당겨져 클릭 자리를 품지 못할 때 드러났다).
+    /// 원격 목록 메뉴가 멀쩡한 것은 그쪽이 그리기가 끝난 뒤 자리를 세워 **다음 프레임부터** 그리기 때문이다
+    menu_opened_this_frame: bool,
     /// 숨김·시스템 폴더를 보일지 (FR-13) — 목록과 같은 값을 받는다.
     ///
     /// 트리만 따로 두면 같은 창에서 목록의 숨긴 폴더는 사라지는데 트리에는 남아,
@@ -145,6 +152,7 @@ impl FolderTreeView {
             nodes: HashMap::new(),
             selected: None,
             menu_at: None,
+            menu_opened_this_frame: false,
             tx,
             rx,
             show_hidden: true,
@@ -193,6 +201,7 @@ impl FolderTreeView {
                     // 원격 트리에는 즐겨찾기가 없다 — 로컬에서 열어 둔 메뉴가 남아 있으면
                     // 여기서 비운다. 안 그러면 로컬 탭으로 돌아올 때 옛 메뉴가 되살아난다
                     self.menu_at = None;
+                    self.menu_opened_this_frame = false;
                     self.show_remote_node(ui, conn, &root, 0, cache, &mut outcome);
                 }
             });
@@ -207,6 +216,7 @@ impl FolderTreeView {
     /// 비우지 않으면 트리를 다시 켤 때 옛 메뉴가 그대로 떠 있다
     pub fn close_menu(&mut self) {
         self.menu_at = None;
+        self.menu_opened_this_frame = false;
     }
 
     /// 우클릭 메뉴 한 장 (FR-56) — 대상이 트리 노드면 `즐겨찾기`, 즐겨찾기 줄이면 `해제`다.
@@ -254,14 +264,19 @@ impl FolderTreeView {
             })
             .response;
 
-        // 바깥을 누르거나 Esc면 닫는다 — 메뉴가 화면에 눌어붙지 않게 한다
-        let outside = ui.input(|input| {
-            input.pointer.any_click()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .is_none_or(|pos| !response.rect.contains(pos))
-        });
+        // 바깥을 누르거나 Esc면 닫는다 — 메뉴가 화면에 눌어붙지 않게 한다.
+        //
+        // **막 연 프레임은 세지 않는다** — 그 프레임의 클릭은 이 메뉴를 연 우클릭 자신이라,
+        // 메뉴가 클릭 자리를 품지 못하면(가장자리라 안으로 당겨진 경우) 곧바로 자기를 닫는다
+        let just_opened = std::mem::take(&mut self.menu_opened_this_frame);
+        let outside = !just_opened
+            && ui.input(|input| {
+                input.pointer.any_click()
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_none_or(|pos| !response.rect.contains(pos))
+            });
         let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
         if chosen.is_some() || outside || escape {
             self.menu_at = None;
@@ -300,6 +315,7 @@ impl FolderTreeView {
                     && let Some(at) = response.interact_pointer_pos()
                 {
                     self.menu_at = Some((at, MenuTarget::Favorite(path.clone())));
+                    self.menu_opened_this_frame = true;
                 }
             });
         }
@@ -462,6 +478,7 @@ impl FolderTreeView {
             && let Some(at) = response.interact_pointer_pos()
         {
             self.menu_at = Some((at, MenuTarget::Node(path.to_path_buf())));
+            self.menu_opened_this_frame = true;
         }
     }
 
