@@ -2,8 +2,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use windows::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, HWND,
-    LPARAM, WPARAM,
+    ERROR_ACCESS_DENIED, ERROR_BAD_NET_NAME, ERROR_BAD_NETPATH, ERROR_DEV_NOT_EXIST,
+    ERROR_FILE_NOT_FOUND, ERROR_NETNAME_DELETED, ERROR_NETWORK_UNREACHABLE, ERROR_NO_MORE_FILES,
+    ERROR_NO_NET_OR_BAD_PATH, ERROR_PATH_NOT_FOUND, ERROR_REM_NOT_LIST, ERROR_UNEXP_NET_ERR, HWND,
+    LPARAM, WIN32_ERROR, WPARAM,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic,
@@ -58,8 +60,34 @@ pub enum EnumOutcome {
     AccessDenied,
     /// 경로 없음/삭제됨
     NotFound,
-    /// 기타 오류
-    Error,
+    /// 기타 오류.
+    ///
+    /// `network`는 **끊긴 네트워크 드라이브·서버처럼 네트워크가 원인인 실패**를 뜻한다 —
+    /// 화면이 사유를 갈라 적는 데 쓴다(끊긴 연결을 살피는 것과 다시 열어 보는 것은
+    /// 사용자가 할 일이 다르다). 이 깃발을 담는 자리가 열거 워커인 이유는 **OS 오류 코드를
+    /// 아는 곳이 여기뿐**이라서다
+    Error {
+        network: bool,
+    },
+}
+
+/// 이 오류 코드가 **네트워크가 원인인 실패**인가.
+///
+/// 끊긴 네트워크 드라이브(`Z:`)를 열면 실측으로 `ERROR_BAD_NETPATH`(53)가 온다.
+/// 나머지는 같은 계열에서 알려진 코드들이며, **목록에 없는 코드는 일반 실패로 떨어진다**
+/// (문구만 덜 구체적이 될 뿐 목록 표시·트리 배지는 영향받지 않는다)
+fn is_network_error(code: WIN32_ERROR) -> bool {
+    matches!(
+        code,
+        ERROR_REM_NOT_LIST            // 51 — 원격 목록을 얻지 못함
+            | ERROR_BAD_NETPATH       // 53 — 네트워크 경로를 찾지 못함 (끊긴 드라이브의 실측값)
+            | ERROR_DEV_NOT_EXIST     // 55 — 그 이름의 공유가 없음
+            | ERROR_UNEXP_NET_ERR     // 59 — 네트워크에서 예상 밖의 오류
+            | ERROR_NETNAME_DELETED   // 64 — 네트워크 이름이 사라짐
+            | ERROR_BAD_NET_NAME      // 67 — 네트워크 이름을 찾지 못함
+            | ERROR_NO_NET_OR_BAD_PATH // 1203 — 네트워크가 없거나 경로가 틀림
+            | ERROR_NETWORK_UNREACHABLE // 1231 — 네트워크에 닿을 수 없음
+    )
 }
 
 pub struct EnumResult {
@@ -117,10 +145,13 @@ pub fn enumerate_dir(path: &Path) -> EnumOutcome {
         ) {
             Ok(h) => h,
             Err(e) => {
-                return match windows::Win32::Foundation::WIN32_ERROR(e.code().0 as u32 & 0xffff) {
+                let code = WIN32_ERROR(e.code().0 as u32 & 0xffff);
+                return match code {
                     ERROR_ACCESS_DENIED => EnumOutcome::AccessDenied,
                     ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => EnumOutcome::NotFound,
-                    _ => EnumOutcome::Error,
+                    _ => EnumOutcome::Error {
+                        network: is_network_error(code),
+                    },
                 };
             }
         };
@@ -131,12 +162,14 @@ pub fn enumerate_dir(path: &Path) -> EnumOutcome {
             data = WIN32_FIND_DATAW::default();
             if let Err(e) = FindNextFileW(handle, &mut data) {
                 let _ = FindClose(handle);
-                if windows::Win32::Foundation::WIN32_ERROR(e.code().0 as u32 & 0xffff)
-                    == ERROR_NO_MORE_FILES
-                {
+                let code = WIN32_ERROR(e.code().0 as u32 & 0xffff);
+                if code == ERROR_NO_MORE_FILES {
                     return EnumOutcome::Ok(entries);
                 }
-                return EnumOutcome::Error;
+                // 읽는 **중에** 끊기는 경우도 있다 — 여기도 같은 판정을 거친다
+                return EnumOutcome::Error {
+                    network: is_network_error(code),
+                };
             }
         }
     }
@@ -266,6 +299,47 @@ mod tests {
     fn 없는_경로는_notfound() {
         let ghost = std::env::temp_dir().join("fe_enum_test_ghost_없는폴더_12345");
         assert!(matches!(enumerate_dir(&ghost), EnumOutcome::NotFound));
+    }
+
+    #[test]
+    fn 네트워크_계열_오류_코드를_가려낸다() {
+        // T1 Acceptance — 끊긴 네트워크 드라이브의 실측값(53)을 포함해 같은 계열을 모두 본다.
+        // 화면이 "연결을 살펴라"와 "다시 열어 보라"를 갈라 적는 근거가 이 판정이다
+        for code in [
+            ERROR_REM_NOT_LIST,
+            ERROR_BAD_NETPATH,
+            ERROR_DEV_NOT_EXIST,
+            ERROR_UNEXP_NET_ERR,
+            ERROR_NETNAME_DELETED,
+            ERROR_BAD_NET_NAME,
+            ERROR_NO_NET_OR_BAD_PATH,
+            ERROR_NETWORK_UNREACHABLE,
+        ] {
+            assert!(
+                is_network_error(code),
+                "네트워크 계열인데 아니라고 했다: {}",
+                code.0
+            );
+        }
+    }
+
+    #[test]
+    fn 네트워크와_무관한_오류_코드는_일반_실패다() {
+        // 목록 밖 코드는 일반 실패로 떨어져야 한다 — 넓게 잡아 엉뚱한 실패에
+        // "연결을 확인하라"고 말하면 사용자를 헛되게 만든다
+        for code in [
+            WIN32_ERROR(112),  // ERROR_DISK_FULL
+            WIN32_ERROR(32),   // ERROR_SHARING_VIOLATION
+            WIN32_ERROR(1392), // ERROR_FILE_CORRUPT
+            ERROR_ACCESS_DENIED,
+            ERROR_PATH_NOT_FOUND,
+        ] {
+            assert!(
+                !is_network_error(code),
+                "네트워크 계열이 아닌데 그렇다고 했다: {}",
+                code.0
+            );
+        }
     }
 
     #[test]

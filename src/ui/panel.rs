@@ -483,7 +483,8 @@ impl PanelState {
             EnumOutcome::NotFound => {
                 self.status = crate::i18n::dynamic::open_not_found(&self.pending_name());
             }
-            EnumOutcome::Error => {
+            // 네트워크 여부로 사유를 갈라 적는 것은 T2가 한다 — 여기서는 종전 문구를 지킨다
+            EnumOutcome::Error { .. } => {
                 self.status = crate::i18n::dynamic::open_failed(&self.pending_name());
             }
         }

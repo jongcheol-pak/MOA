@@ -190,7 +190,7 @@
 
 ## Tasks
 
-- [ ] T1. 열거 결과에 네트워크 실패 여부를 싣는다
+- [x] T1. 열거 결과에 네트워크 실패 여부를 싣는다
   - **Type**: C
   - **Design**: ① `src/fs/enumerate.rs`에 둔다(오류 코드를 아는 유일한 자리). ② 신규 심볼 — `EnumOutcome::Error { network: bool }`(변형 확장), `fn is_network_error(code: WIN32_ERROR) -> bool`(비공개 판정 함수 — 알려진 네트워크 오류 코드 집합). ③ 의존 방향 — `fs`는 아무것도 새로 참조하지 않고, `ui`·`panel`이 이 값을 읽는다. ④ 비추상화 선언 — 오류를 타입으로 감싸지 않는다(`EnumError` 열거형·오류 코드 원본 전달 모두 안 한다). 화면이 갈라 적어야 하는 것은 "네트워크인가"뿐이라 `bool` 하나로 족하다.
   - **Acceptance**:

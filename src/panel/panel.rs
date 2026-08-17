@@ -281,7 +281,9 @@ impl PanelState {
             EnumOutcome::NotFound => {
                 self.fail_pending("경로를 찾을 수 없습니다");
             }
-            EnumOutcome::Error => {
+            // 구 Win32 판은 사유를 한 문구로만 알린다 — 네트워크 여부로 갈라 적는 것은
+            // egui 판(`ui::panel`)의 몫이고, 이 파일은 컴파일을 잇기 위해 남아 있다
+            EnumOutcome::Error { .. } => {
                 self.fail_pending("폴더를 읽는 중 오류가 발생했습니다");
             }
         }
