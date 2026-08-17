@@ -7,8 +7,9 @@ use std::collections::HashMap;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
 use windows::Win32::UI::Controls::{HIMAGELIST, IImageList};
 use windows::Win32::UI::Shell::{
-    SHFILEINFOW, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGFI_TYPENAME, SHGFI_USEFILEATTRIBUTES,
-    SHGetFileInfoW, SHGetImageList, SHIL_EXTRALARGE, SHIL_JUMBO, SHIL_LARGE, SHIL_SMALL,
+    SHFILEINFOW, SHGFI_DISPLAYNAME, SHGFI_SMALLICON, SHGFI_SYSICONINDEX, SHGFI_TYPENAME,
+    SHGFI_USEFILEATTRIBUTES, SHGetFileInfoW, SHGetImageList, SHIL_EXTRALARGE, SHIL_JUMBO,
+    SHIL_LARGE, SHIL_SMALL,
 };
 use windows::core::{HSTRING, Interface};
 
@@ -68,8 +69,16 @@ pub struct IconCache {
     type_by_ext: HashMap<String, String>,
     /// 개별 아이콘(경로별) 캐시 — 파일당 1회만 디스크 조회 (AGENTS UI 스레드 블로킹 최소화)
     icon_by_path: HashMap<String, i32>,
+    /// 경로별 셸 표시 이름 캐시 — 드라이브 이름을 매 프레임 묻지 않는다
+    name_by_path: HashMap<String, String>,
     dir_icon: i32,
     dir_type: String,
+    /// 실제로 셸에 물은 횟수 — **캐시가 듣는지 시험이 관측하는 유일한 값**이다.
+    ///
+    /// 맵 크기로는 이것을 알 수 없다(같은 키를 다시 넣어도 크기가 그대로다). 조회는 끊긴
+    /// 네트워크 드라이브에서 UI를 멈출 수 있는 실경로 I/O라, "한 번만 묻는다"가 성능의 전제다 (plan D9)
+    #[cfg(test)]
+    shell_queries: usize,
 }
 
 impl Default for IconCache {
@@ -108,6 +117,9 @@ impl IconCache {
             icon_by_ext: HashMap::new(),
             type_by_ext: HashMap::new(),
             icon_by_path: HashMap::new(),
+            name_by_path: HashMap::new(),
+            #[cfg(test)]
+            shell_queries: 0,
             dir_icon: info.iIcon,
             dir_type: wide_to_string(&info.szTypeName),
         }
@@ -164,6 +176,79 @@ impl IconCache {
         self.icon_by_ext.insert(ext.to_string(), idx);
         self.type_by_ext.insert(ext.to_string(), type_name);
         idx
+    }
+
+    /// **경로로 직접 물어 얻는** 아이콘 인덱스 — 드라이브·특수 폴더가 각자의 아이콘을 갖는다.
+    ///
+    /// `icon_index`를 쓰지 않는 이유는 그 함수가 `is_dir`을 먼저 걸러 **폴더든 드라이브든 같은
+    /// 일반 폴더 아이콘**을 주기 때문이다. 탐색기처럼 보이려면 셸에 그 경로를 그대로 물어야 한다.
+    ///
+    /// `SHGFI_USEFILEATTRIBUTES`를 **주지 않는다** — 그 플래그는 "디스크를 보지 말고 속성만으로
+    /// 판단하라"는 뜻이라 드라이브 종류가 사라진다. 대신 실제 조회라 느릴 수 있어 경로별로 캐시한다
+    pub fn icon_index_for_path(&mut self, path: &str) -> i32 {
+        if let Some(&idx) = self.icon_by_path.get(path) {
+            return idx;
+        }
+        let mut info = SHFILEINFOW::default();
+        // 안전성: 실제 경로 조회 — 실패해도 `iIcon`은 0(기본 아이콘)이라 그리기가 깨지지 않는다
+        let ok = unsafe {
+            SHGetFileInfoW(
+                &HSTRING::from(path),
+                Default::default(),
+                Some(&mut info),
+                size_of::<SHFILEINFOW>() as u32,
+                SHGFI_SYSICONINDEX | SHGFI_SMALLICON,
+            )
+        };
+        #[cfg(test)]
+        {
+            self.shell_queries += 1;
+        }
+        // 조회가 실패하면 일반 폴더 아이콘으로 떨어진다 — 빈 자리를 남기지 않는다
+        let idx = if ok == 0 { self.dir_icon } else { info.iIcon };
+        self.icon_by_path.insert(path.to_string(), idx);
+        idx
+    }
+
+    /// 셸이 보이는 이름 — 드라이브면 `로컬 디스크 (C:)`처럼 지역화된 문자열이다.
+    ///
+    /// 볼륨 레이블을 읽어 우리가 조립하지 않는 이유는 `로컬 디스크`·`(C:)` 같은 표기가
+    /// 언어마다 다르기 때문이다. 얻지 못하면 `None`이고 부르는 쪽이 경로로 폴백한다
+    pub fn shell_display_name(&mut self, path: &str) -> Option<String> {
+        if let Some(name) = self.name_by_path.get(path) {
+            return Some(name.clone());
+        }
+        let mut info = SHFILEINFOW::default();
+        // 안전성: 실제 경로 조회 — 실패하면 0을 돌려주고 `szDisplayName`은 비어 있다
+        let ok = unsafe {
+            SHGetFileInfoW(
+                &HSTRING::from(path),
+                Default::default(),
+                Some(&mut info),
+                size_of::<SHFILEINFOW>() as u32,
+                SHGFI_DISPLAYNAME,
+            )
+        };
+        #[cfg(test)]
+        {
+            self.shell_queries += 1;
+        }
+        if ok == 0 {
+            return None;
+        }
+        let name = String::from_utf16_lossy(&info.szDisplayName);
+        let name = name.trim_end_matches('\0').to_owned();
+        if name.is_empty() {
+            return None;
+        }
+        self.name_by_path.insert(path.to_string(), name.clone());
+        Some(name)
+    }
+
+    /// 셸에 실제로 물은 횟수 — 캐시가 듣는지 시험이 본다 (plan D9)
+    #[cfg(test)]
+    pub fn shell_queries(&self) -> usize {
+        self.shell_queries
     }
 
     /// 항목의 종류(형식) 문자열 — 셸이 주는 지역화 문자열 그대로
@@ -226,6 +311,21 @@ fn wide_to_string(buf: &[u16]) -> String {
 mod tests {
     use super::*;
 
+    /// 셸을 실제로 부르는 시험들의 직렬화 잠금.
+    ///
+    /// `SHGetFileInfoW`·`SHGetKnownFolderPath`·`SHGetImageList`는 프로세스 전역 셸 상태를
+    /// 함께 쓰는데, Rust 시험은 기본이 병렬이라 서로 다른 스레드에서 동시에 부르면
+    /// `SHGetImageList`가 실패해 **16px로 폴백**한다(그러면 크기별 리스트 시험이 깨진다).
+    /// 언어 전환 시험이 `i18n::LanguageGuard`로 같은 문제를 푸는 것과 같은 방식이다
+    static SHELL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 잠금을 잡는다 — 앞선 시험이 패닉해 독이 올랐어도 이어서 쓴다(그 시험의 실패만으로 충분하다)
+    fn shell_guard() -> std::sync::MutexGuard<'static, ()> {
+        SHELL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn 요청한_크기보다_작지_않은_단계를_고른다() {
         // 늘린 아이콘은 뭉개지고 줄인 아이콘은 멀쩡하다 — 항상 같거나 큰 단계를 써야 한다
@@ -251,6 +351,7 @@ mod tests {
     fn 크기별로_서로_다른_이미지_리스트를_얻는다() {
         // 이 획득이 실패하면 모든 단계가 16px로 폴백해 보기 모드를 바꿔도 아이콘이 그대로다.
         // 화면 표시는 T10(격자 렌더)에서 확인하고, 여기서는 **리스트를 실제로 얻었는지**만 본다
+        let _shell = shell_guard();
         let cache = IconCache::new();
         assert_eq!(
             cache.himl_for(IconSize::Small),
@@ -296,5 +397,64 @@ mod tests {
         let before = shils.len();
         shils.dedup();
         assert_eq!(shils.len(), before);
+    }
+
+    #[test]
+    fn 드라이브는_일반_폴더와_다른_아이콘을_받는다() {
+        // 요구의 핵심 — 탐색기처럼 드라이브가 제 아이콘을 갖는다.
+        // `icon_index`는 `is_dir`을 먼저 걸러 폴더 아이콘 하나만 주므로 그것으로는 안 된다
+        let _shell = shell_guard();
+        let mut icons = IconCache::new();
+        let drive = icons.icon_index_for_path("C:\\");
+        let folder = icons.dir_icon();
+
+        assert_ne!(
+            drive, folder,
+            "드라이브가 일반 폴더와 같은 아이콘을 받았다 — 경로 실조회가 듣지 않는다"
+        );
+    }
+
+    #[test]
+    fn 같은_경로는_한_번만_셸에_묻는다() {
+        // 실경로 조회는 끊긴 네트워크 드라이브에서 UI를 멈출 수 있어 캐시가 성능의 전제다.
+        // **맵 크기로는 이것을 볼 수 없다** — 다시 물어 다시 넣어도 크기가 그대로다 (plan D9)
+        let _shell = shell_guard();
+        let mut icons = IconCache::new();
+        let before = icons.shell_queries();
+
+        let first = icons.icon_index_for_path("C:\\");
+        let after_first = icons.shell_queries();
+        let second = icons.icon_index_for_path("C:\\");
+
+        assert_eq!(first, second, "같은 경로인데 다른 아이콘이 나왔다");
+        assert_eq!(after_first, before + 1, "첫 조회가 셸을 부르지 않았다");
+        assert_eq!(
+            icons.shell_queries(),
+            after_first,
+            "두 번째 요청이 셸을 다시 물었다 — 캐시가 듣지 않는다"
+        );
+    }
+
+    #[test]
+    fn 드라이브의_셸_표시_이름을_얻는다() {
+        // `로컬 디스크 (C:)`처럼 화면 언어를 따르는 문자열이라 값 자체는 단언하지 않는다
+        let _shell = shell_guard();
+        let mut icons = IconCache::new();
+        let name = icons
+            .shell_display_name("C:\\")
+            .expect("C 드라이브 표시 이름");
+
+        assert!(!name.is_empty(), "이름이 비었다");
+        assert_ne!(name, "C:\\", "경로가 그대로 왔다 — 표시 이름이 아니다");
+        // 널 문자가 남으면 화면에 두부(`?`)로 그려진다
+        assert!(!name.contains('\0'), "널 문자가 남았다: {name:?}");
+    }
+
+    #[test]
+    fn 없는_경로의_표시_이름은_없음이거나_패닉하지_않는다() {
+        let _shell = shell_guard();
+        let mut icons = IconCache::new();
+        // 실재하지 않는 드라이브 — 셸이 무엇을 주든 앱이 죽지 않아야 한다
+        let _ = icons.shell_display_name(r"QQ:\없는폴더\깊이");
     }
 }
