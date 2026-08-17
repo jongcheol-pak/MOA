@@ -2768,8 +2768,13 @@ impl eframe::App for ExplorerApp {
                     tree_requests = outcome.tree_requests;
                     favorite = outcome.favorite;
                     // 열어 본 드라이브의 연결 상태를 드라이브 목록에 반영한다 (T6).
-                    // **이 홉은 컴파일러가 강제하지 않는다**(필드별 대입) — 이 줄을
-                    // 빠뜨리면 갱신이 조용히 끊기므로 프레임을 그리는 시험이 지킨다
+                    //
+                    // **이 홉은 컴파일러도 시험도 미치지 않는다** — 필드별 대입이라 빠뜨려도
+                    // 빌드가 통과하고, `ExplorerApp`은 실 HWND(`CreationContext`)가 있어야
+                    // 만들어져 프레임을 돌리는 시험을 세울 수 없다(AGENTS: UI 로직 비대상).
+                    // 이 `for`문을 지워도 붉어지는 시험이 없으니 **리뷰가 지키는 자리**다.
+                    // 앞뒤 층은 시험이 덮는다 — 패널이 관측을 세우는 것(`ui/panel/tests.rs`),
+                    // 여럿을 모으는 것(`ui/splitter.rs`), 반영 규칙(`app/drives.rs`)
                     for (path, reachable) in outcome.drive_observed {
                         self.drives.observe(&path, reachable);
                     }

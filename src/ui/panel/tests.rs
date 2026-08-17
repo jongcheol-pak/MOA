@@ -2578,10 +2578,12 @@ fn 열어_본_결과를_닿았는가로_갈라_올린다() {
 
     // 닿은 것 — 읽어 냈거나, 권한이 없을 뿐 드라이브에는 닿았다
     for outcome in [EnumOutcome::Ok(Vec::new()), EnumOutcome::AccessDenied] {
+        // 어느 갈래가 틀렸는지 메시지로 알린다 — 루프라 실패 자리만으로는 가릴 수 없다
+        let 갈래 = format!("{outcome:?}");
         assert_eq!(
             observation_after(outcome, &mut icons),
             Some((경로.clone(), true)),
-            "닿은 결과를 못 닿은 것으로 올렸다"
+            "닿은 결과를 못 닿은 것으로 올렸다: {갈래}"
         );
     }
 
@@ -2591,10 +2593,11 @@ fn 열어_본_결과를_닿았는가로_갈라_올린다() {
         EnumOutcome::Error { network: false },
         EnumOutcome::NotFound,
     ] {
+        let 갈래 = format!("{outcome:?}");
         assert_eq!(
             observation_after(outcome, &mut icons),
             Some((경로.clone(), false)),
-            "열지 못한 결과를 닿은 것으로 올렸다"
+            "열지 못한 결과를 닿은 것으로 올렸다: {갈래}"
         );
     }
 }
