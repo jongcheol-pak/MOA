@@ -319,9 +319,34 @@
 
 ## Phase Ledger
 
+## T5 역대조 표 (문서 문장 ↔ 실제 동작)
+
+| # | 문서·위치 | 적은 문장 | 실제 근거 | 판정 |
+|---|---|---|---|---|
+| 1 | PRD FR-9 | 로컬 트리의 모든 줄에 셸 아이콘이 붙는다 | `tree.rs`의 `icon_for` → `IconCache::icon_index_for_path`, 시험 `트리_줄에는_셸_아이콘이_붙는다` | ✅ |
+| 2 | PRD FR-9 | 원격 트리는 모두 같은 폴더 아이콘 | `tree.rs:245` `icons.dir_icon()` 한 값을 모든 줄에 넘김 | ✅ |
+| 3 | PRD FR-9 | 드라이브는 `로컬 디스크 (C:)` 같은 셸 표시 이름 | `tree.rs`의 `drive_roots` → `shell_display_name` | ✅ |
+| 4 | PRD FR-9 | 이름을 얻지 못하면 경로 문자열로 폴백 | 같은 자리의 `unwrap_or_else(|| path.to_string_lossy())` | ✅ |
+| 5 | PRD FR-56 | 맨 위에 `즐겨찾기` 제목(흐린 작은 글씨) | `tree.rs:359` `FAVORITES_TITLE_PX`·`theme::TEXT_MUTED` | ✅ |
+| 6 | PRD FR-56 | 하나도 없으면 제목·목록·구분선을 그리지 않는다 | `tree.rs:355` `if favorites.is_empty() { return; }` | ✅ |
+| 7 | PRD FR-56 | 바탕 화면·다운로드가 기본으로 서고 해제할 수 없다 | `known_folders::default_favorites` + `FavoriteEntry.removable=false` + `FavoriteStore::remove`가 기본을 무시 | ✅ |
+| 8 | PRD FR-56 | 그 줄은 우클릭해도 메뉴가 뜨지 않는다 | `tree.rs:385` `entry.removable && response.secondary_clicked()` | ✅ |
+| 9 | PRD FR-56 | 실재하지 않는 폴더는 빠진다 | `known_folders.rs:23` `.filter(|path| path.is_dir())` | ✅ |
+| 10 | PRD FR-56 | 옮긴 자리를 가리킨다 | `SHGetKnownFolderPath`가 매 실행 시 현재 위치를 준다 | ✅ |
+| 11 | PRD FR-56 | 세션 파일에 담기지 않는다 | 저장은 `paths()`(사용자 항목만), 화면만 `entries()` — `app.rs:800` vs `:2709` | ✅ |
+| 12 | PRD FR-56 | 담기 메뉴 문구 `즐겨찾기에 담기` | `i18n::tree_favorite_add` | ⚠️→✅ (리뷰 M1: 옛 `즐겨찾기`가 남아 있어 정정) |
+| 13 | README 25 | 탐색기와 같은 셸 아이콘·드라이브 표시 이름 | 1~4와 같음 | ✅ |
+| 14 | README 26 | 기본 두 줄은 윈도우가 쓰는 이름으로 보인다 | `FavoriteEntry.label`(셸 표시 이름), 사용자 항목은 `None`이라 폴더명 | ✅ |
+| 15 | README 26 | 그 폴더가 없는 PC에서는 해당 줄만 빠진다 | 9와 같음 | ✅ |
+| 16 | README 아키텍처 | `fs/known_folders.rs` 행 신설 | 실제 신규 파일(T1) | ✅ |
+| 17 | 위키 큐 | 구현 함정 + 서술 드리프트 2줄 | vault `pending.md` `[PROJECT-FACT]`·`[K-DRIFT]` | ✅ (리뷰 N2로 드리프트 줄 추가) |
+
+**누락·잔존·변형**: 잔존 1건(12번 — 옛 메뉴 문구)을 정정했다. 변형·누락 없음. 문서에만 있고 코드에 없는 서술은 발견하지 못했다.
+
 ## Retry Ledger
 - T1: 리뷰 수정 사이클 1/5 (1라운드 BLOCKER 1 — task 경계 침범, 코드 대신 plan 귀속 정정으로 해소). 동일 BLOCKER 재발 0.
 - T3: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 1 — 시험 헬퍼가 셸 잠금을 빠뜨림).
+- T5: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 1 — PRD FR-56에 옛 메뉴 문구 잔존 · MINOR 2 — 역대조 표 산출물 부재·위키 큐가 서술 드리프트를 안 짚음). 셋 다 반영.
 - T4: 리뷰 수정 사이클 1/5 (1라운드 MINOR 2 — `from_paths` 과도한 공개·기본 항목 판정식 3회 중복). spec 리뷰는 지적 0건. 품질 리뷰어가 판정문 없이 끝나 D 분기로 1회 재요청.
 - T2: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 2 — 하네스 begin_frame 누락 2곳·tree_row의 포커스 표시 상실). 리뷰어 둘 다 판정문 없이 끝나 D 분기로 1회씩 재요청.
 
