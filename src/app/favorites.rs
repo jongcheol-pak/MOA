@@ -53,9 +53,12 @@ impl FavoriteStore {
         FavoriteStore::default()
     }
 
-    /// 세션에서 되살린다 — 저장은 문자열이므로 경로로 바꿔 받는다.
-    /// **손으로 편집된 파일에 중복이 들어 있을 수 있어** 여기서도 한 번 걸러 낸다
-    pub fn from_paths(paths: impl IntoIterator<Item = PathBuf>) -> FavoriteStore {
+    /// 사용자 항목만으로 만든다 — 저장은 문자열이므로 경로로 바꿔 받는다.
+    /// **손으로 편집된 파일에 중복이 들어 있을 수 있어** 여기서도 한 번 걸러 낸다.
+    ///
+    /// **모듈 밖으로 열지 않는다** — 이 길로 복원하면 기본 항목이 통째로 사라진다.
+    /// 바깥은 언제나 `with_defaults`를 쓴다
+    fn from_paths(paths: impl IntoIterator<Item = PathBuf>) -> FavoriteStore {
         let mut store = FavoriteStore::new();
         for path in paths {
             store.add(path);
@@ -100,7 +103,7 @@ impl FavoriteStore {
             })
             .collect();
         for path in &self.paths {
-            if self.defaults.iter().any(|(known, _)| known == path) {
+            if self.is_default(path) {
                 continue;
             }
             entries.push(FavoriteEntry {
@@ -112,13 +115,17 @@ impl FavoriteStore {
         entries
     }
 
+    /// 윈도우가 정해 준 기본 항목인가 — 목록 합치기·해제 판정이 같은 규칙을 본다
+    fn is_default(&self, path: &Path) -> bool {
+        self.defaults.iter().any(|(known, _)| known == path)
+    }
+
     /// 이미 담긴 폴더인가 — 메뉴의 `즐겨찾기에 담기` 줄을 비활성으로 할지 정한다.
     ///
     /// **기본 항목도 담긴 것으로 본다** — 바탕 화면이 이미 목록에 서 있는데 그 폴더의
     /// 트리 노드에서 다시 담을 수 있으면 같은 줄이 둘이 된다
     pub fn contains(&self, path: &Path) -> bool {
-        self.paths.iter().any(|known| known == path)
-            || self.defaults.iter().any(|(known, _)| known == path)
+        self.paths.iter().any(|known| known == path) || self.is_default(path)
     }
 
     /// 맨 아래에 더한다. **이미 있으면 아무 일도 하지 않는다** —
@@ -136,7 +143,7 @@ impl FavoriteStore {
     /// 아예 보이지 않지만, 규칙은 순수 계층에도 둔다 — 화면만 막으면 다른 경로로
     /// 요청이 올라왔을 때 조용히 지워진다
     pub fn remove(&mut self, path: &Path) {
-        if self.defaults.iter().any(|(known, _)| known == path) {
+        if self.is_default(path) {
             return;
         }
         self.paths.retain(|known| known != path);

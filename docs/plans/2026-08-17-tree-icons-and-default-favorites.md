@@ -243,7 +243,7 @@
     - (ii-a) `drive_roots` 반환 타입 변경(계획된 공개 API 변경) → `## 사전 승인 항목`
   - **Depends on**: T1
 
-- [ ] T4. 즐겨찾기 제목과 기본 항목(바탕 화면·다운로드)
+- [x] T4. 즐겨찾기 제목과 기본 항목(바탕 화면·다운로드)
   - **Type**: D
   - **Design**: ① 기본 항목 판정은 `src/app/favorites.rs`(순수 계층), 제목 그리기는 `src/ui/tree.rs` ② 신규 심볼 — `FavoriteStore::with_defaults(defaults, 사용자 경로들)`(기본 항목을 함께 든다 — 복원도 이 길을 쓴다) · `FavoriteStore::entries() -> Vec<FavoriteEntry>`(기본이 앞, 사용자가 뒤. 중복 경로는 기본 쪽만 남긴다) · `FavoriteEntry { path, label: Option<String>, removable }` — **라벨은 기본 항목만 갖는다**(셸 표시 이름). 사용자 항목은 `None`이고 화면이 기존 `tree.rs::display_name`으로 폴백한다. 그래야 폴더명 산출 로직이 `app/` 계층에 복제되지 않는다(m1) · i18n `tree_favorites_title`(`즐겨찾기` / `Favorites` — **`strings!`는 한쪽을 빠뜨리면 컴파일 오류다**). **같은 회차에 `tree_favorite_add`의 값을 `즐겨찾기에 담기`로 바꾼다**(D7) — 제목과 메뉴가 같은 리터럴이면 화면 문자열로 둘을 가를 수 없어 기존 시험 3건이 깨지거나 죽는다 ③ **`paths()`는 사용자 항목만 준다(세션 저장용), `entries()`는 기본+사용자를 준다(화면용)** — 지금 `app.rs:789`(세션 저장)와 `:2698`(화면 전달)이 둘 다 `paths()`를 쓰므로, 화면 쪽만 `entries()`로 바꾸고 저장 쪽은 그대로 둔다. 이 경계가 없으면 기본 항목이 저장 파일에 섞여 **D4가 B안을 버린 사유가 그대로 되살아난다**(m2).
     `ui::app`이 시작할 때 `default_favorites()`(T1)로 저장소를 만들고, **세션 복원 지점(`app.rs:713`)도 기본 항목을 유지한다** — 지금은 `FavoriteStore::from_paths(...)`가 저장소를 통째로 갈아치우므로 그대로 두면 settings.json이 있는 모든 사용자(=정상 경로)에서 기본 둘이 사라진다. 복원은 `FavoriteStore::with_defaults(defaults, 사용자 경로들)` 한 줄로 바꿔 기본을 다시 싣는다. 트리는 `entries()` 결과만 그리고 무엇이 기본인지 판정하지 않는다(`removable`만 본다) ④ 비추상화 선언: 기본 항목을 사용자가 설정으로 바꾸는 길을 만들지 않는다(Out of Scope)
@@ -322,6 +322,7 @@
 ## Retry Ledger
 - T1: 리뷰 수정 사이클 1/5 (1라운드 BLOCKER 1 — task 경계 침범, 코드 대신 plan 귀속 정정으로 해소). 동일 BLOCKER 재발 0.
 - T3: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 1 — 시험 헬퍼가 셸 잠금을 빠뜨림).
+- T4: 리뷰 수정 사이클 1/5 (1라운드 MINOR 2 — `from_paths` 과도한 공개·기본 항목 판정식 3회 중복). spec 리뷰는 지적 0건. 품질 리뷰어가 판정문 없이 끝나 D 분기로 1회 재요청.
 - T2: 리뷰 수정 사이클 1/5 (1라운드 MAJOR 2 — 하네스 begin_frame 누락 2곳·tree_row의 포커스 표시 상실). 리뷰어 둘 다 판정문 없이 끝나 D 분기로 1회씩 재요청.
 
 
@@ -331,6 +332,10 @@
   - 결정: 줄 그리기를 `selectable_label`에서 직접 그리기(`tree_row`)로 바꾸면서 잃은 **시각적 포커스 표시**를 `has_focus()` 테두리로 되살렸다(키보드 조작 자체는 `Sense::click()`이 보존).
   - 결정: 늘 함께 다니는 `textures`·`ctx`·`himl`을 `RowCtx`로 묶어 `#[allow(too_many_arguments)]` 두 곳을 없앴다.
   - 시험 하네스 3곳이 프레임마다 `textures.begin_frame()`을 부르게 했다 — 빠뜨리면 텍스처 생성 상한(프레임당 8개)이 하네스 수명 전체로 굳는다.
+- T3-T4 완료: 드라이브 셸 표시 이름 → 즐겨찾기 제목·기본 항목(바탕 화면·다운로드).
+  - 결정: `ExplorerApp` 생성자에서 `IconCache`를 구조체 리터럴 앞으로 꺼냈다 — 기본 항목이 셸 표시 이름을 필요로 하는데 리터럴 안에서는 다른 필드를 참조할 수 없다.
+  - 결정: 시험 하네스에 `user_favorite`·`default_favorite` 두 헬퍼를 두고 **인자로 받은 항목만 그린다** — 하네스가 기본 둘을 자동으로 실으면 메뉴 시험이 제목만으로 통과한다(B1).
+  - 리뷰 반영(MINOR 2건): `from_paths`를 비공개로 낮췄다(공개로 두면 복원 지점이 다시 그 길을 골라 기본 항목을 잃는다) · 기본 항목 판정식이 세 곳에 반복돼 `is_default` 헬퍼로 모았다.
 
 ## Next Steps
 
