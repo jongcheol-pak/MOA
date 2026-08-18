@@ -273,7 +273,7 @@ impl FileList {
                     if entry.is_dir {
                         String::new()
                     } else {
-                        format_size_kb(entry.size)
+                        format_size(entry.size)
                     }
                 }
                 2 => self.type_names.get(index).cloned().unwrap_or_default(),
@@ -767,27 +767,32 @@ fn logical_name_cmp(a: &[u16], b: &[u16]) -> std::cmp::Ordering {
     r.cmp(&0)
 }
 
-/// 탐색기식 크기 표시: KB 올림 + 천 단위 구분.
-/// `pub`인 이유: egui UI 계층(`ui::file_list`)이 같은 표시 규칙을 쓰기 위해 —
-/// 복제하면 표시 형식이 두 벌로 갈라진다 (이식 plan part1 4-D)
-pub fn format_size_kb(bytes: u64) -> String {
-    let kb = bytes.div_ceil(1024).max(if bytes > 0 { 1 } else { 0 });
-    let s = kb.to_string();
-    let mut out = String::with_capacity(s.len() + s.len() / 3 + 3);
-    let offset = s.len() % 3;
-    for (i, c) in s.chars().enumerate() {
-        if i != 0 && (i + 3 - offset) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
+/// 크기 표시: 소수점 둘째자리 + KB·MB·GB 자동 승격.
+/// `pub`인 이유: egui UI 계층(자세히·격자 보기와 전송 큐·상태 표시줄)이 같은 표시 규칙을
+/// 쓰기 위해 — 복제하면 표시 형식이 두 벌로 갈라진다 (이식 plan part1 4-D)
+///
+/// **KB 아래 단위(B)는 쓰지 않는다** — 목록의 `크기` 열에 B·KB·MB·GB 넷이 섞이면
+/// 자릿수만 보고 크기를 견줄 수 없다 (2026-08-18 사용자 결정)
+pub fn format_size(bytes: u64) -> String {
+    const STEP: f64 = 1024.0;
+    const UNITS: [&str; 3] = ["KB", "MB", "GB"];
+    let mut value = bytes as f64 / STEP;
+    let mut unit = 0;
+    // 승격 판정을 **반올림한 값**으로 한다 — 그러지 않으면 1,048,571바이트가
+    // `1024.00 KB`로 나온다(표시값은 한 칸을 채웠는데 단위가 안 올라간다)
+    while unit + 1 < UNITS.len() && (value * 100.0).round() / 100.0 >= STEP {
+        value /= STEP;
+        unit += 1;
     }
-    out.push_str("KB");
-    out.insert(out.len() - 2, ' ');
-    out
+    // 0이 아닌데 `0.00 KB`면 빈 파일과 구분되지 않는다 — 최소 한 칸은 채운다
+    if bytes > 0 && unit == 0 && value < 0.01 {
+        value = 0.01;
+    }
+    format!("{value:.2} {}", UNITS[unit])
 }
 
 /// FILETIME(u64) → 로컬 "yyyy-MM-dd HH:mm".
-/// `pub`인 이유는 `format_size_kb`와 동일 (egui UI 계층과 표시 규칙 공유)
+/// `pub`인 이유는 `format_size`와 동일 (egui UI 계층과 표시 규칙 공유)
 pub fn format_filetime(ft: u64) -> String {
     use windows::Win32::Foundation::FILETIME;
     let ft = FILETIME {
@@ -872,12 +877,26 @@ mod tests {
     }
 
     #[test]
-    fn 크기_표시는_kb_올림_천단위_구분() {
-        assert_eq!(format_size_kb(0), "0 KB");
-        assert_eq!(format_size_kb(1), "1 KB");
-        assert_eq!(format_size_kb(1024), "1 KB");
-        assert_eq!(format_size_kb(1025), "2 KB");
-        assert_eq!(format_size_kb(1_234_567), "1,206 KB");
+    fn 크기_표시는_소수_둘째자리에_단위를_올린다() {
+        // 2026-08-18 사용자 결정 — 파일 목록·전송 큐·상태 표시줄이 같은 규칙을 쓴다
+        assert_eq!(format_size(0), "0.00 KB");
+        assert_eq!(format_size(512), "0.50 KB");
+        assert_eq!(format_size(1024), "1.00 KB");
+        assert_eq!(format_size(1_234), "1.21 KB");
+        assert_eq!(format_size(1_234_567), "1.18 MB");
+        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.00 GB");
+    }
+
+    #[test]
+    fn 크기_표시의_경계값() {
+        // 0이 아닌데 `0.00 KB`면 빈 파일과 구분되지 않는다
+        assert_eq!(format_size(1), "0.01 KB");
+        assert_eq!(format_size(10), "0.01 KB");
+        // 승격은 **반올림한 값**으로 판정한다 — 아니면 `1024.00 KB`가 나온다
+        assert_eq!(format_size(1_048_570), "1023.99 KB");
+        assert_eq!(format_size(1_048_571), "1.00 MB");
+        // GB 위로는 올릴 단위가 없어 그대로 둔다(지수 표기로 새지 않는다)
+        assert_eq!(format_size(u64::MAX), "17179869184.00 GB");
     }
 
     #[test]

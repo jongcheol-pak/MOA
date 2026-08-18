@@ -1179,12 +1179,14 @@ impl ExplorerApp {
                         body.min,
                         egui::vec2(body.width(), queue_panel::SITE_ROW_HEIGHT),
                     );
+                    // 로그 화면에서는 건수를 적지 않는다 — 셀 대상이 없다 (2026-08-18)
                     queue_panel::show_site_tabs(
                         &mut dock_ui,
                         site_row,
                         &mut self.dock,
                         &view,
                         &self.sites,
+                        false,
                     );
                     // 지금 보고 있는 연결의 로그를 그린다 — 연결이 없으면 빈 화면이다
                     let body = egui::Rect::from_min_max(
@@ -1743,18 +1745,46 @@ impl ExplorerApp {
         self.pending_clipboard = Some(text);
     }
 
-    /// 큐 행에서 고른 조작 (T19 우클릭 메뉴)
+    /// 큐 행에서 고른 조작 (T19 우클릭 메뉴).
+    ///
+    /// `…All`의 대상은 **지금 보고 있는 목록**이다 — 화면이 그린 범위가 아니라 거른 목록
+    /// 전량이며, 그 계산을 여기서 하는 이유는 `ui::queue_panel`이 큐를 고치지 않기 때문이다
     fn apply_queue_action(&mut self, action: QueueAction) {
         match action {
             // 실패한 것을 대기로 되돌리면 다음 `start_ready`가 다시 건다
             QueueAction::Retry(id) => self
                 .queue
                 .update(id, crate::remote::queue::TransferState::Wait),
-            QueueAction::Cancel(id) => {
+            QueueAction::RetryAll => {
+                let ids = self.visible_transfer_ids();
+                self.queue.retry(&ids);
+            }
+            // `삭제`와 `전송 취소`는 같은 일을 한다 — 상태에 따라 한 쪽만 메뉴에 선다
+            QueueAction::Cancel(id) | QueueAction::Remove(id) => {
                 self.runner.cancel(&self.manager, id);
                 self.queue.cancel(id);
             }
+            QueueAction::RemoveAll => {
+                let ids = self.visible_transfer_ids();
+                // 진행 중인 것은 워커를 먼저 멈춰야 `.part`가 정리된다.
+                // 배정되지 않은 번호에 불러도 `cancel`이 그 자리에서 돌아온다
+                for id in &ids {
+                    self.runner.cancel(&self.manager, *id);
+                }
+                self.queue.remove(&ids);
+            }
         }
+    }
+
+    /// 지금 도크에 보이는 목록의 전송 번호들 — `전체 …` 조작의 대상이다 (plan D4).
+    ///
+    /// 화면과 **같은 함수**로 거른다 — 다른 식으로 다시 세면 눈에 보이는 것과 지워지는 것이
+    /// 어긋난다
+    fn visible_transfer_ids(&self) -> Vec<crate::remote::connection::TransferId> {
+        queue_panel::visible_items(&self.queue, self.dock.filter, self.dock.site)
+            .into_iter()
+            .map(|item| item.id)
+            .collect()
     }
 
     /// 자동 실행으로 시작했으면 창을 숨긴다 — **최대화 복원이 끝난 뒤에** (FR-49).

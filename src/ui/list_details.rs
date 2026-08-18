@@ -4,7 +4,7 @@
 //! 열 조작만** 담당한다. 상태를 바꾸지 않고 이번 프레임의 조작을 `DetailsOutcome`으로 돌려준다 —
 //! 그리기 루프가 목록을 빌린 채로는 선택·정렬을 고칠 수 없기 때문이다.
 use crate::fs::icons::IconCache;
-use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size_kb};
+use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_colored};
 use crate::ui::theme;
@@ -271,6 +271,11 @@ pub struct DetailsOutcome {
     pub column_toggle: Option<ColumnKind>,
     /// 이 행에서 끌기가 시작됐다 (FR-38) — 무엇을 실을지는 호출부가 정한다
     pub drag_started: Option<usize>,
+    /// 지금 끌고 있는 열 경계의 x — **이 모듈 안에서 소비한다**(호출부는 보지 않는다).
+    ///
+    /// `show_header`가 담고 행을 다 그린 뒤에 긋는다. 머리글이 행보다 먼저 그려지므로
+    /// 거기서 바로 그으면 행 배경(얼룩·hover·선택)이 같은 레이어에서 선을 덮는다
+    resize_guide_x: Option<f32>,
 }
 
 /// 자세히 보기를 그린다.
@@ -441,6 +446,14 @@ pub fn show<R: ListRow>(
                 painter.galley(egui::pos2(x, y - galley.size().y / 2.0), galley, text_color);
             }
         }
+        // 끄는 동안의 강조선 — 행 배경보다 **나중에** 그어야 끊기지 않는다
+        if let Some(x) = outcome.resize_guide_x {
+            ui.painter().vline(
+                x,
+                top..=content.bottom(),
+                egui::Stroke::new(1.0, theme::ACCENT),
+            );
+        }
         content
     });
 
@@ -488,7 +501,7 @@ fn cell_text<R: ListRow>(
             if entry.is_dir() {
                 String::new()
             } else {
-                format_size_kb(entry.size())
+                format_size(entry.size())
             }
         }
         ColumnKind::Type => type_name.to_owned(),
@@ -590,6 +603,15 @@ fn show_header(ui: &mut egui::Ui, input: HeaderInput<'_>, outcome: &mut DetailsO
     // 경계 위에서 누른 것이 정렬 클릭으로 새지 않는다
     for (slot, kind) in visible.iter().enumerate() {
         let boundary = left + offsets[slot] + widths[slot];
+        // 평소에도 경계가 보여야 어디를 잡을지 알 수 있다 (2026-08-18 사용자 보고).
+        // 마지막 열의 오른쪽 끝에는 긋지 않는다 — 그것은 표 바깥 경계다
+        if slot + 1 < visible.len() {
+            ui.painter().vline(
+                boundary,
+                top..=(top + HEADER_HEIGHT),
+                egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+            );
+        }
         let handle = egui::Rect::from_min_size(
             egui::pos2(boundary - HANDLE_WIDTH / 2.0, top),
             egui::vec2(HANDLE_WIDTH, HEADER_HEIGHT),
@@ -606,6 +628,7 @@ fn show_header(ui: &mut egui::Ui, input: HeaderInput<'_>, outcome: &mut DetailsO
         }
         if resp.dragged() {
             columns.apply_drag(*kind, resp.drag_delta().x);
+            outcome.resize_guide_x = Some(boundary);
         }
     }
 }
@@ -890,6 +913,64 @@ mod tests {
         assert_eq!(
             cell_text(&있음, "텍스트", ColumnKind::Owner, true),
             "deploy"
+        );
+    }
+
+    /// 머리글만 한 프레임 그리고 세로선을 모은다 (x, 색)
+    fn draw_header_lines(visible: &[ColumnKind], widths: &[f32]) -> Vec<(f32, egui::Color32)> {
+        let mut columns = Columns::new();
+        let mut outcome = DetailsOutcome::default();
+        let offsets = x_offsets(widths);
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                show_header(
+                    ui,
+                    HeaderInput {
+                        columns: &mut columns,
+                        visible,
+                        widths,
+                        offsets: &offsets,
+                        left: 0.0,
+                        top: 0.0,
+                        sort_key: SortKey::Name,
+                        ascending: true,
+                        is_remote: false,
+                        column_flags: ColumnFlags::default(),
+                    },
+                    &mut outcome,
+                );
+            });
+        });
+        let mut lines = Vec::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::LineSegment { points, stroke } = &clipped.shape
+                && (points[0].x - points[1].x).abs() < 0.01
+            {
+                lines.push((points[0].x, stroke.color));
+            }
+        }
+        lines
+    }
+
+    #[test]
+    fn 머리글_열_경계마다_구분선이_선다() {
+        // 2026-08-18 사용자 보고 — 선이 없어 어디를 끌어야 할지 알 수 없었다
+        let visible = local_visible();
+        let widths = vec![100.0, 50.0, 80.0, 70.0];
+        let lines = draw_header_lines(&visible, &widths);
+        let 구분선: Vec<f32> = lines
+            .iter()
+            .filter(|(_, color)| *color == theme::BORDER_SUBTLE)
+            .map(|(x, _)| *x)
+            .collect();
+        // 보이는 열이 넷이면 선은 셋이다 — **마지막 열의 오른쪽 끝에는 긋지 않는다**
+        assert_eq!(구분선, vec![100.0, 150.0, 230.0], "{lines:?}");
+
+        // 끌고 있지 않으면 강조선(가이드)은 없다
+        assert!(
+            !lines.iter().any(|(_, color)| *color == theme::ACCENT),
+            "끌지 않았는데 가이드가 그려졌다: {lines:?}"
         );
     }
 

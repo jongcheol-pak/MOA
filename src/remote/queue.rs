@@ -7,7 +7,7 @@
 //! **방향·식별자는 새로 만들지 않는다** — `remote::connection`이 T4에서 이미
 //! `TransferId`·`TransferDirection`을 도입했고(워커 명령이 그것을 싣는다), 여기서 같은 뜻의
 //! 타입을 또 만들면 경계마다 옮겨 담게 된다 (plan T17 신규 심볼 목록의 `Direction`이 이것이다).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::remote::connection::{TransferDirection, TransferId};
@@ -106,6 +106,17 @@ pub enum QueueFilter {
     All,
     Done,
     Error,
+}
+
+impl QueueFilter {
+    /// 이 거르개에 걸리는가 — `filter`·`count`·`counts_by_site` 셋이 같은 판정을 쓴다
+    fn matches(self, state: &TransferState) -> bool {
+        match self {
+            QueueFilter::All => true,
+            QueueFilter::Done => state.is_done(),
+            QueueFilter::Error => state.is_error(),
+        }
+    }
 }
 
 /// 상태 표시줄·큐 머리글이 쓰는 요약 (인벤토리 #54)
@@ -232,6 +243,30 @@ impl TransferQueue {
         self.paused = paused;
     }
 
+    /// 고른 항목들을 다시 대기로 되돌린다 (행 메뉴 `전체 다시 시도`).
+    ///
+    /// **실패한 것만** 바꾼다 — 목록에 완료·진행 중이 섞여 있어도 그것들은 건드리지 않는다
+    /// (`전체`라는 말이 "보이는 목록"을 뜻하지 "모든 상태"를 뜻하지는 않는다)
+    pub fn retry(&mut self, ids: &[TransferId]) {
+        let ids: HashSet<TransferId> = ids.iter().copied().collect();
+        for item in self
+            .items
+            .iter_mut()
+            .filter(|item| ids.contains(&item.id) && item.state.is_error())
+        {
+            item.state = TransferState::Wait;
+        }
+    }
+
+    /// 고른 항목들을 목록에서 지운다 (행 메뉴 `삭제`·`전체 삭제`의 여러 건 판).
+    ///
+    /// 진행 중인 것의 워커 정지와 `.part` 정리는 `transfer::TransferRunner::cancel`이 맡는다 —
+    /// 큐는 목록만 안다(`cancel`과 같은 분담)
+    pub fn remove(&mut self, ids: &[TransferId]) {
+        let ids: HashSet<TransferId> = ids.iter().copied().collect();
+        self.items.retain(|item| !ids.contains(&item.id));
+    }
+
     /// 끝난 것들을 치운다 (`✕` — 인벤토리 #33). 실패는 남긴다 — 다시 걸 수 있어야 한다
     pub fn clear_done(&mut self) {
         self.items.retain(|item| !item.state.is_done());
@@ -255,11 +290,7 @@ impl TransferQueue {
     pub fn filter(&self, filter: QueueFilter) -> Vec<&TransferItem> {
         self.items
             .iter()
-            .filter(|item| match filter {
-                QueueFilter::All => true,
-                QueueFilter::Done => item.state.is_done(),
-                QueueFilter::Error => item.state.is_error(),
-            })
+            .filter(|item| filter.matches(&item.state))
             .collect()
     }
 
@@ -267,11 +298,7 @@ impl TransferQueue {
     pub fn count(&self, filter: QueueFilter) -> usize {
         self.items
             .iter()
-            .filter(|item| match filter {
-                QueueFilter::All => true,
-                QueueFilter::Done => item.state.is_done(),
-                QueueFilter::Error => item.state.is_error(),
-            })
+            .filter(|item| filter.matches(&item.state))
             .count()
     }
 
@@ -316,10 +343,15 @@ impl TransferQueue {
         (total > 0).then(|| (sent as f32 / total as f32).clamp(0.0, 1.0))
     }
 
-    /// 사이트별 건수 — 연결별 탭의 `(N)`이다 (인벤토리 #36)
-    pub fn counts_by_site(&self) -> HashMap<SiteId, usize> {
+    /// 사이트별 건수 — 연결별 탭의 `(N)`이다 (인벤토리 #36).
+    ///
+    /// **거르개를 함께 받는다** — `성공` 탭을 보는데 아래 줄이 전체 건수를 적으면
+    /// 목록이 비어 있는데 `(1)`이 서 있게 된다 (2026-08-18 사용자 보고).
+    /// 탭에 어떤 사이트가 서는지(멤버십)는 이 건수로 정하지 않는다 — 그것까지 걸러 내면
+    /// 그 거르개에 항목이 없는 서버가 탭에서 통째로 사라진다(호출부가 `All`로 따로 구한다)
+    pub fn counts_by_site(&self, filter: QueueFilter) -> HashMap<SiteId, usize> {
         let mut counts = HashMap::new();
-        for item in &self.items {
+        for item in self.items.iter().filter(|item| filter.matches(&item.state)) {
             *counts.entry(item.site).or_insert(0) += 1;
         }
         counts
@@ -507,10 +539,106 @@ mod tests {
             1,
         );
 
-        let counts = queue.counts_by_site();
+        let counts = queue.counts_by_site(QueueFilter::All);
         assert_eq!(counts.get(&site(1)), Some(&3));
         assert_eq!(counts.get(&site(2)), Some(&1));
         assert_eq!(counts.values().sum::<usize>(), queue.len());
+    }
+
+    #[test]
+    fn 목록_단위로_다시_걸고_지운다() {
+        // 2026-08-18 행 메뉴 `전체 다시 시도`·`전체 삭제` — 대상은 호출부가 고른 번호들이다
+        let mut queue = TransferQueue::new();
+        let 건다 = |queue: &mut TransferQueue, n: u8| {
+            queue.enqueue(
+                site(1),
+                TransferDirection::Upload,
+                PathBuf::from(format!(r"C:\{n}")),
+                RemotePath::new(&format!("/{n}")),
+                1,
+            )
+        };
+        let 실패 = 건다(&mut queue, 1);
+        let 완료 = 건다(&mut queue, 2);
+        let 대기 = 건다(&mut queue, 3);
+        queue.update(
+            실패,
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        );
+        queue.update(완료, TransferState::Done);
+
+        // `retry`는 **실패한 것만** 되돌린다 — 목록에 섞인 완료·대기는 그대로
+        queue.retry(&[실패, 완료, 대기]);
+        assert_eq!(queue.count(QueueFilter::Error), 0);
+        assert_eq!(queue.count(QueueFilter::Done), 1, "완료는 그대로여야 한다");
+        assert_eq!(queue.len(), 3);
+
+        // `remove`는 상태를 가리지 않고 고른 것을 지운다
+        queue.remove(&[실패, 대기]);
+        assert_eq!(queue.len(), 1);
+        assert!(queue.get(완료).is_some());
+
+        // 목록에 없는 번호를 섞어도 조용히 지나간다
+        queue.remove(&[TransferId(9999)]);
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn 사이트별_건수가_거르개를_따른다() {
+        // 2026-08-18 — `성공` 탭인데 아래 줄이 전체 건수를 적던 것을 고친다
+        let mut queue = TransferQueue::new();
+        let 실패 = queue.enqueue(
+            site(1),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:"),
+            RemotePath::new("/a"),
+            1,
+        );
+        let 완료 = queue.enqueue(
+            site(1),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:"),
+            RemotePath::new("/b"),
+            1,
+        );
+        queue.update(
+            실패,
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        );
+        queue.update(완료, TransferState::Done);
+
+        assert_eq!(
+            queue.counts_by_site(QueueFilter::All).get(&site(1)),
+            Some(&2)
+        );
+        assert_eq!(
+            queue.counts_by_site(QueueFilter::Done).get(&site(1)),
+            Some(&1)
+        );
+        assert_eq!(
+            queue.counts_by_site(QueueFilter::Error).get(&site(1)),
+            Some(&1)
+        );
+        // 거르개에 하나도 안 걸리면 그 사이트 자리 자체가 없다 —
+        // 탭을 세우는 쪽은 `All` 집계를 따로 봐야 한다(호출부 규약)
+        let mut 완료만 = TransferQueue::new();
+        let 그것 = 완료만.enqueue(
+            site(2),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:\c"),
+            RemotePath::new("/c"),
+            1,
+        );
+        완료만.update(그것, TransferState::Done);
+        assert!(
+            !완료만
+                .counts_by_site(QueueFilter::Error)
+                .contains_key(&site(2))
+        );
     }
 
     #[test]
@@ -629,7 +757,7 @@ mod tests {
         assert!(queue.is_empty());
         assert_eq!(queue.count(QueueFilter::All), 0);
         assert_eq!(queue.overall_progress(), None);
-        assert!(queue.counts_by_site().is_empty());
+        assert!(queue.counts_by_site(QueueFilter::All).is_empty());
         let summary = queue.summary();
         assert_eq!(summary.pending, 0);
         assert_eq!(summary.eta_secs, None);

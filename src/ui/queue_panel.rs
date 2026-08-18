@@ -1,8 +1,11 @@
 //! 전송 큐 표 (FR-36) — 원본 `FileExplorer-FTP.dc.html:272-294`.
 //!
-//! 연결별 탭 한 줄 · 머리글 한 줄 · 항목 행들로 이뤄진다. 열 폭은 디자인이 픽셀로 못 박아
-//! 두었으므로(`34px 1fr 300px 120px 84px 118px 150px`) 일반 표 부품으로 만들지 않는다
-//! (plan 비추상화 선언) — 자세히 보기 표와 요구가 다르다.
+//! 연결별 탭 한 줄 · 머리글 한 줄 · 항목 행들로 이뤄진다. 열 폭은 **일곱 열 모두 고정 픽셀**
+//! (`34/280/300/120/84/118/150`)이고 합이 표 폭보다 좁으면 마지막 `상태` 열이 그 차이를
+//! 흡수한다 — 원본은 `로컬 파일`이 `1fr`이었으나, 흡수 열이 앞자리면 그 오른쪽 경계를 끌어도
+//! 흡수분이 같은 양을 반대로 먹어 폭 조절이 성립하지 않는다 (2026-08-18 plan D6).
+//! 그래도 `ui::list_details`의 열 부품과 합치지는 않는다(plan 비추상화 선언) — 인덱싱 축이
+//! 열거값 대 자리 번호로 다르고 사례가 둘뿐이다.
 //!
 //! **큐를 고치지 않는다** — 읽어서 그리고, 사용자가 고른 것은 값으로 돌려준다.
 use crate::remote::connection::TransferId;
@@ -35,12 +38,14 @@ const EMPTY_HINT_TOP: f32 = 24.0;
 /// 진행 막대 (`:290`)
 const BAR_WIDTH: f32 = 110.0;
 const BAR_HEIGHT: f32 = 6.0;
-/// 열 폭 — `1fr`(로컬 파일)은 남는 자리를 갖는다 (`:279`)
-const COLUMNS: [f32; 7] = [34.0, 0.0, 300.0, 120.0, 84.0, 118.0, 150.0];
-/// 남는 자리를 갖는 열의 자리 번호
-const FLEX_COLUMN: usize = 1;
-/// 그 열이 아무리 좁아도 유지할 폭
-const FLEX_MIN: f32 = 120.0;
+/// 열 기본 폭 — 원본 `34px 1fr 300px 120px 84px 118px 150px` (`:279`)에서 `1fr`(로컬 파일)만
+/// 고정값으로 바꿨다. 흡수 열이 앞자리에 있으면 그 오른쪽 경계를 끌어도 흡수분이 같은 양을
+/// 반대로 먹어 **잡은 경계가 제자리에 선다** — 폭 조절 자체가 성립하지 않는다 (plan D6).
+/// 합은 1086px이라 기본 창 폭(1100px)에서 여유가 남는다
+const COLUMNS: [f32; 7] = [34.0, 280.0, 300.0, 120.0, 84.0, 118.0, 150.0];
+/// 열 경계 드래그 핸들 폭 — 경계 중심에서 좌우로 절반씩.
+/// `list_details::HANDLE_WIDTH`는 private이라 같은 값을 여기 둔다
+const HANDLE_WIDTH: f32 = 6.0;
 
 // ── 문구 (인벤토리 #35~#48) ──
 /// 머리글 (인벤토리 #37~#43) — 문구가 언어를 따르므로 상수가 아니라 그때그때 만든다
@@ -59,13 +64,58 @@ fn headers() -> [&'static str; 7] {
 // 그 메뉴는 **디자인에 진입점이 없어 이 구현이 정한 문구**다 — 큐 항목을 하나씩
 // 다시 걸거나 그만두는 길이 달리 없다(`⏸`·`✕`는 큐 전체를 다룬다)
 
-/// 사용자가 큐에서 고른 조작
+/// 사용자가 큐에서 고른 조작.
+///
+/// `…All`은 **지금 보고 있는 목록**(상단 거르개 ∩ 연결별 탭)이 대상이다 — 대상 계산은
+/// 화면이 아니라 앱이 한다(`ui::app::apply_queue_action`). 이 모듈은 큐를 고치지 않는다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueAction {
     /// 실패한 항목을 다시 대기로 되돌린다
     Retry(TransferId),
+    /// 보이는 목록의 실패한 항목을 모두 다시 대기로
+    RetryAll,
     /// 아직 끝나지 않은 항목을 그만둔다
     Cancel(TransferId),
+    /// 끝난 항목을 목록에서 지운다
+    Remove(TransferId),
+    /// 보이는 목록을 통째로 지운다 (진행 중인 것도 멈추고 지운다)
+    RemoveAll,
+}
+
+/// 행 우클릭 메뉴에 설 항목 — **탭이 아니라 행 상태가 정한다** (2026-08-18 사용자 결정).
+///
+/// `전송 취소`와 `삭제`는 동작이 같아(전송 중단 + 목록 제거 + `.part` 삭제) 나란히 두면
+/// 무엇을 눌러야 할지 헷갈린다 — 상태별로 한 쪽만 보인다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowMenuItem {
+    Retry,
+    RetryAll,
+    Cancel,
+    Remove,
+    RemoveAll,
+}
+
+/// 이 행에 보일 메뉴 항목들 (순수 판정 — 그리기와 나눠 두어 시험할 수 있게 한다).
+///
+/// `has_error_in_view`는 **보이는 목록에 실패가 하나라도 있는가**다. 없으면
+/// `전체 다시 시도`를 내지 않는다 — 눌러도 아무 일이 없는 메뉴는 두지 않는다
+pub fn row_menu_items(state: &TransferState, has_error_in_view: bool) -> Vec<RowMenuItem> {
+    let mut items = Vec::new();
+    if state.is_error() {
+        items.push(RowMenuItem::Retry);
+    }
+    if state.is_pending() {
+        items.push(RowMenuItem::Cancel);
+    }
+    if has_error_in_view {
+        items.push(RowMenuItem::RetryAll);
+    }
+    // 진행 중·대기는 `전송 취소`가 그 자리를 맡는다
+    if !state.is_pending() {
+        items.push(RowMenuItem::Remove);
+    }
+    items.push(RowMenuItem::RemoveAll);
+    items
 }
 
 /// 얼룩 규칙 — 원본은 **거른 뒤의 자리 번호**(0부터)가 홀수인 행을 칠한다 (`:721`)
@@ -73,40 +123,16 @@ fn stripe(index: usize) -> bool {
     !index.is_multiple_of(2)
 }
 
-/// 크기 표기 — 원본이 `1,840 KB` 꼴로 KB 단위에 자릿수 구분을 넣는다 (`:704`).
+/// 큐의 크기 표기 — 표시 규칙은 파일 목록과 **한 벌**이고(`panel::file_list::format_size`),
+/// 여기서는 큐에만 있는 판정 하나를 앞에 둔다.
 ///
-/// **MB·GB까지 올린다** — 원본은 KB에 고정이라 1.8GB 파일이 `1,887,437 KB`로 나왔다.
-/// 같은 표의 속도(`format_speed`)는 이미 GB/s까지 올라가므로 단위 규칙도 그쪽에 맞춘다
-/// (2026-08-16 검토).
-///
-/// 0은 "모른다"는 뜻이라 `—`다 (plan Edge Case)
+/// 0은 "크기를 모른다"는 뜻이라 `—`다 — 목록에서는 같은 0이 "빈 파일"이라 `0.00 KB`로
+/// 나가야 해서, 이 갈래를 코어 함수에 넣지 않는다 (plan D2)
 pub fn format_size(bytes: u64) -> String {
-    const GB: u64 = 1024 * 1024 * 1024;
-    const MB: u64 = 1024 * 1024;
     if bytes == 0 {
         return UNKNOWN.to_owned();
     }
-    if bytes >= GB {
-        return format!("{:.1} GB", bytes as f64 / GB as f64);
-    }
-    if bytes >= MB {
-        return format!("{:.1} MB", bytes as f64 / MB as f64);
-    }
-    // 1KB 미만도 1KB로 보인다 — 원본이 KB 아래를 쓰지 않는다
-    format!("{} KB", group_digits(bytes.div_ceil(1024)))
-}
-
-/// 세 자리마다 쉼표 — `1840` → `1,840`
-fn group_digits(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
+    crate::panel::file_list::format_size(bytes)
 }
 
 /// 속도 표기 — 원본 `12.4 MB/s` (`:704`).
@@ -191,17 +217,75 @@ pub fn visible_items(
         .collect()
 }
 
-/// 각 열이 차지할 폭 — `1fr` 열이 남는 자리를 갖는다
-fn column_widths(total: f32) -> [f32; 7] {
-    let fixed: f32 = COLUMNS
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != FLEX_COLUMN)
-        .map(|(_, width)| width)
-        .sum();
-    let mut widths = COLUMNS;
-    widths[FLEX_COLUMN] = (total - fixed).max(FLEX_MIN);
-    widths
+/// 큐 표의 열 폭 — **일곱 열 모두 고정 폭**을 갖고, 합이 표 폭보다 좁을 때만
+/// 마지막 열(`상태`)이 그 차이를 표시 폭으로 흡수한다 (plan D6 · `list_details::Columns`와 같은 규칙).
+///
+/// 흡수를 마지막 열에 둔 이유는 위 `COLUMNS` 주석에 있다. 넘칠 때는 저장 폭 그대로 그려
+/// 오른쪽이 잘린다 — 가로 스크롤은 두지 않는다(사용자가 폭을 줄이면 돌아온다)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QueueColumns {
+    widths: [f32; 7],
+}
+
+impl Default for QueueColumns {
+    fn default() -> QueueColumns {
+        QueueColumns { widths: COLUMNS }
+    }
+}
+
+/// 그 열이 줄 수 있는 하한 — 대개 `MIN_COL_WIDTH`(40px)지만, **기본 폭이 그보다 좁은 열**
+/// (`방향` 34px)은 그 기본값이 하한이다.
+///
+/// 하한을 일괄로 40px에 맞추면 저장했다 되살릴 때 `방향`이 34 → 40으로 넓어져
+/// **사용자가 맞춰 둔 화면이 그대로 돌아오지 않는다**(2026-08-18 시험이 잡았다)
+fn min_column_width(slot: usize) -> f32 {
+    let floor = crate::ui::list_details::MIN_COL_WIDTH;
+    COLUMNS.get(slot).copied().unwrap_or(floor).min(floor)
+}
+
+impl QueueColumns {
+    /// 저장된 폭으로 되살린다 (FR-11 세션 복원).
+    ///
+    /// **앞에서부터 있는 만큼만 받는다** — 열 수가 달라진 옛 세션이 와도 나머지는 기본값이다.
+    /// 유한하지 않은 값은 그 자리만 되돌린다(설정 파일이 손상돼도 표를 못 그리지 않게)
+    pub fn from_saved(saved: &[f32]) -> QueueColumns {
+        let mut widths = COLUMNS;
+        for (slot, (width, &value)) in widths.iter_mut().zip(saved).enumerate() {
+            if value.is_finite() {
+                *width = value.max(min_column_width(slot));
+            }
+        }
+        QueueColumns { widths }
+    }
+
+    /// 세션에 저장할 폭
+    pub fn to_saved(self) -> Vec<f32> {
+        self.widths.to_vec()
+    }
+
+    /// 실제로 그릴 폭. 합이 표 폭보다 좁으면 **마지막 열만 늘려** 오른쪽 빈틈을 없앤다.
+    /// 늘리는 것은 표시뿐이며 저장 폭은 그대로다 — 창 크기를 바꿀 때마다 사용자가 정한
+    /// 폭이 덮어써지면 안 된다
+    fn effective(self, total: f32) -> [f32; 7] {
+        let mut widths = self.widths;
+        let slack = total - widths.iter().sum::<f32>();
+        if slack > 0.0
+            && let Some(last) = widths.last_mut()
+        {
+            *last += slack;
+        }
+        widths
+    }
+
+    /// 경계 드래그 — 그 **왼쪽 열**의 폭을 바꾼다. 최소 폭 아래로는 줄지 않는다.
+    ///
+    /// 마지막 열의 오른쪽에는 핸들이 없어 `상태`의 저장 폭은 여기서 바뀌지 않는다
+    fn apply_drag(&mut self, slot: usize, delta: f32) {
+        let floor = min_column_width(slot);
+        if let Some(width) = self.widths.get_mut(slot) {
+            *width = (*width + delta).max(floor);
+        }
+    }
 }
 
 /// 큐 표를 그린다 (인벤토리 #35~#48)
@@ -213,19 +297,30 @@ pub fn show_queue(
     sites: &SiteStore,
 ) -> Option<QueueAction> {
     let site_row = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), SITE_ROW_HEIGHT));
-    show_site_tabs(ui, site_row, state, view, sites);
+    show_site_tabs(ui, site_row, state, view, sites, true);
 
     let header = egui::Rect::from_min_size(
         egui::pos2(rect.left(), site_row.bottom()),
         egui::vec2(rect.width(), HEADER_HEIGHT),
     );
-    let widths = column_widths(rect.width());
-    show_header(ui, header, &widths);
+    let widths = state.columns.effective(rect.width());
+    let guide_x = show_header(ui, header, &widths, &mut state.columns);
 
     let body = egui::Rect::from_min_max(
         egui::pos2(rect.left(), header.bottom()),
         egui::pos2(rect.right(), rect.bottom()),
     );
+    // 가이드 선은 행을 다 그린 뒤에 긋는다 (`show_header` 주석) — 빈 목록 갈래에서도 그어야
+    // 끌던 손이 허공에 뜨지 않으므로, 그리는 자리를 닫는 헬퍼로 둔다
+    let draw_guide = |ui: &egui::Ui, bottom: f32| {
+        if let Some(x) = guide_x {
+            ui.painter().vline(
+                x,
+                header.top()..=bottom,
+                egui::Stroke::new(1.0, theme::ACCENT),
+            );
+        }
+    };
     let items = visible_items(view.queue, state.filter, state.site);
     // 보일 것이 없으면 그 사실을 적는다 (2026-08-16 검토) — 머리글만 남은 표는
     // 아직 아무것도 안 한 것인지 거른 결과가 없는 것인지 알려 주지 않는다
@@ -237,8 +332,12 @@ pub fn show_queue(
             egui::FontId::proportional(FONT_PX),
             theme::TEXT_MUTED,
         );
+        draw_guide(ui, body.bottom());
         return None;
     }
+    // `전체 다시 시도`를 낼지 — 보이는 목록 전체를 본다(화면 밖 행도 대상이므로
+    // 그려지는 범위가 아니라 거른 목록 전량에서 판정한다)
+    let has_error_in_view = items.iter().any(|item| item.state.is_error());
     let mut action = None;
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -253,22 +352,28 @@ pub fn show_queue(
             ui.spacing_mut().item_spacing.y = 0.0;
             for index in range {
                 if let Some(item) = items.get(index)
-                    && let Some(picked) = show_row(ui, item, index, &widths, sites)
+                    && let Some(picked) =
+                        show_row(ui, item, index, &widths, sites, has_error_in_view)
                 {
                     action = Some(picked);
                 }
             }
         });
+    draw_guide(ui, body.bottom());
     action
 }
 
-/// 연결별 탭 한 줄 (인벤토리 #35·#36) — **큐와 로그가 함께 쓴다**(도크에 줄은 하나다)
+/// 연결별 탭 한 줄 (인벤토리 #35·#36) — **큐와 로그가 함께 쓴다**(도크에 줄은 하나다).
+///
+/// `show_counts`가 꺼지면 이름만 적는다 — 로그 화면에는 셀 대상이 없어 `(N)`이 붙으면
+/// 그 수가 무엇의 개수인지 알 수 없다 (2026-08-18 사용자 결정)
 pub fn show_site_tabs(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     state: &mut DockState,
     view: &DockView<'_>,
     sites: &SiteStore,
+    show_counts: bool,
 ) {
     ui.painter().rect_filled(rect, 0.0, theme::SURFACE_BG);
     ui.painter().line_segment(
@@ -282,15 +387,18 @@ pub fn show_site_tabs(
     // `전체` 다음에 **큐에 항목이 있거나 지금 연결된** 사이트들이 온다.
     // 원본은 큐에서만 이름을 모으지만(`:722`), 그러면 연결만 하고 아직 아무것도 옮기지 않은
     // 서버가 탭에 없어 고를 수 없다 (2026-08-05 사용자 보고)
-    let counts = view.queue.counts_by_site();
+    // **멤버십과 건수를 따로 센다** — 멤버십까지 거르면 그 거르개에 항목이 없는 서버가
+    // 탭에서 사라져, `성공` 탭에서 실패만 있는 서버를 고를 수 없게 된다
+    let members = view.queue.counts_by_site(QueueFilter::All);
+    let counts = view.queue.counts_by_site(state.filter);
     let mut order: Vec<SiteId> = sites
         .sites()
         .iter()
         .map(|record| record.id)
-        .filter(|id| counts.contains_key(id) || view.connected.contains(id))
+        .filter(|id| members.contains_key(id) || view.connected.contains(id))
         .collect();
     // 저장소에 없는 사이트의 항목도 빠뜨리지 않는다(지운 사이트의 잔여 전송)
-    let mut extra: Vec<SiteId> = counts
+    let mut extra: Vec<SiteId> = members
         .keys()
         .copied()
         .chain(view.connected.iter().copied())
@@ -301,7 +409,18 @@ pub fn show_site_tabs(
     order.append(&mut extra);
 
     let mut left = rect.left() + SITE_ROW_PAD_X;
-    let all_label = format!("{} ({})", crate::i18n::queue_filter_all(), view.queue.len());
+    // 건수는 지금 고른 거르개를 따른다 — `전체` 탭도 큐 전량이 아니라 그 거르개의 수다
+    let label_with_count = |name: &str, count: usize| {
+        if show_counts {
+            format!("{name} ({count})")
+        } else {
+            name.to_owned()
+        }
+    };
+    let all_label = label_with_count(
+        crate::i18n::queue_filter_all(),
+        view.queue.count(state.filter),
+    );
     let tabs: Vec<(Option<SiteId>, String)> = std::iter::once((None, all_label))
         .chain(order.into_iter().map(|id| {
             let name = sites
@@ -310,7 +429,7 @@ pub fn show_site_tabs(
                 .unwrap_or_else(|| crate::i18n::dynamic::queue_site_fallback(id.0));
             (
                 Some(id),
-                format!("{name} ({})", counts.get(&id).unwrap_or(&0)),
+                label_with_count(&name, *counts.get(&id).unwrap_or(&0)),
             )
         }))
         .collect();
@@ -378,8 +497,17 @@ pub fn show_site_tabs(
     }
 }
 
-/// 머리글 (인벤토리 #37~#43)
-fn show_header(ui: &mut egui::Ui, rect: egui::Rect, widths: &[f32; 7]) {
+/// 머리글 (인벤토리 #37~#43) — 열 경계에 구분선을 긋고 그 위에서 폭을 조절한다.
+///
+/// 돌려주는 값은 **지금 끌고 있는 경계의 x**다. 그 선은 여기서 긋지 않는다 —
+/// 머리글이 본문 행보다 먼저 그려져 행 배경(`ROW_HOT`·얼룩)이 같은 레이어에서 덮어 버린다.
+/// 호출부가 행을 다 그린 뒤에 긋는다
+fn show_header(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    widths: &[f32; 7],
+    columns: &mut QueueColumns,
+) -> Option<f32> {
     ui.painter().rect_filled(rect, 0.0, theme::HEADER_BG);
     let mut left = rect.left();
     for (index, label) in headers().iter().enumerate() {
@@ -392,6 +520,36 @@ fn show_header(ui: &mut egui::Ui, rect: egui::Rect, widths: &[f32; 7]) {
         );
         left += widths[index];
     }
+
+    // 평소에도 경계가 보여야 어디를 잡을지 알 수 있다 (2026-08-18 사용자 보고).
+    // 마지막 열의 오른쪽 끝에는 긋지 않는다 — 그것은 표 바깥 경계다
+    let mut boundary = rect.left();
+    let mut dragging = None;
+    for (slot, width) in widths.iter().take(widths.len() - 1).enumerate() {
+        boundary += width;
+        ui.painter().vline(
+            boundary,
+            rect.top()..=rect.bottom(),
+            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+        );
+        let handle = egui::Rect::from_min_size(
+            egui::pos2(boundary - HANDLE_WIDTH / 2.0, rect.top()),
+            egui::vec2(HANDLE_WIDTH, rect.height()),
+        );
+        let response = ui.interact(
+            handle,
+            ui.id().with(("queue_col_handle", slot)),
+            egui::Sense::click_and_drag(),
+        );
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if response.dragged() {
+            columns.apply_drag(slot, response.drag_delta().x);
+            dragging = Some(boundary);
+        }
+    }
+    dragging
 }
 
 /// 항목 한 줄
@@ -401,6 +559,7 @@ fn show_row(
     index: usize,
     widths: &[f32; 7],
     sites: &SiteStore,
+    has_error_in_view: bool,
 ) -> Option<QueueAction> {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -505,16 +664,21 @@ fn show_row(
         color,
     );
 
-    // 항목 하나를 다시 걸거나 그만두는 길 — 디자인에 진입점이 없어 우클릭으로 둔다
+    // 항목을 다시 걸거나 지우는 길 — 디자인에 진입점이 없어 우클릭으로 둔다
     let mut action = None;
     response.context_menu(|ui| {
-        if item.state.is_error() && ui.button(crate::i18n::queue_retry()).clicked() {
-            action = Some(QueueAction::Retry(item.id));
-            ui.close();
-        }
-        if item.state.is_pending() && ui.button(crate::i18n::queue_cancel()).clicked() {
-            action = Some(QueueAction::Cancel(item.id));
-            ui.close();
+        for entry in row_menu_items(&item.state, has_error_in_view) {
+            let (label, picked) = match entry {
+                RowMenuItem::Retry => (crate::i18n::queue_retry(), QueueAction::Retry(item.id)),
+                RowMenuItem::RetryAll => (crate::i18n::queue_retry_all(), QueueAction::RetryAll),
+                RowMenuItem::Cancel => (crate::i18n::queue_cancel(), QueueAction::Cancel(item.id)),
+                RowMenuItem::Remove => (crate::i18n::queue_remove(), QueueAction::Remove(item.id)),
+                RowMenuItem::RemoveAll => (crate::i18n::queue_remove_all(), QueueAction::RemoveAll),
+            };
+            if ui.button(label).clicked() {
+                action = Some(picked);
+                ui.close();
+            }
         }
     });
     action
@@ -538,17 +702,111 @@ mod tests {
         assert_eq!(BAR_HEIGHT, 6.0);
         assert_eq!(COLUMNS[0], 34.0);
         assert_eq!(&COLUMNS[2..], &[300.0, 120.0, 84.0, 118.0, 150.0]);
+        // 원본의 `1fr` 자리만 고정값이 됐다 — 합이 기본 창 폭(1100px)보다 좁아야
+        // 흡수가 실제로 돈다 (plan D6)
+        assert_eq!(COLUMNS[1], 280.0);
+        assert_eq!(COLUMNS.iter().sum::<f32>(), 1086.0);
     }
 
     #[test]
-    fn 남는_자리는_로컬_파일_열이_갖는다() {
-        // Acceptance ② — `1fr`이 그 열이다
-        let widths = column_widths(1200.0);
-        let fixed: f32 = 34.0 + 300.0 + 120.0 + 84.0 + 118.0 + 150.0;
-        assert_eq!(widths[FLEX_COLUMN], 1200.0 - fixed);
+    fn 남는_자리는_마지막_열이_갖는다() {
+        // plan D6 — 흡수 열이 앞자리면 그 오른쪽 경계가 손을 따라오지 않아
+        // 폭 조절 자체가 성립하지 않는다. 그래서 `상태`(마지막)가 잔여를 먹는다
+        let columns = QueueColumns::default();
+        let widths = columns.effective(1200.0);
         assert_eq!(widths.iter().sum::<f32>(), 1200.0);
-        // 창이 좁아도 최소 폭은 지킨다 — 0이 되면 경로가 통째로 사라진다
-        assert_eq!(column_widths(200.0)[FLEX_COLUMN], FLEX_MIN);
+        assert_eq!(widths[6], 150.0 + (1200.0 - 1086.0));
+        assert_eq!(&widths[..6], &COLUMNS[..6], "앞 여섯 열은 그대로다");
+
+        // 합이 표 폭을 넘으면 저장 폭 그대로 그리고 오른쪽이 잘린다(가로 스크롤 없음)
+        let widths = columns.effective(800.0);
+        assert_eq!(widths, COLUMNS);
+    }
+
+    #[test]
+    fn 머리글_열_경계마다_구분선이_선다() {
+        // 2026-08-18 사용자 보고 — 선이 없어 어디를 끌어야 할지 알 수 없었다.
+        // 파일 목록(`list_details`)과 같은 규칙이라 같은 방식으로 잰다
+        let widths = [34.0f32, 280.0, 300.0, 120.0, 84.0, 118.0, 150.0];
+        let mut columns = QueueColumns::default();
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(widths.iter().sum(), HEADER_HEIGHT),
+                );
+                show_header(ui, rect, &widths, &mut columns);
+            });
+        });
+        let mut 세로선 = Vec::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::LineSegment { points, stroke } = &clipped.shape
+                && (points[0].x - points[1].x).abs() < 0.01
+                && stroke.color == theme::BORDER_SUBTLE
+            {
+                세로선.push(points[0].x);
+            }
+        }
+        // 일곱 열이면 선은 여섯이다 — **마지막 열의 오른쪽 끝에는 긋지 않는다**
+        let mut 기대 = Vec::new();
+        let mut acc = 0.0;
+        for width in &widths[..widths.len() - 1] {
+            acc += width;
+            기대.push(acc);
+        }
+        assert_eq!(세로선, 기대);
+
+        // 끌고 있지 않으면 강조선(가이드)은 없다 — 그 선은 행을 다 그린 뒤 호출부가 긋는다
+        assert!(
+            !output.shapes.iter().any(|clipped| matches!(
+                &clipped.shape,
+                egui::Shape::LineSegment { stroke, .. } if stroke.color == theme::ACCENT
+            )),
+            "끌지 않았는데 가이드가 그려졌다"
+        );
+    }
+
+    #[test]
+    fn 경계_드래그는_왼쪽_열을_바꾸고_하한을_지킨다() {
+        // plan D6 — 경계 k는 열 k−1의 폭을 바꾼다. 마지막 열은 핸들이 없어 여기 오지 않는다
+        let mut columns = QueueColumns::default();
+        columns.apply_drag(4, 30.0);
+        assert_eq!(columns.effective(2000.0)[4], 84.0 + 30.0);
+
+        // 최소 폭 아래로는 줄지 않는다
+        columns.apply_drag(4, -1000.0);
+        assert_eq!(
+            columns.effective(2000.0)[4],
+            crate::ui::list_details::MIN_COL_WIDTH
+        );
+
+        // **기본이 하한보다 좁은 열은 그 기본값이 하한**이다 — `방향`(34px)을 40px로 올리면
+        // 저장했다 되살릴 때 화면이 넓어진다
+        columns.apply_drag(0, -1000.0);
+        assert_eq!(columns.effective(2000.0)[0], 34.0);
+    }
+
+    #[test]
+    fn 열_폭이_세션을_왕복한다() {
+        // FR-11 — 파일 목록 열 폭과 같은 관례
+        let mut columns = QueueColumns::default();
+        columns.apply_drag(1, 40.0);
+        let back = QueueColumns::from_saved(&columns.to_saved());
+        assert_eq!(back, columns);
+
+        // 저장된 것이 없으면 기본값이다(옛 세션 파일)
+        assert_eq!(QueueColumns::from_saved(&[]), QueueColumns::default());
+        // 개수가 모자라면 앞에서부터 받고 나머지는 기본값
+        let 부분 = QueueColumns::from_saved(&[50.0, 60.0]);
+        assert_eq!(부분.to_saved()[..2], [50.0, 60.0]);
+        assert_eq!(부분.to_saved()[2..], COLUMNS[2..]);
+        // 유한하지 않은 값은 그 자리만 되돌리고, 하한 미만은 하한으로 올린다
+        let 손상 = QueueColumns::from_saved(&[f32::NAN, 5.0]);
+        assert_eq!(손상.to_saved()[0], COLUMNS[0]);
+        assert_eq!(손상.to_saved()[1], crate::ui::list_details::MIN_COL_WIDTH);
+        // `방향`은 기본 34px이 곧 하한이라 그 값으로 되살아난다(왕복이 깨지지 않는다)
+        assert_eq!(QueueColumns::from_saved(&[34.0]).to_saved()[0], 34.0);
     }
 
     #[test]
@@ -634,15 +892,16 @@ mod tests {
 
     #[test]
     fn 크기와_속도_표기가_원본_꼴이다() {
-        // 원본 `1,840 KB`·`12.4 MB/s` (`:704`) — KB는 1MB 아래에서만 쓴다
-        assert_eq!(format_size(12 * 1024), "12 KB");
-        assert_eq!(format_size(900 * 1024), "900 KB");
+        // 크기는 파일 목록과 같은 규칙이다 — 소수 둘째자리 + KB·MB·GB (2026-08-18)
+        assert_eq!(format_size(12 * 1024), "12.00 KB");
+        assert_eq!(format_size(900 * 1024), "900.00 KB");
         // MB·GB로 올라간다 — KB에 고정하면 `1,887,437 KB` 같은 수가 나온다 (2026-08-16 검토)
-        assert_eq!(format_size(1_884_160), "1.8 MB");
-        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.0 GB");
-        assert_eq!(format_size(1), "1 KB", "1KB 미만도 한 칸으로 보인다");
+        assert_eq!(format_size(1_884_160), "1.80 MB");
+        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.00 GB");
+        assert_eq!(format_size(1), "0.01 KB", "1KB 미만도 한 칸은 채운다");
+        // 큐에서만 0이 "모른다"다 — 파일 목록의 같은 0은 빈 파일이라 `0.00 KB`다
         assert_eq!(format_size(0), "—", "크기를 모르면 표기가 없다");
-        assert_eq!(group_digits(1_234_567), "1,234,567");
+        assert_eq!(crate::panel::file_list::format_size(0), "0.00 KB");
 
         assert_eq!(format_speed(13_002_342), "12.4 MB/s");
         assert_eq!(format_speed(2048), "2.0 KB/s");
@@ -761,7 +1020,7 @@ mod tests {
                     ui.max_rect().min,
                     egui::vec2(900.0, SITE_ROW_HEIGHT),
                 );
-                show_site_tabs(ui, rect, &mut state, &view, &sites);
+                show_site_tabs(ui, rect, &mut state, &view, &sites, true);
             });
         });
         for clipped in &output.shapes {
@@ -785,6 +1044,128 @@ mod tests {
         assert!(
             !texts.iter().any(|text| text.starts_with("legacy")),
             "연결도 전송도 없는 사이트가 탭에 섰다: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn 행_메뉴는_탭이_아니라_행_상태가_정한다() {
+        // 2026-08-18 사용자 결정(D5) — `전송 취소`와 `삭제`는 동작이 같아 한 쪽만 보인다
+        use RowMenuItem::*;
+        let 실패 = TransferState::Error {
+            message: "550".to_owned(),
+        };
+
+        assert_eq!(
+            row_menu_items(&실패, true),
+            vec![Retry, RetryAll, Remove, RemoveAll]
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Wait, true),
+            vec![Cancel, RetryAll, RemoveAll],
+            "진행 중·대기에는 `삭제`가 없다 — 그 자리는 `전송 취소`가 맡는다"
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Active { sent: 1, speed: 1 }, true),
+            vec![Cancel, RetryAll, RemoveAll]
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Done, true),
+            vec![RetryAll, Remove, RemoveAll]
+        );
+
+        // 보이는 목록에 실패가 없으면 `전체 다시 시도`를 내지 않는다
+        assert_eq!(
+            row_menu_items(&TransferState::Done, false),
+            vec![Remove, RemoveAll]
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Wait, false),
+            vec![Cancel, RemoveAll]
+        );
+    }
+
+    #[test]
+    fn 행_메뉴_문구는_카탈로그를_거친다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        // 사용자 요청 원문 그대로다 — `모두 …`가 아니라 `전체 …`
+        assert_eq!(crate::i18n::queue_retry(), "다시 시도");
+        assert_eq!(crate::i18n::queue_retry_all(), "전체 다시 시도");
+        assert_eq!(crate::i18n::queue_cancel(), "전송 취소");
+        assert_eq!(crate::i18n::queue_remove(), "삭제");
+        assert_eq!(crate::i18n::queue_remove_all(), "전체 삭제");
+    }
+
+    #[test]
+    fn 연결별_탭_건수가_거르개를_따르고_로그에서는_사라진다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        // 사용자 보고(2026-08-18): `성공` 탭인데 아래 줄이 `전체 (1) · LG (1)`이었다
+        let mut sites = SiteStore::new();
+        let lg = sites.add("LG");
+        let mut queue = TransferQueue::new();
+        let 실패 = queue.enqueue(
+            lg,
+            TransferDirection::Upload,
+            PathBuf::from(r"C:"),
+            RemotePath::new("/a"),
+            1,
+        );
+        queue.update(
+            실패,
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        );
+        // 연결은 없다 — 그래도 큐에 항목이 있으니 탭 자리는 남아야 한다
+        let view = DockView {
+            queue: &queue,
+            failed: &[],
+            connected: &[],
+        };
+
+        let 그린다 = |filter: QueueFilter, show_counts: bool| {
+            let mut state = DockState {
+                filter,
+                ..DockState::default()
+            };
+            let ctx = egui::Context::default();
+            let mut texts = Vec::new();
+            let output = ctx.run_ui(Default::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let rect = egui::Rect::from_min_size(
+                        ui.max_rect().min,
+                        egui::vec2(900.0, SITE_ROW_HEIGHT),
+                    );
+                    show_site_tabs(ui, rect, &mut state, &view, &sites, show_counts);
+                });
+            });
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    texts.push(text.galley.text().to_owned());
+                }
+            }
+            texts
+        };
+
+        let 실패_탭 = 그린다(QueueFilter::Error, true);
+        assert!(실패_탭.contains(&"전체 (1)".to_owned()), "{실패_탭:?}");
+        assert!(실패_탭.contains(&"LG (1)".to_owned()), "{실패_탭:?}");
+
+        let 성공_탭 = 그린다(QueueFilter::Done, true);
+        assert!(성공_탭.contains(&"전체 (0)".to_owned()), "{성공_탭:?}");
+        assert!(
+            성공_탭.contains(&"LG (0)".to_owned()),
+            "성공 0건이어도 LG 탭은 남고 건수만 0이어야 한다: {성공_탭:?}"
+        );
+
+        // 로그 화면 — 셀 대상이 없어 건수를 적지 않는다
+        let 로그 = 그린다(QueueFilter::All, false);
+        assert!(로그.contains(&"전체".to_owned()), "{로그:?}");
+        assert!(로그.contains(&"LG".to_owned()), "{로그:?}");
+        assert!(
+            !로그.iter().any(|text| text.contains('(')),
+            "로그 화면에 건수가 남았다: {로그:?}"
         );
     }
 }
