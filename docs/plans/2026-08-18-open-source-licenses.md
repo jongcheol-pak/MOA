@@ -405,6 +405,7 @@
 
 ## Phase Ledger
 
+- Phase G 통과 (Must 100% — 이번 회차가 커버한 것은 Should FR-57이고, F-7 2회차의 PRD 전수 대조에서 기존 Must FR 무회귀를 확인했다. 갭 0이라 재루프 없음. 화면 축 7항목은 ⏳ HUMAN-VERIFY로 대장에 등재)
 - Phase F 2회차 통과 (HEAD 기준 — F-7 2회차: 1회차 지적 4건 전건 해소 확인, 신규 MAJOR 1(대장의 전문 수 stale)·MINOR 3(라벨 폭·README 트리 위치·exe 크기)은 전부 문서라 그 자리에서 정정)
 - Phase F 1회차: F-7이 자기 유발 MAJOR 1건(`harfrust`의 전문이 `../LICENSE` 스텁)을 잡아 **T6를 추가**해 고쳤다 — 규칙 4-1에 따라 이연하지 않았다
 
