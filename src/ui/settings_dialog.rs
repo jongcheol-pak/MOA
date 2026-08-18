@@ -469,7 +469,9 @@ mod tests {
             .map(|clipped| clipped.shape.visual_bounding_rect().max.y)
             .filter(|y| y.is_finite())
             .fold(0.0_f32, f32::max);
-        let 남은_자리 = DIALOG_HEIGHT - HEADER_HEIGHT - dialog::FOOTER_HEIGHT;
+        // 셸이 버튼 줄 위로 `BODY_GAP_BOTTOM`을 더 띄우므로 본문이 쓸 수 있는 자리도 그만큼 줄었다
+        let 남은_자리 =
+            DIALOG_HEIGHT - HEADER_HEIGHT - dialog::FOOTER_HEIGHT - dialog::BODY_GAP_BOTTOM;
         assert!(
             쓴_높이 <= 남은_자리,
             "본문이 {쓴_높이}px를 써 남은 자리 {남은_자리}px를 넘는다 — 바닥 버튼과 겹친다"

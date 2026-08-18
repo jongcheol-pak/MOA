@@ -133,11 +133,31 @@ strings! {
     titlebar_restore => "이전 크기로" / "Restore";
     titlebar_maximize => "최대화" / "Maximize";
     titlebar_minimize => "최소화" / "Minimize";
-    /// 설정 메뉴의 나머지 넷 — 아직 비활성이다
+    /// 설정 메뉴의 나머지 셋(`업데이트`·`릴리즈 노트`·`정보`)은 아직 비활성이다 —
+    /// `오픈소스 라이선스`는 FR-57로 동작하며 대화 제목으로도 쓰인다
     titlebar_updates => "업데이트" / "Updates";
     titlebar_release_notes => "릴리즈 노트" / "Release notes";
     titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
     titlebar_about => "정보" / "About";
+
+    // ── 오픈소스 라이선스 대화 (FR-57) ──
+    /// 목록 위 안내 — 이 앱이 무엇을 쓰는지 한 줄로 밝힌다
+    licenses_intro
+        => "이 앱은 아래 오픈소스 구성 요소를 사용합니다"
+        / "This app uses the open source components listed below";
+    licenses_copyright => "저작권" / "Copyright";
+    /// 배포 패키지에 원문이 없어 표준 전문을 대신 보이는 항목에 붙는다
+    licenses_standard_note
+        => "이 구성 요소는 배포 파일에 라이선스 원문을 담고 있지 않아 해당 라이선스의 표준 전문을 보입니다"
+        / "This component ships without its license text, so the standard text for that license is shown";
+    /// 크레이트가 아니라 함께 담겨 나가는 것(C 라이브러리·글꼴)에 붙는다
+    licenses_bundled_note
+        => "이 앱의 실행 파일에 함께 담겨 나갑니다"
+        / "Bundled into this app's executable";
+    /// 자산을 읽지 못했을 때 목록 자리에 적는다
+    licenses_unavailable
+        => "라이선스 정보를 읽지 못했습니다"
+        / "Could not read the license information";
 
     // ── 패널 메뉴 (FR-23) ──
     /// 열 메뉴 캡션 (인벤토리 #22)
@@ -587,6 +607,15 @@ pub mod dynamic {
             Language::Korean => format!("실패 {count}건"),
             Language::English if count == 1 => "1 failed".to_owned(),
             Language::English => format!("{count} failed"),
+        }
+    }
+
+    /// 라이선스 목록의 구성 요소 수 (FR-57) — 한국어는 수 뒤에 단위가 붙는다
+    pub fn licenses_component_count(count: usize) -> String {
+        match current() {
+            Language::Korean => format!("구성 요소 {count}개"),
+            Language::English if count == 1 => "1 component".to_owned(),
+            Language::English => format!("{count} components"),
         }
     }
 
@@ -1055,8 +1084,11 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 24] = [
+        const EXEMPT_LITERALS: [&str; 27] = [
             // 위젯 ID
+            "라이선스 대화",
+            "라이선스 목록",
+            "라이선스 전문",
             "앱 설정",
             "설정 글꼴",
             "설정 언어",

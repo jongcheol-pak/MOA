@@ -31,6 +31,7 @@ use crate::ui::dialog;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::font_scan::FontScan;
 use crate::ui::icon_tex::IconTextures;
+use crate::ui::license_dialog::LicenseDialog;
 use crate::ui::list_common::{self, ConflictChoice, DragItem, DropOutcome, DropTarget};
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
@@ -491,6 +492,8 @@ pub struct ExplorerApp {
     settings: AppSettings,
     /// 앱 설정 대화 (FR-47) — 타이틀바 설정 메뉴의 `설정`이 연다
     settings_dialog: SettingsDialog,
+    /// 오픈소스 라이선스 대화 (FR-57) — 같은 메뉴의 `오픈소스 라이선스`가 연다
+    license_dialog: LicenseDialog,
     /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 앱이 시작할 때 한 번만 읽는다
     font_scan: FontScan,
     /// 알림 영역 아이콘 (FR-50) — `종료` 토글이 켜져 있을 때만 있다. 없애면 아이콘이 사라진다
@@ -662,6 +665,7 @@ impl ExplorerApp {
             dock: DockState::default(),
             settings: AppSettings::default(),
             settings_dialog: SettingsDialog::new(),
+            license_dialog: LicenseDialog::new(),
             font_scan: FontScan::new(),
             tray: None,
             tray_rx,
@@ -2059,6 +2063,7 @@ impl ExplorerApp {
             }
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             Command::OpenAppSettings => self.settings_dialog.open(),
+            Command::OpenLicenses => self.license_dialog.open(),
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -2862,6 +2867,8 @@ impl eframe::App for ExplorerApp {
         self.poll_tray(&ctx);
         self.hide_on_start(&ctx);
         self.show_settings_dialog(&ctx);
+        // 오픈소스 라이선스 대화 (FR-57) — 상태를 저장하지 않아 배선이 한 줄이다
+        self.license_dialog.show(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);
         // 같은 이름 확인 대화 (FR-55) — 이것이 닫히기 전에는 그 전송이 큐에 들어가지 않는다
