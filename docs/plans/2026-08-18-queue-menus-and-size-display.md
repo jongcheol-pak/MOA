@@ -278,7 +278,7 @@
     - (ii-a) `QueueAction` variant 추가·`TransferQueue` 공개 메서드 신설 → `## 사전 승인 항목`
   - **Depends on**: T2 (같은 `visible_items`·필터 경로를 건드린다)
 
-- [ ] T4. 큐 표의 열 폭을 끌어 조절한다 (구분선 포함)
+- [x] T4. 큐 표의 열 폭을 끌어 조절한다 (구분선 포함)
   - **Type**: D
   - **Design**: ① `ui::queue_panel`에 `pub struct QueueColumns { widths: [f32; 7] }`를 두고 `COLUMNS`를 그 기본값으로 옮긴다(`로컬 파일` 자리는 `0.0`이 아니라 **320.0**으로 채운다 — D6). 책임 — 폭 배열 보관·드래그 반영(`apply_drag`)·세션 왕복(`to_saved`/`from_saved`)·표 폭에 맞춘 실효 폭(`effective`). ② `effective(total)`은 **합이 `total`보다 좁을 때만 마지막 열(`상태`)에 그 차이를 더한다**(파일 목록 `Columns::effective`와 같은 규칙). 넘칠 때는 저장 폭 그대로 돌려주고 오른쪽이 잘린다 — `FLEX_COLUMN`·`FLEX_MIN`과 지금의 `column_widths`는 사라진다. ③ 소유는 `ui::dock::DockState`가 갖는다(도크 화면 상태의 정본이며 큐·로그가 함께 쓰는 줄과 같은 자리). ④ `app::settings::DockSession`에 `#[serde(default)] pub columns: Vec<f32>`를 더하고 `DockState::to_session`/`from_session`이 왕복시킨다 — `from_saved`는 앞에서부터 있는 만큼만 받고 유한하지 않은 값은 그 자리만 기본값으로 되돌린다(`list_details::Columns::from_saved`와 같은 규칙). ⑤ 드래그는 경계 k에서 **왼쪽 열(k−1)**의 폭을 delta만큼 바꾼다(`apply_drag`). 핸들은 경계 여섯 곳(`x_1`~`x_6`)에 두고 **마지막 열의 오른쪽 끝에는 두지 않는다** — 그래서 `상태` 열의 **저장 폭(150)은 드래그로 바뀌지 않는다**(표시 폭만 slack으로 늘어난다). 하한 `MIN_COL_WIDTH`가 걸리는 것도 그 여섯 열이다. 핸들 폭은 `queue_panel`에 자체 상수(6.0)를 둔다(`list_details::HANDLE_WIDTH`는 private). ⑥ 구분선은 D8 — `show_header`가 열 경계마다 `theme::BORDER_SUBTLE` `vline`을 긋는다. **드래그 가이드는 `show_header`가 그리지 않는다** — 머리글이 본문 행보다 먼저 그려져(`show_queue`가 `:223` 머리글 → `:252-261` 행 순서) 행 배경(`ROW_HOT`·`HEADER_BG`, `:409-413`)이 같은 레이어에서 그 선을 덮는다. `show_header`는 드래그 중인 **경계의 x**(커서 x가 아니라 반영된 위치)를 반환만 하고, `show_queue`가 **`ScrollArea`가 끝난 뒤** `ui.painter().vline`으로 본문 바닥까지 `theme::ACCENT`를 긋는다. ⑦ 비추상화 선언 — `list_details::Columns`와 공통 타입·트레이트로 묶지 않는다(4-D 근거: `ColumnKind` 결합·열 종류가 다르고 3회 문턱 미달).
   - **Acceptance**: ① Given 큐 화면, When `크기`와 `진행률` 사이 경계를 오른쪽으로 d만큼 끌 때, Then `크기` 열이 d만큼 넓어지고 **그 경계와 오른쪽 경계들이 함께 d만큼 이동**하며 `상태` 열이 d만큼 줄어든다(합 < 표 폭인 동안) ② Given 같은 화면, When `로컬 파일`과 `원격 파일` 사이 경계를 끌 때, Then `로컬 파일` 폭이 그만큼 바뀐다 ③ 저장 폭 합이 표 폭보다 좁으면 `상태` 열이 그 차이를 표시 폭으로 채우고, **합이 표 폭 이상이 되는 순간부터 오른쪽이 잘린다** — 어느 쪽이든 가로 스크롤은 생기지 않는다 ④ 핸들이 있는 여섯 열(`상태` 제외)은 각자의 하한 아래로 줄지 않는다 — `방향`은 34px, 나머지는 40px(D6 「하한」). `상태`의 저장 폭(150)은 드래그 대상이 아니다 ⑤ 평소에도 머리글에 열 경계마다 세로 구분선이 보이고, 끄는 동안에는 그 경계가 **행 바닥까지 끊김 없이** 강조색으로 이어진다(행 배경이 덮지 않는다 — Design ⑥의 그리기 순서) ⑥ 핸들이 본문 행의 우클릭 메뉴를 가로채지 않는다(핸들은 머리글 rect 안에만 있고 본문과 겹치지 않는다) ⑦ Given 폭을 바꾼 뒤 앱을 껐다 켬, Then 그 폭이 그대로 돌아온다 ⑧ `columns` 필드가 없는 옛 `settings.json`을 읽어도 세션이 폴백하지 않고 기본 폭이 된다 ⑨ `cargo test` 전건 통과
@@ -377,6 +377,9 @@
 - T1-T2 완료 (커밋 edfde56, 다음): 크기 표기를 `panel::file_list::format_size` 한 벌로 접고(소수 둘째자리 + KB/MB/GB 자동, 큐만 `0 → —`), 연결별 탭 건수가 상단 필터를 따르게 했다. 826건 통과.
   - 결정: `filter`·`count`·`counts_by_site` 세 곳의 같은 match를 `QueueFilter::matches`로 뽑았다(3회 문턱 도달 — plan 미명시였으나 두 리뷰어 모두 정당하다고 판정).
   - 함정: 연결별 탭은 **멤버십과 건수를 다른 집계로** 구해야 한다 — 하나로 겸하면 그 필터에 항목이 없는 서버가 탭에서 사라진다.
+- T3-T4 완료 (커밋 77b9bde, 다음): 큐 행 메뉴를 넷으로 넓히고(행 상태가 메뉴를 정한다), 큐 표에 열 폭 드래그·구분선·세션 저장을 넣었다. 831건 통과.
+  - 결정(계획 정정): `방향` 열 기본 폭 34px이 일반 하한 40px보다 좁아 **세션 왕복에서 34 → 40으로 넓어지는 것**을 신규 시험이 잡았다. `min_column_width(slot) = min(기본 폭, MIN_COL_WIDTH)`로 열별 하한을 두고 plan Acceptance ④·D6 「하한」을 정정했다.
+  - 함정: 드래그 가이드 선을 `show_header`에서 그으면 **행 배경이 같은 레이어에서 덮는다**(머리글이 먼저 그려진다). x만 반환하고 `ScrollArea` 이후에 긋는다 — T5도 같은 순서다.
   - 관측: `remote::connection::tests::한_연결이_막혀도_다른_연결은_계속_처리된다`가 전체 실행에서 1회 간헐 실패 → 단독 통과. `deferred.md`에 등재된 시간 마감(2초) 의존 시험이며 이번 변경과 무관(그 파일은 diff에 없다).
 
 ## Next Steps
