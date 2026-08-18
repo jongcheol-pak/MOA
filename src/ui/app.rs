@@ -2747,6 +2747,7 @@ impl eframe::App for ExplorerApp {
                         DisplayRules {
                             show_extensions: self.settings.show_extensions,
                             show_hidden: self.settings.show_hidden,
+                            show_system: self.settings.show_system,
                         },
                         targets,
                         &self.favorites.entries(),

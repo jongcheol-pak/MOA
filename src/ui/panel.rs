@@ -273,8 +273,10 @@ struct DirWatch {
 pub struct DisplayRules {
     /// 이름 뒤 확장자를 보인다 (FR-52)
     pub show_extensions: bool,
-    /// 숨김·시스템 항목을 보인다 (FR-13)
+    /// 숨김 속성 항목을 보인다 (FR-13)
     pub show_hidden: bool,
+    /// 시스템 속성 항목을 보인다 (FR-13) — 둘 다 붙은 항목은 두 값이 모두 켜져야 보인다
+    pub show_system: bool,
 }
 
 impl PanelState {
@@ -1131,13 +1133,17 @@ impl PanelState {
     /// clippy가 막고, 무엇이 배치이고 무엇이 설정인지도 읽기 어려워진다. 목록이 스스로
     /// 설정을 읽게 하지 않는 이유는 `FileListView::set_show_extensions` 주석에 있다.
     ///
-    /// 숨김 항목 설정이 **바뀐 프레임에는 폴더를 다시 읽는다** — 목록은 거른 항목을
-    /// 쥐고 있지 않아 되돌릴 수 없다(`FileListView::set_show_hidden` 주석)
+    /// 숨김·시스템 설정이 **바뀐 프레임에는 폴더를 다시 읽는다** — 목록은 거른 항목을
+    /// 쥐고 있지 않아 되돌릴 수 없다(`FileListView::set_hidden_rules` 주석)
     pub fn apply_display_rules(&mut self, display: DisplayRules, ctx: &egui::Context) {
         self.list.set_show_extensions(display.show_extensions);
         // 트리도 같은 값을 받는다 — 목록에서만 사라지면 설정이 반만 듣는 것처럼 보인다
-        self.tree.set_show_hidden(display.show_hidden);
-        if self.list.set_show_hidden(display.show_hidden) {
+        self.tree
+            .set_hidden_rules(display.show_hidden, display.show_system);
+        if self
+            .list
+            .set_hidden_rules(display.show_hidden, display.show_system)
+        {
             self.reload_active_tab(ctx);
         }
     }

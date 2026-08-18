@@ -48,7 +48,7 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
   - **Edge Cases**: 두 속성이 함께 붙은 항목 → 두 판정이 모두 참(결과 같음) / 원격 항목의 `is_system()`은 거짓이라 `is_dimmed()`가 `is_hidden()`과 같아진다 / `..` 줄은 로컬에서 `attributes: 0`(`src/ui/panel.rs:1634`)이라 어느 쪽도 아니다
   - **Halt Forecast**: 없음 — 트레이트 구현체가 `FileEntry`·`RemoteEntry` 둘뿐이고 둘 다 이 task에서 함께 고친다(사전 승인 항목에 등록). 외부·파괴적 작업 없음
 
-- [ ] **T2. 설정 값을 배선하고 두 토글로 거른다** — Type D
+- [x] **T2. 설정 값을 배선하고 두 토글로 거른다** — Type D
   - **Files**:
     - `src/app/settings.rs` — `show_system` 필드 + 기본값
     - `src/ui/panel.rs` — `DisplayRules::show_system` + `apply_display_rules`
@@ -167,6 +167,8 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
 
 - 숨김·시스템 토글이 **원격 패널에서도 재조회를 부른다** — 원격은 시스템 속성이 없어 새 토글로는 목록이 바뀌지 않는데도 네트워크 왕복이 돈다. 원격만 응답을 캐시해 재필터하는 길이 있다(2026-08-14 등재 항목과 같은 자리 — 이번 분리로 헛돌 경우가 하나 늘었다).
 
+- [SUGGEST] `ListRow`에 `matches_display_rules(show_hidden, show_system)` 기본 메서드를 두면 `FileListView::shows`와 `tree::child_dirs`의 같은 논리식 두 곳을 트레이트 한 자리로 모을 수 있다 — 지금은 공통화 문턱(3회) 미달이라 두지 않았다(T2 quality 리뷰 S1).
+
 ## Out of Scope
 
 - 탐색기의 “보호된 운영 체제 파일 숨기기”처럼 시스템 토글을 켤 때 확인 대화를 띄우는 것 — 요청에 없다.
@@ -185,6 +187,8 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
 - 계획에 없던 파괴적 작업
 
 ## Progress Log
+- T1-T2 완료 (커밋 8f8f47f, T2 커밋): 판정을 `is_hidden`/`is_system`/`is_dimmed`로 가르고(화면 동작 불변), `AppSettings::show_system`(기본 false)을 `DisplayRules` → 목록·트리로 배선했다. setter는 `set_hidden_rules(show_hidden, show_system)`로 확장. 시험 6건 개정(판정 2·필터 4) + `child_dirs` 호출부 2곳 추가 갱신. 814건 전부 통과.
+  - 결정: 필터 논리식을 목록(`shows`)과 트리(`child_dirs`) 두 자리에 두되 공통화하지 않는다 — 정의 기준 2회라 공통화 문턱(3회) 미달이고, 트레이트로 올리면 어떤 항목이 왜 빠졌는지 추적이 한 겹 멀어진다(T2 quality 리뷰가 SUGGEST로만 남김).
 
 - 2026-08-18: 계획을 쓰기 전에 미커밋이던 “숨김 항목 흐리게 표시” 작업을 `07ef515`로 커밋해 작업 트리를 비웠다(세션 시작 스냅샷에는 그 전 상태가 찍혀 있다). 그 뒤 이 계획을 작성했다.
 - 2026-08-18: plan-reviewer 1라운드 — BLOCKER 2(시험 자산 누락)·MAJOR 4·MINOR 3. B1·B2·M1·M2·M3·m1·m2·m3 반영, M4는 시점 오해로 기각(근거는 Investigation Log 마지막 줄).

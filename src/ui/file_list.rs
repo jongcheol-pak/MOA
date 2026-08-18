@@ -77,11 +77,15 @@ pub struct FileListView {
     view_mode: ViewMode,
     /// 이름 뒤 확장자를 보일지 (FR-52) — 앱 설정에서 매 프레임 받는다(패널마다 다르지 않다)
     show_extensions: bool,
-    /// 숨김·시스템 항목을 보일지 (FR-13) — 같은 경로로 받는다.
+    /// 숨김 속성 항목을 보일지 (FR-13) — 같은 경로로 받는다.
     ///
     /// **거르기는 항목을 받는 자리에서 한 번만** 한다: `type_names`·`icon_indices`가
     /// 항목과 인덱스로 짝지어져 있어, 그리는 자리에서 거르면 셋이 어긋난다
     show_hidden: bool,
+    /// 시스템 속성 항목을 보일지 (FR-13) — 기본값을 `AppSettings`와 같이 `false`로 둔다.
+    ///
+    /// 어긋나게 두면 **첫 프레임마다 "바뀌었다"고 판정돼 폴더를 다시 읽는다**
+    show_system: bool,
 }
 
 impl Default for FileListView {
@@ -108,6 +112,7 @@ impl FileListView {
             view_mode: ViewMode::default(),
             show_extensions: true,
             show_hidden: true,
+            show_system: false,
         }
     }
 
@@ -119,16 +124,27 @@ impl FileListView {
         self.show_extensions = show;
     }
 
-    /// 숨김 항목 표시 여부를 받는다 (FR-13). **바뀌었으면 `true`** — 그때는 호출부가
-    /// 폴더를 다시 읽어야 한다.
+    /// 숨김·시스템 항목 표시 여부를 받는다 (FR-13). **어느 한쪽이라도 바뀌었으면 `true`**
+    /// — 그때는 호출부가 폴더를 다시 읽어야 한다.
     ///
     /// 이 자리에서 되돌릴 수 없는 이유: 거른 항목을 따로 쥐고 있지 않다. 쥐려면
     /// 항목뿐 아니라 `type_names`·`icon_indices`까지 같은 순서로 함께 쥐어야 해서,
-    /// 다시 읽는 편이 훨씬 단순하다(로컬 열거는 감시 갱신 때마다 이미 하는 일이다)
-    pub fn set_show_hidden(&mut self, show: bool) -> bool {
-        let changed = self.show_hidden != show;
-        self.show_hidden = show;
+    /// 다시 읽는 편이 훨씬 단순하다(로컬 열거는 감시 갱신 때마다 이미 하는 일이다).
+    ///
+    /// **두 값을 함께 받는 이유**: 어느 쪽이 바뀌어도 할 일이 같아서, 갈라 두면 호출부가
+    /// 두 반환값을 합치는 일을 매번 기억해야 한다
+    pub fn set_hidden_rules(&mut self, show_hidden: bool, show_system: bool) -> bool {
+        let changed = self.show_hidden != show_hidden || self.show_system != show_system;
+        self.show_hidden = show_hidden;
+        self.show_system = show_system;
         changed
+    }
+
+    /// 이 항목을 목록에 보일까 — 속성마다 대응하는 설정을 본다 (FR-13).
+    ///
+    /// 둘 다 붙은 항목은 두 설정이 모두 켜져야 보인다(사용자 결정 — 탐색기와 같다)
+    fn shows(&self, entry: &impl ListRow) -> bool {
+        (self.show_hidden || !entry.is_hidden()) && (self.show_system || !entry.is_system())
     }
 
     /// 지금 쓰는 보기 모드 — 메뉴의 현재 표시와 세션 저장에 쓴다
@@ -162,8 +178,9 @@ impl FileListView {
         mut entries: Vec<FileEntry>,
         icons: &mut IconCache,
     ) {
-        if !self.show_hidden {
-            entries.retain(|e| !e.is_hidden() && !e.is_system());
+        // 둘 다 켜져 있으면 아무것도 걸러지지 않는다 — 10만 항목 폴더에서 헛도는 순회를 막는다
+        if !self.show_hidden || !self.show_system {
+            entries.retain(|e| self.shows(e));
         }
         let keep = (dir == self.dir).then(|| self.selected_name_keys());
         self.dir = dir;
@@ -200,8 +217,8 @@ impl FileListView {
     /// 로컬과 달리 **선택을 되살리지 않는다** — 원격 목록은 사용자가 새로 고침을 눌렀을 때만
     /// 바뀌고(변경 감시가 없다 — Deferred), 그때는 선택이 풀리는 것이 자연스럽다
     pub fn set_remote_entries(&mut self, mut entries: Vec<RemoteEntry>, icons: &mut IconCache) {
-        if !self.show_hidden {
-            entries.retain(|e| !e.is_hidden() && !e.is_system());
+        if !self.show_hidden || !self.show_system {
+            entries.retain(|e| self.shows(e));
         }
         self.type_names = entries
             .iter()
@@ -988,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn 숨김을_끄면_목록에서_빠지고_개수도_거른_뒤_기준이다() {
+    fn 숨김과_시스템은_각자의_토글로_걸러지고_개수도_거른_뒤_기준이다() {
         use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
         let mut icons = IconCache::new();
         let mut hidden_dir = entry("숨긴폴더", true, 0, 0);
@@ -1003,22 +1020,39 @@ mod tests {
                 system_file.clone(),
             ]
         };
+        // 네 조합을 모두 본다 — 한쪽 토글이 다른 쪽 속성까지 걸러 내면 그 자리가 드러난다
+        let mut 본다 = |show_hidden: bool, show_system: bool| {
+            let mut v = FileListView::new();
+            v.set_hidden_rules(show_hidden, show_system);
+            v.set_entries(PathBuf::from(r"C:\문서"), rows(), &mut icons);
+            (names(&v), v.counts())
+        };
 
-        // 켜져 있으면 전부 보인다 — 지금까지의 동작이다
-        let mut v = FileListView::new();
-        v.set_entries(PathBuf::from(r"C:\문서"), rows(), &mut icons);
-        assert_eq!(v.len(), 4);
-        assert_eq!(v.counts(), (2, 2));
+        let (전부, 개수) = 본다(true, true);
+        assert_eq!(전부.len(), 4, "둘 다 켰는데 무언가 빠졌다");
+        assert_eq!(개수, (2, 2));
 
-        // 끄면 숨김·시스템이 빠지고 **개수도 거른 뒤 기준**이다
-        let mut v = FileListView::new();
-        assert!(v.set_show_hidden(false), "값이 바뀌었는데 알리지 않았다");
-        v.set_entries(PathBuf::from(r"C:\문서"), rows(), &mut icons);
-        assert_eq!(names(&v), vec!["폴더", "보통.txt"]);
-        assert_eq!(v.counts(), (1, 1));
+        // 숨김만 끄면 숨긴 폴더만 빠진다 — 시스템 파일은 제 토글이 켜져 있으므로 남는다
+        assert_eq!(본다(false, true).0, vec!["폴더", "pagefile.sys", "보통.txt"]);
+
+        // 시스템만 끄면 그 반대다
+        assert_eq!(본다(true, false).0, vec!["숨긴폴더", "폴더", "보통.txt"]);
+
+        // 둘 다 끄면 둘 다 빠지고 **개수도 거른 뒤 기준**이다
+        let (남은것, 개수) = 본다(false, false);
+        assert_eq!(남은것, vec!["폴더", "보통.txt"]);
+        assert_eq!(개수, (1, 1));
 
         // 같은 값을 다시 주면 바뀌지 않았다고 알린다 — 매 프레임 폴더를 다시 읽으면 안 된다
-        assert!(!v.set_show_hidden(false), "안 바뀌었는데 바뀌었다고 한다");
+        let mut v = FileListView::new();
+        assert!(v.set_hidden_rules(false, false), "값이 바뀌었는데 알리지 않았다");
+        assert!(
+            !v.set_hidden_rules(false, false),
+            "안 바뀌었는데 바뀌었다고 한다"
+        );
+        // 한쪽만 바뀌어도 알려야 한다 — 그 프레임에 폴더를 다시 읽는 신호다
+        assert!(v.set_hidden_rules(true, false), "숨김만 바뀐 것을 놓쳤다");
+        assert!(v.set_hidden_rules(true, true), "시스템만 바뀐 것을 놓쳤다");
     }
 
     #[test]
@@ -1039,7 +1073,7 @@ mod tests {
         v.selection = (0..2).collect();
 
         // 같은 폴더를 숨김 없이 다시 읽는다 — 선택은 이름으로 되살아나지만 없는 것은 못 살아난다
-        v.set_show_hidden(false);
+        v.set_hidden_rules(false, false);
         v.set_entries(
             dir,
             vec![entry("보통.txt", false, 0, 0), hidden],

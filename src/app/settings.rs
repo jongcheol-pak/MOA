@@ -120,8 +120,14 @@ pub struct AppSettings {
     pub tray_on_close: bool,
     /// 목록에 파일 확장명을 보인다 (FR-52). 끄면 이름만 보인다
     pub show_extensions: bool,
-    /// 숨김·시스템 항목을 목록에 보인다 (FR-13)
+    /// 숨김 속성이 붙은 항목을 목록에 보인다 (FR-13)
     pub show_hidden: bool,
+    /// 시스템 속성이 붙은 항목을 목록에 보인다 (FR-13).
+    ///
+    /// **숨김과 따로 두는 이유**: 두 속성에 각자의 토글이 대응한다. 둘 다 붙은 항목
+    /// (`pagefile.sys` 등)은 두 값이 모두 켜져야 보인다 — 탐색기의 `숨김 파일 표시`와
+    /// `보호된 운영 체제 파일 숨기기` 조합과 같은 규칙이다
+    pub show_system: bool,
     /// 화면 문구 언어 (FR-53). part2가 실제 전환에 쓰고, 이 part는 저장만 한다
     pub language: LanguageSetting,
 }
@@ -137,6 +143,10 @@ impl Default for AppSettings {
             // 따르면 이미 쓰던 사람의 화면이 업데이트만으로 달라진다
             show_extensions: true,
             show_hidden: true,
+            // 시스템 항목만 기본이 `false`다 (사용자 확정) — 위 원칙의 예외이며, 그래서
+            // **업데이트 직후 시스템 파일이 목록에서 사라진다**(의도된 변화다). 저장된
+            // 설정 파일에 이 키가 없을 때도 이 값이 쓰인다(`#[serde(default)]`)
+            show_system: false,
             language: LanguageSetting::System,
         }
     }

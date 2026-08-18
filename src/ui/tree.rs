@@ -141,11 +141,14 @@ pub struct FolderTreeView {
     /// (2026-08-17 사용자 보고 — 화면 가장자리라 메뉴가 안으로 당겨져 클릭 자리를 품지 못할 때 드러났다).
     /// 원격 목록 메뉴가 멀쩡한 것은 그쪽이 그리기가 끝난 뒤 자리를 세워 **다음 프레임부터** 그리기 때문이다
     menu_opened_this_frame: bool,
-    /// 숨김·시스템 폴더를 보일지 (FR-13) — 목록과 같은 값을 받는다.
+    /// 숨김 속성 폴더를 보일지 (FR-13) — 목록과 같은 값을 받는다.
     ///
     /// 트리만 따로 두면 같은 창에서 목록의 숨긴 폴더는 사라지는데 트리에는 남아,
     /// 설정이 반만 듣는 것처럼 보인다
     show_hidden: bool,
+    /// 시스템 속성 폴더를 보일지 (FR-13) — 기본값을 `AppSettings`와 같이 `false`로 둔다
+    /// (어긋나면 첫 프레임마다 하위 목록을 통째로 버리고 다시 읽는다)
+    show_system: bool,
     /// 줄마다 쓸 셸 아이콘 인덱스 — **보이는 줄만** 조회하고 그 결과를 여기 담는다.
     ///
     /// `IconCache`도 경로별로 캐시하지만 그쪽은 프로세스 전체가 함께 쓰는 자리라,
@@ -171,19 +174,21 @@ impl FolderTreeView {
             tx,
             rx,
             show_hidden: true,
+            show_system: false,
         }
     }
 
-    /// 숨김 폴더 표시 여부를 받는다 (FR-13). **바뀌었으면 `true`**.
+    /// 숨김·시스템 폴더 표시 여부를 받는다 (FR-13). **어느 한쪽이라도 바뀌었으면 `true`**.
     ///
     /// 바뀌면 읽어 둔 하위 목록을 **통째로 버린다** — 항목마다 속성을 쥐고 있지 않아
     /// 걸러진 것을 되돌릴 수 없다(목록이 폴더를 다시 읽는 것과 같은 이유). 펼침 상태도
     /// 함께 풀리지만, 설정을 바꾸는 일이 드물어 다시 읽는 편이 단순하다
-    pub fn set_show_hidden(&mut self, show: bool) -> bool {
-        if self.show_hidden == show {
+    pub fn set_hidden_rules(&mut self, show_hidden: bool, show_system: bool) -> bool {
+        if self.show_hidden == show_hidden && self.show_system == show_system {
             return false;
         }
-        self.show_hidden = show;
+        self.show_hidden = show_hidden;
+        self.show_system = show_system;
         self.nodes.clear();
         true
     }
@@ -611,9 +616,10 @@ impl FolderTreeView {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         let show_hidden = self.show_hidden;
+        let show_system = self.show_system;
         std::thread::spawn(move || {
             let children = match enumerate_dir(&path) {
-                EnumOutcome::Ok(entries) => child_dirs(&path, entries, show_hidden),
+                EnumOutcome::Ok(entries) => child_dirs(&path, entries, show_hidden, show_system),
                 // 접근 거부·삭제·오류 — 하위 없음으로 다룬다
                 _ => Vec::new(),
             };
@@ -653,8 +659,16 @@ fn remote_display_name(path: &RemotePath) -> String {
 
 /// 열거 결과에서 하위 폴더만 골라 이름 자연 정렬로 돌려준다.
 /// 정렬은 목록과 같은 규칙을 쓴다 — 종류 인자는 이름 정렬에서 쓰이지 않아 빈 문자열을 넘긴다
-fn child_dirs(parent: &Path, mut entries: Vec<FileEntry>, show_hidden: bool) -> Vec<PathBuf> {
-    entries.retain(|e| e.is_dir && (show_hidden || !(e.is_hidden() || e.is_system())));
+fn child_dirs(
+    parent: &Path,
+    mut entries: Vec<FileEntry>,
+    show_hidden: bool,
+    show_system: bool,
+) -> Vec<PathBuf> {
+    // 속성마다 대응하는 설정을 본다 — 목록과 같은 규칙이다(`FileListView::shows`)
+    entries.retain(|e| {
+        e.is_dir && (show_hidden || !e.is_hidden()) && (show_system || !e.is_system())
+    });
     entries.sort_by(|a, b| compare_entries(a, "", b, "", SortKey::Name));
     entries
         .iter()
@@ -1004,7 +1018,7 @@ mod tests {
             entry("사진", true),
             entry("설치.exe", false),
         ];
-        let children = child_dirs(Path::new(r"C:\Users"), entries, true);
+        let children = child_dirs(Path::new(r"C:\Users"), entries, true, true);
         assert_eq!(children, vec![PathBuf::from(r"C:\Users\사진")]);
     }
 
@@ -1012,7 +1026,7 @@ mod tests {
     fn 하위_폴더는_자연_정렬된다() {
         // "폴더10"이 "폴더2"보다 뒤에 와야 한다 (사전식이면 앞에 온다)
         let entries = vec![entry("폴더10", true), entry("폴더2", true)];
-        let children = child_dirs(Path::new(r"D:\"), entries, true);
+        let children = child_dirs(Path::new(r"D:\"), entries, true, true);
         assert_eq!(
             children,
             vec![PathBuf::from(r"D:\폴더2"), PathBuf::from(r"D:\폴더10")]
@@ -1020,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    fn 숨김을_끄면_트리에서도_숨김_폴더가_빠진다() {
+    fn 트리도_숨김과_시스템을_각자의_토글로_거른다() {
         // 목록에서만 사라지면 같은 창의 두 곳이 다르게 보인다 (FR-13)
         use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
         let mut 숨김 = entry("숨긴폴더", true);
@@ -1029,26 +1043,55 @@ mod tests {
         시스템.attributes = FILE_ATTRIBUTE_SYSTEM.0;
         let 항목 = || vec![entry("보통", true), 숨김.clone(), 시스템.clone()];
 
-        let 켬 = child_dirs(Path::new(r"D:\"), 항목(), true);
-        assert_eq!(켬.len(), 3, "켜져 있으면 전부 보여야 한다");
-        let 끔 = child_dirs(Path::new(r"D:\"), 항목(), false);
-        assert_eq!(끔, vec![PathBuf::from(r"D:\보통")]);
+        let 켬 = child_dirs(Path::new(r"D:\"), 항목(), true, true);
+        assert_eq!(켬.len(), 3, "둘 다 켜져 있으면 전부 보여야 한다");
+
+        // 시스템 폴더는 **시스템 토글로** 판정된다 — 숨김 토글에 묶여 있으면 안 된다
+        assert_eq!(
+            child_dirs(Path::new(r"D:\"), 항목(), true, false),
+            vec![PathBuf::from(r"D:\보통"), PathBuf::from(r"D:\숨긴폴더")]
+        );
+        assert_eq!(
+            child_dirs(Path::new(r"D:\"), 항목(), false, true),
+            vec![
+                PathBuf::from(r"D:\System Volume Information"),
+                PathBuf::from(r"D:\보통")
+            ]
+        );
+        assert_eq!(
+            child_dirs(Path::new(r"D:\"), 항목(), false, false),
+            vec![PathBuf::from(r"D:\보통")]
+        );
     }
 
     #[test]
     fn 트리_설정이_바뀌면_읽어_둔_하위를_버린다() {
         let mut tree = FolderTreeView::new();
         assert!(
-            !tree.set_show_hidden(true),
+            !tree.set_hidden_rules(true, false),
             "기본값과 같은데 바뀌었다고 한다"
         );
+
+        // 숨김만 바뀌어도 캐시를 버린다
         tree.nodes
             .insert(PathBuf::from(r"D:\"), Node::Loaded(Rc::new(Vec::new())));
-        assert!(tree.set_show_hidden(false), "값이 바뀌었는데 알리지 않았다");
+        assert!(
+            tree.set_hidden_rules(false, false),
+            "숨김이 바뀌었는데 알리지 않았다"
+        );
         assert!(
             tree.nodes.is_empty(),
             "걸러진 것을 되돌릴 수 없는데 캐시가 남았다"
         );
+
+        // 시스템만 바뀌어도 마찬가지다 — 한쪽만 보면 그 토글이 트리에 듣지 않는다
+        tree.nodes
+            .insert(PathBuf::from(r"D:\"), Node::Loaded(Rc::new(Vec::new())));
+        assert!(
+            tree.set_hidden_rules(false, true),
+            "시스템이 바뀌었는데 알리지 않았다"
+        );
+        assert!(tree.nodes.is_empty(), "시스템 토글에는 캐시가 남았다");
     }
 
     #[test]
