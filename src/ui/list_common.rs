@@ -3,7 +3,6 @@
 //! `ui::list_details`(자세히)와 `ui::list_grid`(나머지 보기)가 같은 조작 타입과 텍스트
 //! 배치 규칙을 쓴다. 한쪽에 두고 다른 쪽이 참조하면 두 렌더 모듈이 서로를 알게 되므로
 //! 공용 조각만 여기로 모은다.
-use crate::ui::theme;
 use eframe::egui;
 use std::sync::Arc;
 
@@ -121,25 +120,31 @@ pub fn drop_direction(
     }
 }
 
+/// 숨김·시스템 항목을 그릴 때 글자·아이콘에 곱하는 불투명도 (FR-13).
+///
+/// 탐색기가 숨김 항목을 흐리게 보이는 것과 같은 표시다 — 목록에 있지만 보통 항목은
+/// 아니라는 것을 색만으로 알린다. **글자와 아이콘에 같은 값을 쓴다**: 한쪽만 흐리면
+/// 항목이 반쯤 지워진 것처럼 보인다
+pub const HIDDEN_ALPHA: f32 = 0.5;
+
+/// 숨김 항목이면 흐린 색으로 바꾼다 — 글자색과 아이콘 tint가 함께 쓰는 한 벌의 규칙
+pub fn dim_if_hidden(color: egui::Color32, hidden: bool) -> egui::Color32 {
+    if hidden {
+        color.gamma_multiply(HIDDEN_ALPHA)
+    } else {
+        color
+    }
+}
+
 /// 텍스트를 **한 줄로만** 배치하고, 폭을 넘으면 끝을 `…`로 줄인 갤리를 만든다.
 ///
 /// `Painter::layout`을 쓰면 안 된다 — 그 함수의 폭 인자는 자르는 폭이 아니라 **줄바꿈 폭**이라
 /// 긴 이름이 여러 줄이 된다. 행 높이가 고정인 자세히 보기에서는 2줄이 되는 순간 아래 행과
 /// 겹쳐 글자가 포개져 보인다(사용자 보고 4번)
-pub fn elided_galley(
-    painter: &egui::Painter,
-    text: String,
-    font: egui::FontId,
-    max_width: f32,
-) -> Arc<egui::Galley> {
-    elided_galley_rows(painter, text, font, max_width, 1)
-}
-
-/// 색을 지정하는 변형.
 ///
 /// **갤리는 색을 구워 넣는다** — `Painter::galley`에 넘기는 색은 갤리 안이 `PLACEHOLDER`일
 /// 때만 쓰인다. 그래서 기본색으로 만든 갤리를 그리면서 다른 색을 넘겨도 **아무 일도 일어나지
-/// 않는다**(로그·큐 표에서 실제로 그랬다 — T20 리뷰). 색이 다른 자리는 이 함수로 만든다
+/// 않는다**(로그·큐 표에서 실제로 그랬다 — T20 리뷰). 그래서 색을 인자로 받는다
 pub fn elided_galley_colored(
     painter: &egui::Painter,
     text: String,
@@ -147,14 +152,7 @@ pub fn elided_galley_colored(
     max_width: f32,
     color: egui::Color32,
 ) -> Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple(text, font, color, max_width);
-    job.wrap = egui::text::TextWrapping {
-        max_width,
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('…'),
-    };
-    painter.layout_job(job)
+    elided_galley_rows(painter, text, font, max_width, 1, color)
 }
 
 /// 줄 수를 지정하는 변형 — 격자 보기의 이름은 두 줄까지 쓴다 (plan 시각 속성 표).
@@ -167,8 +165,9 @@ pub fn elided_galley_rows(
     font: egui::FontId,
     max_width: f32,
     max_rows: usize,
+    color: egui::Color32,
 ) -> Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple(text, font, theme::TEXT, max_width);
+    let mut job = egui::text::LayoutJob::simple(text, font, color, max_width);
     job.wrap = egui::text::TextWrapping {
         max_width,
         max_rows,
@@ -183,6 +182,7 @@ mod tests {
     use super::*;
     use crate::remote::connection::TransferDirection;
     use crate::remote::types::{RemotePath, SiteId};
+    use crate::ui::theme;
 
     fn local_item() -> DragItem {
         DragItem::Local {
@@ -236,6 +236,23 @@ mod tests {
         assert_eq!(remote_item().name(), "app.js");
     }
 
+    #[test]
+    fn 숨김_항목만_흐려진다() {
+        // 숨김이 아닌 항목의 색은 손대지 않는다 — 목록 전체가 흐려지면 표시가 뜻을 잃는다
+        assert_eq!(dim_if_hidden(theme::TEXT, false), theme::TEXT);
+        let dimmed = dim_if_hidden(theme::TEXT, true);
+        assert!(
+            dimmed.a() < theme::TEXT.a(),
+            "숨김 항목인데 불투명도가 그대로다"
+        );
+        // 아이콘 tint도 같은 규칙을 쓴다 (한쪽만 흐리면 항목이 반쯤 지워진 것처럼 보인다)
+        assert_eq!(
+            dim_if_hidden(egui::Color32::WHITE, true).a(),
+            dimmed.a(),
+            "글자와 아이콘의 흐림 정도가 다르다"
+        );
+    }
+
     /// 갤리에 실제로 구워진 색 — `Painter::galley`에 넘기는 색은 이 값이 `PLACEHOLDER`일 때만 쓰인다
     fn baked_color(galley: &egui::Galley) -> egui::Color32 {
         galley.job.sections[0].format.color
@@ -250,11 +267,12 @@ mod tests {
         let mut colored = None;
         let _ = ctx.run_ui(Default::default(), |ui| {
             let painter = ui.painter();
-            plain = Some(elided_galley(
+            plain = Some(elided_galley_colored(
                 painter,
                 "본문".to_owned(),
                 egui::FontId::proportional(13.0),
                 100.0,
+                theme::TEXT,
             ));
             colored = Some(elided_galley_colored(
                 painter,
@@ -277,7 +295,14 @@ mod tests {
         let mut result = (0, false);
         let _ = ctx.run_ui(Default::default(), |ui| {
             let font = egui::TextStyle::Body.resolve(ui.style());
-            let galley = elided_galley_rows(ui.painter(), text.to_owned(), font, width, rows);
+            let galley = elided_galley_rows(
+                ui.painter(),
+                text.to_owned(),
+                font,
+                width,
+                rows,
+                theme::TEXT,
+            );
             result = (galley.rows.len(), galley.elided);
         });
         assert!(has_font, "맑은 고딕을 읽지 못해 폭 기준 검증을 할 수 없다");

@@ -6,7 +6,7 @@
 use crate::fs::icons::{IconCache, IconSize};
 use crate::panel::file_list::{ListRow, format_filetime, format_size_kb};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
-use crate::ui::list_common::{FileListAction, elided_galley_rows};
+use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_rows};
 use crate::ui::theme;
 use crate::ui::view_mode::{GRID_NAME_ROWS, ViewMode, grid_metrics};
 use eframe::egui;
@@ -264,13 +264,17 @@ fn draw_cell<R: ListRow>(
         show_extensions,
         ..
     } = item;
+    // 숨김·시스템 항목은 아이콘과 글자를 함께 흐리게 그린다 (FR-13 — 탐색기와 같은 표시)
+    let hidden = entry.is_hidden();
+    let tint = dim_if_hidden(egui::Color32::WHITE, hidden);
+    let text_color = dim_if_hidden(theme::TEXT, hidden);
     if is_single_row(mode) {
         let icon_rect = egui::Rect::from_min_size(
             egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
             egui::Vec2::splat(icon_px),
         );
         if let Some(id) = texture {
-            ui.painter().image(id, icon_rect, uv, egui::Color32::WHITE);
+            ui.painter().image(id, icon_rect, uv, tint);
         }
         let text_left = icon_rect.right() + ROW_ICON_GAP;
         let galley = elided_galley_rows(
@@ -279,11 +283,12 @@ fn draw_cell<R: ListRow>(
             font,
             (cell.right() - CELL_PAD_X - text_left).max(0.0),
             1,
+            text_color,
         );
         ui.painter().galley(
             egui::pos2(text_left, cell.center().y - galley.size().y / 2.0),
             galley,
-            theme::TEXT,
+            text_color,
         );
         return;
     }
@@ -294,7 +299,7 @@ fn draw_cell<R: ListRow>(
         egui::Vec2::splat(icon_px),
     );
     if let Some(id) = texture {
-        ui.painter().image(id, icon_rect, uv, egui::Color32::WHITE);
+        ui.painter().image(id, icon_rect, uv, tint);
     }
     // 이름은 아이콘 아래, 두 줄까지 (plan 시각 속성 표)
     let text_width = (cell.width() - CELL_PAD_X * 2.0).max(0.0);
@@ -304,12 +309,13 @@ fn draw_cell<R: ListRow>(
         font,
         text_width,
         GRID_NAME_ROWS,
+        text_color,
     );
     let text_x = cell.center().x - galley.size().x / 2.0;
     ui.painter().galley(
         egui::pos2(text_x, icon_rect.bottom() + ICON_TEXT_GAP),
         galley,
-        theme::TEXT,
+        text_color,
     );
 }
 
@@ -334,12 +340,20 @@ fn draw_multiline_cell<R: ListRow>(
     } = item;
     let icon_px = mode.icon_px();
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    // 숨김·시스템 항목을 흐리게 그리는 규칙은 한 줄짜리 칸과 같다 (FR-13)
+    let hidden = entry.is_hidden();
+    let text_color = dim_if_hidden(theme::TEXT, hidden);
     let icon_rect = egui::Rect::from_min_size(
         egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
         egui::Vec2::splat(icon_px),
     );
     if let Some(id) = texture {
-        ui.painter().image(id, icon_rect, uv, egui::Color32::WHITE);
+        ui.painter().image(
+            id,
+            icon_rect,
+            uv,
+            dim_if_hidden(egui::Color32::WHITE, hidden),
+        );
     }
     let text_left = icon_rect.right() + ROW_ICON_GAP;
     let size_text = if entry.is_dir() {
@@ -357,14 +371,23 @@ fn draw_multiline_cell<R: ListRow>(
             font.clone(),
             (meta_left - ROW_ICON_GAP - text_left).max(0.0),
             1,
+            text_color,
         );
         ui.painter().galley(
             egui::pos2(text_left, cell.center().y - name.size().y / 2.0),
             name,
-            theme::TEXT,
+            text_color,
         );
         let meta = [format_filetime(entry.modified_key()), size_text];
-        draw_stacked(ui, &meta, meta_left, cell, font, CONTENT_META_WIDTH);
+        draw_stacked(
+            ui,
+            &meta,
+            meta_left,
+            cell,
+            font,
+            CONTENT_META_WIDTH,
+            text_color,
+        );
         return;
     }
 
@@ -375,7 +398,7 @@ fn draw_multiline_cell<R: ListRow>(
         size_text,
     ];
     let width = (cell.right() - CELL_PAD_X - text_left).max(0.0);
-    draw_stacked(ui, &lines, text_left, cell, font, width);
+    draw_stacked(ui, &lines, text_left, cell, font, width, text_color);
 }
 
 /// 여러 줄을 칸 세로 가운데에 쌓아 그린다. 빈 줄도 자리를 차지해 줄 위치가 흔들리지 않는다
@@ -386,10 +409,11 @@ fn draw_stacked(
     cell: egui::Rect,
     font: egui::FontId,
     width: f32,
+    color: egui::Color32,
 ) {
     let galleys: Vec<_> = lines
         .iter()
-        .map(|text| elided_galley_rows(ui.painter(), text.clone(), font.clone(), width, 1))
+        .map(|text| elided_galley_rows(ui.painter(), text.clone(), font.clone(), width, 1, color))
         .collect();
     let line_height = galleys
         .iter()
@@ -401,8 +425,7 @@ fn draw_stacked(
     for galley in galleys {
         // 빈 줄은 그리지 않지만 자리는 차지한다 (폴더의 크기 칸)
         if !galley.is_empty() {
-            ui.painter()
-                .galley(egui::pos2(left, y), galley, theme::TEXT);
+            ui.painter().galley(egui::pos2(left, y), galley, color);
         }
         y += line_height + LINE_GAP;
     }

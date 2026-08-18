@@ -6,7 +6,7 @@
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size_kb};
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::list_common::{FileListAction, elided_galley, elided_galley_colored};
+use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_colored};
 use crate::ui::theme;
 use eframe::egui;
 use std::collections::BTreeSet;
@@ -393,6 +393,9 @@ pub fn show<R: ListRow>(
 
             let entry = &entries[index];
             let y = rect.center().y;
+            // 숨김·시스템 항목은 아이콘과 글자를 함께 흐리게 그린다 (FR-13 — 탐색기와 같은 표시)
+            let hidden = entry.is_hidden();
+            let text_color = dim_if_hidden(theme::TEXT, hidden);
             // 보이는 행에 한해 아이콘 인덱스를 조회한다 — 로드 시 전체를 미리 계산하면
             // exe가 많은 폴더에서 로드가 길어진다(PoC 실측 585ms → 84ms)
             let icon_index = match icon_indices[index] {
@@ -416,7 +419,7 @@ pub fn show<R: ListRow>(
                     tex.id(),
                     icon_rect,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
+                    dim_if_hidden(egui::Color32::WHITE, hidden),
                 );
             }
 
@@ -434,12 +437,8 @@ pub fn show<R: ListRow>(
                 if text.is_empty() || width <= 0.0 {
                     continue;
                 }
-                let galley = elided_galley(painter, text, font.clone(), width);
-                painter.galley(
-                    egui::pos2(x, y - galley.size().y / 2.0),
-                    galley,
-                    theme::TEXT,
-                );
+                let galley = elided_galley_colored(painter, text, font.clone(), width, text_color);
+                painter.galley(egui::pos2(x, y - galley.size().y / 2.0), galley, text_color);
             }
         }
         content
