@@ -29,6 +29,8 @@
 
 ## Deferred / Follow-up
 
+- [SUGGEST] `TransferQueue::cancel(id)`와 `remove(ids)`가 같은 `retain` 한 줄을 각자 갖는다 — `cancel`을 `remove` 위에 재구성하면 한 곳으로 좁힐 수 있다. **이번엔 채택하지 않았다**: 중복이 2회라 공통화 문턱(3회) 미달이고, 위임으로 바꾸면 단건 경로에 `HashSet` 할당이 새로 붙는다(T3 quality S1).
+
 - 큐 표 열의 **표시·숨김·순서 바꾸기** — 이번에 열 폭 상태(`QueueColumns`)가 생겨 확장 지점이 열린다. 파일 목록의 같은 항목(2026-07-29 등재)과 한 뿌리.
 
 ## Investigation Log
@@ -258,7 +260,7 @@
     - (ii-a) `counts_by_site`·`show_site_tabs` 시그니처 변경(crate 내부) → `## 사전 승인 항목`
   - **Depends on**: -
 
-- [ ] T3. 큐 행 메뉴에 목록 단위 조작을 더한다
+- [x] T3. 큐 행 메뉴에 목록 단위 조작을 더한다
   - **Type**: D
   - **Design**: ① `ui::queue_panel::QueueAction`에 `RetryAll`·`Remove(TransferId)`·`RemoveAll` 세 variant를 더한다(`Retry`·`Cancel`은 그대로). ② 메뉴 구성은 D5 표대로 행 상태로 가른다 — `show_row`가 `has_error_in_view: bool`(보이는 목록에 실패가 있는가)를 인자로 받아 `전체 다시 시도` 표시 여부를 정한다. ③ 대상 계산은 **앱이 한다** — `ui::app::apply_queue_action`이 `queue_panel::visible_items(&self.queue, self.dock.filter, self.dock.site)`로 지금 보이는 목록을 다시 구해 그 `TransferId`들에 적용한다(화면은 큐를 고치지 않는다는 모듈 규약 유지). ④ `remote::queue::TransferQueue`에 `retry(ids)`·`remove(ids)`를 더한다 — 각각 상태를 `Wait`로 돌리고, 목록에서 지운다(기존 `cancel`의 `retain`과 같은 방식). ⑤ 비추상화 선언 — "선택 집합" 타입을 만들지 않는다(`Vec<TransferId>`를 그대로 넘긴다).
   - **Acceptance**: ① Given `실패` 탭 + `LG` 탭에 실패 3건, When 한 행에서 `전체 다시 시도`, Then 그 3건이 모두 `대기 중`이 되고 다른 서버의 실패는 그대로다 ② Given 같은 상태, When `삭제`, Then 우클릭한 그 한 행만 사라진다 ③ Given 같은 상태, When `전체 삭제`, Then LG의 실패 3건이 사라지고 다른 서버·다른 상태의 항목은 남는다 ④ Given `전체` 연결 탭 + `전송 큐` 필터에 진행 중 1건이 섞여 있음, When `전체 삭제`, Then 진행 중이던 것도 워커가 멈추고 `.part`가 지워진다(기존 취소 경로) ⑤ 진행 중·대기 행의 메뉴에는 `삭제`가 없고 `전송 취소`가 있다. 완료 행에는 그 반대다 ⑥ 보이는 목록에 실패가 없으면 `전체 다시 시도`가 메뉴에 없다 ⑦ 새 문구 셋이 `src/i18n/mod.rs`에 한·영 모두 등록돼 소스 훑기 시험을 통과한다 ⑧ `cargo test` 전건 통과
