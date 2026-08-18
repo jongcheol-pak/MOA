@@ -5,6 +5,7 @@ pub mod favorites;
 pub mod fonts;
 pub mod layout;
 pub mod layout_host;
+pub mod licenses;
 pub mod menu;
 pub mod settings;
 pub mod sidebar;
