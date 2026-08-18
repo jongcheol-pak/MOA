@@ -35,12 +35,14 @@ const EMPTY_HINT_TOP: f32 = 24.0;
 /// 진행 막대 (`:290`)
 const BAR_WIDTH: f32 = 110.0;
 const BAR_HEIGHT: f32 = 6.0;
-/// 열 폭 — `1fr`(로컬 파일)은 남는 자리를 갖는다 (`:279`)
-const COLUMNS: [f32; 7] = [34.0, 0.0, 300.0, 120.0, 84.0, 118.0, 150.0];
-/// 남는 자리를 갖는 열의 자리 번호
-const FLEX_COLUMN: usize = 1;
-/// 그 열이 아무리 좁아도 유지할 폭
-const FLEX_MIN: f32 = 120.0;
+/// 열 기본 폭 — 원본 `34px 1fr 300px 120px 84px 118px 150px` (`:279`)에서 `1fr`(로컬 파일)만
+/// 고정값으로 바꿨다. 흡수 열이 앞자리에 있으면 그 오른쪽 경계를 끌어도 흡수분이 같은 양을
+/// 반대로 먹어 **잡은 경계가 제자리에 선다** — 폭 조절 자체가 성립하지 않는다 (plan D6).
+/// 합은 1086px이라 기본 창 폭(1100px)에서 여유가 남는다
+const COLUMNS: [f32; 7] = [34.0, 280.0, 300.0, 120.0, 84.0, 118.0, 150.0];
+/// 열 경계 드래그 핸들 폭 — 경계 중심에서 좌우로 절반씩.
+/// `list_details::HANDLE_WIDTH`는 private이라 같은 값을 여기 둔다
+const HANDLE_WIDTH: f32 = 6.0;
 
 // ── 문구 (인벤토리 #35~#48) ──
 /// 머리글 (인벤토리 #37~#43) — 문구가 언어를 따르므로 상수가 아니라 그때그때 만든다
@@ -212,17 +214,75 @@ pub fn visible_items(
         .collect()
 }
 
-/// 각 열이 차지할 폭 — `1fr` 열이 남는 자리를 갖는다
-fn column_widths(total: f32) -> [f32; 7] {
-    let fixed: f32 = COLUMNS
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| *index != FLEX_COLUMN)
-        .map(|(_, width)| width)
-        .sum();
-    let mut widths = COLUMNS;
-    widths[FLEX_COLUMN] = (total - fixed).max(FLEX_MIN);
-    widths
+/// 큐 표의 열 폭 — **일곱 열 모두 고정 폭**을 갖고, 합이 표 폭보다 좁을 때만
+/// 마지막 열(`상태`)이 그 차이를 표시 폭으로 흡수한다 (plan D6 · `list_details::Columns`와 같은 규칙).
+///
+/// 흡수를 마지막 열에 둔 이유는 위 `COLUMNS` 주석에 있다. 넘칠 때는 저장 폭 그대로 그려
+/// 오른쪽이 잘린다 — 가로 스크롤은 두지 않는다(사용자가 폭을 줄이면 돌아온다)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QueueColumns {
+    widths: [f32; 7],
+}
+
+impl Default for QueueColumns {
+    fn default() -> QueueColumns {
+        QueueColumns { widths: COLUMNS }
+    }
+}
+
+/// 그 열이 줄 수 있는 하한 — 대개 `MIN_COL_WIDTH`(40px)지만, **기본 폭이 그보다 좁은 열**
+/// (`방향` 34px)은 그 기본값이 하한이다.
+///
+/// 하한을 일괄로 40px에 맞추면 저장했다 되살릴 때 `방향`이 34 → 40으로 넓어져
+/// **사용자가 맞춰 둔 화면이 그대로 돌아오지 않는다**(2026-08-18 시험이 잡았다)
+fn min_column_width(slot: usize) -> f32 {
+    let floor = crate::ui::list_details::MIN_COL_WIDTH;
+    COLUMNS.get(slot).copied().unwrap_or(floor).min(floor)
+}
+
+impl QueueColumns {
+    /// 저장된 폭으로 되살린다 (FR-11 세션 복원).
+    ///
+    /// **앞에서부터 있는 만큼만 받는다** — 열 수가 달라진 옛 세션이 와도 나머지는 기본값이다.
+    /// 유한하지 않은 값은 그 자리만 되돌린다(설정 파일이 손상돼도 표를 못 그리지 않게)
+    pub fn from_saved(saved: &[f32]) -> QueueColumns {
+        let mut widths = COLUMNS;
+        for (slot, (width, &value)) in widths.iter_mut().zip(saved).enumerate() {
+            if value.is_finite() {
+                *width = value.max(min_column_width(slot));
+            }
+        }
+        QueueColumns { widths }
+    }
+
+    /// 세션에 저장할 폭
+    pub fn to_saved(self) -> Vec<f32> {
+        self.widths.to_vec()
+    }
+
+    /// 실제로 그릴 폭. 합이 표 폭보다 좁으면 **마지막 열만 늘려** 오른쪽 빈틈을 없앤다.
+    /// 늘리는 것은 표시뿐이며 저장 폭은 그대로다 — 창 크기를 바꿀 때마다 사용자가 정한
+    /// 폭이 덮어써지면 안 된다
+    fn effective(self, total: f32) -> [f32; 7] {
+        let mut widths = self.widths;
+        let slack = total - widths.iter().sum::<f32>();
+        if slack > 0.0
+            && let Some(last) = widths.last_mut()
+        {
+            *last += slack;
+        }
+        widths
+    }
+
+    /// 경계 드래그 — 그 **왼쪽 열**의 폭을 바꾼다. 최소 폭 아래로는 줄지 않는다.
+    ///
+    /// 마지막 열의 오른쪽에는 핸들이 없어 `상태`의 저장 폭은 여기서 바뀌지 않는다
+    fn apply_drag(&mut self, slot: usize, delta: f32) {
+        let floor = min_column_width(slot);
+        if let Some(width) = self.widths.get_mut(slot) {
+            *width = (*width + delta).max(floor);
+        }
+    }
 }
 
 /// 큐 표를 그린다 (인벤토리 #35~#48)
@@ -240,13 +300,24 @@ pub fn show_queue(
         egui::pos2(rect.left(), site_row.bottom()),
         egui::vec2(rect.width(), HEADER_HEIGHT),
     );
-    let widths = column_widths(rect.width());
-    show_header(ui, header, &widths);
+    let widths = state.columns.effective(rect.width());
+    let guide_x = show_header(ui, header, &widths, &mut state.columns);
 
     let body = egui::Rect::from_min_max(
         egui::pos2(rect.left(), header.bottom()),
         egui::pos2(rect.right(), rect.bottom()),
     );
+    // 가이드 선은 행을 다 그린 뒤에 긋는다 (`show_header` 주석) — 빈 목록 갈래에서도 그어야
+    // 끌던 손이 허공에 뜨지 않으므로, 그리는 자리를 닫는 헬퍼로 둔다
+    let draw_guide = |ui: &egui::Ui, bottom: f32| {
+        if let Some(x) = guide_x {
+            ui.painter().vline(
+                x,
+                header.top()..=bottom,
+                egui::Stroke::new(1.0, theme::ACCENT),
+            );
+        }
+    };
     let items = visible_items(view.queue, state.filter, state.site);
     // 보일 것이 없으면 그 사실을 적는다 (2026-08-16 검토) — 머리글만 남은 표는
     // 아직 아무것도 안 한 것인지 거른 결과가 없는 것인지 알려 주지 않는다
@@ -258,6 +329,7 @@ pub fn show_queue(
             egui::FontId::proportional(FONT_PX),
             theme::TEXT_MUTED,
         );
+        draw_guide(ui, body.bottom());
         return None;
     }
     // `전체 다시 시도`를 낼지 — 보이는 목록 전체를 본다(화면 밖 행도 대상이므로
@@ -284,6 +356,7 @@ pub fn show_queue(
                 }
             }
         });
+    draw_guide(ui, body.bottom());
     action
 }
 
@@ -421,8 +494,17 @@ pub fn show_site_tabs(
     }
 }
 
-/// 머리글 (인벤토리 #37~#43)
-fn show_header(ui: &mut egui::Ui, rect: egui::Rect, widths: &[f32; 7]) {
+/// 머리글 (인벤토리 #37~#43) — 열 경계에 구분선을 긋고 그 위에서 폭을 조절한다.
+///
+/// 돌려주는 값은 **지금 끌고 있는 경계의 x**다. 그 선은 여기서 긋지 않는다 —
+/// 머리글이 본문 행보다 먼저 그려져 행 배경(`ROW_HOT`·얼룩)이 같은 레이어에서 덮어 버린다.
+/// 호출부가 행을 다 그린 뒤에 긋는다
+fn show_header(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    widths: &[f32; 7],
+    columns: &mut QueueColumns,
+) -> Option<f32> {
     ui.painter().rect_filled(rect, 0.0, theme::HEADER_BG);
     let mut left = rect.left();
     for (index, label) in headers().iter().enumerate() {
@@ -435,6 +517,36 @@ fn show_header(ui: &mut egui::Ui, rect: egui::Rect, widths: &[f32; 7]) {
         );
         left += widths[index];
     }
+
+    // 평소에도 경계가 보여야 어디를 잡을지 알 수 있다 (2026-08-18 사용자 보고).
+    // 마지막 열의 오른쪽 끝에는 긋지 않는다 — 그것은 표 바깥 경계다
+    let mut boundary = rect.left();
+    let mut dragging = None;
+    for (slot, width) in widths.iter().take(widths.len() - 1).enumerate() {
+        boundary += width;
+        ui.painter().vline(
+            boundary,
+            rect.top()..=rect.bottom(),
+            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+        );
+        let handle = egui::Rect::from_min_size(
+            egui::pos2(boundary - HANDLE_WIDTH / 2.0, rect.top()),
+            egui::vec2(HANDLE_WIDTH, rect.height()),
+        );
+        let response = ui.interact(
+            handle,
+            ui.id().with(("queue_col_handle", slot)),
+            egui::Sense::click_and_drag(),
+        );
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if response.dragged() {
+            columns.apply_drag(slot, response.drag_delta().x);
+            dragging = Some(boundary);
+        }
+    }
+    dragging
 }
 
 /// 항목 한 줄
@@ -587,17 +699,67 @@ mod tests {
         assert_eq!(BAR_HEIGHT, 6.0);
         assert_eq!(COLUMNS[0], 34.0);
         assert_eq!(&COLUMNS[2..], &[300.0, 120.0, 84.0, 118.0, 150.0]);
+        // 원본의 `1fr` 자리만 고정값이 됐다 — 합이 기본 창 폭(1100px)보다 좁아야
+        // 흡수가 실제로 돈다 (plan D6)
+        assert_eq!(COLUMNS[1], 280.0);
+        assert_eq!(COLUMNS.iter().sum::<f32>(), 1086.0);
     }
 
     #[test]
-    fn 남는_자리는_로컬_파일_열이_갖는다() {
-        // Acceptance ② — `1fr`이 그 열이다
-        let widths = column_widths(1200.0);
-        let fixed: f32 = 34.0 + 300.0 + 120.0 + 84.0 + 118.0 + 150.0;
-        assert_eq!(widths[FLEX_COLUMN], 1200.0 - fixed);
+    fn 남는_자리는_마지막_열이_갖는다() {
+        // plan D6 — 흡수 열이 앞자리면 그 오른쪽 경계가 손을 따라오지 않아
+        // 폭 조절 자체가 성립하지 않는다. 그래서 `상태`(마지막)가 잔여를 먹는다
+        let columns = QueueColumns::default();
+        let widths = columns.effective(1200.0);
         assert_eq!(widths.iter().sum::<f32>(), 1200.0);
-        // 창이 좁아도 최소 폭은 지킨다 — 0이 되면 경로가 통째로 사라진다
-        assert_eq!(column_widths(200.0)[FLEX_COLUMN], FLEX_MIN);
+        assert_eq!(widths[6], 150.0 + (1200.0 - 1086.0));
+        assert_eq!(&widths[..6], &COLUMNS[..6], "앞 여섯 열은 그대로다");
+
+        // 합이 표 폭을 넘으면 저장 폭 그대로 그리고 오른쪽이 잘린다(가로 스크롤 없음)
+        let widths = columns.effective(800.0);
+        assert_eq!(widths, COLUMNS);
+    }
+
+    #[test]
+    fn 경계_드래그는_왼쪽_열을_바꾸고_하한을_지킨다() {
+        // plan D6 — 경계 k는 열 k−1의 폭을 바꾼다. 마지막 열은 핸들이 없어 여기 오지 않는다
+        let mut columns = QueueColumns::default();
+        columns.apply_drag(4, 30.0);
+        assert_eq!(columns.effective(2000.0)[4], 84.0 + 30.0);
+
+        // 최소 폭 아래로는 줄지 않는다
+        columns.apply_drag(4, -1000.0);
+        assert_eq!(
+            columns.effective(2000.0)[4],
+            crate::ui::list_details::MIN_COL_WIDTH
+        );
+
+        // **기본이 하한보다 좁은 열은 그 기본값이 하한**이다 — `방향`(34px)을 40px로 올리면
+        // 저장했다 되살릴 때 화면이 넓어진다
+        columns.apply_drag(0, -1000.0);
+        assert_eq!(columns.effective(2000.0)[0], 34.0);
+    }
+
+    #[test]
+    fn 열_폭이_세션을_왕복한다() {
+        // FR-11 — 파일 목록 열 폭과 같은 관례
+        let mut columns = QueueColumns::default();
+        columns.apply_drag(1, 40.0);
+        let back = QueueColumns::from_saved(&columns.to_saved());
+        assert_eq!(back, columns);
+
+        // 저장된 것이 없으면 기본값이다(옛 세션 파일)
+        assert_eq!(QueueColumns::from_saved(&[]), QueueColumns::default());
+        // 개수가 모자라면 앞에서부터 받고 나머지는 기본값
+        let 부분 = QueueColumns::from_saved(&[50.0, 60.0]);
+        assert_eq!(부분.to_saved()[..2], [50.0, 60.0]);
+        assert_eq!(부분.to_saved()[2..], COLUMNS[2..]);
+        // 유한하지 않은 값은 그 자리만 되돌리고, 하한 미만은 하한으로 올린다
+        let 손상 = QueueColumns::from_saved(&[f32::NAN, 5.0]);
+        assert_eq!(손상.to_saved()[0], COLUMNS[0]);
+        assert_eq!(손상.to_saved()[1], crate::ui::list_details::MIN_COL_WIDTH);
+        // `방향`은 기본 34px이 곧 하한이라 그 값으로 되살아난다(왕복이 깨지지 않는다)
+        assert_eq!(QueueColumns::from_saved(&[34.0]).to_saved()[0], 34.0);
     }
 
     #[test]

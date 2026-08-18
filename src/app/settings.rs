@@ -243,6 +243,13 @@ pub struct DockSession {
     /// 큐 화면의 거르개 키
     #[serde(default)]
     pub filter: String,
+    /// 큐 표의 열 폭 일곱 개 (FR-11).
+    ///
+    /// **필드가 없는 옛 파일도 그대로 읽혀야 하므로 `default`를 쓴다** — 스키마 버전을 올리면
+    /// `parse_session`이 통째로 폴백해 워크스페이스·분할·탭까지 초기화된다
+    /// (`PanelSession::columns`와 같은 이유)
+    #[serde(default)]
+    pub columns: Vec<f32>,
 }
 
 /// 사이드바 표시 상태 (FR-19·FR-20) — 창 내부 상태 타입 `sidebar::SidebarState`와 구분해 `Session` 접미사
@@ -840,6 +847,7 @@ mod tests {
         session.dock = DockSession {
             panel: "log".to_owned(),
             filter: "error".to_owned(),
+            columns: vec![34.0, 300.0, 300.0, 120.0, 84.0, 118.0, 150.0],
         };
 
         let text = serde_json::to_string(&session).expect("직렬화");

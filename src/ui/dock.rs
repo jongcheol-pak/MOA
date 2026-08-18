@@ -63,6 +63,8 @@ pub struct DockState {
     /// **로그 화면도 이 값을 쓴다** — 그 사이트의 연결 로그를 보인다. 두 화면이 같은 줄을
     /// 쓰므로 고른 것도 하나다(디자인 `:272-276` — 탭 줄은 도크에 하나뿐)
     pub site: Option<SiteId>,
+    /// 큐 표의 열 폭 (FR-11 세션 저장) — 도크는 앱에 하나뿐이라 여기가 제자리다
+    pub columns: crate::ui::queue_panel::QueueColumns,
 }
 
 /// 세션 파일에 적히는 키 — 열거형 이름이 바뀌어도 저장 형식은 그대로여야 한다
@@ -83,6 +85,7 @@ impl Default for DockState {
             panel: None,
             filter: QueueFilter::All,
             site: None,
+            columns: crate::ui::queue_panel::QueueColumns::default(),
         }
     }
 }
@@ -103,6 +106,7 @@ impl DockState {
                 QueueFilter::Error => FILTER_ERROR,
             }
             .to_owned(),
+            columns: self.columns.to_saved(),
         }
     }
 
@@ -120,6 +124,7 @@ impl DockState {
                 _ => QueueFilter::All,
             },
             site: None,
+            columns: crate::ui::queue_panel::QueueColumns::from_saved(&saved.columns),
         }
     }
 

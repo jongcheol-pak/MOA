@@ -779,19 +779,28 @@ mod tests {
 
     #[test]
     fn 도크_상태가_왕복한다() {
+        let mut columns = crate::ui::dock::DockState::default().columns;
+        columns = crate::ui::queue_panel::QueueColumns::from_saved(&{
+            let mut widths = columns.to_saved();
+            widths[1] = 333.0;
+            widths
+        });
         let saved = crate::ui::dock::DockState {
             panel: Some(crate::ui::dock::DockPanel::Log),
             filter: crate::remote::queue::QueueFilter::Error,
             site: Some(SiteId(3)),
+            columns,
         }
         .to_session();
         assert_eq!(saved.panel, "log");
         assert_eq!(saved.filter, "error");
+        assert_eq!(saved.columns[1], 333.0, "큐 열 폭도 함께 담긴다");
         let back = crate::ui::dock::DockState::from_session(&saved);
         assert_eq!(back.panel, Some(crate::ui::dock::DockPanel::Log));
         assert_eq!(back.filter, crate::remote::queue::QueueFilter::Error);
         // 사이트 고르기는 담지 않는다 — 연결 없이 시작하므로 가리킬 곳이 없다
         assert_eq!(back.site, None);
+        assert_eq!(back.columns, columns, "열 폭은 되살아난다");
     }
 
     #[test]
