@@ -108,6 +108,17 @@ pub enum QueueFilter {
     Error,
 }
 
+impl QueueFilter {
+    /// 이 거르개에 걸리는가 — `filter`·`count`·`counts_by_site` 셋이 같은 판정을 쓴다
+    fn matches(self, state: &TransferState) -> bool {
+        match self {
+            QueueFilter::All => true,
+            QueueFilter::Done => state.is_done(),
+            QueueFilter::Error => state.is_error(),
+        }
+    }
+}
+
 /// 상태 표시줄·큐 머리글이 쓰는 요약 (인벤토리 #54)
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueueSummary {
@@ -255,11 +266,7 @@ impl TransferQueue {
     pub fn filter(&self, filter: QueueFilter) -> Vec<&TransferItem> {
         self.items
             .iter()
-            .filter(|item| match filter {
-                QueueFilter::All => true,
-                QueueFilter::Done => item.state.is_done(),
-                QueueFilter::Error => item.state.is_error(),
-            })
+            .filter(|item| filter.matches(&item.state))
             .collect()
     }
 
@@ -267,11 +274,7 @@ impl TransferQueue {
     pub fn count(&self, filter: QueueFilter) -> usize {
         self.items
             .iter()
-            .filter(|item| match filter {
-                QueueFilter::All => true,
-                QueueFilter::Done => item.state.is_done(),
-                QueueFilter::Error => item.state.is_error(),
-            })
+            .filter(|item| filter.matches(&item.state))
             .count()
     }
 
@@ -316,10 +319,15 @@ impl TransferQueue {
         (total > 0).then(|| (sent as f32 / total as f32).clamp(0.0, 1.0))
     }
 
-    /// 사이트별 건수 — 연결별 탭의 `(N)`이다 (인벤토리 #36)
-    pub fn counts_by_site(&self) -> HashMap<SiteId, usize> {
+    /// 사이트별 건수 — 연결별 탭의 `(N)`이다 (인벤토리 #36).
+    ///
+    /// **거르개를 함께 받는다** — `성공` 탭을 보는데 아래 줄이 전체 건수를 적으면
+    /// 목록이 비어 있는데 `(1)`이 서 있게 된다 (2026-08-18 사용자 보고).
+    /// 탭에 어떤 사이트가 서는지(멤버십)는 이 건수로 정하지 않는다 — 그것까지 걸러 내면
+    /// 그 거르개에 항목이 없는 서버가 탭에서 통째로 사라진다(호출부가 `All`로 따로 구한다)
+    pub fn counts_by_site(&self, filter: QueueFilter) -> HashMap<SiteId, usize> {
         let mut counts = HashMap::new();
-        for item in &self.items {
+        for item in self.items.iter().filter(|item| filter.matches(&item.state)) {
             *counts.entry(item.site).or_insert(0) += 1;
         }
         counts
@@ -507,10 +515,66 @@ mod tests {
             1,
         );
 
-        let counts = queue.counts_by_site();
+        let counts = queue.counts_by_site(QueueFilter::All);
         assert_eq!(counts.get(&site(1)), Some(&3));
         assert_eq!(counts.get(&site(2)), Some(&1));
         assert_eq!(counts.values().sum::<usize>(), queue.len());
+    }
+
+    #[test]
+    fn 사이트별_건수가_거르개를_따른다() {
+        // 2026-08-18 — `성공` 탭인데 아래 줄이 전체 건수를 적던 것을 고친다
+        let mut queue = TransferQueue::new();
+        let 실패 = queue.enqueue(
+            site(1),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:"),
+            RemotePath::new("/a"),
+            1,
+        );
+        let 완료 = queue.enqueue(
+            site(1),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:"),
+            RemotePath::new("/b"),
+            1,
+        );
+        queue.update(
+            실패,
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        );
+        queue.update(완료, TransferState::Done);
+
+        assert_eq!(
+            queue.counts_by_site(QueueFilter::All).get(&site(1)),
+            Some(&2)
+        );
+        assert_eq!(
+            queue.counts_by_site(QueueFilter::Done).get(&site(1)),
+            Some(&1)
+        );
+        assert_eq!(
+            queue.counts_by_site(QueueFilter::Error).get(&site(1)),
+            Some(&1)
+        );
+        // 거르개에 하나도 안 걸리면 그 사이트 자리 자체가 없다 —
+        // 탭을 세우는 쪽은 `All` 집계를 따로 봐야 한다(호출부 규약)
+        let mut 완료만 = TransferQueue::new();
+        let 그것 = 완료만.enqueue(
+            site(2),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:\c"),
+            RemotePath::new("/c"),
+            1,
+        );
+        완료만.update(그것, TransferState::Done);
+        assert!(
+            !완료만
+                .counts_by_site(QueueFilter::Error)
+                .contains_key(&site(2))
+        );
     }
 
     #[test]
@@ -629,7 +693,7 @@ mod tests {
         assert!(queue.is_empty());
         assert_eq!(queue.count(QueueFilter::All), 0);
         assert_eq!(queue.overall_progress(), None);
-        assert!(queue.counts_by_site().is_empty());
+        assert!(queue.counts_by_site(QueueFilter::All).is_empty());
         let summary = queue.summary();
         assert_eq!(summary.pending, 0);
         assert_eq!(summary.eta_secs, None);

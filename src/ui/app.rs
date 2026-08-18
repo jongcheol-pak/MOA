@@ -1179,12 +1179,14 @@ impl ExplorerApp {
                         body.min,
                         egui::vec2(body.width(), queue_panel::SITE_ROW_HEIGHT),
                     );
+                    // 로그 화면에서는 건수를 적지 않는다 — 셀 대상이 없다 (2026-08-18)
                     queue_panel::show_site_tabs(
                         &mut dock_ui,
                         site_row,
                         &mut self.dock,
                         &view,
                         &self.sites,
+                        false,
                     );
                     // 지금 보고 있는 연결의 로그를 그린다 — 연결이 없으면 빈 화면이다
                     let body = egui::Rect::from_min_max(

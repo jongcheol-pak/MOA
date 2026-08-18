@@ -189,7 +189,7 @@ pub fn show_queue(
     sites: &SiteStore,
 ) -> Option<QueueAction> {
     let site_row = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), SITE_ROW_HEIGHT));
-    show_site_tabs(ui, site_row, state, view, sites);
+    show_site_tabs(ui, site_row, state, view, sites, true);
 
     let header = egui::Rect::from_min_size(
         egui::pos2(rect.left(), site_row.bottom()),
@@ -238,13 +238,17 @@ pub fn show_queue(
     action
 }
 
-/// 연결별 탭 한 줄 (인벤토리 #35·#36) — **큐와 로그가 함께 쓴다**(도크에 줄은 하나다)
+/// 연결별 탭 한 줄 (인벤토리 #35·#36) — **큐와 로그가 함께 쓴다**(도크에 줄은 하나다).
+///
+/// `show_counts`가 꺼지면 이름만 적는다 — 로그 화면에는 셀 대상이 없어 `(N)`이 붙으면
+/// 그 수가 무엇의 개수인지 알 수 없다 (2026-08-18 사용자 결정)
 pub fn show_site_tabs(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     state: &mut DockState,
     view: &DockView<'_>,
     sites: &SiteStore,
+    show_counts: bool,
 ) {
     ui.painter().rect_filled(rect, 0.0, theme::SURFACE_BG);
     ui.painter().line_segment(
@@ -258,15 +262,18 @@ pub fn show_site_tabs(
     // `전체` 다음에 **큐에 항목이 있거나 지금 연결된** 사이트들이 온다.
     // 원본은 큐에서만 이름을 모으지만(`:722`), 그러면 연결만 하고 아직 아무것도 옮기지 않은
     // 서버가 탭에 없어 고를 수 없다 (2026-08-05 사용자 보고)
-    let counts = view.queue.counts_by_site();
+    // **멤버십과 건수를 따로 센다** — 멤버십까지 거르면 그 거르개에 항목이 없는 서버가
+    // 탭에서 사라져, `성공` 탭에서 실패만 있는 서버를 고를 수 없게 된다
+    let members = view.queue.counts_by_site(QueueFilter::All);
+    let counts = view.queue.counts_by_site(state.filter);
     let mut order: Vec<SiteId> = sites
         .sites()
         .iter()
         .map(|record| record.id)
-        .filter(|id| counts.contains_key(id) || view.connected.contains(id))
+        .filter(|id| members.contains_key(id) || view.connected.contains(id))
         .collect();
     // 저장소에 없는 사이트의 항목도 빠뜨리지 않는다(지운 사이트의 잔여 전송)
-    let mut extra: Vec<SiteId> = counts
+    let mut extra: Vec<SiteId> = members
         .keys()
         .copied()
         .chain(view.connected.iter().copied())
@@ -277,7 +284,18 @@ pub fn show_site_tabs(
     order.append(&mut extra);
 
     let mut left = rect.left() + SITE_ROW_PAD_X;
-    let all_label = format!("{} ({})", crate::i18n::queue_filter_all(), view.queue.len());
+    // 건수는 지금 고른 거르개를 따른다 — `전체` 탭도 큐 전량이 아니라 그 거르개의 수다
+    let label_with_count = |name: &str, count: usize| {
+        if show_counts {
+            format!("{name} ({count})")
+        } else {
+            name.to_owned()
+        }
+    };
+    let all_label = label_with_count(
+        crate::i18n::queue_filter_all(),
+        view.queue.count(state.filter),
+    );
     let tabs: Vec<(Option<SiteId>, String)> = std::iter::once((None, all_label))
         .chain(order.into_iter().map(|id| {
             let name = sites
@@ -286,7 +304,7 @@ pub fn show_site_tabs(
                 .unwrap_or_else(|| crate::i18n::dynamic::queue_site_fallback(id.0));
             (
                 Some(id),
-                format!("{name} ({})", counts.get(&id).unwrap_or(&0)),
+                label_with_count(&name, *counts.get(&id).unwrap_or(&0)),
             )
         }))
         .collect();
@@ -738,7 +756,7 @@ mod tests {
                     ui.max_rect().min,
                     egui::vec2(900.0, SITE_ROW_HEIGHT),
                 );
-                show_site_tabs(ui, rect, &mut state, &view, &sites);
+                show_site_tabs(ui, rect, &mut state, &view, &sites, true);
             });
         });
         for clipped in &output.shapes {
@@ -762,6 +780,79 @@ mod tests {
         assert!(
             !texts.iter().any(|text| text.starts_with("legacy")),
             "연결도 전송도 없는 사이트가 탭에 섰다: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn 연결별_탭_건수가_거르개를_따르고_로그에서는_사라진다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        // 사용자 보고(2026-08-18): `성공` 탭인데 아래 줄이 `전체 (1) · LG (1)`이었다
+        let mut sites = SiteStore::new();
+        let lg = sites.add("LG");
+        let mut queue = TransferQueue::new();
+        let 실패 = queue.enqueue(
+            lg,
+            TransferDirection::Upload,
+            PathBuf::from(r"C:"),
+            RemotePath::new("/a"),
+            1,
+        );
+        queue.update(
+            실패,
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        );
+        // 연결은 없다 — 그래도 큐에 항목이 있으니 탭 자리는 남아야 한다
+        let view = DockView {
+            queue: &queue,
+            failed: &[],
+            connected: &[],
+        };
+
+        let 그린다 = |filter: QueueFilter, show_counts: bool| {
+            let mut state = DockState {
+                filter,
+                ..DockState::default()
+            };
+            let ctx = egui::Context::default();
+            let mut texts = Vec::new();
+            let output = ctx.run_ui(Default::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let rect = egui::Rect::from_min_size(
+                        ui.max_rect().min,
+                        egui::vec2(900.0, SITE_ROW_HEIGHT),
+                    );
+                    show_site_tabs(ui, rect, &mut state, &view, &sites, show_counts);
+                });
+            });
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(text) = &clipped.shape {
+                    texts.push(text.galley.text().to_owned());
+                }
+            }
+            texts
+        };
+
+        let 실패_탭 = 그린다(QueueFilter::Error, true);
+        assert!(실패_탭.contains(&"전체 (1)".to_owned()), "{실패_탭:?}");
+        assert!(실패_탭.contains(&"LG (1)".to_owned()), "{실패_탭:?}");
+
+        let 성공_탭 = 그린다(QueueFilter::Done, true);
+        assert!(성공_탭.contains(&"전체 (0)".to_owned()), "{성공_탭:?}");
+        assert!(
+            성공_탭.contains(&"LG (0)".to_owned()),
+            "성공 0건이어도 LG 탭은 남고 건수만 0이어야 한다: {성공_탭:?}"
+        );
+
+        // 로그 화면 — 셀 대상이 없어 건수를 적지 않는다
+        let 로그 = 그린다(QueueFilter::All, false);
+        assert!(로그.contains(&"전체".to_owned()), "{로그:?}");
+        assert!(로그.contains(&"LG".to_owned()), "{로그:?}");
+        assert!(
+            !로그.iter().any(|text| text.contains('(')),
+            "로그 화면에 건수가 남았다: {로그:?}"
         );
     }
 }
