@@ -7,7 +7,6 @@
 //! **버퍼를 고치지 않는다** — 읽어서 그리고, `⧉`(복사)는 값으로 돌려준다.
 //! 비밀번호 가리기는 이미 버퍼에 들어가기 전에 끝나 있다(D14·T5) — 여기서 다시 하지 않는다.
 use crate::remote::log::{LogBuffer, LogKind};
-use crate::ui::list_common::elided_galley_colored;
 use crate::ui::theme;
 use eframe::egui;
 
@@ -76,7 +75,11 @@ pub fn show_log(ui: &mut egui::Ui, rect: egui::Rect, log: &LogBuffer) {
         });
 }
 
-/// 한 줄 — 시각 · 종류 · 본문
+/// 한 줄 — 시각 · 종류 · 본문.
+///
+/// 세 열을 **라벨로 놓는다** — `painter`로 그리면 위젯이 아니라 마우스로 끌어 고를 수 없다
+/// (2026-08-18 사용자 요청). egui는 여러 라벨에 걸친 선택을 스스로 이어 주므로, 한 줄의 세
+/// 열은 공백으로 다음 줄은 개행으로 이어져 복사된다
 fn show_line(ui: &mut egui::Ui, line: &crate::remote::log::LogLine) {
     let (color, background) = kind_colors(line.kind);
     let (rect, _) = ui.allocate_exact_size(
@@ -86,37 +89,65 @@ fn show_line(ui: &mut egui::Ui, line: &crate::remote::log::LogLine) {
     if let Some(background) = background {
         ui.painter().rect_filled(rect, 0.0, background);
     }
-    let font = egui::FontId::monospace(FONT_PX);
-    let left = rect.left() + PAD_X;
-    ui.painter().text(
-        egui::pos2(left, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+    // 열 자리는 **절대 좌표로 잡는다** — 커서 배치(`add_sized`·`allocate_ui_with_layout`)는
+    // 위젯을 셀 가운데에 놓거나 내용 크기만큼만 차지해 열 x가 밀린다
+    // (2026-08-18 실측: 시각 10 → 41 / 10, 종류 82 → 104 / 20). 원본 치수는
+    // 시각 10 · 종류 82 · 본문 136이며 이 계산이 그것을 그대로 낸다
+    let time_left = rect.left() + PAD_X;
+    let kind_left = time_left + TIME_WIDTH + COLUMN_GAP;
+    let text_left = kind_left + KIND_WIDTH + COLUMN_GAP;
+    selectable_cell(
+        ui,
+        egui::pos2(time_left, rect.top()),
+        TIME_WIDTH,
         &line.time,
-        font.clone(),
         theme::TEXT_MUTED,
     );
-    ui.painter().text(
-        egui::pos2(left + TIME_WIDTH + COLUMN_GAP, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+    selectable_cell(
+        ui,
+        egui::pos2(kind_left, rect.top()),
+        KIND_WIDTH,
         line.kind.label(),
-        font.clone(),
         color,
     );
-    // 본문은 길어도 줄바꿈하지 않는다 — 행 높이가 고정이라 두 줄이 되면 아래 줄과 겹친다.
-    // **색은 종류와 무관하게 `#B4B4B4` 하나다** — 원본이 본문 span에 고정색을 준다(`:313`).
+    // **본문 색은 종류와 무관하게 하나다** — 원본이 본문 span에 고정색을 준다(`:313`).
     // 종류별 색은 앞의 종류 열에만 붙는다
-    let text_left = left + TIME_WIDTH + COLUMN_GAP + KIND_WIDTH + COLUMN_GAP;
-    let galley = elided_galley_colored(
-        ui.painter(),
-        line.text.clone(),
-        font,
-        (rect.right() - PAD_X - text_left).max(0.0),
+    selectable_cell(
+        ui,
+        egui::pos2(text_left, rect.top()),
+        rect.right() - PAD_X - text_left,
+        &line.text,
         theme::TEXT_LOG,
     );
-    ui.painter().galley(
-        egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
-        galley,
-        theme::TEXT_LOG,
+}
+
+/// 열 한 칸 — 그 자리에 **고를 수 있는 라벨** 하나를 놓는다.
+///
+/// 길어도 줄바꿈하지 않는다(행 높이가 고정이라 두 줄이 되면 아래 줄과 겹친다).
+/// 잘려 보여도 **전체를 고르면 원문이 복사된다** — egui가 갤리의 원문을 준다
+fn selectable_cell(
+    ui: &mut egui::Ui,
+    at: egui::Pos2,
+    width: f32,
+    text: &str,
+    color: egui::Color32,
+) {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_size(
+                at,
+                egui::vec2(width.max(0.0), LINE_HEIGHT),
+            ))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .font(egui::FontId::monospace(FONT_PX))
+                .color(color),
+        )
+        .selectable(true)
+        .truncate(),
     );
 }
 
@@ -192,6 +223,54 @@ mod tests {
         assert_ne!(
             kind_colors(LogKind::Error).0,
             kind_colors(LogKind::Status).0
+        );
+    }
+
+    #[test]
+    fn 로그_줄은_고를_수_있는_라벨이고_열_x가_원본과_같다() {
+        // 2026-08-18 사용자 요청 — `painter`로 그리면 위젯이 아니라 끌어서 고를 수 없다.
+        // 라벨로 바꾸면서 열 x가 밀리지 않았는지 함께 본다(시각 10 · 종류 82 · 본문 136)
+        let mut log = LogBuffer::new();
+        log.push(LogKind::Response, "226 Transfer complete");
+        let ctx = egui::Context::default();
+        let mut texts: Vec<(String, f32)> = Vec::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 100.0));
+                show_log(ui, rect, &log);
+            });
+        });
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                texts.push((text.galley.text().to_owned(), text.pos.x));
+            }
+        }
+        let 찾는다 = |조각: &str| {
+            texts
+                .iter()
+                .find(|(text, _)| text.contains(조각))
+                .map(|(_, x)| *x)
+                .unwrap_or_else(|| panic!("`{조각}`이 그려지지 않았다: {texts:?}"))
+        };
+        assert_eq!(찾는다("응답:"), PAD_X + TIME_WIDTH + COLUMN_GAP);
+        assert_eq!(
+            찾는다("226"),
+            PAD_X + TIME_WIDTH + COLUMN_GAP + KIND_WIDTH + COLUMN_GAP
+        );
+        // 시각은 `HH:MM:SS`라 내용을 단정하지 않고 자리만 본다
+        assert!(
+            texts.iter().any(|(_, x)| (*x - PAD_X).abs() < 0.01),
+            "시각 열이 왼쪽 여백 자리에 없다: {texts:?}"
+        );
+
+        // 끌어서 고르는 것은 egui의 라벨 선택이 맡는다 — 그 스위치가 꺼지면 라벨로 바꿔도
+        // 소용없다. 앱이 나중에 그것을 끄면 여기서 붉어진다
+        let interaction = ctx.style_of(egui::Theme::Dark).interaction.clone();
+        assert!(interaction.selectable_labels, "라벨 선택이 꺼져 있다");
+        assert!(
+            interaction.multi_widget_text_select,
+            "여러 줄에 걸친 선택이 꺼져 있다"
         );
     }
 
