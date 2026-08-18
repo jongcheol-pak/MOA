@@ -304,7 +304,7 @@
     - (ii-a) 공개 열거형 `Command`에 variant 추가 → `## 사전 승인 항목`
   - **Depends on**: T3
 
-- [ ] T5. 문서를 실제와 맞춘다
+- [x] T5. 문서를 실제와 맞춘다
   - **Type**: A
   - **Acceptance**:
     - `docs/prd.md`에 **FR-57**(오픈소스 라이선스 화면, Should)이 신설된다.

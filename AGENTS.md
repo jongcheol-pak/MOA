@@ -17,6 +17,7 @@
 - **Lint**: `cargo clippy --all-targets -- -D warnings`
 - **Format check**: `cargo fmt --check`
 - **Format**: `cargo fmt`
+- **라이선스 자산 재생성**: `cargo run --example gen_licenses` — 의존성을 더하거나 버전을 올린 뒤 반드시 돌린다. `assets/licenses.json`이 낡으면 `Cargo.lock` 지문 대조 시험이 실패한다
 
 ## 데이터 접근
 - **DB/스토어**: 없음 (`%APPDATA%\MOA\settings.json` 로컬 파일 하나에 **세션 + 앱 설정**을 함께 담는다 — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
@@ -40,6 +41,11 @@
 ├── Cargo.toml
 ├── docs/
 │   └── prd.md               # 승인된 PRD (요구사항 정본)
+├── assets/                  # 실행 파일에 담기는 생성물·원문 (커밋 대상)
+│   ├── licenses.json        # 라이선스 고지 자산 — 생성기가 만든다 (손으로 고치지 않는다)
+│   └── spdx/                # SPDX 표준 전문 — 배포 패키지에 원문이 없는 구성 요소에 쓴다
+├── examples/
+│   └── gen_licenses.rs      # 라이선스 자산 생성기 (개발용 — `cargo build`가 빌드하지 않는다)
 ├── src/
 │   ├── main.rs              # 진입점 — COM 초기화, 세션 로드, egui 창 실행
 │   ├── ui/                  # egui(eframe/glow) UI 계층 — 화면·입력 전부
@@ -57,6 +63,7 @@
 ## 산출물·파일 관리
 - **빌드 산출물**: `target/` (gitignore)
 - **런타임 생성물**: `%APPDATA%\MOA\settings.json` (설정·세션)
+- **커밋되는 생성물**: `assets/licenses.json` — `examples/gen_licenses.rs`가 만들며 **손으로 고치지 않는다**. 레지스트리 캐시를 훑어 만들므로 생성은 개발 PC에서만 하고, 빌드·시험은 그 결과만 읽는다(네트워크·캐시 비의존)
 
 ## Conventions
 - **아키텍처**: 계층형(단일 crate) — 모듈로만 분리 (ui / app / panel / fs). 의존은 단방향이며 `ui`만 상위다: `app`·`panel`·`fs`는 `ui`를 모른다. GUI 도구로 도메인 규칙이 얇아 crate 분리는 하지 않는다.
@@ -71,6 +78,7 @@
   - **예외**: 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`), 서버·파일시스템에서 온 문자열을 살피는 낱말, 개발자에게만 보이는 단언·오류 메시지. 앞의 둘은 화면 언어를 따르면 **동작이 틀어진다**
   - **시험**: 카탈로그 값을 단언할 때 **기대값은 언제나 원문 리터럴**이고, 그 시험은 `i18n::LanguageGuard::lock`으로 언어를 잠근다. 기대값에 카탈로그를 부르면 값이 무엇으로 바뀌어도 통과하고, 잠그지 않으면 병렬 실행에서 다른 시험이 바꾼 언어를 만난다
 - **모달 대화**: **`ui::dialog`의 셸을 거친다** — `egui::Modal`을 직접 쓰지 않는다. 프레임(모서리 12px·여백 0·스크림·그림자)과 하단 버튼 줄(전폭 균등 분할·구분선·hover 채움·굵은 주 버튼)이 그 모듈 한 곳에 있고, 대화는 본문만 그린다. 높이를 본문이 정하면 `show`(본문 폭을 준다), 대화가 자기 크기를 스스로 잡으면 `show_fixed`(프레임 크기를 준다)를 쓴다. 직접 쓰면 팝업 모양이 다시 제각각이 되므로 규약은 `ui::dialog`의 소스 훑기 테스트(`대화는_모두_이_모듈을_거친다`)가 지킨다
+- **예제 타깃(`examples/`)**: 개발용 CLI라 **stdout/stderr 출력을 허용**하고 `fn main() -> Result<_, String>`으로 오류를 종료 코드에 싣는다 (아래 DO NOT의 `println!` 금지는 콘솔 창이 없는 **GUI 실행 파일**을 겨냥한 것이다 — 예제에는 오류를 알릴 다른 수단이 없다). `unwrap`·`expect` 금지는 예제에도 그대로 적용된다
 - **파일**: 1500라인 내외, UTF-8, 주석은 한글
 
 ## DO NOT
