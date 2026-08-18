@@ -11,7 +11,7 @@
 //!
 //! 예제 타깃이라 화면 출력과 `main -> Result`를 쓴다(GUI 프로덕션의 `println!` 금지는 콘솔
 //! 창이 없는 exe를 겨냥한 것이고, 개발용 CLI에는 오류를 알릴 수단이 필요하다).
-use moa::app::licenses::{CrateEntry, LicenseData, LicenseText, SCHEMA_VERSION};
+use moa::app::licenses::{CrateEntry, LicenseData, LicenseText, MIN_LICENSE_BYTES, SCHEMA_VERSION};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,16 +21,6 @@ const TARGET: &str = "x86_64-pc-windows-msvc";
 
 /// 라이선스 원문으로 볼 파일 이름의 머리 — 대소문자를 가리지 않는다
 const LICENSE_PREFIXES: [&str; 5] = ["license", "licence", "copying", "notice", "unlicense"];
-
-/// 라이선스 원문으로 볼 **최소 길이**(바이트).
-///
-/// 이름이 `LICENSE`인데 내용은 원문이 아닌 파일이 있다 — `harfrust`의 것은 워크스페이스
-/// 상위를 가리키는 `../LICENSE` 열 바이트이고, `aho-corasick`의 `COPYING`은 "이 프로젝트는
-/// 이중 라이선스"라는 125바이트 안내다. 그대로 담으면 화면의 전문 자리에 그 한 줄만 뜬다.
-///
-/// 300바이트로 잡은 근거(2026-08-18 실측): 이 트리에서 가장 짧은 **진짜** 전문이 553B이고
-/// 걸러야 할 둘이 10B·125B다. 걸러진 크레이트는 SPDX 표준 전문 갈래로 넘어간다
-const MIN_LICENSE_BYTES: usize = 300;
 
 fn main() -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

@@ -326,7 +326,7 @@
     - (ii-a) PRD 문면 개정·`AGENTS.md` 수정 → `## 사전 승인 항목`
   - **Depends on**: T4
 
-- [ ] T6. 전문이 아닌 파일을 걸러 내고 라벨을 정돈한다 <!-- Phase F-7이 낸 자기 유발 결함 — 규칙 4-1에 따라 같은 루프에서 고친다 -->
+- [x] T6. 전문이 아닌 파일을 걸러 내고 라벨을 정돈한다 <!-- Phase F-7이 낸 자기 유발 결함 — 규칙 4-1에 따라 같은 루프에서 고친다 -->
   - **Type**: C
   - **Design**: ① 배치 — `examples/gen_licenses.rs`(수집·라벨)와 `src/app/licenses.rs`(시험·필드 doc). ② 신규 심볼과 책임 — `MIN_LICENSE_BYTES`(원문으로 볼 최소 길이), `label_of(file_name, spdx)`(인자가 하나 늘어 크레이트 선언을 폴백으로 쓴다), `normalize_label`(파일명 조각 → 표준 SPDX 표기). ③ 의존 방향 — 그대로(생성기 → `moa::app::licenses`). ④ 비추상화 — 라이선스 텍스트를 실제로 파싱해 종류를 알아내지 않는다(길이 하나로 스텁만 거른다).
   - **Acceptance**:

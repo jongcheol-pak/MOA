@@ -17,6 +17,19 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// exe에 담기는 자산 원본. 생성기가 이 파일을 덮어쓴다
 const ASSET: &str = include_str!("../../assets/licenses.json");
 
+/// 라이선스 원문으로 볼 **최소 길이**(바이트) — 생성기와 시험이 함께 쓴다.
+///
+/// 이름이 `LICENSE`인데 내용은 원문이 아닌 파일이 있다 — `harfrust`의 것은 워크스페이스
+/// 상위를 가리키는 `../LICENSE` 열 바이트이고, `aho-corasick`의 `COPYING`은 "이 프로젝트는
+/// 이중 라이선스"라는 125바이트 안내다. 그대로 담으면 화면의 전문 자리에 그 한 줄만 뜬다.
+///
+/// 300으로 잡은 근거(2026-08-18 실측): 이 트리에서 가장 짧은 **진짜** 전문이 553B이고
+/// 걸러야 할 둘이 10B·125B다. 걸러진 크레이트는 SPDX 표준 전문 갈래로 넘어간다.
+///
+/// **여기 두는 이유**: 거르는 쪽(생성기)과 확인하는 쪽(시험)이 같은 값을 봐야 한다 —
+/// 두 곳에 각각 적으면 생성기만 임계를 올렸을 때 그 사이 구간의 스텁이 조용히 남는다
+pub const MIN_LICENSE_BYTES: usize = 300;
+
 /// 고지 자산 전체.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LicenseData {
@@ -228,11 +241,9 @@ mod tests {
     /// 여기서 길이로 그 규칙을 못 박는다
     #[test]
     fn 전문에_길이가_짧은_스텁이_섞여_있지_않다() {
-        /// 생성기의 `MIN_LICENSE_BYTES`와 같은 값 — 어느 표준 라이선스도 이보다 길다
-        const MIN_BYTES: usize = 300;
         for text in &load().texts {
             assert!(
-                text.body.trim().len() >= MIN_BYTES,
+                text.body.trim().len() >= MIN_LICENSE_BYTES,
                 "{}의 전문이 {}바이트뿐이다 — 원문이 아니라 스텁일 수 있다: {:?}",
                 text.spdx,
                 text.body.trim().len(),
