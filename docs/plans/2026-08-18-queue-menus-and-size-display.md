@@ -242,7 +242,7 @@
     - (ii-a) `panel::file_list`의 공개 함수 제거·신설(계획된 시그니처 변경) → `## 사전 승인 항목`
   - **Depends on**: -
 
-- [ ] T2. 연결별 탭 건수가 지금 필터를 따른다
+- [x] T2. 연결별 탭 건수가 지금 필터를 따른다
   - **Type**: C
   - **Design**: ① `remote::queue::TransferQueue::counts_by_site`에 `filter: QueueFilter` 인자를 더해 그 필터에 걸리는 것만 센다(같은 파일 안의 `filter`/`count`와 같은 판정식). ② **탭 멤버십과 라벨 건수를 서로 다른 집계로 구한다** — 지금은 `queue_panel.rs:285-301`이 `counts` 하나로 둘을 겸하는데(`counts.contains_key(id) || connected.contains(id)`), 거기에 필터를 먹이면 `성공` 탭에서 Done 0건인 사이트가 **탭에서 통째로 사라진다**. 멤버십은 `counts_by_site(QueueFilter::All)`로, 라벨 건수는 `counts_by_site(state.filter)`로 따로 구한다(두 호출). ③ `ui::queue_panel::show_site_tabs`에 `show_counts: bool`을 더해 로그 화면에서는 라벨에 `(N)`을 붙이지 않는다. ④ `전체` 탭의 수도 `queue.len()`이 아니라 `queue.count(filter)`로 바꾼다. ⑤ 비추상화 선언 — "탭 라벨 만들기"를 별도 타입으로 뽑지 않는다(포맷 두 줄이다).
   - **Acceptance**: ① Given 큐에 LG의 실패 1건뿐이고 **LG에 연결돼 있지 않음**, When `성공` 탭을 볼 때, Then 아래 줄이 `전체 (0)`·`LG (0)`으로 선다(LG 탭이 사라지지 않는다 — Design ②) ② Given 같은 상태, When `실패` 탭을 볼 때, Then `전체 (1)`·`LG (1)` ③ Given 같은 상태, When `서버 로그` 탭을 볼 때, Then 아래 줄이 `전체`·`LG`로 **건수 없이** 선다 ④ 탭을 누르는 사이 건수가 바뀌어도 클릭이 씹히지 않는다(위젯 id는 여전히 `SiteId`로 잡는다 — 위키 함정) ⑤ `cargo test` 전건 통과
@@ -371,6 +371,11 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T1-T2 완료 (커밋 edfde56, 다음): 크기 표기를 `panel::file_list::format_size` 한 벌로 접고(소수 둘째자리 + KB/MB/GB 자동, 큐만 `0 → —`), 연결별 탭 건수가 상단 필터를 따르게 했다. 826건 통과.
+  - 결정: `filter`·`count`·`counts_by_site` 세 곳의 같은 match를 `QueueFilter::matches`로 뽑았다(3회 문턱 도달 — plan 미명시였으나 두 리뷰어 모두 정당하다고 판정).
+  - 함정: 연결별 탭은 **멤버십과 건수를 다른 집계로** 구해야 한다 — 하나로 겸하면 그 필터에 항목이 없는 서버가 탭에서 사라진다.
+  - 관측: `remote::connection::tests::한_연결이_막혀도_다른_연결은_계속_처리된다`가 전체 실행에서 1회 간헐 실패 → 단독 통과. `deferred.md`에 등재된 시간 마감(2초) 의존 시험이며 이번 변경과 무관(그 파일은 diff에 없다).
 
 ## Next Steps
 
