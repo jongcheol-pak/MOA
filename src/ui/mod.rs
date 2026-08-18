@@ -10,6 +10,7 @@ pub mod dock;
 pub mod file_list;
 pub mod font_scan;
 pub mod icon_tex;
+pub mod license_dialog;
 pub mod list_common;
 pub mod list_details;
 pub mod list_grid;
