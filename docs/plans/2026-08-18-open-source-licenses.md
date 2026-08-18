@@ -326,6 +326,28 @@
     - (ii-a) PRD 문면 개정·`AGENTS.md` 수정 → `## 사전 승인 항목`
   - **Depends on**: T4
 
+- [ ] T6. 전문이 아닌 파일을 걸러 내고 라벨을 정돈한다 <!-- Phase F-7이 낸 자기 유발 결함 — 규칙 4-1에 따라 같은 루프에서 고친다 -->
+  - **Type**: C
+  - **Design**: ① 배치 — `examples/gen_licenses.rs`(수집·라벨)와 `src/app/licenses.rs`(시험·필드 doc). ② 신규 심볼과 책임 — `MIN_LICENSE_BYTES`(원문으로 볼 최소 길이), `label_of(file_name, spdx)`(인자가 하나 늘어 크레이트 선언을 폴백으로 쓴다), `normalize_label`(파일명 조각 → 표준 SPDX 표기). ③ 의존 방향 — 그대로(생성기 → `moa::app::licenses`). ④ 비추상화 — 라이선스 텍스트를 실제로 파싱해 종류를 알아내지 않는다(길이 하나로 스텁만 거른다).
+  - **Acceptance**:
+    - Given `harfrust`처럼 패키지의 `LICENSE`가 상위를 가리키는 **스텁**(`../LICENSE`, 10B)인 크레이트, When 자산을 다시 만든다, Then 그 항목은 **원문 없음**으로 판정돼 SPDX 표준 전문을 가리키고 `standard_text: true`가 된다.
+    - 자산의 모든 전문이 `MIN_LICENSE_BYTES` 이상이다(시험이 단언 — 개수만 세던 기존 시험은 길이도 함께 본다).
+    - 화면 라벨에 `apache-2`·`mit` 같은 파일명 조각이 남지 않는다 — 알려진 것은 표준 표기(`Apache-2.0`·`MIT`)로, `LICENSE`·`COPYING`처럼 종류를 알 수 없는 이름은 그 크레이트의 SPDX 선언으로 바뀐다.
+    - `LicenseData`의 필드 doc이 실제 내용과 맞는다(라벨이 늘 SPDX 식별자인 것은 아니다).
+    - 닫힌 상태에서 `LicenseDialog::show`를 불러도 아무것도 그리지 않는 것을 단위 시험이 잰다(T3 acceptance가 요구했으나 시험이 없었다 — F-7 m2).
+    - `cargo build` · `cargo test` · `cargo clippy --all-targets -- -D warnings` · `cargo fmt --check` 전부 경고 0.
+  - **Files**:
+    - 주: `examples/gen_licenses.rs`, `src/app/licenses.rs`
+    - 동반: `assets/licenses.json`(재생성), `src/ui/license_dialog.rs`(시험 추가)
+    - 테스트: `src/app/licenses.rs`·`src/ui/license_dialog.rs`의 `#[cfg(test)] mod tests`
+  - **Edge Cases**:
+    - 짧지만 진짜인 전문 — 실측 세 번째로 짧은 것이 553B라 임계 300B에 걸리지 않는다
+    - 이중 라이선스 안내문(`aho-corasick`의 125B "dual-licensed under…")도 걸러지지만 그 크레이트는 실제 전문 둘을 따로 갖고 있어 손실이 없다
+    - 걸러낸 뒤 표준 전문도 없는 SPDX면 T2가 이미 오류로 멈춘다
+  - **Halt Forecast**:
+    - (i) 임계값 근거 → 위 Edge Cases의 실측
+  - **Depends on**: T5
+
 ## 사전 승인 항목 (일괄 승인 대상)
 
 - **T1·T2 — `assets/`·`examples/` 디렉터리 신설**(구조 변경): 레포에 없던 두 디렉터리가 생기고 `assets/licenses.json`(≈400KB)·`assets/spdx/*.txt` 3개가 커밋된다. 되돌리려면 디렉터리 삭제 + `AGENTS.md`·`README.md` 되돌리기.
