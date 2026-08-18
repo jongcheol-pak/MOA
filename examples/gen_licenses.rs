@@ -221,13 +221,23 @@ fn read_license_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
         }
     };
     let mut files: Vec<(String, String)> = Vec::new();
-    for entry in entries.flatten() {
-        if !entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
-            continue;
+    for entry in entries {
+        // 열거 도중의 실패를 조용히 넘기면 그 크레이트가 「원문 없음」으로 판정돼 엉뚱하게
+        // 표준 전문으로 대체된다 — 무엇을 못 봤는지 반드시 알린다
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                println!("  건너뜀: {} 안의 항목 하나 ({err})", dir.display());
+                continue;
+            }
+        };
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => {}
+            Ok(_) => continue,
+            Err(err) => {
+                println!("  건너뜀: {:?} ({err})", entry.path());
+                continue;
+            }
         }
         let file_name = entry.file_name().to_string_lossy().to_string();
         let lower = file_name.to_lowercase();
@@ -257,7 +267,12 @@ fn label_of(file_name: &str) -> String {
 /// SPDX 식별자에 해당하는 표준 전문의 자리 번호들.
 ///
 /// `MIT OR Apache-2.0`처럼 여럿을 선언하면 그 전부를 담는다(선언 그대로 보이고 전문도
-/// 둘 다 보이게 한다 — 어느 쪽을 골랐는지 자산이 임의로 정하지 않는다)
+/// 둘 다 보이게 한다 — 어느 쪽을 골랐는지 자산이 임의로 정하지 않는다).
+///
+/// `assets/spdx/`의 세 파일은 레지스트리에서 가져왔다(`serde`의 LICENSE-APACHE ·
+/// `error-code`의 LICENSE는 그대로, `bitflags`의 LICENSE-MIT는 **첫 줄 저작권 표기만
+/// `<year> <copyright holders>` 플레이스홀더로 바꿔** 담았다 — 그러지 않으면 bitflags의
+/// 저작권자가 무관한 크레이트들의 고지에 오귀속된다)
 fn standard_indices(root: &Path, spdx: &str, pool: &mut TextPool) -> Result<Vec<usize>, String> {
     let mut indices = Vec::new();
     for id in split_spdx(spdx) {
