@@ -1033,7 +1033,10 @@ mod tests {
         assert_eq!(개수, (2, 2));
 
         // 숨김만 끄면 숨긴 폴더만 빠진다 — 시스템 파일은 제 토글이 켜져 있으므로 남는다
-        assert_eq!(본다(false, true).0, vec!["폴더", "pagefile.sys", "보통.txt"]);
+        assert_eq!(
+            본다(false, true).0,
+            vec!["폴더", "pagefile.sys", "보통.txt"]
+        );
 
         // 시스템만 끄면 그 반대다
         assert_eq!(본다(true, false).0, vec!["숨긴폴더", "폴더", "보통.txt"]);
@@ -1045,7 +1048,10 @@ mod tests {
 
         // 같은 값을 다시 주면 바뀌지 않았다고 알린다 — 매 프레임 폴더를 다시 읽으면 안 된다
         let mut v = FileListView::new();
-        assert!(v.set_hidden_rules(false, false), "값이 바뀌었는데 알리지 않았다");
+        assert!(
+            v.set_hidden_rules(false, false),
+            "값이 바뀌었는데 알리지 않았다"
+        );
         assert!(
             !v.set_hidden_rules(false, false),
             "안 바뀌었는데 바뀌었다고 한다"

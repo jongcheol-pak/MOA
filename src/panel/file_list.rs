@@ -1111,7 +1111,10 @@ mod tests {
         // 정렬 키는 확장자를 포함한 원본이다
         assert_eq!(
             a.name_sort_key().as_ref(),
-            "파일2.txt\0".encode_utf16().collect::<Vec<u16>>().as_slice()
+            "파일2.txt\0"
+                .encode_utf16()
+                .collect::<Vec<u16>>()
+                .as_slice()
         );
     }
 }

@@ -666,9 +666,8 @@ fn child_dirs(
     show_system: bool,
 ) -> Vec<PathBuf> {
     // 속성마다 대응하는 설정을 본다 — 목록과 같은 규칙이다(`FileListView::shows`)
-    entries.retain(|e| {
-        e.is_dir && (show_hidden || !e.is_hidden()) && (show_system || !e.is_system())
-    });
+    entries
+        .retain(|e| e.is_dir && (show_hidden || !e.is_hidden()) && (show_system || !e.is_system()));
     entries.sort_by(|a, b| compare_entries(a, "", b, "", SortKey::Name));
     entries
         .iter()

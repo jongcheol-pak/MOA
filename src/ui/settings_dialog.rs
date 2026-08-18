@@ -596,7 +596,10 @@ mod tests {
         }
         {
             let _guard = i18n::LanguageGuard::lock(LanguageSetting::English);
-            assert_eq!(i18n::settings_show_hidden(), "Show hidden files and folders");
+            assert_eq!(
+                i18n::settings_show_hidden(),
+                "Show hidden files and folders"
+            );
             assert_eq!(i18n::settings_show_system(), "Show system files");
         }
     }
