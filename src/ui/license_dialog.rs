@@ -24,9 +24,6 @@ const TITLE_FONT_PX: f32 = 16.0;
 /// 본문 여백과 두 열 사이 간격 — 사이트 관리자와 같은 값
 const BODY_PAD_X: f32 = 18.0;
 const BODY_PAD_TOP: f32 = 6.0;
-/// 본문과 하단 버튼 줄 사이 — 목록 웰의 테두리가 버튼 줄 구분선에 닿지 않게 띄운다
-/// (2026-08-19 화면 확인: 이 여백이 없으면 두 선이 겹쳐 한 줄처럼 보인다)
-const BODY_PAD_BOTTOM: f32 = 12.0;
 const BODY_GAP: f32 = 22.0;
 /// 좌측 목록 폭 — 사이트 관리자(400)보다 좁다. 담기는 것이 이름 한 줄뿐이고,
 /// 남는 자리는 전문을 넓게 읽는 데 쓰는 편이 낫다
@@ -104,7 +101,8 @@ impl LicenseDialog {
                 show_header(ui, header);
                 let content = egui::Rect::from_min_max(
                     egui::pos2(rect.left() + BODY_PAD_X, header.bottom() + BODY_PAD_TOP),
-                    egui::pos2(rect.right() - BODY_PAD_X, rect.bottom() - BODY_PAD_BOTTOM),
+                    // 버튼 줄과의 간격은 셸이 이미 뺐다 (`dialog::BODY_GAP_BOTTOM`)
+                    egui::pos2(rect.right() - BODY_PAD_X, rect.bottom()),
                 );
                 let left = egui::Rect::from_min_size(
                     content.min,

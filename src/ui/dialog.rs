@@ -23,6 +23,16 @@ pub const CORNER_RADIUS: u8 = 12;
 /// 버튼 44pt)과 같다. 종전 값(원격 대화 30 · 설정·사이트 관리자 58)이 제각각이라 하나로 모은다
 pub const FOOTER_HEIGHT: f32 = 44.0;
 
+/// 본문과 하단 버튼 줄 사이 — **`show_fixed`가 content 사각형에서 빼 준다**.
+///
+/// `show`(본문이 높이를 정하는 대화)는 본문 Frame의 `BODY_MARGIN`이 이미 그 자리를 만들지만,
+/// `show_fixed`는 대화가 받은 사각형을 바닥까지 채워 쓰기 때문에 셸이 띄워 주지 않으면
+/// 목록 웰·표의 아래 테두리가 버튼 줄 구분선에 닿아 **두 선이 한 줄처럼 보인다**
+/// (2026-08-19 화면 확인 — 라이선스 대화에서 드러났고 사용자가 모든 팝업에 같은 규칙을 요청했다).
+///
+/// 여기 두는 이유: 대화마다 각자 빼게 하면 새로 만드는 팝업이 그것을 빠뜨린다
+pub const BODY_GAP_BOTTOM: f32 = 12.0;
+
 /// 본문 안쪽 여백 — `show`가 본문에 입힌다. `show_fixed`를 쓰는 대화는 스스로 관리한다
 pub const BODY_MARGIN: i8 = 18;
 
@@ -118,10 +128,12 @@ pub fn show(
     }
 }
 
-/// 자기 크기를 스스로 잡는 대화 — 설정·사이트 관리자가 쓴다.
+/// 자기 크기를 스스로 잡는 대화 — 설정·사이트 관리자·라이선스가 쓴다.
 ///
-/// `content`가 받는 사각형은 **하단 버튼 줄을 뺀 나머지**다. 그 안에서 헤더·본문을 어떻게
-/// 나눌지는 대화가 정한다(본문 여백도 각자 관리한다 — 두 대화가 서로 다른 값을 쓴다)
+/// `content`가 받는 사각형은 **하단 버튼 줄과 그 위 여백(`BODY_GAP_BOTTOM`)을 뺀 나머지**다.
+/// 그 안에서 헤더·본문을 어떻게 나눌지는 대화가 정한다(좌우 여백은 각자 관리한다 —
+/// 세 대화가 서로 다른 값을 쓴다). **아래 여백만 셸이 쥔다** — 그것을 대화에 맡기면
+/// 새 팝업이 빠뜨려 본문이 버튼 줄에 붙는다
 pub fn show_fixed(
     ctx: &egui::Context,
     id: egui::Id,
@@ -139,8 +151,10 @@ pub fn show_fixed(
                 egui::pos2(rect.left(), rect.bottom() - FOOTER_HEIGHT),
                 rect.max,
             );
-            let content_rect =
-                egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), footer_rect.top()));
+            let content_rect = egui::Rect::from_min_max(
+                rect.min,
+                egui::pos2(rect.right(), footer_rect.top() - BODY_GAP_BOTTOM),
+            );
             content(ui, content_rect);
             clicked = footer(ui, footer_rect, buttons);
         });
@@ -317,6 +331,33 @@ mod tests {
     /// 시험용 하단 자리 — 왼쪽 위를 원점에 두고 폭만 바꾼다
     fn 자리(width: f32) -> egui::Rect {
         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(width, FOOTER_HEIGHT))
+    }
+
+    /// 고정 크기 대화의 본문이 버튼 줄에 닿지 않는지 — 새 팝업이 여백을 빠뜨려도 셸이 지킨다.
+    ///
+    /// 2026-08-19 화면 확인에서 라이선스 대화의 목록 웰 테두리가 버튼 줄 구분선과 겹쳐
+    /// 한 줄처럼 보였다. 각 대화가 각자 빼던 것을 셸로 올렸으므로 그 계약을 여기서 못 박는다
+    #[test]
+    fn 고정_크기_대화의_본문은_버튼_줄과_떨어진다() {
+        let ctx = egui::Context::default();
+        let 프레임 = egui::vec2(480.0, 560.0);
+        let mut 받은_자리 = egui::Rect::ZERO;
+        let _ = ctx.run_ui(Default::default(), |ctx| {
+            show_fixed(
+                ctx,
+                egui::Id::new("여백 시험"),
+                프레임,
+                &[ButtonSpec::plain("닫기")],
+                |_ui, rect| 받은_자리 = rect,
+            );
+        });
+        // 프레임 = 본문 + 여백 + 버튼 줄
+        assert!(
+            (프레임.y - 받은_자리.height() - BODY_GAP_BOTTOM - FOOTER_HEIGHT).abs() < 0.5,
+            "본문 높이 {}px + 여백 {BODY_GAP_BOTTOM}px + 버튼 {FOOTER_HEIGHT}px이 프레임 {}px과 맞지 않는다",
+            받은_자리.height(),
+            프레임.y
+        );
     }
 
     #[test]
