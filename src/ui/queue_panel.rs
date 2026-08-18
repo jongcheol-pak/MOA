@@ -724,6 +724,50 @@ mod tests {
     }
 
     #[test]
+    fn 머리글_열_경계마다_구분선이_선다() {
+        // 2026-08-18 사용자 보고 — 선이 없어 어디를 끌어야 할지 알 수 없었다.
+        // 파일 목록(`list_details`)과 같은 규칙이라 같은 방식으로 잰다
+        let widths = [34.0f32, 280.0, 300.0, 120.0, 84.0, 118.0, 150.0];
+        let mut columns = QueueColumns::default();
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(widths.iter().sum(), HEADER_HEIGHT),
+                );
+                show_header(ui, rect, &widths, &mut columns);
+            });
+        });
+        let mut 세로선 = Vec::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::LineSegment { points, stroke } = &clipped.shape
+                && (points[0].x - points[1].x).abs() < 0.01
+                && stroke.color == theme::BORDER_SUBTLE
+            {
+                세로선.push(points[0].x);
+            }
+        }
+        // 일곱 열이면 선은 여섯이다 — **마지막 열의 오른쪽 끝에는 긋지 않는다**
+        let mut 기대 = Vec::new();
+        let mut acc = 0.0;
+        for width in &widths[..widths.len() - 1] {
+            acc += width;
+            기대.push(acc);
+        }
+        assert_eq!(세로선, 기대);
+
+        // 끌고 있지 않으면 강조선(가이드)은 없다 — 그 선은 행을 다 그린 뒤 호출부가 긋는다
+        assert!(
+            !output.shapes.iter().any(|clipped| matches!(
+                &clipped.shape,
+                egui::Shape::LineSegment { stroke, .. } if stroke.color == theme::ACCENT
+            )),
+            "끌지 않았는데 가이드가 그려졌다"
+        );
+    }
+
+    #[test]
     fn 경계_드래그는_왼쪽_열을_바꾸고_하한을_지킨다() {
         // plan D6 — 경계 k는 열 k−1의 폭을 바꾼다. 마지막 열은 핸들이 없어 여기 오지 않는다
         let mut columns = QueueColumns::default();

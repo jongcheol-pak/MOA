@@ -280,7 +280,8 @@ mod tests {
         );
 
         // 끌어서 고르는 것은 egui의 라벨 선택이 맡는다 — 그 스위치가 꺼지면 라벨로 바꿔도
-        // 소용없다. 앱이 나중에 그것을 끄면 여기서 붉어진다
+        // 소용없다. **재는 것은 egui 기본값**이며 앱이 구성한 스타일이 아니다(이 앱은 그 값을
+        // 건드리지 않는다) — egui가 판올림에서 기본값을 뒤집으면 여기서 붉어진다
         let interaction = egui::Context::default()
             .style_of(egui::Theme::Dark)
             .interaction
