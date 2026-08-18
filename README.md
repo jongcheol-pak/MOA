@@ -49,7 +49,7 @@ Windows 11 이상(x64)에서 하나의 창을 **자유 분할(트리형)**하고
 
 ```
 cargo run              # 디버그 실행
-cargo build --release  # 배포 빌드 (단일 exe, 약 7.7MB)
+cargo build --release  # 배포 빌드 (단일 exe, 약 8.6MB)
 ```
 
 요구 사항: Rust stable(1.80+, msvc 툴체인), Windows 11 이상.
@@ -143,16 +143,20 @@ src/
 │   ├── thumbnail.rs   # 썸네일 워커 + LRU 캐시 (IShellItemImageFactory)
 │   ├── shell_menu.rs  # IContextMenu 셸 컨텍스트 메뉴 (COM — unsafe 격리)
 │   └── watcher.rs     # 폴더 변경 감시 (ReadDirectoryChangesW + 디바운스)
-├── tests/
-│   ├── layout_flow.rs # 분할·닫기 시퀀스 통합 테스트
-│   ├── watcher.rs     # 감시 통합 테스트 (채널 검증)
-│   ├── transfer_memory.rs   # 1GB 동시 4건 전송의 메모리 실측 (NFR-12)
-│   └── remote_concurrency.rs # 무응답 서버·1만 항목 조회 (NFR-11·13)
-├── examples/
-│   └── gen_licenses.rs # 라이선스 고지 자산 생성기 (개발용 — 배포 exe에 들어가지 않는다)
-└── assets/            # 실행 파일에 담기는 생성물·원문 (커밋 대상)
-    ├── licenses.json  # 라이선스 고지 자산 — `cargo run --example gen_licenses`가 만든다
-    └── spdx/          # SPDX 표준 전문 (원문이 없는 구성 요소에 쓴다)
+└── (아래는 `src/`와 나란한 레포 루트 항목이다)
+
+tests/
+├── layout_flow.rs     # 분할·닫기 시퀀스 통합 테스트
+├── watcher.rs         # 감시 통합 테스트 (채널 검증)
+├── transfer_memory.rs # 1GB 동시 4건 전송의 메모리 실측 (NFR-12)
+└── remote_concurrency.rs # 무응답 서버·1만 항목 조회 (NFR-11·13)
+
+examples/
+└── gen_licenses.rs    # 라이선스 고지 자산 생성기 (개발용 — 배포 exe에 들어가지 않는다)
+
+assets/                # 실행 파일에 담기는 생성물·원문 (커밋 대상)
+├── licenses.json      # 라이선스 고지 자산 — `cargo run --example gen_licenses`가 만든다
+└── spdx/              # SPDX 표준 전문 (원문이 없는 구성 요소에 쓴다)
 ```
 
 > `app/{window,sidebar,menu,layout_host}.rs`·`panel/{panel,folder_tree,address_bar}.rs`와
