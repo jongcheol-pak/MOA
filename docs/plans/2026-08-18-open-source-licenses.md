@@ -32,6 +32,7 @@
 
 - 목록 검색·필터 — 155개라 이름으로 좁히면 편하지만, 이번 요구는 「고지를 볼 수 있게」다. 좌측 목록이 정렬돼 있고 스크롤로 닿으므로 없이도 성립한다.
 - 라이선스 종류별 묶어 보기(같은 전문을 쓰는 크레이트를 한 항목으로) — 자산이 이미 전문을 중복 제거해 담으므로 화면만 바꾸면 되는 확장 지점이다.
+- [SUGGEST] `examples/gen_licenses.rs`의 `main`에서 원문 있는 갈래와 없는 갈래가 `CrateEntry` 필드 넷(`name`·`version`·`spdx`·`authors`)을 똑같이 채운다 — 공통 필드를 먼저 만들고 `text_indices`·`standard_text` 둘만 분기하면 중복이 준다 (출처: T2 quality S1)
 
 ## Investigation Log
 
@@ -228,7 +229,7 @@
     - (ii-a) 신규 공개 모듈 `app::licenses` · `assets/` 디렉터리 신설 → `## 사전 승인 항목`
   - **Depends on**: -
 
-- [ ] T2. 라이선스 자산 생성기를 만들고 자산을 채운다
+- [x] T2. 라이선스 자산 생성기를 만들고 자산을 채운다
   - **Type**: D
   - **Design**: ① 배치 — `examples/gen_licenses.rs`(생성기), `assets/spdx/{MIT,Apache-2.0,BSL-1.0}.txt`(표준 전문, 4-D가 지목한 출처에서 손으로 배치), `assets/licenses.json`(T1의 스켈레톤을 덮어쓴다). ② 신규 심볼과 책임 — `main() -> Result<(), String>`(절차 전체), `collect_targets`(`cargo tree --target x86_64-pc-windows-msvc -e normal --prefix none --format "{p}|{l}"` → ` (*)` 접미 제거 → `(이름, 버전, SPDX)` 목록, `moa` 제외), `read_package_info`(`cargo metadata --filter-platform … --format-version 1` → 이름+버전별 `manifest_path`·`authors`), `read_license_files`(크레이트 디렉터리 최상위의 `LICENSE*`·`LICENCE*`·`COPYING*`·`NOTICE*`·`UNLICENSE*` 수집), `dedupe_texts`(내용이 같은 전문을 하나로 접고 인덱스를 돌려준다), `bundled_entries`(수동 등재 3건 — libssh2·zlib·Phosphor 글꼴). ③ 의존 방향 — `moa::app::licenses`의 타입과 `lockfile_fingerprint`를 참조한다(역방향 없음). ④ 비추상화 — 수집 단계를 트레이트로 추상화하지 않는다(구현이 하나뿐이다). 도구 실행은 `std::process::Command` 직접 호출이고 래퍼를 두지 않는다. 출력·오류는 D11의 규약을 따른다.
   - **Acceptance**:
@@ -385,6 +386,12 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T1-T2 완료 (커밋 653cdd1, 다음): `app::licenses`가 자산을 읽고 `examples/gen_licenses.rs`가 그것을 채운다. 구성 요소 **158개**(대상 155 + 번들 3) · 전문 **95개**(중복 제거) · 자산 369KB. 시험 836건 통과.
+  - 결정: **저작자 표기에서 `@`가 든 낱말을 통째로 뺀다** — crates.io에 공개된 값이어도 커밋되는 파일에 메일 주소·핸들을 담지 않는다(규칙 6-1). `<>`로 감싼 것뿐 아니라 맨몸으로 붙은 것도 있었다(`Rich Geldreich rich@…`·`Amod Malviya @amodm` 실측). 시험이 `@` 잔존 0을 지킨다.
+  - 결정: `assets/spdx/MIT.txt`만 원본을 가공한다(첫 줄을 SPDX 플레이스홀더로) — 그러지 않으면 `bitflags`의 저작권자가 무관한 12개 크레이트의 고지에 오귀속된다. Apache-2.0·BSL-1.0은 본문에 저작권자 자리가 없어 그대로 쓴다.
+  - 관측: **자산을 담아도 release exe가 2KB만 늘었다**(8,222,208 → 8,224,256B) — 아직 `load()`를 부르는 코드가 없어 `lto` + `strip`이 `include_str!` 데이터를 죽은 것으로 걷어낸 것이다. T3가 대화를 붙이면 실제 크기가 드러난다.
+  - 관측: 생성기는 멱등이다 — 두 번 돌려도 `assets/licenses.json`이 바이트 단위로 같다(디렉터리 열거 순서를 이름으로 세우고 전문을 내용으로 중복 제거하기 때문).
 
 ## Next Steps
 
