@@ -237,7 +237,8 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>
     (request, command)
 }
 
-/// 설정 메뉴 — `설정`만 동작하고 나머지 넷은 아직 표시만 한다 (FR-22).
+/// 설정 메뉴 — `설정`과 `오픈소스 라이선스`가 동작하고 나머지 셋은 아직 표시만 한다
+/// (FR-22·FR-57).
 ///
 /// 다섯 항목을 배열+반복으로 묶지 않은 이유: 각 항목이 곧 서로 다른 화면·동작으로 갈라질
 /// 자리라, 지금 묶으면 채우는 순간 다시 풀어야 한다
@@ -257,7 +258,10 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
         pending_item(ui, crate::i18n::titlebar_updates());
         pending_item(ui, crate::i18n::titlebar_release_notes());
         ui.separator();
-        pending_item(ui, crate::i18n::titlebar_licenses());
+        if ui.button(crate::i18n::titlebar_licenses()).clicked() {
+            *out = Some(Command::OpenLicenses);
+            ui.close();
+        }
         pending_item(ui, crate::i18n::titlebar_about());
     });
 }

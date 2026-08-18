@@ -133,7 +133,8 @@ strings! {
     titlebar_restore => "이전 크기로" / "Restore";
     titlebar_maximize => "최대화" / "Maximize";
     titlebar_minimize => "최소화" / "Minimize";
-    /// 설정 메뉴의 나머지 셋 — 아직 비활성이다 (`오픈소스 라이선스`는 FR-57로 동작한다)
+    /// 설정 메뉴의 나머지 셋(`업데이트`·`릴리즈 노트`·`정보`)은 아직 비활성이다 —
+    /// `오픈소스 라이선스`는 FR-57로 동작하며 대화 제목으로도 쓰인다
     titlebar_updates => "업데이트" / "Updates";
     titlebar_release_notes => "릴리즈 노트" / "Release notes";
     titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
