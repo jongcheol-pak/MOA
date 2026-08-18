@@ -67,7 +67,7 @@
 | 6 | 새 모달이 `ui::dialog`를 거치지 않으면 시험이 잡는다 | `src/ui/dialog.rs`의 `대화는_모두_이_모듈을_거친다`(`src/ui` 바로 아래 훑기, 대화 개수 하드코딩 없음) | ✅ |
 | 7 | 화면 문구를 카탈로그 밖에 두면 시험이 잡는다 | `src/i18n/mod.rs:1025 화면_문구가_카탈로그를_거치지_않은_곳이_없다`, ROOTS에 `src/ui` 포함 | ✅ |
 | 8 | 자산 JSON을 `serde_json`으로 읽을 수 있다 | `Cargo.toml`에 `serde`(derive)·`serde_json` 이미 있음 | ✅ |
-| 9 | `examples/`는 `cargo build`의 산출물에 들어가지 않는다 | cargo 문서상 example 타깃은 `cargo build`가 빌드하지 않는다(`--examples`·`cargo test`·`--all-targets`에서만). **이 레포에서 실측한 것은 아니다** — T2 acceptance가 `cargo build --release` 후 `target/release`에 `gen_licenses` 산출물이 없음을 확인해 못 박는다. 이 전제가 뒤집혀도 D2의 성립(배포 exe 불변·오프라인 재생성)은 무너지지 않는다 — 늘어나는 것은 gitignore된 `target/`의 파일 하나뿐이라 Open Question으로 올리지 않는다 | ⚠ 미확인 → T2가 확정 |
+| 9 | `examples/`는 `cargo build`의 산출물에 들어가지 않는다 | **T2에서 실측 확정** — `cargo build --release` 후 `target/release/*.exe`에 `gen_licenses.exe`가 없고 `target/release/examples/`도 비어 있다(2026-08-18) | ✅ |
 | 10 | `Command`를 `match`하는 곳이 `src/ui/app.rs` 한 곳뿐이고 wildcard arm이 없다 | `src/ui/app.rs:2031`(중첩 `:2076`)이 유일하며 `_ =>` 없음. 나머지 참조(`ui/panel.rs:1273`·`ui/titlebar.rs:254`·`ui/menu.rs`·`ui/splitter.rs`·`ui/tabs.rs`)는 값 생성·비교뿐. `src/app/window.rs:783`의 `match command`는 Win32 `IDM_*` u32라 무관 | ✅ |
 
 ## Risks & Unknowns

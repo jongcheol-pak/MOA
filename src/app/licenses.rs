@@ -134,8 +134,11 @@ mod tests {
     fn 담긴_자산을_읽을_수_있다() {
         let data = load();
         assert_eq!(data.schema, SCHEMA_VERSION);
-        // 아직 생성기가 없어 자산은 빈 스켈레톤이다 — T2가 채우면 이 단언이 뒤집힌다
-        assert!(data.crates.is_empty());
+        assert!(
+            !data.crates.is_empty(),
+            "자산이 비어 있다 — 생성기를 돌려야 한다"
+        );
+        assert!(!data.texts.is_empty());
     }
 
     #[test]
@@ -169,6 +172,59 @@ mod tests {
             .map(|text| text.body.as_str())
             .collect();
         assert_eq!(bodies, ["첫째", "둘째"]);
+    }
+
+    /// 의존성이 바뀌었는데 자산을 다시 만들지 않은 상태(stale)를 잡는 관문이다.
+    ///
+    /// 이 시험이 붉어지면 코드가 아니라 **자산이 낡은 것**이므로 생성기를 돌린다
+    #[test]
+    fn 자산이_현재_의존성과_같은_시점의_것이다() {
+        let lock = include_str!("../../Cargo.lock");
+        assert_eq!(
+            load().lock_fingerprint,
+            lockfile_fingerprint(lock),
+            "Cargo.lock이 바뀌었는데 라이선스 자산이 그대로다 — \
+             `cargo run --example gen_licenses`로 다시 만든다"
+        );
+    }
+
+    #[test]
+    fn 함께_링크되는_것도_고지에_들어_있다() {
+        let data = load();
+        let bundled: Vec<&str> = data
+            .crates
+            .iter()
+            .filter(|entry| entry.bundled)
+            .map(|entry| entry.name.as_str())
+            .collect();
+        // 크레이트의 SPDX 필드만 긁으면 빠지는 셋 — 번들 C 소스 둘과 글꼴 하나
+        assert_eq!(bundled.len(), 3, "번들 고지가 빠졌다: {bundled:?}");
+        assert!(bundled.iter().any(|name| name.starts_with("libssh2")));
+        assert!(bundled.iter().any(|name| name.starts_with("zlib")));
+        assert!(bundled.iter().any(|name| name.starts_with("Phosphor")));
+    }
+
+    #[test]
+    fn 모든_항목이_전문을_적어도_하나_가리킨다() {
+        let data = load();
+        for entry in &data.crates {
+            assert!(
+                !entry.texts(data).is_empty(),
+                "{} {}의 전문이 없다",
+                entry.name,
+                entry.version
+            );
+        }
+    }
+
+    #[test]
+    fn 자산에_메일_주소가_남아_있지_않다() {
+        // 저작자 표기는 커밋되는 파일에 담기므로 생성기가 주소·핸들을 떼어 낸다
+        for entry in &load().crates {
+            for author in &entry.authors {
+                assert!(!author.contains('@'), "{}: {author}", entry.name);
+            }
+        }
     }
 
     #[test]
