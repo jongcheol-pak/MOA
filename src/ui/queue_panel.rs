@@ -59,13 +59,58 @@ fn headers() -> [&'static str; 7] {
 // 그 메뉴는 **디자인에 진입점이 없어 이 구현이 정한 문구**다 — 큐 항목을 하나씩
 // 다시 걸거나 그만두는 길이 달리 없다(`⏸`·`✕`는 큐 전체를 다룬다)
 
-/// 사용자가 큐에서 고른 조작
+/// 사용자가 큐에서 고른 조작.
+///
+/// `…All`은 **지금 보고 있는 목록**(상단 거르개 ∩ 연결별 탭)이 대상이다 — 대상 계산은
+/// 화면이 아니라 앱이 한다(`ui::app::apply_queue_action`). 이 모듈은 큐를 고치지 않는다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueAction {
     /// 실패한 항목을 다시 대기로 되돌린다
     Retry(TransferId),
+    /// 보이는 목록의 실패한 항목을 모두 다시 대기로
+    RetryAll,
     /// 아직 끝나지 않은 항목을 그만둔다
     Cancel(TransferId),
+    /// 끝난 항목을 목록에서 지운다
+    Remove(TransferId),
+    /// 보이는 목록을 통째로 지운다 (진행 중인 것도 멈추고 지운다)
+    RemoveAll,
+}
+
+/// 행 우클릭 메뉴에 설 항목 — **탭이 아니라 행 상태가 정한다** (2026-08-18 사용자 결정).
+///
+/// `전송 취소`와 `삭제`는 동작이 같아(전송 중단 + 목록 제거 + `.part` 삭제) 나란히 두면
+/// 무엇을 눌러야 할지 헷갈린다 — 상태별로 한 쪽만 보인다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowMenuItem {
+    Retry,
+    RetryAll,
+    Cancel,
+    Remove,
+    RemoveAll,
+}
+
+/// 이 행에 보일 메뉴 항목들 (순수 판정 — 그리기와 나눠 두어 시험할 수 있게 한다).
+///
+/// `has_error_in_view`는 **보이는 목록에 실패가 하나라도 있는가**다. 없으면
+/// `전체 다시 시도`를 내지 않는다 — 눌러도 아무 일이 없는 메뉴는 두지 않는다
+pub fn row_menu_items(state: &TransferState, has_error_in_view: bool) -> Vec<RowMenuItem> {
+    let mut items = Vec::new();
+    if state.is_error() {
+        items.push(RowMenuItem::Retry);
+    }
+    if state.is_pending() {
+        items.push(RowMenuItem::Cancel);
+    }
+    if has_error_in_view {
+        items.push(RowMenuItem::RetryAll);
+    }
+    // 진행 중·대기는 `전송 취소`가 그 자리를 맡는다
+    if !state.is_pending() {
+        items.push(RowMenuItem::Remove);
+    }
+    items.push(RowMenuItem::RemoveAll);
+    items
 }
 
 /// 얼룩 규칙 — 원본은 **거른 뒤의 자리 번호**(0부터)가 홀수인 행을 칠한다 (`:721`)
@@ -215,6 +260,9 @@ pub fn show_queue(
         );
         return None;
     }
+    // `전체 다시 시도`를 낼지 — 보이는 목록 전체를 본다(화면 밖 행도 대상이므로
+    // 그려지는 범위가 아니라 거른 목록 전량에서 판정한다)
+    let has_error_in_view = items.iter().any(|item| item.state.is_error());
     let mut action = None;
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -229,7 +277,8 @@ pub fn show_queue(
             ui.spacing_mut().item_spacing.y = 0.0;
             for index in range {
                 if let Some(item) = items.get(index)
-                    && let Some(picked) = show_row(ui, item, index, &widths, sites)
+                    && let Some(picked) =
+                        show_row(ui, item, index, &widths, sites, has_error_in_view)
                 {
                     action = Some(picked);
                 }
@@ -395,6 +444,7 @@ fn show_row(
     index: usize,
     widths: &[f32; 7],
     sites: &SiteStore,
+    has_error_in_view: bool,
 ) -> Option<QueueAction> {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -499,16 +549,21 @@ fn show_row(
         color,
     );
 
-    // 항목 하나를 다시 걸거나 그만두는 길 — 디자인에 진입점이 없어 우클릭으로 둔다
+    // 항목을 다시 걸거나 지우는 길 — 디자인에 진입점이 없어 우클릭으로 둔다
     let mut action = None;
     response.context_menu(|ui| {
-        if item.state.is_error() && ui.button(crate::i18n::queue_retry()).clicked() {
-            action = Some(QueueAction::Retry(item.id));
-            ui.close();
-        }
-        if item.state.is_pending() && ui.button(crate::i18n::queue_cancel()).clicked() {
-            action = Some(QueueAction::Cancel(item.id));
-            ui.close();
+        for entry in row_menu_items(&item.state, has_error_in_view) {
+            let (label, picked) = match entry {
+                RowMenuItem::Retry => (crate::i18n::queue_retry(), QueueAction::Retry(item.id)),
+                RowMenuItem::RetryAll => (crate::i18n::queue_retry_all(), QueueAction::RetryAll),
+                RowMenuItem::Cancel => (crate::i18n::queue_cancel(), QueueAction::Cancel(item.id)),
+                RowMenuItem::Remove => (crate::i18n::queue_remove(), QueueAction::Remove(item.id)),
+                RowMenuItem::RemoveAll => (crate::i18n::queue_remove_all(), QueueAction::RemoveAll),
+            };
+            if ui.button(label).clicked() {
+                action = Some(picked);
+                ui.close();
+            }
         }
     });
     action
@@ -781,6 +836,55 @@ mod tests {
             !texts.iter().any(|text| text.starts_with("legacy")),
             "연결도 전송도 없는 사이트가 탭에 섰다: {texts:?}"
         );
+    }
+
+    #[test]
+    fn 행_메뉴는_탭이_아니라_행_상태가_정한다() {
+        // 2026-08-18 사용자 결정(D5) — `전송 취소`와 `삭제`는 동작이 같아 한 쪽만 보인다
+        use RowMenuItem::*;
+        let 실패 = TransferState::Error {
+            message: "550".to_owned(),
+        };
+
+        assert_eq!(
+            row_menu_items(&실패, true),
+            vec![Retry, RetryAll, Remove, RemoveAll]
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Wait, true),
+            vec![Cancel, RetryAll, RemoveAll],
+            "진행 중·대기에는 `삭제`가 없다 — 그 자리는 `전송 취소`가 맡는다"
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Active { sent: 1, speed: 1 }, true),
+            vec![Cancel, RetryAll, RemoveAll]
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Done, true),
+            vec![RetryAll, Remove, RemoveAll]
+        );
+
+        // 보이는 목록에 실패가 없으면 `전체 다시 시도`를 내지 않는다
+        assert_eq!(
+            row_menu_items(&TransferState::Done, false),
+            vec![Remove, RemoveAll]
+        );
+        assert_eq!(
+            row_menu_items(&TransferState::Wait, false),
+            vec![Cancel, RemoveAll]
+        );
+    }
+
+    #[test]
+    fn 행_메뉴_문구는_카탈로그를_거친다() {
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        // 사용자 요청 원문 그대로다 — `모두 …`가 아니라 `전체 …`
+        assert_eq!(crate::i18n::queue_retry(), "다시 시도");
+        assert_eq!(crate::i18n::queue_retry_all(), "전체 다시 시도");
+        assert_eq!(crate::i18n::queue_cancel(), "전송 취소");
+        assert_eq!(crate::i18n::queue_remove(), "삭제");
+        assert_eq!(crate::i18n::queue_remove_all(), "전체 삭제");
     }
 
     #[test]

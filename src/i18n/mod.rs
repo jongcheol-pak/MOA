@@ -432,7 +432,10 @@ strings! {
     queue_state_done => "완료" / "Done";
     queue_state_active => "전송 중" / "Transferring";
     queue_retry => "다시 시도" / "Retry";
+    queue_retry_all => "전체 다시 시도" / "Retry all";
     queue_cancel => "전송 취소" / "Cancel transfer";
+    queue_remove => "삭제" / "Remove";
+    queue_remove_all => "전체 삭제" / "Remove all";
 
     // ── 하단 도크 (FR-35·FR-40) ──
     dock_queue => "전송 큐" / "Transfer queue";

@@ -7,7 +7,7 @@
 //! **방향·식별자는 새로 만들지 않는다** — `remote::connection`이 T4에서 이미
 //! `TransferId`·`TransferDirection`을 도입했고(워커 명령이 그것을 싣는다), 여기서 같은 뜻의
 //! 타입을 또 만들면 경계마다 옮겨 담게 된다 (plan T17 신규 심볼 목록의 `Direction`이 이것이다).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::remote::connection::{TransferDirection, TransferId};
@@ -241,6 +241,30 @@ impl TransferQueue {
     /// 큐는 "새로 시작하지 않는다"만 안다
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+    }
+
+    /// 고른 항목들을 다시 대기로 되돌린다 (행 메뉴 `전체 다시 시도`).
+    ///
+    /// **실패한 것만** 바꾼다 — 목록에 완료·진행 중이 섞여 있어도 그것들은 건드리지 않는다
+    /// (`전체`라는 말이 "보이는 목록"을 뜻하지 "모든 상태"를 뜻하지는 않는다)
+    pub fn retry(&mut self, ids: &[TransferId]) {
+        let ids: HashSet<TransferId> = ids.iter().copied().collect();
+        for item in self
+            .items
+            .iter_mut()
+            .filter(|item| ids.contains(&item.id) && item.state.is_error())
+        {
+            item.state = TransferState::Wait;
+        }
+    }
+
+    /// 고른 항목들을 목록에서 지운다 (행 메뉴 `삭제`·`전체 삭제`의 여러 건 판).
+    ///
+    /// 진행 중인 것의 워커 정지와 `.part` 정리는 `transfer::TransferRunner::cancel`이 맡는다 —
+    /// 큐는 목록만 안다(`cancel`과 같은 분담)
+    pub fn remove(&mut self, ids: &[TransferId]) {
+        let ids: HashSet<TransferId> = ids.iter().copied().collect();
+        self.items.retain(|item| !ids.contains(&item.id));
     }
 
     /// 끝난 것들을 치운다 (`✕` — 인벤토리 #33). 실패는 남긴다 — 다시 걸 수 있어야 한다
@@ -519,6 +543,46 @@ mod tests {
         assert_eq!(counts.get(&site(1)), Some(&3));
         assert_eq!(counts.get(&site(2)), Some(&1));
         assert_eq!(counts.values().sum::<usize>(), queue.len());
+    }
+
+    #[test]
+    fn 목록_단위로_다시_걸고_지운다() {
+        // 2026-08-18 행 메뉴 `전체 다시 시도`·`전체 삭제` — 대상은 호출부가 고른 번호들이다
+        let mut queue = TransferQueue::new();
+        let 건다 = |queue: &mut TransferQueue, n: u8| {
+            queue.enqueue(
+                site(1),
+                TransferDirection::Upload,
+                PathBuf::from(format!(r"C:\{n}")),
+                RemotePath::new(&format!("/{n}")),
+                1,
+            )
+        };
+        let 실패 = 건다(&mut queue, 1);
+        let 완료 = 건다(&mut queue, 2);
+        let 대기 = 건다(&mut queue, 3);
+        queue.update(
+            실패,
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        );
+        queue.update(완료, TransferState::Done);
+
+        // `retry`는 **실패한 것만** 되돌린다 — 목록에 섞인 완료·대기는 그대로
+        queue.retry(&[실패, 완료, 대기]);
+        assert_eq!(queue.count(QueueFilter::Error), 0);
+        assert_eq!(queue.count(QueueFilter::Done), 1, "완료는 그대로여야 한다");
+        assert_eq!(queue.len(), 3);
+
+        // `remove`는 상태를 가리지 않고 고른 것을 지운다
+        queue.remove(&[실패, 대기]);
+        assert_eq!(queue.len(), 1);
+        assert!(queue.get(완료).is_some());
+
+        // 목록에 없는 번호를 섞어도 조용히 지나간다
+        queue.remove(&[TransferId(9999)]);
+        assert_eq!(queue.len(), 1);
     }
 
     #[test]
