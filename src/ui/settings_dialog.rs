@@ -183,7 +183,7 @@ fn show_body(
     group_title(&mut body, i18n::settings_group_exit(), Divider::Draw);
     let exit = show_exit_group(&mut body, settings);
 
-    // 파일 보기 — 확장명·숨김 항목
+    // 파일 보기 — 확장명·숨김·시스템 파일
     group_title(&mut body, i18n::settings_group_files(), Divider::Draw);
     let files = show_file_group(&mut body, settings);
 
@@ -340,7 +340,7 @@ fn show_language_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> Setting
     outcome
 }
 
-/// `파일 보기` 그룹의 두 토글 — 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
+/// `파일 보기` 그룹의 세 토글 — 값을 그대로 뒤집기만 하면 되는 자리라 여기서 배선한다
 /// (`시작`·`모양` 그룹은 레지스트리·글꼴이라는 부수 효과가 있어 각자 따로 있다).
 ///
 /// 그룹 하나를 따로 뗀 이유: 이 부분만 그려 시험할 수 있어야 **앞 그룹들의 줄 수가 바뀔 때**
@@ -357,6 +357,10 @@ fn show_file_group(ui: &mut egui::Ui, settings: &mut AppSettings) -> SettingsOut
     }
     if widgets::toggle_row(ui, i18n::settings_show_hidden(), settings.show_hidden) {
         settings.show_hidden = !settings.show_hidden;
+        outcome.changed = true;
+    }
+    if widgets::toggle_row(ui, i18n::settings_show_system(), settings.show_system) {
+        settings.show_system = !settings.show_system;
         outcome.changed = true;
     }
     outcome
@@ -555,6 +559,46 @@ mod tests {
             "토글을 눌렀는데 값이 뒤집히지 않았다"
         );
         assert!(settings.show_hidden, "누르지 않은 토글까지 바뀌었다");
+        assert!(!settings.show_system, "누르지 않은 토글까지 바뀌었다");
+
+        // 셋째 줄이 `시스템 파일 표시` 토글이다 — 줄 사이 간격을 빼고 세면 줄 틈을 눌러
+        // 아무 일도 일어나지 않는다(그때 이 시험은 "값이 안 바뀐다"로 실패한다)
+        let mut 셋째줄 = egui::pos2(40.0, 0.0);
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let 줄높이 = widgets::FORM_FIELD_HEIGHT + ui.spacing().item_spacing.y;
+            셋째줄.y = 2.0 * 줄높이 + widgets::FORM_FIELD_HEIGHT / 2.0;
+            outcome = show_file_group(ui, &mut settings);
+        });
+        for (time, event) in [(0.15, press(셋째줄, true)), (0.20, press(셋째줄, false))] {
+            let input = egui::RawInput {
+                time: Some(time),
+                events: vec![event],
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                outcome = show_file_group(ui, &mut settings);
+            });
+        }
+        assert!(settings.show_system, "시스템 토글을 눌렀는데 켜지지 않았다");
+        assert!(settings.show_hidden, "숨김 토글까지 함께 바뀌었다");
+        assert!(!settings.show_extensions, "확장명 토글까지 함께 바뀌었다");
+    }
+
+    #[test]
+    fn 파일_보기_토글의_문구가_카탈로그에_있다() {
+        // 값은 원문 리터럴로 단언한다 — 카탈로그를 불러 견주면 무엇으로 바뀌어도 통과한다.
+        // **두 잠금을 겹치지 않게 스코프로 끊는다** — `LanguageGuard`가 쥐는 것은 재진입을
+        // 허용하지 않는 `Mutex`라, 앞 guard가 살아 있는 채로 다시 잠그면 그 자리에서 멎는다
+        {
+            let _guard = i18n::LanguageGuard::lock(LanguageSetting::Korean);
+            assert_eq!(i18n::settings_show_hidden(), "숨김 파일 및 폴더 표시");
+            assert_eq!(i18n::settings_show_system(), "시스템 파일 표시");
+        }
+        {
+            let _guard = i18n::LanguageGuard::lock(LanguageSetting::English);
+            assert_eq!(i18n::settings_show_hidden(), "Show hidden files and folders");
+            assert_eq!(i18n::settings_show_system(), "Show system files");
+        }
     }
 
     #[test]
