@@ -200,26 +200,58 @@ mod tests {
         assert_eq!(LogKind::Error.label(), "오류:");
     }
 
+    /// 로그를 한 프레임 그리고 글자마다 (내용, x, 색)을 모은다.
+    ///
+    /// **실제 렌더 경로로 잰다** — 유틸리티를 따로 부르면 화면이 그것을 더 이상 쓰지 않게 된
+    /// 뒤에도 시험이 통과한다(2026-08-18 리뷰가 그 상태를 잡았다)
+    fn draw_log(log: &LogBuffer) -> Vec<(String, f32, egui::Color32)> {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 200.0));
+                show_log(ui, rect, log);
+            });
+        });
+        let mut drawn = Vec::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                let color = text
+                    .galley
+                    .job
+                    .sections
+                    .first()
+                    .map(|section| section.format.color)
+                    .unwrap_or(text.fallback_color);
+                drawn.push((text.galley.text().to_owned(), text.pos.x, color));
+            }
+        }
+        drawn
+    }
+
+    /// 그려진 것 중 그 조각을 담은 첫 글자
+    fn 찾는다(drawn: &[(String, f32, egui::Color32)], 조각: &str) -> (f32, egui::Color32) {
+        drawn
+            .iter()
+            .find(|(text, _, _)| text.contains(조각))
+            .map(|(_, x, color)| (*x, *color))
+            .unwrap_or_else(|| panic!("`{조각}`이 그려지지 않았다: {drawn:?}"))
+    }
+
     #[test]
     fn 본문_색은_종류와_무관하게_하나다() {
         // spec 리뷰 M1 — 원본은 본문 span에 `#B4B4B4` 고정색을 준다(`:313`).
         // 종류별 색은 **앞의 종류 열에만** 붙는다. 오류 줄 본문까지 빨갛게 칠하면 원본과 다르다
-        let ctx = egui::Context::default();
-        let mut colors = Vec::new();
-        let _ = ctx.run_ui(Default::default(), |ui| {
-            for kind in [LogKind::Status, LogKind::Error] {
-                let galley = crate::ui::list_common::elided_galley_colored(
-                    ui.painter(),
-                    format!("{kind:?} 줄"),
-                    egui::FontId::monospace(FONT_PX),
-                    200.0,
-                    theme::TEXT_LOG,
-                );
-                colors.push(galley.job.sections[0].format.color);
-            }
-        });
-        assert_eq!(colors, vec![theme::TEXT_LOG, theme::TEXT_LOG]);
+        let mut log = LogBuffer::new();
+        log.push(LogKind::Status, "상태 본문");
+        log.push(LogKind::Error, "오류 본문");
+        let drawn = draw_log(&log);
+
+        assert_eq!(찾는다(&drawn, "상태 본문").1, theme::TEXT_LOG);
+        assert_eq!(찾는다(&drawn, "오류 본문").1, theme::TEXT_LOG);
         // 종류 열은 여전히 종류별로 갈린다
+        assert_eq!(찾는다(&drawn, "상태:").1, kind_colors(LogKind::Status).0);
+        assert_eq!(찾는다(&drawn, "오류:").1, kind_colors(LogKind::Error).0);
         assert_ne!(
             kind_colors(LogKind::Error).0,
             kind_colors(LogKind::Status).0
@@ -229,44 +261,30 @@ mod tests {
     #[test]
     fn 로그_줄은_고를_수_있는_라벨이고_열_x가_원본과_같다() {
         // 2026-08-18 사용자 요청 — `painter`로 그리면 위젯이 아니라 끌어서 고를 수 없다.
-        // 라벨로 바꾸면서 열 x가 밀리지 않았는지 함께 본다(시각 10 · 종류 82 · 본문 136)
+        // 라벨로 바꾸면서 열 x가 밀리지 않았는지 함께 본다(시각 10 · 종류 82 · 본문 136).
+        // 커서 배치(`add_sized`·`allocate_ui_with_layout`)는 이 값을 밀었다 — 그 실측이
+        // `show_line`의 주석에 있다
         let mut log = LogBuffer::new();
         log.push(LogKind::Response, "226 Transfer complete");
-        let ctx = egui::Context::default();
-        let mut texts: Vec<(String, f32)> = Vec::new();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let rect =
-                    egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 100.0));
-                show_log(ui, rect, &log);
-            });
-        });
-        for clipped in &output.shapes {
-            if let egui::Shape::Text(text) = &clipped.shape {
-                texts.push((text.galley.text().to_owned(), text.pos.x));
-            }
-        }
-        let 찾는다 = |조각: &str| {
-            texts
-                .iter()
-                .find(|(text, _)| text.contains(조각))
-                .map(|(_, x)| *x)
-                .unwrap_or_else(|| panic!("`{조각}`이 그려지지 않았다: {texts:?}"))
-        };
-        assert_eq!(찾는다("응답:"), PAD_X + TIME_WIDTH + COLUMN_GAP);
+        let drawn = draw_log(&log);
+
+        assert_eq!(찾는다(&drawn, "응답:").0, PAD_X + TIME_WIDTH + COLUMN_GAP);
         assert_eq!(
-            찾는다("226"),
+            찾는다(&drawn, "226").0,
             PAD_X + TIME_WIDTH + COLUMN_GAP + KIND_WIDTH + COLUMN_GAP
         );
         // 시각은 `HH:MM:SS`라 내용을 단정하지 않고 자리만 본다
         assert!(
-            texts.iter().any(|(_, x)| (*x - PAD_X).abs() < 0.01),
-            "시각 열이 왼쪽 여백 자리에 없다: {texts:?}"
+            drawn.iter().any(|(_, x, _)| (*x - PAD_X).abs() < 0.01),
+            "시각 열이 왼쪽 여백 자리에 없다: {drawn:?}"
         );
 
         // 끌어서 고르는 것은 egui의 라벨 선택이 맡는다 — 그 스위치가 꺼지면 라벨로 바꿔도
         // 소용없다. 앱이 나중에 그것을 끄면 여기서 붉어진다
-        let interaction = ctx.style_of(egui::Theme::Dark).interaction.clone();
+        let interaction = egui::Context::default()
+            .style_of(egui::Theme::Dark)
+            .interaction
+            .clone();
         assert!(interaction.selectable_labels, "라벨 선택이 꺼져 있다");
         assert!(
             interaction.multi_widget_text_select,
