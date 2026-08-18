@@ -22,6 +22,16 @@ const TARGET: &str = "x86_64-pc-windows-msvc";
 /// 라이선스 원문으로 볼 파일 이름의 머리 — 대소문자를 가리지 않는다
 const LICENSE_PREFIXES: [&str; 5] = ["license", "licence", "copying", "notice", "unlicense"];
 
+/// 라이선스 원문으로 볼 **최소 길이**(바이트).
+///
+/// 이름이 `LICENSE`인데 내용은 원문이 아닌 파일이 있다 — `harfrust`의 것은 워크스페이스
+/// 상위를 가리키는 `../LICENSE` 열 바이트이고, `aho-corasick`의 `COPYING`은 "이 프로젝트는
+/// 이중 라이선스"라는 125바이트 안내다. 그대로 담으면 화면의 전문 자리에 그 한 줄만 뜬다.
+///
+/// 300바이트로 잡은 근거(2026-08-18 실측): 이 트리에서 가장 짧은 **진짜** 전문이 553B이고
+/// 걸러야 할 둘이 10B·125B다. 걸러진 크레이트는 SPDX 표준 전문 갈래로 넘어간다
+const MIN_LICENSE_BYTES: usize = 300;
+
 fn main() -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let targets = collect_targets()?;
@@ -35,7 +45,7 @@ fn main() -> Result<(), String> {
         let info = packages
             .get(&(name.clone(), version.clone()))
             .ok_or_else(|| format!("{name} {version}: cargo metadata에 없다"))?;
-        let files = read_license_files(&info.dir)?;
+        let files = read_license_files(&info.dir, spdx)?;
         let entry = if files.is_empty() {
             // 배포 패키지에 원문이 없는 크레이트 — SPDX 표준 전문으로 채우고 그 사실을 표시한다
             let indices = standard_indices(&root, spdx, &mut builder)
@@ -210,7 +220,7 @@ fn strip_email(author: &str) -> String {
 ///
 /// 라벨은 `LICENSE-MIT` 같은 이름에서 뒷부분을, 그렇지 않으면 파일 이름을 쓴다 —
 /// 화면에서 전문 위에 붙어 무엇을 보고 있는지 알린다
-fn read_license_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
+fn read_license_files(dir: &Path, spdx: &str) -> Result<Vec<(String, String)>, String> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -246,7 +256,14 @@ fn read_license_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
         }
         // UTF-8이 아닌 원문은 손실 없이 담을 수 없어 건너뛴다 — 어느 것을 건너뛰었는지 알린다
         match std::fs::read_to_string(entry.path()) {
-            Ok(body) => files.push((label_of(&file_name), body)),
+            // 이름만 라이선스인 파일 — 상위를 가리키는 스텁이거나 "이중 라이선스" 안내문이다.
+            // 그대로 담으면 화면의 전문 자리에 그 한 줄만 뜬다
+            Ok(body) if body.trim().len() < MIN_LICENSE_BYTES => println!(
+                "  원문 아님: {}\\{file_name} ({}B) — 표준 전문으로 대신한다",
+                dir.display(),
+                body.trim().len()
+            ),
+            Ok(body) => files.push((label_of(&file_name, spdx), body)),
             Err(err) => println!("  건너뜀: {}\\{file_name} ({err})", dir.display()),
         }
     }
@@ -255,13 +272,46 @@ fn read_license_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(files)
 }
 
-/// `LICENSE-MIT` → `MIT`, `COPYING` → `COPYING`
-fn label_of(file_name: &str) -> String {
+/// 전문 위에 붙는 이름 — `LICENSE-MIT` → `MIT`, `LICENSE` → 그 크레이트의 SPDX 선언.
+///
+/// 파일 이름을 그대로 쓰면 화면에 `apache-2`·`mit`·`LICENSE` 같은 조각이 뜬다. 알아볼 수
+/// 있는 것은 표준 표기로 맞추고, 종류를 알 수 없는 이름(`LICENSE`·`COPYING`)은 그 크레이트가
+/// **선언한 것**을 대신 보인다
+fn label_of(file_name: &str, spdx: &str) -> String {
     let stem = file_name.split('.').next().unwrap_or(file_name);
-    match stem.split_once('-') {
-        Some((_, tail)) if !tail.is_empty() => tail.to_string(),
-        _ => stem.to_string(),
+    let tail = match stem.split_once('-') {
+        Some((_, tail)) if !tail.is_empty() => tail,
+        _ => stem,
+    };
+    if let Some(id) = normalize_label(tail) {
+        return id.to_string();
     }
+    // 종류를 담지 않은 일반 이름이면 선언을 쓴다 — 그것마저 비면 파일 이름으로 돌아간다
+    let generic = matches!(
+        tail.to_lowercase().as_str(),
+        "license" | "licence" | "copying" | "notice"
+    );
+    if generic && !spdx.is_empty() {
+        spdx.to_string()
+    } else {
+        tail.to_string()
+    }
+}
+
+/// 파일 이름 조각을 표준 SPDX 표기로 — 알아볼 수 없으면 `None`.
+///
+/// 표기가 갈리는 것만 담는다(`APACHE`·`apache-2`·`Apache-2.0`이 한 화면에 섞이지 않게).
+/// 목록에 없는 것(`GPLv2`·`UNICODE`·`LIBM-MIT` 등)은 파일 이름 그대로가 더 정확하다
+fn normalize_label(tail: &str) -> Option<&'static str> {
+    Some(match tail.to_lowercase().as_str() {
+        "mit" => "MIT",
+        "apache" | "apache-2" | "apache-2.0" | "apache2" => "Apache-2.0",
+        "zlib" => "Zlib",
+        "unlicense" => "Unlicense",
+        "boost" | "bsl" | "bsl-1.0" => "BSL-1.0",
+        "isc" => "ISC",
+        _ => return None,
+    })
 }
 
 /// SPDX 식별자에 해당하는 표준 전문의 자리 번호들.

@@ -51,7 +51,12 @@ pub struct CrateEntry {
 /// 라이선스 전문 한 벌.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LicenseText {
-    /// 이 전문이 무엇인지 알려 주는 이름 — 화면에서 전문 위에 붙는다
+    /// 이 전문이 무엇인지 알려 주는 이름 — 화면에서 전문 위에 붙는다.
+    ///
+    /// **늘 SPDX 식별자인 것은 아니다** — 생성기가 파일 이름에서 알아볼 수 있는 것은 표준
+    /// 표기(`MIT`·`Apache-2.0`)로 맞추지만, 종류를 담지 않은 이름(`LICENSE`·`COPYING`)이면
+    /// 그 크레이트의 **선언 전체**(`MIT OR Apache-2.0`)가 오고, 알아볼 수 없는 이름
+    /// (`GPLv2`·`LIBM-MIT`)은 그대로 온다
     pub spdx: String,
     pub body: String,
 }
@@ -213,6 +218,25 @@ mod tests {
                 "{} {}의 전문이 없다",
                 entry.name,
                 entry.version
+            );
+        }
+    }
+
+    /// 개수만 세면 **이름만 라이선스인 파일**이 전문 행세를 한다 — `harfrust`의 `LICENSE`는
+    /// 상위를 가리키는 `../LICENSE` 열 바이트였고, 그것이 그 항목의 유일한 전문으로 담겨
+    /// 화면에 그 한 줄만 떴다(2026-08-18 Phase F-7이 잡았다). 생성기가 그런 파일을 거르므로
+    /// 여기서 길이로 그 규칙을 못 박는다
+    #[test]
+    fn 전문에_길이가_짧은_스텁이_섞여_있지_않다() {
+        /// 생성기의 `MIN_LICENSE_BYTES`와 같은 값 — 어느 표준 라이선스도 이보다 길다
+        const MIN_BYTES: usize = 300;
+        for text in &load().texts {
+            assert!(
+                text.body.trim().len() >= MIN_BYTES,
+                "{}의 전문이 {}바이트뿐이다 — 원문이 아니라 스텁일 수 있다: {:?}",
+                text.spdx,
+                text.body.trim().len(),
+                text.body.trim()
             );
         }
     }

@@ -350,6 +350,23 @@ mod tests {
         assert!(!dialog.is_open());
     }
 
+    /// 닫힌 대화가 아무것도 그리지 않는지 — `show`의 첫 줄이 그 가드다.
+    ///
+    /// `egui::Context`를 만들어 한 프레임 돌려 셰이프가 하나도 나오지 않는 것으로 잰다
+    #[test]
+    fn 닫혀_있으면_아무것도_그리지_않는다() {
+        let ctx = egui::Context::default();
+        let mut dialog = LicenseDialog::new();
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        assert!(!dialog.is_open());
+        let shapes: usize = output
+            .shapes
+            .iter()
+            .filter(|shape| !matches!(shape.shape, egui::epaint::Shape::Noop))
+            .count();
+        assert_eq!(shapes, 0, "닫힌 대화가 무언가를 그렸다");
+    }
+
     #[test]
     fn 고른_자리가_목록을_벗어나면_되돌린다() {
         assert_eq!(clamp_selection(0, 0), 0);
