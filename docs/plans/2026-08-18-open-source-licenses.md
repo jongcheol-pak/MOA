@@ -257,7 +257,7 @@
     - (ii-a) `examples/` 디렉터리 신설 · `assets/spdx/` 파일 4개 커밋 → `## 사전 승인 항목`
   - **Depends on**: T1
 
-- [ ] T3. 라이선스 대화를 그린다
+- [x] T3. 라이선스 대화를 그린다
   - **Type**: D
   - **Design**: ① 배치 — `src/ui/license_dialog.rs`(신규), `src/ui/mod.rs`에 선언. ② 신규 심볼과 책임 — `LicenseDialog`(열림 상태 + 고른 항목 인덱스만 든다), `open`/`is_open`/`close`(설정 대화와 같은 표면), `show(&mut self, ctx)`(**구현 시 정정**: 계획은 `-> bool`이었으나 설정 대화와 같이 **닫기 판정을 안에서 하고 `close()`를 부르는** 쪽으로 뒀다 — 호출부가 반환값을 받아 다시 `close()`를 부르면 같은 판정이 두 곳에 갈린다. 바깥은 `is_open()`으로 읽는다), private `show_list`(좌측 목록)·`show_detail`(우측 전문)·`show_header`(제목 줄). ③ 의존 방향 — `ui::dialog`(셸)·`ui::theme`·`ui::widgets`·`app::licenses`(데이터)·`i18n`을 참조하고, `ui::app`이 이것을 참조한다. ④ 비추상화 — 목록 행을 공용 위젯으로 승격하지 않는다(쓰는 곳이 하나다 — 셋째 지점이 생기면 그때 `widgets`로 올린다). 검색·정렬 UI를 만들지 않는다(Deferred).
   - **Acceptance**:
