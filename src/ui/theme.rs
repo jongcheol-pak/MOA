@@ -93,6 +93,10 @@ pub const BORDER_CONTROL: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x
 pub const CARD_BG: egui::Color32 = egui::Color32::from_rgb(0x23, 0x23, 0x23);
 pub const CARD_HOT: egui::Color32 = egui::Color32::from_rgb(0x28, 0x28, 0x28);
 
+/// 선택된 탭의 글자 — 탭 배경 차이가 옅어 기본 글자색(#E8E8E8)으로는 비선택(#9A9A9A)과
+/// 잘 갈리지 않는다(2026-08-18 보고). 도크 탭과 전송 큐의 사이트 탭이 함께 쓴다
+pub const TEXT_SELECTED: egui::Color32 = egui::Color32::WHITE;
+
 /// 보조 글자 — 밝은 순서대로. `HEADER_TEXT`(#C8C8C8)·`TEXT_DIM`(#6A6A6A)이 그 사이를 메운다
 pub const TEXT_BUTTON: egui::Color32 = egui::Color32::from_rgb(0xD8, 0xD8, 0xD8);
 pub const TEXT_LOG: egui::Color32 = egui::Color32::from_rgb(0xB4, 0xB4, 0xB4);

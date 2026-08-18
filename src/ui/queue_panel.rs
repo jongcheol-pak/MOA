@@ -316,10 +316,12 @@ pub fn show_site_tabs(
         .collect();
 
     for (site, label) in tabs {
+        // 색은 굽지 않고 그릴 때 정한다 — 구워 두면 아래 `galley`의 색이 무시된다
+        // (도크 탭과 같은 함정. `list_common`의 주석 참고)
         let text = ui.painter().layout_no_wrap(
             label,
             egui::FontId::proportional(FONT_PX),
-            theme::TEXT_MUTED,
+            egui::Color32::PLACEHOLDER,
         );
         // `전체`는 점이 없다 (인벤토리 #35) — 그만큼 폭도 줄어든다
         let dot_width = if site.is_some() {
@@ -362,7 +364,9 @@ pub fn show_site_tabs(
         ui.painter().galley(
             egui::pos2(text_left, tab.center().y - text.size().y / 2.0),
             text,
-            if active || response.hovered() {
+            if active {
+                theme::TEXT_SELECTED
+            } else if response.hovered() {
                 theme::TEXT
             } else {
                 theme::TEXT_MUTED

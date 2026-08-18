@@ -198,23 +198,20 @@ pub fn show_strip(
         (
             format!("{} ({})", crate::i18n::dock_queue(), counts.0),
             Some(QueueFilter::All),
-            theme::TEXT,
         ),
         (
             format!("{} ({})", crate::i18n::dock_success(), counts.1),
             Some(QueueFilter::Done),
-            theme::OK_TEXT,
         ),
         (
             format!("{} ({})", crate::i18n::dock_failed(), counts.2),
             Some(QueueFilter::Error),
-            theme::ERROR_TEXT,
         ),
-        (crate::i18n::dock_log().to_owned(), None, theme::TEXT),
+        (crate::i18n::dock_log().to_owned(), None),
     ];
 
     let mut left = rect.left();
-    for (index, (label, filter, active_color)) in tabs.into_iter().enumerate() {
+    for (index, (label, filter)) in tabs.into_iter().enumerate() {
         // 필터 묶음과 로그 사이에 선을 하나 긋는다 — 종류가 다르다는 것을 자리로도 보인다
         if index > 0 && filter.is_none() {
             ui.painter().vline(
@@ -224,10 +221,13 @@ pub fn show_strip(
             );
             left += TAB_DIVIDER_GAP;
         }
+        // 색을 여기서 굽지 않는다 — 갤리에 든 색은 아래 `galley`에 넘기는 색을 덮어써
+        // 선택·hover 색이 화면에 나오지 않는다(`list_common`의 같은 함정 주석 참고).
+        // 폭이 정해져야 탭 자리가 나오고 그래야 hover를 알 수 있어 색은 나중에 정해진다
         let text = ui.painter().layout_no_wrap(
             label,
             egui::FontId::proportional(TAB_FONT_PX),
-            theme::TEXT_MUTED,
+            egui::Color32::PLACEHOLDER,
         );
         let width = text.size().x + TAB_PAD_X * 2.0;
         let tab = egui::Rect::from_min_size(
@@ -246,8 +246,10 @@ pub fn show_strip(
         if active {
             ui.painter().rect_filled(tab, 0.0, theme::SURFACE_BG);
         }
+        // 선택된 탭만 흰색이다 — 성공·실패도 예외를 두지 않는다. 상태색(#7FD6A2·#FF8A8A)은
+        // 선택 표시로 쓰기엔 옅어 어느 탭을 보고 있는지가 먼저 읽히지 않았다 (2026-08-18 보고)
         let color = if active {
-            active_color
+            theme::TEXT_SELECTED
         } else if response.hovered() {
             theme::TEXT
         } else {
