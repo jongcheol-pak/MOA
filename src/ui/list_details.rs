@@ -394,8 +394,8 @@ pub fn show<R: ListRow>(
             let entry = &entries[index];
             let y = rect.center().y;
             // 숨김·시스템 항목은 아이콘과 글자를 함께 흐리게 그린다 (FR-13 — 탐색기와 같은 표시)
-            let hidden = entry.is_hidden();
-            let text_color = dim_if_hidden(theme::TEXT, hidden);
+            let dimmed = entry.is_dimmed();
+            let text_color = dim_if_hidden(theme::TEXT, dimmed);
             // 보이는 행에 한해 아이콘 인덱스를 조회한다 — 로드 시 전체를 미리 계산하면
             // exe가 많은 폴더에서 로드가 길어진다(PoC 실측 585ms → 84ms)
             let icon_index = match icon_indices[index] {
@@ -419,7 +419,7 @@ pub fn show<R: ListRow>(
                     tex.id(),
                     icon_rect,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    dim_if_hidden(egui::Color32::WHITE, hidden),
+                    dim_if_hidden(egui::Color32::WHITE, dimmed),
                 );
             }
 

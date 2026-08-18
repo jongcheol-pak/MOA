@@ -163,7 +163,7 @@ impl FileListView {
         icons: &mut IconCache,
     ) {
         if !self.show_hidden {
-            entries.retain(|e| !e.is_hidden());
+            entries.retain(|e| !e.is_hidden() && !e.is_system());
         }
         let keep = (dir == self.dir).then(|| self.selected_name_keys());
         self.dir = dir;
@@ -201,7 +201,7 @@ impl FileListView {
     /// 바뀌고(변경 감시가 없다 — Deferred), 그때는 선택이 풀리는 것이 자연스럽다
     pub fn set_remote_entries(&mut self, mut entries: Vec<RemoteEntry>, icons: &mut IconCache) {
         if !self.show_hidden {
-            entries.retain(|e| !e.is_hidden());
+            entries.retain(|e| !e.is_hidden() && !e.is_system());
         }
         self.type_names = entries
             .iter()

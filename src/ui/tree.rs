@@ -654,7 +654,7 @@ fn remote_display_name(path: &RemotePath) -> String {
 /// 열거 결과에서 하위 폴더만 골라 이름 자연 정렬로 돌려준다.
 /// 정렬은 목록과 같은 규칙을 쓴다 — 종류 인자는 이름 정렬에서 쓰이지 않아 빈 문자열을 넘긴다
 fn child_dirs(parent: &Path, mut entries: Vec<FileEntry>, show_hidden: bool) -> Vec<PathBuf> {
-    entries.retain(|e| e.is_dir && (show_hidden || !e.is_hidden()));
+    entries.retain(|e| e.is_dir && (show_hidden || !(e.is_hidden() || e.is_system())));
     entries.sort_by(|a, b| compare_entries(a, "", b, "", SortKey::Name));
     entries
         .iter()

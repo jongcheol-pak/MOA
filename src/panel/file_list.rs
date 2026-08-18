@@ -560,11 +560,30 @@ pub trait ListRow {
 
     fn is_dir(&self) -> bool;
 
-    /// 숨김 항목인가 — `숨김 항목` 설정이 꺼져 있으면 목록에서 빠진다 (FR-13).
+    /// 숨김 항목인가 — 숨김을 보이는 설정이 꺼져 있으면 목록에서 빠진다 (FR-13).
     ///
-    /// 로컬은 `FILE_ATTRIBUTE_HIDDEN`·`FILE_ATTRIBUTE_SYSTEM`을, 원격은 이름이 `.`으로
-    /// 시작하는지를 본다 — 유닉스 계열 서버에는 숨김 속성이 따로 없고 그 관례가 곧 규칙이다
+    /// 로컬은 `FILE_ATTRIBUTE_HIDDEN`을, 원격은 이름이 `.`으로 시작하는지를 본다 —
+    /// 유닉스 계열 서버에는 숨김 속성이 따로 없고 그 관례가 곧 규칙이다.
+    ///
+    /// **화면 문구를 여기 적지 않는다** — 설정 라벨은 `i18n` 카탈로그가 언어마다 정하므로
+    /// 그것을 주석에 박으면 문구를 바꿀 때마다 이 자리가 조용히 낡는다
     fn is_hidden(&self) -> bool;
+
+    /// 시스템 항목인가 — 시스템 항목을 보이는 설정이 꺼져 있으면 목록에서 빠진다 (FR-13).
+    ///
+    /// **숨김과 따로 묻는 이유**: 두 속성에 각자의 설정이 대응하고, 둘 다 붙은 항목
+    /// (`pagefile.sys` 등)은 두 설정이 모두 켜져야 보인다. 원격은 언제나 `false`다 —
+    /// 유닉스 계열 서버에 이 속성이 없어 흉내 낼 근거가 없다
+    fn is_system(&self) -> bool;
+
+    /// 목록에서 흐리게 그릴 항목인가 — 숨김이거나 시스템이면 보통 항목이 아니다 (FR-13).
+    ///
+    /// 거르기와 달리 **둘을 함께 본다**: 설정을 켜서 보이기로 한 항목이 어느 쪽이든
+    /// 보통 항목과 구분돼야 하고, 그 판정이 그리는 자리마다 흩어지면 보기 모드에 따라
+    /// 다르게 보인다
+    fn is_dimmed(&self) -> bool {
+        self.is_hidden() || self.is_system()
+    }
 
     fn is_symlink(&self) -> bool;
 
@@ -620,8 +639,11 @@ impl ListRow for FileEntry {
     }
 
     fn is_hidden(&self) -> bool {
-        const HIDDEN: u32 = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
-        self.attributes & HIDDEN != 0
+        self.attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0
+    }
+
+    fn is_system(&self) -> bool {
+        self.attributes & FILE_ATTRIBUTE_SYSTEM.0 != 0
     }
 
     fn is_symlink(&self) -> bool {
@@ -674,6 +696,11 @@ impl ListRow for crate::remote::types::RemoteEntry {
         // 유닉스 계열 서버에는 숨김 속성이 없다 — `.`으로 시작하는 이름이 그 관례다.
         // `..`는 이름이 점으로 시작하지만 화면 장치이므로 걸러지면 안 된다
         !self.is_parent() && self.name.starts_with('.')
+    }
+
+    /// 원격에는 시스템 속성이 없다 — 서버가 주지 않는 것을 이름으로 흉내 내지 않는다
+    fn is_system(&self) -> bool {
+        false
     }
 
     fn is_symlink(&self) -> bool {
@@ -976,12 +1003,31 @@ mod tests {
     }
 
     #[test]
-    fn 로컬_숨김은_숨김_또는_시스템_속성이다() {
+    fn 로컬_숨김과_시스템은_각자의_속성이다() {
         use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM};
-        assert!(!entry_with("보통.txt", 0).is_hidden());
-        assert!(entry_with("숨김.txt", FILE_ATTRIBUTE_HIDDEN.0).is_hidden());
-        // 시스템 파일도 함께 숨긴다 (`pagefile.sys` — plan Edge Case)
-        assert!(entry_with("pagefile.sys", FILE_ATTRIBUTE_SYSTEM.0).is_hidden());
+        let 보통 = entry_with("보통.txt", 0);
+        assert!(!보통.is_hidden() && !보통.is_system());
+        assert!(!보통.is_dimmed(), "보통 항목을 흐리게 그리려 한다");
+
+        // 두 속성에 각자의 설정이 대응한다 — 한쪽 판정이 다른 쪽을 물면 토글이 헛돈다
+        let 숨김 = entry_with("숨김.txt", FILE_ATTRIBUTE_HIDDEN.0);
+        assert!(숨김.is_hidden() && !숨김.is_system());
+
+        let 시스템 = entry_with("pagefile.sys", FILE_ATTRIBUTE_SYSTEM.0);
+        assert!(시스템.is_system() && !시스템.is_hidden());
+
+        // 둘 다 붙은 항목 — 두 설정이 모두 켜져야 보인다(거르는 쪽 판정은 호출부가 한다)
+        let 둘다 = entry_with(
+            "System Volume Information",
+            FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0,
+        );
+        assert!(둘다.is_hidden() && 둘다.is_system());
+
+        // 어느 쪽이든 흐리게 그린다
+        for e in [&숨김, &시스템, &둘다] {
+            assert!(e.is_dimmed(), "{}를 흐리게 그리지 않는다", e.name());
+        }
+
         // 이름이 점으로 시작해도 로컬은 속성으로만 판정한다 — 윈도우의 규칙이다
         assert!(!entry_with(".gitignore", 0).is_hidden());
     }
@@ -994,6 +1040,10 @@ mod tests {
         assert!(remote(".ssh", true, 0, None).is_hidden());
         // `..`는 이름이 점으로 시작하지만 화면 장치다 — 걸러지면 맨 윗줄이 사라진다
         assert!(!remote("..", true, 0, None).is_hidden());
+        // 서버는 시스템 속성을 주지 않는다 — 어떤 이름이든 시스템이 아니다
+        for name in ["보통.txt", ".bashrc", "pagefile.sys"] {
+            assert!(!remote(name, false, 0, None).is_system());
+        }
     }
 
     #[test]
@@ -1061,7 +1111,7 @@ mod tests {
         // 정렬 키는 확장자를 포함한 원본이다
         assert_eq!(
             a.name_sort_key().as_ref(),
-            "파일2.txt ".encode_utf16().collect::<Vec<u16>>().as_slice()
+            "파일2.txt\0".encode_utf16().collect::<Vec<u16>>().as_slice()
         );
     }
 }

@@ -30,9 +30,9 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
 
 ## Tasks
 
-- [ ] **T1. 판정 기준을 숨김·시스템으로 가른다 (필터·표시 동작 불변)** — Type C
+- [x] **T1. 판정 기준을 숨김·시스템으로 가른다 (필터·표시 동작 불변)** — Type C
   - **Files**:
-    - `src/panel/file_list.rs` — `ListRow` 트레이트 선언(`is_hidden` doc 포함) · `FileEntry` impl · `RemoteEntry` impl · **시험 `로컬_숨김은_숨김_또는_시스템_속성이다`(L979~987) 개정**
+    - `src/panel/file_list.rs` — `ListRow` 트레이트 선언(`is_hidden` doc 포함) · `FileEntry` impl · `RemoteEntry` impl · **시험 `로컬_숨김은_숨김_또는_시스템_속성이다`(L979~987) 개정** · **`name_sort_key` 시험 리터럴의 raw NUL 바이트를 `\0` 이스케이프로 교체**(grep이 이 파일을 건너뛰던 원인 — 계획 당시 Deferred로 미뤘으나, 이 task의 Files 안이고 같은 검증 명령으로 확인되며 이 파일의 조사 자체가 그 함정에 걸려 있어 그 자리에서 고친다. 값은 U+0000 그대로라 시험 단언은 불변)
     - `src/ui/file_list.rs` — 필터 2곳(`:166`·`:204`)
     - `src/ui/tree.rs` — 필터 1곳(`:657`)
     - `src/ui/list_details.rs`(`:397`) · `src/ui/list_grid.rs`(`:268`·`:344`) — 흐리게 그리기
@@ -166,7 +166,6 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
 ## Deferred / Follow-up
 
 - 숨김·시스템 토글이 **원격 패널에서도 재조회를 부른다** — 원격은 시스템 속성이 없어 새 토글로는 목록이 바뀌지 않는데도 네트워크 왕복이 돈다. 원격만 응답을 캐시해 재필터하는 길이 있다(2026-08-14 등재 항목과 같은 자리 — 이번 분리로 헛돌 경우가 하나 늘었다).
-- `src/panel/file_list.rs`의 **NUL 바이트** — 이 파일이 binary로 보여 grep이 조용히 건너뛴다. 원인(어떤 편집이 남긴 바이트인지)을 찾아 걷어내면 이 파일도 정상 검색 대상이 된다. 이번 요청과 무관해 미룬다.
 
 ## Out of Scope
 
@@ -190,3 +189,5 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
 - 2026-08-18: 계획을 쓰기 전에 미커밋이던 “숨김 항목 흐리게 표시” 작업을 `07ef515`로 커밋해 작업 트리를 비웠다(세션 시작 스냅샷에는 그 전 상태가 찍혀 있다). 그 뒤 이 계획을 작성했다.
 - 2026-08-18: plan-reviewer 1라운드 — BLOCKER 2(시험 자산 누락)·MAJOR 4·MINOR 3. B1·B2·M1·M2·M3·m1·m2·m3 반영, M4는 시점 오해로 기각(근거는 Investigation Log 마지막 줄).
 - 2026-08-18: plan-reviewer 2라운드 — BLOCKER 0·MAJOR 0·MINOR 5(기록 정확도 3 + 구현 중 드러나는 것 2). 다섯 건 모두 반영하고 통과.
+- 2026-08-18: T1 구현 중 **Deferred 결정 하나를 뒤집었다** — `src/panel/file_list.rs`의 raw NUL 바이트를 T1에서 함께 고쳤다(위 Files 참조). 계획에서는 미루기로 했으나 그 NUL이 바로 이 task의 조사를 막는 함정이었고, 수정이 1글자·같은 파일·같은 검증 명령 범위였다. 두 리뷰어(spec MAJOR·quality MINOR)가 범위 이탈로 지적해 이 기록을 남긴다.
+- 2026-08-18: T1 리뷰 — spec MAJOR 1(위 Deferred 불일치, 이 기록으로 해소) · quality MAJOR 1(doc 주석이 아직 없는 T3 라벨을 인용 → 화면 문구 인용을 걷어내고 역할로 서술) · quality MINOR 1(spec MAJOR와 같은 사안).
