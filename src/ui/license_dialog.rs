@@ -29,8 +29,8 @@ const BODY_GAP: f32 = 22.0;
 /// 남는 자리는 전문을 넓게 읽는 데 쓰는 편이 낫다
 const LEFT_WIDTH: f32 = 320.0;
 
-/// 안내 문구 한 줄 높이
-const INTRO_HEIGHT: f32 = 18.0;
+/// 안내 문구와 그 아래 개수 사이
+const INTRO_LINE_GAP: f32 = 2.0;
 /// 안내와 목록 사이
 const INTRO_GAP: f32 = 8.0;
 /// 목록 웰 안쪽 여백
@@ -122,15 +122,29 @@ impl LicenseDialog {
 
     /// 좌측 — 안내 한 줄과 구성 요소 목록
     fn show_list(&mut self, ui: &mut egui::Ui, column: egui::Rect, data: &LicenseData) {
-        ui.painter().text(
-            egui::pos2(column.left(), column.top() + INTRO_HEIGHT / 2.0),
-            egui::Align2::LEFT_CENTER,
-            i18n::dynamic::licenses_component_count(data.crates.len()),
+        // 안내는 열 폭에 맞춰 접힌다 — 언어에 따라 한 줄이 되기도 두 줄이 되기도 해서
+        // 높이를 상수로 박지 않고 그려진 것을 재어 아래를 잡는다
+        let intro = ui.painter().layout(
+            i18n::licenses_intro().to_owned(),
             egui::FontId::proportional(BODY_FONT_PX),
             theme::TEXT_MUTED,
+            column.width(),
+        );
+        let intro_bottom = column.top() + intro.size().y;
+        ui.painter().galley(column.min, intro, theme::TEXT_MUTED);
+        let count = ui.painter().layout_no_wrap(
+            i18n::dynamic::licenses_component_count(data.crates.len()),
+            egui::FontId::proportional(BODY_FONT_PX),
+            theme::TEXT_DIM,
+        );
+        let count_bottom = intro_bottom + INTRO_LINE_GAP + count.size().y;
+        ui.painter().galley(
+            egui::pos2(column.left(), intro_bottom + INTRO_LINE_GAP),
+            count,
+            theme::TEXT_DIM,
         );
         let well = egui::Rect::from_min_max(
-            egui::pos2(column.left(), column.top() + INTRO_HEIGHT + INTRO_GAP),
+            egui::pos2(column.left(), count_bottom + INTRO_GAP),
             column.max,
         );
         ui.painter().rect(

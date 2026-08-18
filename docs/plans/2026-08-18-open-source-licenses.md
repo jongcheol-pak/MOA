@@ -111,7 +111,7 @@
 |---|---|---|
 | `app::licenses::LicenseData`(자산 모델) | `grep -rn "licens" src/ -i` → i18n 키 1건·`ui/titlebar.rs` 1건뿐. 라이선스 데이터 구조 없음 | 신규 — 같은 일을 하는 것이 없다 |
 | `app::licenses::lockfile_fingerprint` | `grep -rn "fnv\|Hasher\|hash(" src/` → `remote/sftp.rs:123`의 SSH 호스트 키 해시뿐(용도가 다르고 libssh2 API다) | 신규 — std에 해시 함수가 없고 의존성을 더하지 않기 위해 FNV-1a 64비트를 직접 쓴다(20줄) |
-| `ui::license_dialog::LicenseDialog` | `ui::settings_dialog::SettingsDialog`·`ui::site_manager` | **셸은 재사용**(`dialog::show_fixed`), 좌우 2단 배치는 `site_manager::show_body`의 `LEFT_WIDTH`(400) + `BODY_GAP`(22) 방식을 **같은 계산으로 다시 쓴다**(그 함수는 사이트 폼 전용 private이라 호출할 수 없다). 목록 행·전문 렌더는 신규 |
+| `ui::license_dialog::LicenseDialog` | `ui::settings_dialog::SettingsDialog`·`ui::site_manager` | **셸은 재사용**(`dialog::show_fixed`), 좌우 2단 배치는 `site_manager::show_body`의 **계산 방식**(좌 열 rect → `BODY_GAP` → 나머지가 우 열)을 그대로 다시 쓴다(그 함수는 사이트 폼 전용 private이라 호출할 수 없다). `BODY_GAP`·`BODY_PAD_X`·`HEADER_HEIGHT`는 같은 값이고, **좌 열 폭만 400 → 320으로 좁혔다**(T3 구현 시 정정 — 담기는 것이 이름 한 줄뿐이라 400은 과하고, 남는 자리는 9KB에 이르는 전문을 넓게 읽는 데 쓰는 편이 낫다). 목록 행·전문 렌더는 신규 |
 | 목록 행 렌더 | `ui::widgets`의 공개 위젯 15종에 "선택 가능한 목록 행"이 없다(`radio_row`·`check_row`·`toggle_row`는 각각 라디오·체크·토글 전용) | 신규 — 다만 hover 배경은 `widgets::hover_backdrop`를, 색은 `theme::ROW_HOT`·`theme::TEXT_*`를 재사용한다 |
 | SPDX 표준 전문 3종(`assets/spdx/*.txt`) | 레지스트리에서 확보 — MIT는 `bitflags-2.10.0/LICENSE-MIT`(저작권 줄을 SPDX 플레이스홀더로 대체), Apache-2.0은 `serde-1.0.229/LICENSE-APACHE`(그대로), BSL-1.0은 `error-code-3.3.2/LICENSE`(그대로) | 재사용(레지스트리에서 가져와 커밋) — 네트워크를 타지 않는다 |
 
@@ -259,7 +259,7 @@
 
 - [ ] T3. 라이선스 대화를 그린다
   - **Type**: D
-  - **Design**: ① 배치 — `src/ui/license_dialog.rs`(신규), `src/ui/mod.rs`에 선언. ② 신규 심볼과 책임 — `LicenseDialog`(열림 상태 + 고른 항목 인덱스만 든다), `open`/`is_open`/`close`(설정 대화와 같은 표면), `show(&mut self, ctx) -> bool`(닫기를 눌렀는지만 돌려준다), private `show_list`(좌측 목록)·`show_detail`(우측 전문)·`show_header`(제목 줄). ③ 의존 방향 — `ui::dialog`(셸)·`ui::theme`·`ui::widgets`·`app::licenses`(데이터)·`i18n`을 참조하고, `ui::app`이 이것을 참조한다. ④ 비추상화 — 목록 행을 공용 위젯으로 승격하지 않는다(쓰는 곳이 하나다 — 셋째 지점이 생기면 그때 `widgets`로 올린다). 검색·정렬 UI를 만들지 않는다(Deferred).
+  - **Design**: ① 배치 — `src/ui/license_dialog.rs`(신규), `src/ui/mod.rs`에 선언. ② 신규 심볼과 책임 — `LicenseDialog`(열림 상태 + 고른 항목 인덱스만 든다), `open`/`is_open`/`close`(설정 대화와 같은 표면), `show(&mut self, ctx)`(**구현 시 정정**: 계획은 `-> bool`이었으나 설정 대화와 같이 **닫기 판정을 안에서 하고 `close()`를 부르는** 쪽으로 뒀다 — 호출부가 반환값을 받아 다시 `close()`를 부르면 같은 판정이 두 곳에 갈린다. 바깥은 `is_open()`으로 읽는다), private `show_list`(좌측 목록)·`show_detail`(우측 전문)·`show_header`(제목 줄). ③ 의존 방향 — `ui::dialog`(셸)·`ui::theme`·`ui::widgets`·`app::licenses`(데이터)·`i18n`을 참조하고, `ui::app`이 이것을 참조한다. ④ 비추상화 — 목록 행을 공용 위젯으로 승격하지 않는다(쓰는 곳이 하나다 — 셋째 지점이 생기면 그때 `widgets`로 올린다). 검색·정렬 UI를 만들지 않는다(Deferred).
   - **Acceptance**:
     <!-- 화면에 실제로 무엇이 보이는가는 T3 시점에 판정할 수 없다 — 대화를 여는 배선이 T4다.
          그 축은 아래 「화면 축(T4 이후 수동 검증)」으로 이관했고, 여기에는 T3에서 기계로 판정되는 것만 둔다. -->
