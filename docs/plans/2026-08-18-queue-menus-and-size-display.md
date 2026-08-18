@@ -29,6 +29,8 @@
 
 ## Deferred / Follow-up
 
+- **egui의 끌기 판정을 시험에서 재현하는 방법** — `RawInput`에 `PointerMoved`+`PointerButton{pressed}`를 넣고 시간·프레임을 진행시켜도 `Response::dragged()`가 서지 않았다(2026-08-18 두 차례 실측). 그래서 열 폭 드래그의 **화면 쪽**(가이드 선이 서는가)은 큐 표·파일 목록 양쪽 다 수동 검증에 기대고 있다. 방법을 찾으면 `queue_panel`·`list_details` 두 곳에 함께 넣는다(폭 계산 규칙 자체는 `apply_drag` 단위 시험이 이미 고정한다).
+
 - [SUGGEST] `TransferQueue::cancel(id)`와 `remove(ids)`가 같은 `retain` 한 줄을 각자 갖는다 — `cancel`을 `remove` 위에 재구성하면 한 곳으로 좁힐 수 있다. **이번엔 채택하지 않았다**: 중복이 2회라 공통화 문턱(3회) 미달이고, 위임으로 바꾸면 단건 경로에 `HashSet` 할당이 새로 붙는다(T3 quality S1).
 
 - 큐 표 열의 **표시·숨김·순서 바꾸기** — 이번에 열 폭 상태(`QueueColumns`)가 생겨 확장 지점이 열린다. 파일 목록의 같은 항목(2026-07-29 등재)과 한 뿌리.
@@ -297,7 +299,7 @@
     - (ii-a) `DockSession` 필드 추가·`DockState` 구조 변경·`show_header` 시그니처 변경·`FLEX_COLUMN`/`FLEX_MIN` 제거 → `## 사전 승인 항목`
   - **Depends on**: T2 (같은 `show_header`·`show_queue` 경로를 건드린다)
 
-- [ ] T5. 파일 목록 머리글에 열 구분선과 드래그 가이드를 둔다
+- [x] T5. 파일 목록 머리글에 열 구분선과 드래그 가이드를 둔다
   - **Type**: C
   - **Design**: ① `ui::list_details::show_header`가 열 경계마다 `theme::BORDER_SUBTLE` 세로선을 긋는다(머리글 높이 안에서만). ② 드래그 중인 경계의 x를 `DetailsOutcome.resize_guide_x`에 담고, **같은 파일의 `show` 안**(`list_details.rs:309-336`의 `show_viewport` 클로저 — 머리글과 행을 그리는 그 `Ui`)에서 목록 바닥까지 `theme::ACCENT` 선을 긋는다. **행 루프가 끝난 뒤에 긋는다** — 머리글(`:321-336`)이 행(`:348-`)보다 먼저 그려지므로 앞에서 그으면 행 배경이 같은 레이어에서 선을 덮는다(T4 Design ⑥과 같은 함정). `src/ui/file_list.rs`의 바깥 호출부는 건드리지 않는다(그쪽은 스크롤 좌표계 밖이다). ③ 신규 심볼은 `DetailsOutcome`의 필드 하나(`resize_guide_x: Option<f32>`)뿐이다 — 새 함수·타입을 만들지 않는다. ④ 비추상화 선언 — 큐 표(T4)와 선 그리기를 공통 헬퍼로 묶지 않는다(각각 `vline` 한 줄이고 좌표 계산이 다르다).
   - **Acceptance**: ① Given 자세히 보기, When 아무것도 하지 않을 때, Then 머리글의 열 경계마다 세로 구분선이 보인다 ② Given 같은 화면, When 경계를 끌 때, Then 그 경계가 목록 바닥까지 **끊김 없이** 강조색 선으로 이어지고(행 배경이 덮지 않는다 — Design ②의 그리기 순서) 손을 떼면 사라진다 ③ 구분선이 열 폭 조절 동작·정렬 클릭·열 메뉴를 바꾸지 않는다 ④ 마지막 열의 오른쪽 끝에는 선을 긋지 않는다(표 바깥 경계) ⑤ `cargo test` 전건 통과
