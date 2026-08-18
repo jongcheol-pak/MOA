@@ -115,7 +115,9 @@ strings! {
     settings_tray_on_close => "닫으면 트레이로 보내기" / "Send to tray on close";
     /// 토글 라벨은 **켰을 때 일어나는 일**을 적는다 — 이름만 두면 켜고 끄는 것이 무엇인지 모른다
     settings_show_extensions => "파일 확장명 표시" / "Show file name extensions";
-    settings_show_hidden => "숨김 항목 표시" / "Show hidden items";
+    settings_show_hidden => "숨김 파일 및 폴더 표시" / "Show hidden files and folders";
+    /// 시스템 파일은 숨김과 따로 켠다 — 둘 다 붙은 항목은 두 토글이 모두 켜져야 보인다
+    settings_show_system => "시스템 파일 표시" / "Show system files";
     /// 언어 선택지 — `English`는 두 언어에서 같다
     settings_language_system => "시스템 기본" / "System default";
     settings_language_korean => "한국어" / "Korean";

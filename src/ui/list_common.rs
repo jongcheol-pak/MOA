@@ -127,7 +127,11 @@ pub fn drop_direction(
 /// 항목이 반쯤 지워진 것처럼 보인다
 pub const HIDDEN_ALPHA: f32 = 0.5;
 
-/// 숨김 항목이면 흐린 색으로 바꾼다 — 글자색과 아이콘 tint가 함께 쓰는 한 벌의 규칙
+/// 흐리게 그릴 항목이면 흐린 색으로 바꾼다 — 글자색과 아이콘 tint가 함께 쓰는 한 벌의 규칙.
+///
+/// **무엇이 그 대상인지는 여기서 정하지 않는다** — 호출부가 `ListRow::is_dimmed()`로
+/// 판정해 넘긴다(숨김이거나 시스템). 색 변환과 판정을 한 함수에 두면 목록·트리처럼
+/// 판정 기준이 다른 자리가 이 함수를 함께 쓸 수 없다
 pub fn dim_if_hidden(color: egui::Color32, hidden: bool) -> egui::Color32 {
     if hidden {
         color.gamma_multiply(HIDDEN_ALPHA)

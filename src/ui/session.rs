@@ -669,6 +669,7 @@ mod tests {
             tray_on_close: true,
             show_extensions: false,
             show_hidden: false,
+            show_system: true,
             language: LanguageSetting::English,
         };
         let mut session = to_session(

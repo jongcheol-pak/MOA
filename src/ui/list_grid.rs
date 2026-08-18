@@ -265,9 +265,9 @@ fn draw_cell<R: ListRow>(
         ..
     } = item;
     // 숨김·시스템 항목은 아이콘과 글자를 함께 흐리게 그린다 (FR-13 — 탐색기와 같은 표시)
-    let hidden = entry.is_hidden();
-    let tint = dim_if_hidden(egui::Color32::WHITE, hidden);
-    let text_color = dim_if_hidden(theme::TEXT, hidden);
+    let dimmed = entry.is_dimmed();
+    let tint = dim_if_hidden(egui::Color32::WHITE, dimmed);
+    let text_color = dim_if_hidden(theme::TEXT, dimmed);
     if is_single_row(mode) {
         let icon_rect = egui::Rect::from_min_size(
             egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
@@ -341,8 +341,8 @@ fn draw_multiline_cell<R: ListRow>(
     let icon_px = mode.icon_px();
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     // 숨김·시스템 항목을 흐리게 그리는 규칙은 한 줄짜리 칸과 같다 (FR-13)
-    let hidden = entry.is_hidden();
-    let text_color = dim_if_hidden(theme::TEXT, hidden);
+    let dimmed = entry.is_dimmed();
+    let text_color = dim_if_hidden(theme::TEXT, dimmed);
     let icon_rect = egui::Rect::from_min_size(
         egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
         egui::Vec2::splat(icon_px),
@@ -352,7 +352,7 @@ fn draw_multiline_cell<R: ListRow>(
             id,
             icon_rect,
             uv,
-            dim_if_hidden(egui::Color32::WHITE, hidden),
+            dim_if_hidden(egui::Color32::WHITE, dimmed),
         );
     }
     let text_left = icon_rect.right() + ROW_ICON_GAP;
