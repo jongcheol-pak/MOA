@@ -4,7 +4,7 @@
 //! 열 조작만** 담당한다. 상태를 바꾸지 않고 이번 프레임의 조작을 `DetailsOutcome`으로 돌려준다 —
 //! 그리기 루프가 목록을 빌린 채로는 선택·정렬을 고칠 수 없기 때문이다.
 use crate::fs::icons::IconCache;
-use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size_kb};
+use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size};
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_colored};
 use crate::ui::theme;
@@ -488,7 +488,7 @@ fn cell_text<R: ListRow>(
             if entry.is_dir() {
                 String::new()
             } else {
-                format_size_kb(entry.size())
+                format_size(entry.size())
             }
         }
         ColumnKind::Type => type_name.to_owned(),

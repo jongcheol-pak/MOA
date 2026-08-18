@@ -165,9 +165,7 @@ FR-13 서술은 토글 하나를 전제로 쓰여 있어 이번 분리로 어긋
 
 ## Deferred / Follow-up
 
-- 숨김·시스템 토글이 **원격 패널에서도 재조회를 부른다** — 원격은 시스템 속성이 없어 새 토글로는 목록이 바뀌지 않는데도 네트워크 왕복이 돈다. 원격만 응답을 캐시해 재필터하는 길이 있다(2026-08-14 등재 항목과 같은 자리 — 이번 분리로 헛돌 경우가 하나 늘었다).
-
-- [SUGGEST] `ListRow`에 `matches_display_rules(show_hidden, show_system)` 기본 메서드를 두면 `FileListView::shows`와 `tree::child_dirs`의 같은 논리식 두 곳을 트레이트 한 자리로 모을 수 있다 — 지금은 공통화 문턱(3회) 미달이라 두지 않았다(T2 quality 리뷰 S1).
+- 없음 — 두 항목 모두 `docs/plans/deferred.md` 대기로 이관했다 (2026-08-18).
 
 ## Out of Scope
 

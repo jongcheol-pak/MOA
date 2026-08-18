@@ -4,7 +4,7 @@
 //! 선택·더블클릭·우클릭은 `ui::list_details`(자세히 보기)와 **같은 규칙**을 따른다 —
 //! 보기 모드를 바꿨다고 조작법이 달라지면 안 되기 때문이다.
 use crate::fs::icons::{IconCache, IconSize};
-use crate::panel::file_list::{ListRow, format_filetime, format_size_kb};
+use crate::panel::file_list::{ListRow, format_filetime, format_size};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_rows};
 use crate::ui::theme;
@@ -359,7 +359,7 @@ fn draw_multiline_cell<R: ListRow>(
     let size_text = if entry.is_dir() {
         String::new()
     } else {
-        format_size_kb(entry.size())
+        format_size(entry.size())
     };
 
     if mode == ViewMode::Content {

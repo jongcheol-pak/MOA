@@ -73,40 +73,16 @@ fn stripe(index: usize) -> bool {
     !index.is_multiple_of(2)
 }
 
-/// 크기 표기 — 원본이 `1,840 KB` 꼴로 KB 단위에 자릿수 구분을 넣는다 (`:704`).
+/// 큐의 크기 표기 — 표시 규칙은 파일 목록과 **한 벌**이고(`panel::file_list::format_size`),
+/// 여기서는 큐에만 있는 판정 하나를 앞에 둔다.
 ///
-/// **MB·GB까지 올린다** — 원본은 KB에 고정이라 1.8GB 파일이 `1,887,437 KB`로 나왔다.
-/// 같은 표의 속도(`format_speed`)는 이미 GB/s까지 올라가므로 단위 규칙도 그쪽에 맞춘다
-/// (2026-08-16 검토).
-///
-/// 0은 "모른다"는 뜻이라 `—`다 (plan Edge Case)
+/// 0은 "크기를 모른다"는 뜻이라 `—`다 — 목록에서는 같은 0이 "빈 파일"이라 `0.00 KB`로
+/// 나가야 해서, 이 갈래를 코어 함수에 넣지 않는다 (plan D2)
 pub fn format_size(bytes: u64) -> String {
-    const GB: u64 = 1024 * 1024 * 1024;
-    const MB: u64 = 1024 * 1024;
     if bytes == 0 {
         return UNKNOWN.to_owned();
     }
-    if bytes >= GB {
-        return format!("{:.1} GB", bytes as f64 / GB as f64);
-    }
-    if bytes >= MB {
-        return format!("{:.1} MB", bytes as f64 / MB as f64);
-    }
-    // 1KB 미만도 1KB로 보인다 — 원본이 KB 아래를 쓰지 않는다
-    format!("{} KB", group_digits(bytes.div_ceil(1024)))
-}
-
-/// 세 자리마다 쉼표 — `1840` → `1,840`
-fn group_digits(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
+    crate::panel::file_list::format_size(bytes)
 }
 
 /// 속도 표기 — 원본 `12.4 MB/s` (`:704`).
@@ -634,15 +610,16 @@ mod tests {
 
     #[test]
     fn 크기와_속도_표기가_원본_꼴이다() {
-        // 원본 `1,840 KB`·`12.4 MB/s` (`:704`) — KB는 1MB 아래에서만 쓴다
-        assert_eq!(format_size(12 * 1024), "12 KB");
-        assert_eq!(format_size(900 * 1024), "900 KB");
+        // 크기는 파일 목록과 같은 규칙이다 — 소수 둘째자리 + KB·MB·GB (2026-08-18)
+        assert_eq!(format_size(12 * 1024), "12.00 KB");
+        assert_eq!(format_size(900 * 1024), "900.00 KB");
         // MB·GB로 올라간다 — KB에 고정하면 `1,887,437 KB` 같은 수가 나온다 (2026-08-16 검토)
-        assert_eq!(format_size(1_884_160), "1.8 MB");
-        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.0 GB");
-        assert_eq!(format_size(1), "1 KB", "1KB 미만도 한 칸으로 보인다");
+        assert_eq!(format_size(1_884_160), "1.80 MB");
+        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.00 GB");
+        assert_eq!(format_size(1), "0.01 KB", "1KB 미만도 한 칸은 채운다");
+        // 큐에서만 0이 "모른다"다 — 파일 목록의 같은 0은 빈 파일이라 `0.00 KB`다
         assert_eq!(format_size(0), "—", "크기를 모르면 표기가 없다");
-        assert_eq!(group_digits(1_234_567), "1,234,567");
+        assert_eq!(crate::panel::file_list::format_size(0), "0.00 KB");
 
         assert_eq!(format_speed(13_002_342), "12.4 MB/s");
         assert_eq!(format_speed(2048), "2.0 KB/s");
