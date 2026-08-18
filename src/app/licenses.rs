@@ -5,8 +5,9 @@
 //! 보여야 하고, 빌드가 레지스트리 캐시나 네트워크를 타면 안 되기 때문이다.
 //!
 //! 의존성이 바뀌었는데 자산을 다시 만들지 않으면 화면의 고지가 실제와 어긋난다. 그것을
-//! 잡으려고 자산에 `Cargo.lock`의 지문을 함께 담고, 시험이 현재 lock과 대조한다
-//! (`lockfile_fingerprint`).
+//! 잡으려고 자산에 `Cargo.lock`의 지문(`lockfile_fingerprint`)을 함께 담는다 — 그 값을
+//! 현재 lock과 대조하는 시험은 자산이 실제로 채워질 때 함께 선다(빈 스켈레톤 상태에서는
+//! 대조할 값이 없다).
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
@@ -133,6 +134,8 @@ mod tests {
     fn 담긴_자산을_읽을_수_있다() {
         let data = load();
         assert_eq!(data.schema, SCHEMA_VERSION);
+        // 아직 생성기가 없어 자산은 빈 스켈레톤이다 — T2가 채우면 이 단언이 뒤집힌다
+        assert!(data.crates.is_empty());
     }
 
     #[test]

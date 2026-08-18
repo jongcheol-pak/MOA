@@ -204,7 +204,7 @@
 
 <!-- 순서 주의: 생성기(T2)가 모델(T1)의 타입·지문 함수를 쓰므로 모델이 먼저다. -->
 
-- [ ] T1. 자산 모델과 지문 함수를 만든다
+- [x] T1. 자산 모델과 지문 함수를 만든다
   - **Type**: C
   - **Design**: ① 배치 — `src/app/licenses.rs`(순수 로직 계층, `ui`를 모른다), `src/app/mod.rs`에 모듈 선언, `assets/licenses.json`에 **빈 스켈레톤**(`schema`·`lock_fingerprint: 0`·빈 배열 둘)을 손으로 둔다(`include_str!`이 컴파일 시점에 파일을 요구한다). ② 신규 심볼과 책임 — `LicenseData`(`schema`·`lock_fingerprint`·`crates`·`texts`), `CrateEntry`(`name`·`version`·`spdx`·`authors`·`text_indices`·`standard_text`·`bundled`), `LicenseText`(`spdx`·`body`), `parse(json: &str) -> LicenseData`(문자열을 받는 파싱 진입점 — 실패하면 패닉하지 않고 빈 데이터를 준다. 시험이 깨진 fixture를 여기 넣는다), `load()`(`include_str!`한 자산을 `parse`에 넘기고 결과를 `OnceLock`에 담는다), `CrateEntry::texts<'a>(&self, data: &'a LicenseData) -> Vec<&'a LicenseText>`(`text_indices`가 범위를 벗어난 자리는 건너뛴다 — Edge Case의 담당 심볼), `lockfile_fingerprint(lock: &str) -> u64`(`name = "…"`·`version = "…"` 줄만 뽑아 이어 붙인 뒤 FNV-1a 64). 세 자료형에 `Serialize`·`Deserialize`를 **둘 다** 파생한다 — T2가 같은 타입으로 자산을 쓴다. ③ 의존 방향 — `serde`·`serde_json`만 참조하고 `ui`를 모른다. `ui::license_dialog`(T3)와 `examples/gen_licenses.rs`(T2)가 이것을 참조한다. ④ 비추상화 — 자산 소스를 갈아 끼우는 트레이트를 두지 않는다(`include_str!` 한 곳뿐). 검색·필터·정렬 API를 미리 만들지 않는다(정렬은 생성기가 이미 해서 담는다).
   - **Acceptance**:
