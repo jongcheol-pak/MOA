@@ -247,7 +247,20 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
 
 ## Phase Ledger
 
+- **Phase F 통과 (HEAD `d077843`)** — F-1 `cargo build --release` OK(20m 39s) · F-2 **866/866** · F-3 clippy·fmt 경고 0. F-7: BLOCKER 0 / MAJOR 0 / MINOR 2, 둘 다 **문서 표기 형식**이라 조치 불요 판정이다.
+  - m1 — T3 acceptance의 「레포 **전체**에서 `PRIMARY_FILL` 잔존 0」이 문면 그대로는 미충족이다(과거 회차 plan 7곳·대장 1곳에 남아 있다). 코드(`*.rs`) 잔존은 0이고, 남은 자리는 **그 시점의 영구 기록**이라 지우는 편이 기록을 훼손한다. acceptance 문면이 과하게 잡힌 것이지 구현 결함이 아니다 — 다음에 같은 형태를 쓸 때 「코드 잔존 0」으로 좁힌다.
+  - m2 — 대장 종결 행이 acceptance가 적은 형식과 다르다(종결일이 `2026-08-20`이고 plan 이름을 행마다가 아니라 섹션 헤더에 한 번 적었다). 자정을 넘겨 작업한 결과이며 추적에 필요한 정보(등록일·종결일·plan·task)는 전부 남아 있다.
+  - **Phase G 미적용** — 이 plan에 `**PRD**:` 줄이 없다. F-7이 `docs/prd.md` FR 전수를 훑어 이번 변경이 스치는 FR 여덟(FR-5·9·11·20·36·42·44·55·57)이 **어느 문면과도 어긋나지 않음**을 확인했다.
+  - **F-8 미적용** — `## 시각 요소 분해` 섹션이 없다(동작·화면 무변경 회차).
+  - **HUMAN-VERIFY 없음** — 화면·동작이 한 군데도 바뀌지 않아 사람이 확인할 축이 발생하지 않았다.
+
 ## Retry Ledger
+
+## Next Steps
+
+- 권장 다음 액션: `task/small-refactors` 브랜치를 master로 병합할지 결정 (push·병합은 별도 승인 대상)
+- Suggested skills: 공식 `/code-review` (병합 전 최종 점검을 원할 때)
+- 위키 갱신: `[DECISION]` 1건·`[PROJECT-FACT]` 2건을 vault `pending.md`에 큐로 남겼다. 본문 반영은 별도 세션(`pjc:llm-wiki` 절차 B)
 
 ## Progress Log
 
