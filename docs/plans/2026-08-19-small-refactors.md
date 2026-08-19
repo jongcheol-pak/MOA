@@ -126,7 +126,7 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
   - **Edge Cases**: 원문이 없는 크레이트(`standard_indices` 갈래)가 오류를 내면 종전과 같은 메시지(`{name} {version}: {err}`)로 종료해야 한다 — 공통 필드를 먼저 만들어도 `?`의 조기 반환 위치가 달라지지 않게 한다.
   - **Halt Forecast**: 없음 — 예제 타깃 한 파일이고 산출물 동일성이 즉시 판정된다.
   - **Files**: 주 — `examples/gen_licenses.rs`
-- [ ] **T2. `fs::icons`의 셸 잠금을 세 자리에서 좁힌다** — Type C
+- [x] **T2. `fs::icons`의 셸 잠금을 세 자리에서 좁힌다** — Type C
   - **이 task가 바꾸는 것과 바꾸지 않는 것**: `ShellGuard`는 **비시험 빌드에서 빈 구조체**라(`icons.rs:356`) **실행 파일의 동작·성능은 달라지지 않는다**. 이득은 ⓐ 시험 빌드에서 전역 `SHELL_LOCK`을 쥔 구간이 셸 호출 자체로 좁아지는 것과 ⓑ 다섯 자리의 해제 시점이 같은 형태가 되어 다음 사람이 「왜 여기만 다르지」를 다시 조사하지 않는 것이다.
   - **Acceptance**:
     - `icon_index`의 경로별 조회 갈래(`:163`)·`icon_index_for_path`(`:200`)·`shell_display_name`(`:237`) 셋 모두 `shell_guard()`가 **`SHGetFileInfoW` 호출식만 감싸는 블록** 안에 든다. 캐시 삽입·`wide_to_string` 변환은 잠금 밖에서 돈다.
@@ -250,3 +250,8 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
 ## Retry Ledger
 
 ## Progress Log
+
+- **T1-T2 완료** (커밋 `cc7de56`, T2는 아래 완료 커밋): `gen_licenses`의 `main` 갈래 중복 제거 + `fs::icons`의 셸 잠금 세 자리 축소. 866/866 통과, clippy·fmt 경고 0.
+  - **T1 동작 무변경이 해시로 실증됐다** — `cargo run --example gen_licenses` 재실행 후 `assets/licenses.json`의 SHA256이 변경 전과 동일(`533f578f…4ad448`). spec 리뷰어가 독립 재실행해 같은 해시를 재현했다.
+  - **T2에서 대상이 아닌 여섯 번째 잠금 자리를 확인했다** — `IconCache::new()`(`icons.rs:94`)도 `shell_guard()`를 잡지만 **본문 전체가 셸 호출**이고 `system_image_list`가 그 잠금 안에서 불려 좁히면 재진입 데드락이다(주석이 이미 그 사유를 적고 있다). plan의 「다섯 자리」는 캐시 조회 메서드 쪽을 가리킨 것이며 그 다섯은 모두 같은 블록 형태가 됐다.
+  - **T2의 `ShellGuard` 주석은 두 번 고쳤다** — 1차 수정("인스턴스가 스레드마다 별개라 겨룰 상대가 없다")에 quality 리뷰가 인과 비약을 지적했고(m1), `SHELL_LOCK`의 원 주석을 확인해 **진짜 이유가 시험 병렬성**임을 확인했다(`Rust 시험은 기본이 병렬이라 동시에 부르면 SHGetImageList가 16px로 폴백한다`). 원래 문면("UI 스레드 하나가 그리므로")도 1차 수정도 정확하지 않았고, 최종 문면이 그 사실을 인용한다. **자기 유발 지적이라 이연하지 않고 그 자리에서 고쳤다**(규칙 4-1).
