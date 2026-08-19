@@ -20,6 +20,8 @@
 
 ## Deferred / Follow-up
 
+- **[SUGGEST] `ui_sources` 재귀 헬퍼 3중복을 공용화** — `theme.rs`·`dialog.rs`·`widgets.rs` 세 곳에 바이트 단위로 같은 몸체가 있다(공통화 문턱 3회를 정확히 채웠다). **이번엔 하지 않았고 plan Design ④가 든 사유(「`#[cfg(test)]` 가시성 배선」)는 T3 quality 리뷰가 「과장됐다」고 지적했다** — `#[cfg(test)] pub(crate) fn`을 공통 모듈에 두는 것은 표준 패턴이다. 다만 이 레포에 그런 test-support 모듈 관례가 없어 신규 모듈을 여는 비용은 실재한다. 리뷰어 제안: `src/ui/mod.rs`에 `#[cfg(test)] pub(crate) mod test_support;`를 두고 옮긴다. **네 번째 시험이 같은 헬퍼를 필요로 하면 그때는 공용화가 명백해진다.**
+
 - **[SUGGEST] `app/remote.rs`(1038줄)를 손자 모듈로 더 쪼개기** — T2 quality 리뷰 m1: 이 파일이 세 관심사를 담는다(①연결 수명주기 ②원격 메뉴 대화 ③이벤트 폴링·트리 조회). 네 질문의 ①③이 「예」에 가깝다. **`pub(super)`는 `ui::app`의 후손 전체에 보이므로 손자 모듈(`remote::menu`·`remote::poll` 등)로 쪼개도 가시성 근거가 유지된다**(실제로 `transfer_conflict.rs`가 형제인 `remote.rs`의 `pub(super)` 항목을 쓴다). 이번엔 순수 이동 범위를 지켜 하지 않았다.
 - **`ExplorerApp::connect_site`를 `pub(super)`로 좁힐지** — T2 quality 리뷰 m2: 호출부가 `remote.rs` 안 3곳뿐이라 좁힐 수 있고, 그러면 이동 항목 36개가 모두 `pub(super)`로 일관된다. **이번엔 좁히지 않았다** — plan 4-B·D5가 「좁히는 것도 이동 범위 밖이며 그것대로 계약 변경」이라 정했고 spec 리뷰가 좁힌 것을 BLOCKER로 잡았다. 다음에 다룰 때는 그 계약 변경을 명시적으로 승인받아야 한다.
 
@@ -173,7 +175,7 @@
   - **Edge Cases**: `poll_remote`가 형제 모듈의 `settle_conflict`·`abandon_conflict_lists`를 부르므로 T1이 먼저 끝나야 한다(의존: T1 → T2). `matching_site`·`to_tab_phase`는 `impl` 밖 자유 함수라 옮길 때 `use`가 함께 따라가야 한다. `settle_dialog`는 **원격 전용임이 계획 단계에서 확정됐다**(Investigation Log — 호출부 셋이 전부 `show_remote_dialogs` 안) — 조건부로 남기지 않고 옮긴다.
   - **Halt Forecast**: 없음 — T1과 같은 성질이다. 다만 이동량이 커(약 850줄) 중간에 컴파일이 여러 번 깨질 수 있는데, 그것은 정상 진행이며 Halt 사유가 아니다.
   - **Files**: 주 — `src/ui/app.rs`, `src/ui/app/remote.rs`(신규)
-- [ ] **T3. 비재귀 소스 훑기 시험 둘을 재귀로 바꾼다** — Type C
+- [x] **T3. 비재귀 소스 훑기 시험 둘을 재귀로 바꾼다** — Type C
   - **왜 이번에 하는가**: T1·T2가 850줄을 `src/ui/app/`으로 내보내는데 그 폴더는 두 비재귀 시험의 사각지대다. **이번 이동이 만드는 검증 공백이라 이연할 수 없다**(규칙 4-1). 대장 61행에 이미 등재된 항목이며 `theme.rs:156-157`의 주석이 그 함정을 명시한다.
   - **Design**: ① 배치 — `src/ui/dialog.rs`·`src/ui/widgets.rs`의 각 시험 안. ② 신규 심볼과 책임 — 두 파일에 **재귀 수집 헬퍼**를 각각 둔다(`theme.rs`의 `ui_sources`와 같은 형태). ③ 의존 방향 — 시험 전용(`#[cfg(test)]`)이며 프로덕션 코드는 건드리지 않는다. ④ 비추상화 — 세 시험이 공유하는 헬퍼를 **공용 모듈로 뽑지 않는다**(중복 3회지만 시험 전용 코드이고 공용화하면 `#[cfg(test)]` 가시성을 넘나드는 배선이 생긴다 — 그 판단은 대장에 남긴다).
   - **Acceptance**:

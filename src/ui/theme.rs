@@ -153,8 +153,8 @@ mod tests {
 
     /// `src/ui` 아래의 `.rs`를 하위 폴더까지 모아 온다.
     ///
-    /// **비재귀로 훑으면 `ui/panel/` 같은 하위가 통째로 빠진다** — 모달 규약 시험이
-    /// 그렇게 짜여 있어 대기 목록에 올라 있다. 새로 쓰는 이 시험은 그 함정을 피한다
+    /// **비재귀로 훑으면 `ui/app/`·`ui/panel/` 같은 하위가 통째로 빠진다** — 이 시험이
+    /// 먼저 그 함정을 피했고, 모달·아이콘 규약 시험도 2026-08-20에 같은 방식으로 맞췄다
     fn ui_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("ui 디렉터리") {
             let path = entry.expect("항목").path();
