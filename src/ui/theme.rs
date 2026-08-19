@@ -60,6 +60,12 @@ pub const OK_TEXT: egui::Color32 = egui::Color32::from_rgb(0x7F, 0xD6, 0xA2);
 pub const OK_FILL: egui::Color32 = egui::Color32::from_rgb(0x16, 0x24, 0x1C);
 pub const OK_BORDER: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
 
+/// 끝난 전송의 진행 막대 채움 — 같은 성공 계열이지만 배지가 아니라 전송 큐가 쓴다.
+///
+/// `OK_BORDER`와 값이 같지만 합치지 않는다 — 한쪽은 상태 배지의 테두리이고 이쪽은 막대의
+/// 채움이라, 합치면 한쪽 색을 조정할 때 다른 쪽이 함께 끌려간다.
+pub const OK_BAR: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
+
 /// 연결 중(경고) 계열 — 점·글자가 같은 색이다
 pub const WARN: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xB3, 0x4D);
 pub const WARN_FILL: egui::Color32 = egui::Color32::from_rgb(0x24, 0x1F, 0x14);
@@ -70,12 +76,6 @@ pub const ERROR: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x6B, 0x6B);
 pub const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x8A, 0x8A);
 pub const ERROR_FILL: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x1A, 0x1A);
 pub const ERROR_BORDER: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x26, 0x26);
-
-/// 끝난 전송의 진행 막대 채움 — 이 색을 쓰는 곳은 전송 큐뿐이다.
-///
-/// `OK_BORDER`와 값이 같지만 합치지 않는다 — 한쪽은 상태 배지의 테두리이고 이쪽은 막대의
-/// 채움이라, 합치면 한쪽 색을 조정할 때 다른 쪽이 함께 끌려간다.
-pub const OK_BAR: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
 
 /// 입력·목록 웰 배경 — 사이트 관리자의 입력칸과 목록이 이 색 위에 앉는다
 pub const WELL_BG: egui::Color32 = egui::Color32::from_rgb(0x15, 0x15, 0x15);
