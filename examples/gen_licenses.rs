@@ -36,35 +36,28 @@ fn main() -> Result<(), String> {
             .get(&(name.clone(), version.clone()))
             .ok_or_else(|| format!("{name} {version}: cargo metadata에 없다"))?;
         let files = read_license_files(&info.dir, spdx)?;
-        let entry = if files.is_empty() {
+        // 두 갈래가 다른 것은 전문의 출처뿐이다 — 나머지 필드는 아래에서 한 번만 적는다
+        let (text_indices, standard_text) = if files.is_empty() {
             // 배포 패키지에 원문이 없는 크레이트 — SPDX 표준 전문으로 채우고 그 사실을 표시한다
             let indices = standard_indices(&root, spdx, &mut builder)
                 .map_err(|err| format!("{name} {version}: {err}"))?;
-            CrateEntry {
-                name: name.clone(),
-                version: version.clone(),
-                spdx: spdx.clone(),
-                authors: info.authors.clone(),
-                text_indices: indices,
-                standard_text: true,
-                bundled: false,
-            }
+            (indices, true)
         } else {
             let indices = files
                 .into_iter()
                 .map(|(label, body)| builder.intern(label, body))
                 .collect();
-            CrateEntry {
-                name: name.clone(),
-                version: version.clone(),
-                spdx: spdx.clone(),
-                authors: info.authors.clone(),
-                text_indices: indices,
-                standard_text: false,
-                bundled: false,
-            }
+            (indices, false)
         };
-        crates.push(entry);
+        crates.push(CrateEntry {
+            name: name.clone(),
+            version: version.clone(),
+            spdx: spdx.clone(),
+            authors: info.authors.clone(),
+            text_indices,
+            standard_text,
+            bundled: false,
+        });
     }
 
     crates.extend(bundled_entries(&root, &packages, &mut builder)?);

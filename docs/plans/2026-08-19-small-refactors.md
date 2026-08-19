@@ -118,7 +118,7 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
 
 ## Tasks
 
-- [ ] **T1. `gen_licenses`의 `main` 갈래 중복을 없앤다** — Type C
+- [x] **T1. `gen_licenses`의 `main` 갈래 중복을 없앤다** — Type C
   - **Acceptance**:
     - 두 갈래가 공유하는 다섯 필드(`name`·`version`·`spdx`·`authors`·`bundled`)를 한 번만 적고, 갈래는 `text_indices`·`standard_text` 둘만 정한다.
     - `cargo run --example gen_licenses`가 만든 `assets/licenses.json`이 **현재 파일과 바이트 단위로 같다** — **판정은 실행 전후 `Get-FileHash`(SHA256) 대조가 1차**이고 `git diff --stat`은 보조다(개행 정규화가 걸리면 바이트가 달라도 diff가 0줄로 나올 수 있어 그것만으로는 판정할 수 없다).
