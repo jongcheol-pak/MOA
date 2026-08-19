@@ -20,6 +20,9 @@
 
 ## Deferred / Follow-up
 
+- **[SUGGEST] `app/remote.rs`(1038줄)를 손자 모듈로 더 쪼개기** — T2 quality 리뷰 m1: 이 파일이 세 관심사를 담는다(①연결 수명주기 ②원격 메뉴 대화 ③이벤트 폴링·트리 조회). 네 질문의 ①③이 「예」에 가깝다. **`pub(super)`는 `ui::app`의 후손 전체에 보이므로 손자 모듈(`remote::menu`·`remote::poll` 등)로 쪼개도 가시성 근거가 유지된다**(실제로 `transfer_conflict.rs`가 형제인 `remote.rs`의 `pub(super)` 항목을 쓴다). 이번엔 순수 이동 범위를 지켜 하지 않았다.
+- **`ExplorerApp::connect_site`를 `pub(super)`로 좁힐지** — T2 quality 리뷰 m2: 호출부가 `remote.rs` 안 3곳뿐이라 좁힐 수 있고, 그러면 이동 항목 36개가 모두 `pub(super)`로 일관된다. **이번엔 좁히지 않았다** — plan 4-B·D5가 「좁히는 것도 이동 범위 밖이며 그것대로 계약 변경」이라 정했고 spec 리뷰가 좁힌 것을 BLOCKER로 잡았다. 다음에 다룰 때는 그 계약 변경을 명시적으로 승인받아야 한다.
+
 - **[SUGGEST] 충돌 상태 6개 필드를 `ConflictState` 구조체로 묶기** — `pending_conflicts`·`conflict_tx/rx`·`conflict_lists`·`conflict_queue`·`conflict_dialog`·`next_conflict`를 한데 모으면 `panel/workers.rs`의 `DirLoad`와 같은 캡슐화가 되고 자식 모듈에 노출되는 부모 필드가 6개 → 1개로 준다. **이번엔 순수 이동 제약을 넘어 하지 않았다**(상태 필드 이동은 구조 변경이다) — T1 quality 리뷰 S1.
 
 - app.rs에 남는 나머지 책임(세션·워크스페이스 211줄 · 창·트레이 173줄 · 도크·큐·로그 184줄 · 그 밖 화면 206줄 · 명령 배선 112줄)의 추가 분리 — 이번에 둘을 떼면 ①이 얼마나 남는지 실측 후 판단한다.
@@ -157,7 +160,7 @@
   - **Edge Cases**: 옮긴 뒤 `app.rs`에서 쓰이지 않게 된 `use`가 남으면 clippy가 잡는다 — 그것만 정리하고 다른 `use`는 건드리지 않는다. `ConflictDecision`이 `ui::list_common::ConflictChoice`를 `From`으로 받으므로 새 파일에 그 `use`가 필요하다. 시험이 `super::*`로 부모를 참조하면 옮긴 심볼이 안 보일 수 있다 — 그 경우 시험도 함께 옮기거나 경로를 명시한다.
   - **Halt Forecast**: 없음 — 새 파일 추가와 코드 이동뿐이고 삭제·이름 변경이 없다. 누락은 전부 컴파일 오류로 즉시 드러난다(전제 #4).
   - **Files**: 주 — `src/ui/app.rs`, `src/ui/app/transfer_conflict.rs`(신규)
-- [ ] **T2. 원격 연결·조회를 `src/ui/app/remote.rs`로 옮긴다** — Type D
+- [x] **T2. 원격 연결·조회를 `src/ui/app/remote.rs`로 옮긴다** — Type D
   - **Design**: ① 배치 — `src/ui/app.rs`에 `mod remote;`를 선언하고 `src/ui/app/remote.rs`를 만든다. ② 신규 심볼과 책임 — **없다.** 메서드 25개와 원격 소속 자유 함수·타입 12개를 담는다. ③ 의존 방향 — `ui::app`의 자식이며, **형제인 `app::transfer_conflict`의 `pub(super)` 메서드를 부른다**(`poll_remote` → `settle_conflict` 등 — 전제 검증 #2가 이 경로를 확인했다). ④ 비추상화 — 「원격 배선」을 트레이트나 서비스 타입으로 감싸지 않는다. `RemoteOps`는 이미 있는 구조체라 그대로 옮긴다.
   - **Acceptance**:
     - `src/ui/app/remote.rs`가 생기고 4-A 표의 **T2 대상 전부**(메서드 25 · 자유 함수·타입 12)가 거기 있다. `app.rs`에 그 정의가 **하나도 남지 않는다**(각 이름으로 검색해 정의 잔존 0).
@@ -245,3 +248,9 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- **T1-T2 완료** (커밋 `421e450`, T2는 아래 완료 커밋): `ui/app.rs`가 **3802 → 2356줄**이 됐다. 충돌 확인 487줄·원격 배선 1038줄이 자식 모듈로 나갔다.
+  - **가시성을 한 곳도 넓히지 않았다** — 옮긴 항목 49개가 전부 `pub(super)`이고 `ExplorerApp` 필드는 그대로 private이다. 자식 모듈 구조가 그것을 가능하게 했다(계획 단계에서 세 방향을 별도 crate로 컴파일해 검증한 것이 그대로 맞았다).
+  - **`connect_site`를 좁혔다가 되돌렸다** — 다른 항목과 함께 `pub(super)`로 만들었는데 plan 4-B·D5가 「좁히는 것도 계약 변경이라 이번엔 `pub`을 그대로 둔다」로 정해 둔 자리였다. spec 리뷰가 BLOCKER로 잡았고 판정 도착 전에 자체 발견해 복원했다.
+  - **T1 quality가 존재하지 않는 모듈 참조를 잡았다** — 새 파일 doc에 `ui::app::remote`를 적었는데 그 모듈은 T2가 만들 것이라 그 시점엔 없었다. 실제 위치로 고쳤다.
+  - 리뷰 미검증 잔여분(use 최소성·시험 이동 정합)은 메인이 직접 검증했고, 재리뷰에서 리뷰어가 그 근거의 타당성까지 확인했다.
