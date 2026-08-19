@@ -26,6 +26,7 @@ use crate::remote::transfer::{self, TransferRunner};
 use crate::remote::tree_cache::TreeCache;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
+use crate::ui::about_dialog::AboutDialog;
 use crate::ui::app_icon;
 use crate::ui::dialog;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
@@ -494,6 +495,8 @@ pub struct ExplorerApp {
     settings_dialog: SettingsDialog,
     /// 오픈소스 라이선스 대화 (FR-57) — 같은 메뉴의 `오픈소스 라이선스`가 연다
     license_dialog: LicenseDialog,
+    /// 정보 대화 (FR-58) — 같은 메뉴의 `정보`가 연다
+    about_dialog: AboutDialog,
     /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 앱이 시작할 때 한 번만 읽는다
     font_scan: FontScan,
     /// 알림 영역 아이콘 (FR-50) — `종료` 토글이 켜져 있을 때만 있다. 없애면 아이콘이 사라진다
@@ -666,6 +669,7 @@ impl ExplorerApp {
             settings: AppSettings::default(),
             settings_dialog: SettingsDialog::new(),
             license_dialog: LicenseDialog::new(),
+            about_dialog: AboutDialog::new(),
             font_scan: FontScan::new(),
             tray: None,
             tray_rx,
@@ -2064,6 +2068,7 @@ impl ExplorerApp {
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             Command::OpenAppSettings => self.settings_dialog.open(),
             Command::OpenLicenses => self.license_dialog.open(),
+            Command::OpenAbout => self.about_dialog.open(),
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -2869,6 +2874,8 @@ impl eframe::App for ExplorerApp {
         self.show_settings_dialog(&ctx);
         // 오픈소스 라이선스 대화 (FR-57) — 상태를 저장하지 않아 배선이 한 줄이다
         self.license_dialog.show(&ctx);
+        // 정보 대화 (FR-58) — 마찬가지로 상태를 저장하지 않는다
+        self.about_dialog.show(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);
         // 같은 이름 확인 대화 (FR-55) — 이것이 닫히기 전에는 그 전송이 큐에 들어가지 않는다

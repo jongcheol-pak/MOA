@@ -163,7 +163,7 @@
   - **Halt Forecast**: 없음 — 자산이 exe에 내장돼 런타임 파일·네트워크 접근이 없고, 디코드 실패는 위 Edge Cases가 흡수한다. 새 파일 하나를 더할 뿐 기존 파일을 지우거나 옮기지 않는다.
   - **Files**: 주 — `src/ui/about_dialog.rs`(신규), `src/ui/mod.rs`, `src/i18n/mod.rs`(`about_app_name` 키와 `dynamic::about_version_line`)
 
-- [ ] **T3. 메뉴 배선과 어긋난 주석 정정** — Type C
+- [x] **T3. 메뉴 배선과 어긋난 주석 정정** — Type C
   - **Design**: ① 배치 — `src/ui/menu.rs`(`Command`), `src/ui/titlebar.rs`(메뉴 항목), `src/ui/app.rs`(필드·매치·프레임 호출). ② 신규 심볼과 책임 — `Command::OpenAbout`(정보 대화를 연다). ③ 의존 방향 — `ui::app`이 `ui::about_dialog`를 참조한다(단방향 유지). ④ 비추상화 — 다섯 메뉴 항목을 배열+반복으로 묶지 않는다(`titlebar.rs:243`의 기존 사유를 그대로 지킨다).
   - **Acceptance**:
     - 설정 메뉴의 `정보`가 활성 버튼이 되고 누르면 `Command::OpenAbout`이 나온다. `업데이트`·`릴리즈 노트`는 `pending_item` 그대로다.
