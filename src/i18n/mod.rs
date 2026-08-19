@@ -133,12 +133,21 @@ strings! {
     titlebar_restore => "이전 크기로" / "Restore";
     titlebar_maximize => "최대화" / "Maximize";
     titlebar_minimize => "최소화" / "Minimize";
-    /// 설정 메뉴의 나머지 셋(`업데이트`·`릴리즈 노트`·`정보`)은 아직 비활성이다 —
-    /// `오픈소스 라이선스`는 FR-57로 동작하며 대화 제목으로도 쓰인다
+    /// 설정 메뉴의 나머지 둘(`업데이트`·`릴리즈 노트`)은 아직 비활성이다 —
+    /// `오픈소스 라이선스`는 FR-57, `정보`는 FR-58로 동작한다
+    /// (`오픈소스 라이선스`는 그 대화의 제목으로도 쓰인다)
     titlebar_updates => "업데이트" / "Updates";
     titlebar_release_notes => "릴리즈 노트" / "Release notes";
     titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
     titlebar_about => "정보" / "About";
+
+    // ── 앱 이름 (FR-53·FR-58) ──
+    /// 화면에 보이는 앱 이름 — 한국어는 `모아`, 영어는 `MOA`다.
+    ///
+    /// 정보 대화뿐 아니라 **창 제목(작업 표시줄·Alt+Tab)과 트레이 툴팁**도 이 값을 쓴다.
+    /// 데이터가 걸린 이름(레지스트리 값·`%APPDATA%` 폴더·단일 인스턴스 뮤텍스)은
+    /// **여기를 따르지 않는다** — 언어에 따라 바뀌면 자동 실행 등록과 기존 설정을 잃는다
+    app_name => "모아" / "MOA";
 
     // ── 오픈소스 라이선스 대화 (FR-57) ──
     /// 목록 위 안내 — 이 앱이 무엇을 쓰는지 한 줄로 밝힌다
@@ -198,16 +207,14 @@ strings! {
 
     // ── 탭 스트립·주소창 ──
     tabs_new => "새 탭" / "New tab";
+    /// 탭 줄 `+` 버튼의 안내 — 누르면 곧바로 탭이 생기는 것이 아니라 메뉴가 열린다.
+    /// `새 탭`을 그대로 쓰면 버튼이 즉시 탭을 만드는 것처럼 읽힌다 (2026-08-19)
+    tabs_new_menu => "새 탭 열기" / "Open a new tab";
     tabs_close => "탭 닫기" / "Close tab";
     tabs_menu => "메뉴" / "Menu";
     address_back => "뒤로" / "Back";
     address_forward => "앞으로" / "Forward";
     address_up => "상위 폴더" / "Up";
-
-    // ── 사이트 드롭다운 (FR-27) ──
-    /// 사이트 드롭다운 캡션 (인벤토리 #92)
-    site_dropdown_open => "연결 사이트를 새 탭으로" / "Open site in a new tab";
-    site_dropdown_other => "다른 사이트로 새 탭 열기" / "Open another site in a new tab";
 
     // ── 폴더 트리 (FR-9) ──
     /// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격 트리가 같은 문구를 쓴다
@@ -608,6 +615,14 @@ pub mod dynamic {
             Language::English if count == 1 => "1 failed".to_owned(),
             Language::English => format!("{count} failed"),
         }
+    }
+
+    /// 정보 대화의 이름·버전 줄 (FR-58) — 한국어 `모아 0.1.0`, 영어 `MOA 0.1.0`.
+    ///
+    /// 두 언어에서 어순이 같아 갈래를 두지 않는다(이름만 갈린다). 값이 끼어드는 문구라
+    /// `strings!`가 아니라 여기 있으며, 버전은 `Cargo.toml`이 정본이라 컴파일 시점에 박는다
+    pub fn about_version_line() -> String {
+        format!("{} {}", super::app_name(), env!("CARGO_PKG_VERSION"))
     }
 
     /// 라이선스 목록의 구성 요소 수 (FR-57) — 한국어는 수 뒤에 단위가 붙는다
@@ -1084,8 +1099,9 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 27] = [
+        const EXEMPT_LITERALS: [&str; 28] = [
             // 위젯 ID
+            "정보 대화",
             "라이선스 대화",
             "라이선스 목록",
             "라이선스 전문",
@@ -1483,6 +1499,21 @@ mod tests {
             dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41"), "—"),
             "3 pending · 12.4 MB/s · 00:41 left"
         );
+    }
+
+    #[test]
+    fn 앱_이름과_버전_줄이_언어를_따른다() {
+        // 이름은 정보 대화·창 제목·트레이 툴팁 셋이 함께 쓴다 (FR-53·FR-58).
+        // 데이터가 걸린 이름(레지스트리 값·`%APPDATA%` 폴더)은 이 값을 따르지 않는다
+        let version = env!("CARGO_PKG_VERSION");
+        {
+            let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+            assert_eq!(app_name(), "모아");
+            assert_eq!(dynamic::about_version_line(), format!("모아 {version}"));
+        }
+        let _guard = LanguageGuard::lock(LanguageSetting::English);
+        assert_eq!(app_name(), "MOA");
+        assert_eq!(dynamic::about_version_line(), format!("MOA {version}"));
     }
 
     #[test]

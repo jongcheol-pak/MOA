@@ -78,6 +78,15 @@ pub const PRIMARY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F
 /// 입력·목록 웰 배경 — 사이트 관리자의 입력칸과 목록이 이 색 위에 앉는다
 pub const WELL_BG: egui::Color32 = egui::Color32::from_rgb(0x15, 0x15, 0x15);
 
+/// 팝업 메뉴 프레임의 모서리 반경 — 컨텍스트 메뉴·드롭다운이 모두 이 값을 쓴다.
+///
+/// **정본을 여기 둔 이유**: 종전에는 메뉴마다 `Frame::menu`에 `.corner_radius(0)`을
+/// 덧붙이거나 붙이지 않아, 같은 우클릭 메뉴인데 원격 목록은 각지고 설정 메뉴는 둥글었다
+/// (2026-08-19 사용자 보고). `apply_dark`가 이 값을 egui 스타일에 세우면
+/// `Frame::menu`가 그것을 읽으므로 각 메뉴는 아무것도 적지 않아도 같은 모양이 된다.
+/// 대화 팝업(`ui::dialog`)의 12px과는 별개다 — 그쪽은 버튼 줄을 낀 모달이라 부품이 다르다
+pub const MENU_CORNER_RADIUS: u8 = 6;
+
 /// 행 hover / 메뉴 hover
 pub const ROW_HOT: egui::Color32 = egui::Color32::from_rgb(0x2E, 0x2E, 0x2E);
 pub const MENU_HOT: egui::Color32 = egui::Color32::from_rgb(0x38, 0x38, 0x38);
@@ -120,6 +129,9 @@ pub fn apply_dark(ctx: &egui::Context) {
     visuals.widgets.active.bg_fill = CONTROL_ACTIVE;
     visuals.selection.bg_fill = CONTROL_ACTIVE;
 
+    // 팝업 메뉴 모서리 — `Frame::menu`가 여기서 읽어 간다 (`MENU_CORNER_RADIUS` 참조)
+    visuals.menu_corner_radius = egui::CornerRadius::same(MENU_CORNER_RADIUS);
+
     ctx.set_visuals(visuals);
 
     // egui의 디버그 경고 하나를 끈다 — 디버그 빌드에만 있는 옵션이라 cfg로 가른다.
@@ -131,4 +143,112 @@ pub fn apply_dark(ctx: &egui::Context) {
     // 우리 위젯 id는 패널 id·탭 인덱스로 고정돼 있어 이 경고가 겨냥하는 불안정이 아니다
     #[cfg(debug_assertions)]
     ctx.all_styles_mut(|style| style.debug.warn_if_rect_changes_id = false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `src/ui` 아래의 `.rs`를 하위 폴더까지 모아 온다.
+    ///
+    /// **비재귀로 훑으면 `ui/panel/` 같은 하위가 통째로 빠진다** — 모달 규약 시험이
+    /// 그렇게 짜여 있어 대기 목록에 올라 있다. 새로 쓰는 이 시험은 그 함정을 피한다
+    fn ui_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("ui 디렉터리") {
+            let path = entry.expect("항목").path();
+            if path.is_dir() {
+                ui_sources(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// `Frame::menu(...)`로 시작하는 체인 안에서 `.corner_radius(`를 부르는가.
+    ///
+    /// 같은 파일에 메뉴가 아닌 프레임(대화 셸 등)이 함께 있을 수 있어 파일 전체를
+    /// 훑지 않고 **그 호출에서 이어지는 구간만** 본다. 체인은 `.show(`에서 끝난다
+    fn menu_frame_sets_corner(source: &str) -> bool {
+        let mut rest = source;
+        while let Some(at) = rest.find("Frame::menu(") {
+            let tail = &rest[at..];
+            let end = tail.find(".show(").unwrap_or(tail.len());
+            if tail[..end].contains(".corner_radius(") {
+                return true;
+            }
+            rest = &tail[end.min(tail.len())..];
+            // 진행이 없으면(찾은 자리가 끝) 무한히 돌지 않도록 끊는다
+            if rest.is_empty() {
+                break;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn 규약_검사는_값을_가리지_않는다() {
+        // 검사기 자신을 시험한다 — `0`만 잡던 종전 방식이 놓치던 두 형태를 든다
+        assert!(menu_frame_sets_corner(
+            "egui::Frame::menu(s).fill(a).corner_radius(0).show(ui, |ui| {})"
+        ));
+        assert!(menu_frame_sets_corner(
+            "egui::Frame::menu(s).corner_radius(2).show(ui, |ui| {})"
+        ));
+        assert!(menu_frame_sets_corner(
+            "egui::Frame::menu(s).corner_radius(egui::CornerRadius::ZERO).show(ui, |ui| {})"
+        ));
+        // 메뉴 프레임이 모서리를 적지 않으면 통과한다
+        assert!(!menu_frame_sets_corner(
+            "egui::Frame::menu(s).fill(a).stroke(b).show(ui, |ui| {})"
+        ));
+        // 메뉴가 아닌 프레임의 모서리는 대상이 아니다 (대화 셸 등)
+        assert!(!menu_frame_sets_corner(
+            "egui::Frame::new().corner_radius(12).show(ui, |ui| {})"
+        ));
+    }
+
+    #[test]
+    fn 팝업_메뉴는_모서리를_따로_적지_않는다() {
+        // 규약: 메뉴 모서리의 정본은 `theme::MENU_CORNER_RADIUS` 하나이고, 각 메뉴는
+        // `Frame::menu`가 읽어 가게 둔다. 문서로만 두면 다음 작업자가 다시 `.corner_radius(0)`을
+        // 붙여도 아무것도 걸리지 않아, 같은 우클릭 메뉴인데 어떤 것은 각지고 어떤 것은
+        // 둥근 상태로 되돌아간다 (2026-08-19 사용자 보고가 그 상태였다)
+        let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut sources = Vec::new();
+        ui_sources(&ui_dir, &mut sources);
+        assert!(!sources.is_empty(), "ui 소스를 하나도 읽지 못했다");
+
+        // 이 파일은 규약을 설명하느라 그 문자열을 주석에 담는다. **경로 전체로 견준다** —
+        // 이름만 보면 하위 폴더에 같은 이름이 생겼을 때 그 파일까지 조용히 빠진다
+        let self_path = ui_dir.join("theme.rs");
+        let mut 발견 = Vec::new();
+        for path in sources {
+            if path == self_path {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");
+            // **값을 가리지 않고 잡는다** — `.corner_radius(0)`만 찾으면 `.corner_radius(2)`나
+            // `.corner_radius(CornerRadius::ZERO)`로 적은 곳이 규약을 어긴 채 통과한다.
+            // 메뉴 프레임을 만드는 자리에서는 모서리를 **아예 적지 않는 것**이 규약이다
+            if menu_frame_sets_corner(&source) {
+                발견.push(
+                    path.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        assert!(
+            발견.is_empty(),
+            "메뉴 모서리를 따로 적은 곳(테마의 공통 값을 쓰도록 지운다): {발견:?}"
+        );
+    }
+
+    #[test]
+    fn 메뉴_모서리는_대화_모서리와_다른_부품이다() {
+        // 둘을 한 값으로 묶으면 한쪽을 바꿀 때 다른 쪽이 조용히 따라간다 —
+        // 메뉴는 버튼 줄이 없는 얇은 팝업이라 대화(12px)보다 덜 둥글다
+        assert_ne!(MENU_CORNER_RADIUS, crate::ui::dialog::CORNER_RADIUS);
+    }
 }

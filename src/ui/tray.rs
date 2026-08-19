@@ -16,7 +16,8 @@ use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
@@ -32,8 +33,6 @@ pub const TRAY_CALLBACK: u32 = WM_APP + 2;
 const TRAY_ICON_ID: u32 = 1;
 /// 트레이 아이콘 한 변 (알림 영역 표준 크기)
 const TRAY_ICON_PX: u32 = 16;
-/// 마우스를 올렸을 때 뜨는 이름
-const TOOLTIP: &str = "MOA";
 
 /// `TrackPopupMenu`가 돌려주는 항목 번호 (0은 "고르지 않음"이라 1부터 쓴다)
 const CMD_SHOW: usize = 1;
@@ -106,6 +105,19 @@ impl Tray {
         }
         Some(Tray { hwnd, icon })
     }
+
+    /// 툴팁을 지금 언어로 다시 올린다 (FR-53) — 아이콘·콜백은 그대로 둔다.
+    ///
+    /// 언어를 바꿔도 알림 영역은 스스로 다시 묻지 않으므로, 앱이 `NIM_MODIFY`로
+    /// 알려 주지 않으면 툴팁만 옛 언어로 남는다
+    pub fn update_tooltip(&self) {
+        let data = icon_data(self.hwnd, self.icon);
+        // 안전성: 우리가 올린 아이콘을 우리가 고친다. 아이콘이 이미 사라졌으면
+        // 실패만 반환하며(`Drop`과 같은 취급) 앱은 그대로 돈다
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &data);
+        }
+    }
 }
 
 impl Drop for Tray {
@@ -135,7 +147,13 @@ fn icon_data(hwnd: HWND, icon: HICON) -> NOTIFYICONDATAW {
         hIcon: icon,
         ..Default::default()
     };
-    for (slot, ch) in data.szTip.iter_mut().zip(TOOLTIP.encode_utf16()) {
+    // 툴팁은 화면에 보이는 이름이라 언어를 따른다 (FR-53) — `szTip`은 128 UTF-16 단위
+    // 고정 배열이고 `zip`이 짧은 쪽에서 멈추므로 이름이 길어져도 넘치지 않는다
+    for (slot, ch) in data
+        .szTip
+        .iter_mut()
+        .zip(crate::i18n::app_name().encode_utf16())
+    {
         *slot = ch;
     }
     data

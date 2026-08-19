@@ -1537,10 +1537,11 @@ impl PanelState {
             .order(egui::Order::Foreground)
             .fixed_pos(at)
             .show(ui.ctx(), |ui| {
+                // 모서리는 적지 않는다 — `Frame::menu`가 테마의 공통 값을 읽는다
+                // (`theme::MENU_CORNER_RADIUS`)
                 egui::Frame::menu(ui.style())
                     .fill(theme::SURFACE_BG)
                     .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
-                    .corner_radius(0)
                     .show(ui, |ui| {
                         chosen =
                             remote_menu::show_remote_menu(ui, picked.len(), connected, targets);

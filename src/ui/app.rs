@@ -26,6 +26,7 @@ use crate::remote::transfer::{self, TransferRunner};
 use crate::remote::tree_cache::TreeCache;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
+use crate::ui::about_dialog::AboutDialog;
 use crate::ui::app_icon;
 use crate::ui::dialog;
 use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
@@ -494,6 +495,8 @@ pub struct ExplorerApp {
     settings_dialog: SettingsDialog,
     /// 오픈소스 라이선스 대화 (FR-57) — 같은 메뉴의 `오픈소스 라이선스`가 연다
     license_dialog: LicenseDialog,
+    /// 정보 대화 (FR-58) — 같은 메뉴의 `정보`가 연다
+    about_dialog: AboutDialog,
     /// 고를 수 있는 글꼴 목록 (FR-48) — 워커가 만든다. 앱이 시작할 때 한 번만 읽는다
     font_scan: FontScan,
     /// 알림 영역 아이콘 (FR-50) — `종료` 토글이 켜져 있을 때만 있다. 없애면 아이콘이 사라진다
@@ -611,6 +614,11 @@ impl ExplorerApp {
             crate::app::theme::disable_window_transitions(shell.hwnd());
             // 아직 그리지 않은 자리가 흰색으로 번쩍이지 않게 한다 (창 표시·최대화 순간)
             crate::app::theme::paint_unpainted_as_window_bg(shell.hwnd());
+            // **창이 보이기 전에** 아이콘을 붙인다 — 작업 표시줄은 버튼을 만드는 순간
+            // 아이콘을 읽어 가므로 그보다 앞서야 한다. winit이 창 클래스를 비워 두고
+            // eframe은 창이 활성이 된 뒤에야 붙여서, 둘 다 이 시점을 놓친다
+            // (사유·실측은 `app_icon::apply_to_window`)
+            app_icon::apply_to_window(shell.hwnd());
         }
         let (expand_tx, expand_rx) = std::sync::mpsc::channel();
         let (conflict_tx, conflict_rx) = std::sync::mpsc::channel();
@@ -666,6 +674,7 @@ impl ExplorerApp {
             settings: AppSettings::default(),
             settings_dialog: SettingsDialog::new(),
             license_dialog: LicenseDialog::new(),
+            about_dialog: AboutDialog::new(),
             font_scan: FontScan::new(),
             tray: None,
             tray_rx,
@@ -1946,6 +1955,14 @@ impl ExplorerApp {
         if outcome.language_changed {
             // 이 프레임은 이미 옛 언어로 그려졌다 — 다음 프레임이 오도록 청한다 (전제 3-b)
             crate::i18n::set_language(self.settings.language);
+            // 창 밖에 있는 두 이름은 다시 그린다고 따라오지 않는다 — 앱이 직접 알린다 (FR-53).
+            // 창 제목은 작업 표시줄·Alt+Tab에, 툴팁은 알림 영역에 보인다
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                crate::i18n::app_name().to_owned(),
+            ));
+            if let Some(tray) = &self.tray {
+                tray.update_tooltip();
+            }
             ctx.request_repaint();
         }
         if outcome.font_changed {
@@ -2064,6 +2081,7 @@ impl ExplorerApp {
             Command::ToggleSidebar => self.sidebar_collapsed = !self.sidebar_collapsed,
             Command::OpenAppSettings => self.settings_dialog.open(),
             Command::OpenLicenses => self.license_dialog.open(),
+            Command::OpenAbout => self.about_dialog.open(),
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -2869,6 +2887,8 @@ impl eframe::App for ExplorerApp {
         self.show_settings_dialog(&ctx);
         // 오픈소스 라이선스 대화 (FR-57) — 상태를 저장하지 않아 배선이 한 줄이다
         self.license_dialog.show(&ctx);
+        // 정보 대화 (FR-58) — 마찬가지로 상태를 저장하지 않는다
+        self.about_dialog.show(&ctx);
         // 원격 파일 작업 대화 (FR-39)
         self.show_remote_dialogs(&ctx);
         // 같은 이름 확인 대화 (FR-55) — 이것이 닫히기 전에는 그 전송이 큐에 들어가지 않는다

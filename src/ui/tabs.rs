@@ -11,7 +11,6 @@ use crate::remote::types::Protocol;
 use crate::remote::types::SiteId;
 use crate::ui::menu::{self, Command, PanelMenuState};
 use crate::ui::remote_states::{self, RemoteView};
-use crate::ui::site_dropdown;
 use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
@@ -49,6 +48,23 @@ const SEPARATOR_RATIO: f32 = 0.6;
 
 /// 고른 탭의 위쪽 모서리 반경 (사용자 결정) — 아래 두 모서리는 각지게 둔다
 const TAB_CORNER_RADIUS: u8 = 6;
+
+// ── 새 탭 메뉴 (FR-33) ──
+/// 메뉴 폭 — 사이트 이름과 프로토콜 라벨이 한 줄에 들어가는 크기
+const NEW_TAB_MENU_WIDTH: f32 = 250.0;
+/// 사이트 줄 높이·글자 크기
+const SITE_ROW_HEIGHT: f32 = 28.0;
+const SITE_ROW_FONT_PX: f32 = 13.0;
+/// 줄 안 상태 점 지름 — 사이드바(7px)보다 한 단계 작다
+const SITE_ROW_DOT: f32 = 6.0;
+/// 프로토콜 글자 크기
+const SITE_PROTO_FONT_PX: f32 = 12.0;
+/// 줄 좌우 여백·요소 간격
+const SITE_ROW_PAD_X: f32 = 10.0;
+const SITE_ROW_GAP: f32 = 8.0;
+/// hover 채움 모서리 — 메뉴 프레임 모서리(`theme::MENU_CORNER_RADIUS`)보다 작게 두어
+/// 채움이 둥근 테두리 밖으로 새지 않게 한다
+const SITE_ROW_CORNER: u8 = 4;
 
 /// 분할 버튼 아이콘(사각형) 한 변 — 글리프가 아니라 직접 그린다 (split-4way plan D8)
 const SPLIT_ICON_SIZE: f32 = 12.0;
@@ -226,25 +242,129 @@ fn show_tabs(
                         draw_separator(ui.painter(), hit.rect);
                     }
                 }
-                if widgets::icon_button_styled(
-                    ui,
-                    egui_phosphor::regular::PLUS,
-                    egui::vec2(NEW_TAB_WIDTH, STRIP_HEIGHT),
-                    theme::CONTROL_HOT,
-                    theme::TEXT,
-                    NEW_TAB_ICON_PX,
-                )
-                .on_hover_text(crate::i18n::tabs_new())
-                .clicked()
-                {
-                    *action = Some(TabAction::New);
-                }
-                // `+` 바로 오른쪽에 사이트 드롭다운을 붙인다 (인벤토리 #92·#93, 원본 `:106`)
-                if let Some(site) = site_dropdown::show_site_dropdown(ui, remote, STRIP_HEIGHT) {
-                    *open_site = Some(site);
-                }
+                show_new_tab_menu(ui, remote, action, open_site);
             });
         });
+}
+
+/// `+` 버튼과 그 메뉴 — `새 탭`, 그리고 등록된 사이트를 새 탭으로 여는 줄들 (FR-33).
+///
+/// 종전에는 `+`가 곧바로 새 탭을 만들고 그 옆의 `▾`가 사이트 목록을 열었다. 버튼 두 개가
+/// 나란히 서면 무엇이 무엇인지 눌러 봐야 알 수 있어, 진입점을 이 메뉴 하나로 합쳤다
+/// (2026-08-19 사용자 요청). 여는 동작 자체는 그대로다 — 사이트 줄은 종전 `▾`와 같이
+/// `open_site`로 나가 그 패널의 새 원격 탭이 된다.
+///
+/// **등록된 사이트가 없으면 `새 탭` 한 줄만 남는다** — 구분선과 빈 목록을 그리면
+/// 무언가 빠진 것처럼 보인다
+fn show_new_tab_menu(
+    ui: &mut egui::Ui,
+    remote: RemoteView<'_>,
+    action: &mut Option<TabAction>,
+    open_site: &mut Option<SiteId>,
+) {
+    let response = widgets::icon_button_styled(
+        ui,
+        egui_phosphor::regular::PLUS,
+        egui::vec2(NEW_TAB_WIDTH, STRIP_HEIGHT),
+        theme::CONTROL_HOT,
+        theme::TEXT,
+        NEW_TAB_ICON_PX,
+    )
+    // 안내는 `새 탭`이 아니다 — 이 버튼은 탭을 만들지 않고 메뉴를 연다.
+    // 메뉴 첫 항목과 같은 글자를 쓰면 누르는 즉시 탭이 생기는 것처럼 읽힌다
+    .on_hover_text(crate::i18n::tabs_new_menu());
+    egui::Popup::menu(&response).show(|ui| {
+        new_tab_menu_items(ui, remote, action, open_site);
+    });
+}
+
+/// 새 탭 메뉴의 내용 — 팝업 껍데기와 나눠 두어 시험이 이 함수를 직접 그릴 수 있게 한다
+/// (`Popup::menu`는 눌러야 열리는 두 단계라 시험에서 좌표를 흉내 내기 어렵다 —
+/// 설정 대화가 같은 이유로 같은 형태를 쓴다)
+fn new_tab_menu_items(
+    ui: &mut egui::Ui,
+    remote: RemoteView<'_>,
+    action: &mut Option<TabAction>,
+    open_site: &mut Option<SiteId>,
+) {
+    ui.set_width(NEW_TAB_MENU_WIDTH);
+    if ui.button(crate::i18n::tabs_new()).clicked() {
+        *action = Some(TabAction::New);
+        ui.close();
+    }
+    let mut first = true;
+    for record in remote.sites.visible() {
+        // 구분선은 사이트가 하나라도 있을 때 **한 번만** 긋는다
+        if first {
+            ui.separator();
+            first = false;
+        }
+        if show_site_row(
+            ui,
+            &record.name,
+            record.protocol.label(),
+            remote.is_connected(record.id),
+        ) {
+            *open_site = Some(record.id);
+            ui.close();
+        }
+    }
+}
+
+/// 메뉴의 사이트 한 줄 — 상태 점 · 이름 · 프로토콜. 눌렸으면 `true`.
+///
+/// `ui.button`을 쓰지 않는 이유: 한 줄에 점·이름·프로토콜 셋이 서로 다른 정렬로 앉아야
+/// 하는데, 버튼 라벨 하나로는 그 배치를 만들 수 없다
+fn show_site_row(ui: &mut egui::Ui, name: &str, protocol: &str, connected: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), SITE_ROW_HEIGHT),
+        egui::Sense::click(),
+    );
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, SITE_ROW_CORNER, theme::MENU_HOT);
+    }
+    let painter = ui.painter();
+    let dot_center = egui::pos2(
+        rect.left() + SITE_ROW_PAD_X + SITE_ROW_DOT / 2.0,
+        rect.center().y,
+    );
+    painter.circle_filled(
+        dot_center,
+        SITE_ROW_DOT / 2.0,
+        if connected {
+            theme::OK_DOT
+        } else {
+            theme::TEXT_DIM
+        },
+    );
+
+    // 프로토콜을 먼저 오른쪽에 붙여 이름이 길어도 밀려나지 않게 한다
+    let proto = painter.layout_no_wrap(
+        protocol.to_owned(),
+        egui::FontId::proportional(SITE_PROTO_FONT_PX),
+        theme::TEXT_MUTED,
+    );
+    let proto_left = rect.right() - SITE_ROW_PAD_X - proto.size().x;
+    painter.galley(
+        egui::pos2(proto_left, rect.center().y - proto.size().y / 2.0),
+        proto,
+        theme::TEXT_MUTED,
+    );
+
+    let name_left = dot_center.x + SITE_ROW_DOT / 2.0 + SITE_ROW_GAP;
+    let name = painter.layout(
+        name.to_owned(),
+        egui::FontId::proportional(SITE_ROW_FONT_PX),
+        theme::TEXT,
+        (proto_left - SITE_ROW_GAP - name_left).max(0.0),
+    );
+    painter.galley(
+        egui::pos2(name_left, rect.center().y - name.size().y / 2.0),
+        name,
+        theme::TEXT,
+    );
+    response.clicked()
 }
 
 /// 탭 하나를 그린다 — 폴더 아이콘·제목·닫기 ×가 한 영역 안에 들어간다.
@@ -658,6 +778,80 @@ mod tests {
         assert_ne!(흐림, up, "끊긴 원격 탭의 대상 아이콘이 흐려지지 않았다");
         // 로컬 탭(배지 없음)은 늘 또렷하다
         assert_eq!(icon_color(up, None), up);
+    }
+
+    /// 새 탭 메뉴 내용을 그리고 그 안에 실린 글자를 모은다.
+    ///
+    /// 팝업을 눌러 여는 대신 내용 함수를 직접 그린다 — 무엇이 메뉴에 실렸는지는
+    /// 그려진 글자로 판정하는 것이 가장 확실하다
+    fn menu_labels(sites: &crate::remote::sites::SiteStore) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut labels = Vec::new();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let tree = crate::remote::tree_cache::TreeCache::new();
+                new_tab_menu_items(
+                    ui,
+                    RemoteView {
+                        sites,
+                        connected: &[],
+                        tree: &tree,
+                    },
+                    &mut None,
+                    &mut None,
+                );
+            });
+        });
+        for shape in output.shapes {
+            collect_text(&shape.shape, &mut labels);
+        }
+        labels
+    }
+
+    /// 도형 트리를 훑어 글자만 모은다 — 메뉴 항목은 중첩 도형 안에 들어 있다
+    fn collect_text(shape: &egui::epaint::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::epaint::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect_text(shape, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn 사이트가_있으면_메뉴가_그_사이트를_싣는다() {
+        // 종전에는 `▾` 드롭다운이 하던 일이다 — `+` 메뉴로 옮겨도 목록은 그대로 나와야 한다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let mut sites = crate::remote::sites::SiteStore::new();
+        sites.add("배포 서버");
+        let labels = menu_labels(&sites);
+        assert!(
+            labels.iter().any(|label| label == "새 탭"),
+            "`새 탭`이 첫 항목으로 있어야 한다: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label == "배포 서버"),
+            "등록한 사이트가 메뉴에 없다: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn 사이트가_없으면_새_탭만_남는다() {
+        // 빈 목록과 구분선을 그리면 무언가 빠진 것처럼 보인다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let labels = menu_labels(&crate::remote::sites::SiteStore::new());
+        assert_eq!(labels, vec!["새 탭".to_owned()], "메뉴에 다른 것이 실렸다");
+
+        // 숨긴 사이트만 남아도 같다 — 목록이 비는 것과 구분되지 않는다
+        let mut hidden = crate::remote::sites::SiteStore::new();
+        let id = hidden.add("배포 서버");
+        hidden.hide(id);
+        assert_eq!(menu_labels(&hidden), vec!["새 탭".to_owned()]);
     }
 
     #[test]

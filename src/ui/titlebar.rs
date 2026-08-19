@@ -35,6 +35,16 @@ const TITLE_FONT_PX: f32 = 14.0;
 /// 타이틀바 아래 구분선 두께
 const SEPARATOR_THICKNESS: f32 = 1.0;
 
+/// 설정 메뉴 최소 폭 — 라벨이 짧아도 이보다 좁아지지 않는다.
+/// 좁은 메뉴는 눌러야 할 자리가 작아 보여 다른 메뉴들과 나란히 놓였을 때 어색하다
+const SETTINGS_MENU_MIN_WIDTH: f32 = 160.0;
+/// 라벨 좌우로 두는 여백.
+///
+/// 항목은 `ui.button`이라 좌우로 `button_padding.x`(egui 기본 4px)씩 8px을 먼저 쓴다.
+/// 나머지는 글자가 테두리에 닿아 보이지 않게 두는 숨 쉴 자리다 — 라벨 폭을 딱 맞춰
+/// 주면 마지막 글자가 잘릴락 말락 하게 그려진다
+const SETTINGS_MENU_PADDING: f32 = 24.0;
+
 /// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
 /// 넓히면 목록 스크롤바·스플리터처럼 창 끝에 닿는 위젯을 자주 가로챈다
 const RESIZE_MARGIN: f32 = 4.0;
@@ -69,8 +79,8 @@ pub struct TitlebarOutcome {
 
 /// 타이틀바 한 줄을 그리고 이번 프레임의 요청을 돌려준다.
 ///
-/// `title`은 활성 워크스페이스 이름이다 — 작업 표시줄에 뜨는 OS 창 제목("MOA")과는
-/// 별개다(D8). 좌우 버튼을 뺀 폭에서 넘치면 egui가 말줄임한다
+/// `title`은 활성 워크스페이스 이름이다 — 작업 표시줄에 뜨는 OS 창 제목(앱 이름,
+/// `i18n::app_name`)과는 별개다(D8). 좌우 버튼을 뺀 폭에서 넘치면 egui가 말줄임한다
 pub fn show_titlebar(
     ui: &mut egui::Ui,
     title: &str,
@@ -237,8 +247,8 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>
     (request, command)
 }
 
-/// 설정 메뉴 — `설정`과 `오픈소스 라이선스`가 동작하고 나머지 셋은 아직 표시만 한다
-/// (FR-22·FR-57).
+/// 설정 메뉴 — `설정`·`오픈소스 라이선스`·`정보`가 동작하고 나머지 둘(`업데이트`·
+/// `릴리즈 노트`)은 아직 표시만 한다 (FR-22·FR-57·FR-58).
 ///
 /// 다섯 항목을 배열+반복으로 묶지 않은 이유: 각 항목이 곧 서로 다른 화면·동작으로 갈라질
 /// 자리라, 지금 묶으면 채우는 순간 다시 풀어야 한다
@@ -251,6 +261,7 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
     )
     .on_hover_text(crate::i18n::settings_title());
     egui::Popup::menu(&response).show(|ui| {
+        ui.set_width(settings_menu_width(ui));
         if ui.button(crate::i18n::settings_title()).clicked() {
             *out = Some(Command::OpenAppSettings);
             ui.close();
@@ -262,8 +273,43 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
             *out = Some(Command::OpenLicenses);
             ui.close();
         }
-        pending_item(ui, crate::i18n::titlebar_about());
+        if ui.button(crate::i18n::titlebar_about()).clicked() {
+            *out = Some(Command::OpenAbout);
+            ui.close();
+        }
     });
+}
+
+/// 설정 메뉴 폭 — 다섯 라벨 중 가장 넓은 것에 맞춰 **그 자리에서 잰다**.
+///
+/// **폭을 주지 않으면 언어를 바꾼 뒤 항목이 두 줄로 접힌다** — `egui::Area`는 직전 프레임의
+/// 크기를 기억해 다음 프레임의 레이아웃 한계로 쓰므로(`egui`의 `containers/area.rs`),
+/// 한국어 폭 안에서 더 긴 영어 라벨(`Open source licenses`)이 줄바꿈된 채 굳는다.
+/// 처음부터 영어로 켜면 기억된 크기가 없어 한 줄로 잡히던 것이 그 증거다 (2026-08-19 사용자 보고).
+///
+/// 고정 상수 대신 재는 이유: 화면 글꼴은 맑은 고딕이고 사용자가 바꿀 수도 있어(FR-48)
+/// 상수로 박으면 그 값이 맞는지 추정에 기대게 된다. 여기서 재면 어떤 글꼴·언어에서도
+/// 라벨이 그대로 든다 (`remote_states::badge_width`가 같은 방식을 쓴다).
+///
+/// **다섯 라벨을 여기서만 모은다** — 그리는 쪽은 항목마다 동작이 달라 배열로 묶지 않는다
+fn settings_menu_width(ui: &egui::Ui) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let widest = [
+        crate::i18n::settings_title(),
+        crate::i18n::titlebar_updates(),
+        crate::i18n::titlebar_release_notes(),
+        crate::i18n::titlebar_licenses(),
+        crate::i18n::titlebar_about(),
+    ]
+    .into_iter()
+    .map(|label| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT)
+            .size()
+            .x
+    })
+    .fold(0.0_f32, f32::max);
+    (widest + SETTINGS_MENU_PADDING).max(SETTINGS_MENU_MIN_WIDTH)
 }
 
 /// 아직 기능이 없는 메뉴 항목 — 비활성으로 두어 준비 중임을 눈으로 알린다.
@@ -535,6 +581,47 @@ mod tests {
             frames.contains(&Some(WindowRequest::ToggleMaximize)),
             "더블클릭이 최대화 토글로 이어지지 않았다: {frames:?}"
         );
+    }
+
+    #[test]
+    fn 설정_메뉴_폭_안에서_라벨이_한_줄로_그려진다() {
+        // 사용자가 본 결함이 그대로 재현되는 자리다 — 폭이 모자라면 `Open source licenses`가
+        // 두 줄로 접힌다. **폭 계산을 되풀이해 견주지 않는다**(그러면 늘 참이라 아무것도
+        // 지키지 못한다) — 잰 폭을 줄바꿈 한계로 삼아 **실제로 몇 줄이 나오는지**를 본다
+        let ctx = egui::Context::default();
+        for language in [
+            crate::app::settings::LanguageSetting::Korean,
+            crate::app::settings::LanguageSetting::English,
+        ] {
+            let _guard = crate::i18n::LanguageGuard::lock(language);
+            let mut folded: Vec<(String, usize)> = Vec::new();
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                let width = settings_menu_width(ui);
+                let font = egui::TextStyle::Button.resolve(ui.style());
+                // 항목은 버튼이라 좌우 여백을 먼저 떼고 남은 자리에 글자가 앉는다
+                let wrap = width - ui.style().spacing.button_padding.x * 2.0;
+                for label in [
+                    crate::i18n::settings_title(),
+                    crate::i18n::titlebar_updates(),
+                    crate::i18n::titlebar_release_notes(),
+                    crate::i18n::titlebar_licenses(),
+                    crate::i18n::titlebar_about(),
+                ] {
+                    let rows = ui
+                        .painter()
+                        .layout(label.to_owned(), font.clone(), theme::TEXT, wrap)
+                        .rows
+                        .len();
+                    if rows != 1 {
+                        folded.push((label.to_owned(), rows));
+                    }
+                }
+            });
+            assert!(
+                folded.is_empty(),
+                "{language:?}에서 접힌 항목이 있다: {folded:?}"
+            );
+        }
     }
 
     #[test]
