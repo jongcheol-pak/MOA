@@ -148,7 +148,7 @@
   - **Halt Forecast**: 없음(파괴적·외부 호출 없음. `assets/`에 새 파일을 더할 뿐 기존 `licenses.json`을 건드리지 않는다).
   - **Files**: 주 — `examples/gen_app_icon.rs`(신규), `assets/app_icon_256.png`(신규 생성물), `Cargo.toml`, `Cargo.lock`
 
-- [ ] **T2. 정보 대화 모듈** — Type D
+- [x] **T2. 정보 대화 모듈** — Type D
   - **Design**: ① 배치 — `src/ui/about_dialog.rs`(신규), `src/ui/mod.rs`에 선언. ② 신규 심볼과 책임 — `AboutDialog`(열림 상태와 아이콘 텍스처 캐시만 든다) · `new`/`open`/`is_open`/`close`(라이선스·설정 대화와 같은 표면) · `show(&mut self, ctx)`(닫기 판정을 안에서 하고 스스로 `close()`를 부른다 — 라이선스 대화가 그렇게 정정된 선례) · private `icon_texture(ctx, physical_px)`(캐시가 맞으면 그대로, 아니면 디코드·축소해 새로 만든다). 이름·버전 줄은 `i18n::dynamic::about_version_line()`이 만든다(D9 — 대화 모듈이 아니라 카탈로그 쪽에 둔다). ③ 의존 방향 — `ui::dialog`(셸)·`ui::theme`·`i18n`·`image`를 참조하고 `ui::app`이 이것을 참조한다. `ui::app_icon`은 참조하지 않는다(ICO 경로와 독립). ④ 비추상화 — 아이콘 로더를 공용 위젯으로 승격하지 않는다(쓰는 곳이 하나다). 팝업 안에 스크롤·레이아웃 헬퍼를 두지 않는다.
   - **Acceptance**:
     - `AboutDialog`가 `open`/`is_open`/`close`를 갖고, 닫힌 상태에서 `show`를 불러도 아무것도 그리지 않는다(단위 시험).
@@ -217,6 +217,11 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T2 완료: `src/ui/about_dialog.rs`가 96px 아이콘과 `MOA 0.1.0` 한 줄을 `dialog::show` 셸 안에 세운다. 아이콘은 표시 물리 크기(`96 × 화면 배율`)로 CPU에서 Lanczos3 축소해 텍스처로 올리고, 만든 크기를 함께 들어 배율이 바뀔 때만 다시 만든다. 신규 시험 13건.
+  - 결정: `i18n` 소스 훑기 시험이 위젯 열쇠 `Id::new("정보 대화")`를 잡아 `EXEMPT_LITERALS`(위젯 ID 목록)에 등재했다 — `"라이선스 대화"`와 같은 자리이며 AGENTS.md의 예외 조항("위젯 상태를 잇는 열쇠")에 해당한다.
+  - 리뷰 반영: 시험이 `show()` 실제 렌더 경로를 한 번도 돌지 않는다는 지적(MAJOR)에 따라 라이선스 대화의 `ctx.run_ui` 기법을 옮겨 왔다. 열린 상태 시험은 **두 프레임**을 돈다 — egui의 떠 있는 영역은 첫 프레임에 크기만 재고 그리지 않는다(실측).
+  - 리뷰 반영: `snap_to_pixels`의 가드가 NaN을 통과시키던 것(MINOR)을 `is_finite` 조합으로 고쳤다. `!(x > 0.0)` 형태는 clippy가 거부한다.
 
 - T1 완료: `examples/gen_app_icon.rs`가 `docs/AppIcon.png`(1083×1105)를 256×256 Lanczos3로 줄여 `assets/app_icon_256.png`를 만든다. **생성물 실측 75,943B**(D1의 `60KB 안팎(추정)`을 이 값으로 확정 — 추정보다 약 16KB 크다). 두 번 실행해 md5가 같아 재현성을 확인했다.
   - 확인: `cargo tree --target x86_64-pc-windows-msvc -e normal` 중복 제거 **155개로 불변**, `cargo run --example gen_licenses` 후 `assets/licenses.json` **md5 불변(diff 0)** — D7의 "패키지·feature 집합이 변하지 않아 라이선스 자산 재생성 불요"가 실측으로 확인됐다(`git status`가 M으로 표시한 것은 CRLF 정규화 때문이며 내용 변화는 0이다).
