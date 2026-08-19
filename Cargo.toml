@@ -55,6 +55,15 @@ egui-phosphor = "0.13"
 # eframe이 재수출하지 않아 직접 의존 — 창 HWND 추출(셸 컨텍스트 메뉴)에 필요
 raw-window-handle = "0.6"
 
+# 정보 화면의 앱 아이콘 (FR-58) — `assets/app_icon_256.png`를 읽어 **표시할 물리 크기로
+# CPU에서 줄인 뒤** 텍스처로 올린다. GPU 선형 필터는 인접 네 텍셀만 보므로 크게 줄이면
+# 가장자리가 자글거린다. 생성기(`examples/gen_app_icon.rs`)도 같은 크레이트를 쓴다.
+#
+# eframe·arboard가 이미 이것을 링크하고 `png` feature까지 켜 두지만(2026-08-19 `cargo tree
+# -e features` 실측), 전이 의존에 기대면 상위가 그것을 끊는 순간 조용히 깨진다. 명시로
+# 올려도 패키지·feature 집합이 그대로라 exe도 라이선스 자산도 변하지 않는다
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # 원격 연결 (FR-27~FR-46). 둘 다 **동기(blocking) API**라 이 앱의 std::thread + 채널 구조에
 # 그대로 맞는다 — async 런타임(tokio)을 들이지 않는다(AGENTS 동시성 규약).
 # 대안 `russh-sftp`는 tokio를 강제해 기각했다.
