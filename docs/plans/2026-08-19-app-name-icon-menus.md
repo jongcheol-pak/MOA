@@ -198,13 +198,13 @@
   - **Acceptance**: ① `cargo test` 통과 — 새 시험 2건 포함. ② `cargo clippy --all-targets -- -D warnings` 경고 0. ③ `grep -rn 'site_dropdown' src/ README.md docs/prd.md AGENTS.md` 결과 0건 — 삭제된 파일이 README 구조 트리나 PRD에 남지 않게 한다(T6이 README를 고치므로 두 task가 끝난 뒤 이 조건이 성립한다). **과거 회차의 `docs/plans/*.md`는 대상이 아니다** — 그 시점의 기록이라 지금 사실에 맞춰 고치면 이력이 왜곡된다(구현 중 확인: `2026-08-04-ftp-integration.md` 등이 그 파일을 신설했다고 적고 있다). ④ `panel.rs`의 diff가 0줄(출력 계약 불변 확인). ⑤ 메뉴가 실제로 뜨고 사이트를 고르면 탭이 열리는 것은 **⏳ HUMAN-VERIFY**.
 
 - [ ] **T4. 설정 메뉴에 가로 폭을 준다** — Type C
-  - **Design**: ① 배치 — `src/ui/titlebar.rs`의 `show_settings_menu` 한 곳. ② 신규 심볼 — `SETTINGS_MENU_WIDTH` 상수(다른 메뉴가 자기 폭 상수를 두는 관례와 같다). ③ 의존 — 없음(파일 안에서 끝난다). ④ 비추상화 — 모든 메뉴의 폭을 공통 상수로 묶지 않는다. 메뉴마다 담는 문구 길이가 달라 한 값으로 묶으면 좁은 메뉴가 헐렁해진다.
-  - `Popup::menu(&response).show(|ui| { ui.set_width(SETTINGS_MENU_WIDTH); ... })`.
-  - 값은 두 언어의 다섯 항목이 모두 한 줄에 드는 크기로 **실측해 정한다**(영어 `Open source licenses`가 최장). 앱이 `text_styles`를 덮어쓰지 않아 `TextStyle::Button`은 egui 기본 12.5px이다(확인함).
-  - **글꼴 여유(리뷰 m8)**: 시험은 기본 글꼴로 재지만 실제 렌더는 맑은 고딕이고 사용자가 글꼴을 바꿀 수도 있다(FR-48). 그래서 값은 **잰 최대 폭에 여유를 더해** 잡고, 시험은 `최대 폭 ≤ 폭 × 0.75`처럼 **여유가 남아 있는지까지** 단언한다 — 딱 맞게 잡으면 글꼴이 조금만 넓어져도 다시 2줄이 된다.
-  - 시험: 두 언어에서 다섯 라벨의 최대 텍스트 폭이 위 여유 조건을 만족하는지 단언한다(문구가 나중에 길어지면 이 시험이 먼저 깨진다).
+  - **Design**: ① 배치 — `src/ui/titlebar.rs`의 `show_settings_menu` 한 곳. ② 신규 심볼 — `SETTINGS_MENU_WIDTH` 상수(다른 메뉴가 자기 폭 상수를 두는 관례와 같다). **구현 중 변경**: 고정 상수 대신 `settings_menu_width(ui)`가 다섯 라벨을 **실제 글꼴로 재** 최대값 + 여백을 돌려주고, `SETTINGS_MENU_MIN_WIDTH`가 하한을 잡는다 — quality 리뷰 SUGGEST 채택. 상수로 박으면 그 값이 맑은 고딕·사용자 글꼴(FR-48)에 맞는지 추정에 기대게 되는데, 재면 그 추정 자체가 사라진다(`remote_states::badge_width` 선례). ③ 의존 — 없음(파일 안에서 끝난다). ④ 비추상화 — 모든 메뉴의 폭을 공통 상수로 묶지 않는다. 메뉴마다 담는 문구 길이가 달라 한 값으로 묶으면 좁은 메뉴가 헐렁해진다.
+  - `Popup::menu(&response).show(|ui| { ui.set_width(settings_menu_width(ui)); ... })`.
+  - **폭은 그리는 자리에서 잰다** — 다섯 라벨을 지금 언어·지금 글꼴로 레이아웃해 가장 넓은 것에 여백을 더하고, `SETTINGS_MENU_MIN_WIDTH`로 하한을 잡는다. 고정 상수를 쓰지 않는 이유: 화면 글꼴은 맑은 고딕이고 사용자가 바꿀 수도 있어(FR-48) 상수가 맞는지 추정에 기대게 되는데, 재면 그 추정이 사라진다.
+    - (계획 단계에서는 "실측해 정한 고정 상수 + 여유 비율 시험"으로 적었으나, T4 quality 리뷰의 SUGGEST를 받아 **원인을 없애는 쪽**으로 바꿨다. `remote_states::badge_width`가 같은 방식을 쓴다.)
+  - 시험: 잰 폭을 줄바꿈 한계로 삼아 **두 언어의 다섯 항목이 실제로 몇 줄로 그려지는지** 본다 — 폭 계산을 되풀이해 견주면 늘 참이라 아무것도 지키지 못한다.
   - **Files**: `src/ui/titlebar.rs` 한 파일.
-  - **Edge Cases**: 언어를 한국어→영어→한국어로 왕복해도 폭이 고정이라 흔들리지 않는다 · 사용자가 글꼴을 바꾸면(FR-48) 문구 폭이 달라진다 — 위 여유 조건이 그 몫을 남긴다 · 폭을 준다고 메뉴가 화면 밖으로 나가지는 않는다(`Popup`이 자리를 고른다).
+  - **Edge Cases**: 언어를 한국어→영어→한국어로 왕복해도 그때그때 다시 재므로 어긋나지 않는다 · 사용자가 글꼴을 바꾸면(FR-48) 그 글꼴로 재어 폭이 함께 따라간다 · 라벨이 짧아도 최소 폭 아래로는 좁아지지 않는다 · 폭을 준다고 메뉴가 화면 밖으로 나가지는 않는다(`Popup`이 자리를 고른다).
   - **Halt Forecast**: 없음 — 편집 대상이 `titlebar.rs` 한 파일이고 삭제·외부 호출·의존성 변경이 없다.
   - **Acceptance**: ① 새 시험이 두 언어 모두에서 통과한다(`LanguageGuard`로 잠근다). ② `cargo test`·`cargo clippy --all-targets -- -D warnings` 통과. ③ 한국어로 시작해 영어로 바꿨을 때 `Open source licenses`가 한 줄인 것은 **⏳ HUMAN-VERIFY**.
 

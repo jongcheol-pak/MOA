@@ -38,7 +38,11 @@ const SEPARATOR_THICKNESS: f32 = 1.0;
 /// 설정 메뉴 최소 폭 — 라벨이 짧아도 이보다 좁아지지 않는다.
 /// 좁은 메뉴는 눌러야 할 자리가 작아 보여 다른 메뉴들과 나란히 놓였을 때 어색하다
 const SETTINGS_MENU_MIN_WIDTH: f32 = 160.0;
-/// 라벨 좌우로 두는 여백 — 버튼 자체 여백과 메뉴 안쪽 여백을 합친 몫이다
+/// 라벨 좌우로 두는 여백.
+///
+/// 항목은 `ui.button`이라 좌우로 `button_padding.x`(egui 기본 4px)씩 8px을 먼저 쓴다.
+/// 나머지는 글자가 테두리에 닿아 보이지 않게 두는 숨 쉴 자리다 — 라벨 폭을 딱 맞춰
+/// 주면 마지막 글자가 잘릴락 말락 하게 그려진다
 const SETTINGS_MENU_PADDING: f32 = 24.0;
 
 /// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
@@ -580,20 +584,22 @@ mod tests {
     }
 
     #[test]
-    fn 설정_메뉴_폭은_두_언어_라벨을_모두_담는다() {
-        // 폭이 모자라면 긴 라벨이 두 줄로 접힌다 — 사용자가 영어로 바꿨을 때 실제로 그랬다.
-        // 폭을 그 자리에서 재므로 어떤 언어에서도 가장 긴 라벨이 그대로 들어야 한다
+    fn 설정_메뉴_폭_안에서_라벨이_한_줄로_그려진다() {
+        // 사용자가 본 결함이 그대로 재현되는 자리다 — 폭이 모자라면 `Open source licenses`가
+        // 두 줄로 접힌다. **폭 계산을 되풀이해 견주지 않는다**(그러면 늘 참이라 아무것도
+        // 지키지 못한다) — 잰 폭을 줄바꿈 한계로 삼아 **실제로 몇 줄이 나오는지**를 본다
         let ctx = egui::Context::default();
         for language in [
             crate::app::settings::LanguageSetting::Korean,
             crate::app::settings::LanguageSetting::English,
         ] {
             let _guard = crate::i18n::LanguageGuard::lock(language);
-            let mut width = 0.0;
-            let mut widest = 0.0_f32;
+            let mut folded: Vec<(String, usize)> = Vec::new();
             let _ = ctx.run_ui(Default::default(), |ui| {
-                width = settings_menu_width(ui);
+                let width = settings_menu_width(ui);
                 let font = egui::TextStyle::Button.resolve(ui.style());
+                // 항목은 버튼이라 좌우 여백을 먼저 떼고 남은 자리에 글자가 앉는다
+                let wrap = width - ui.style().spacing.button_padding.x * 2.0;
                 for label in [
                     crate::i18n::settings_title(),
                     crate::i18n::titlebar_updates(),
@@ -601,21 +607,19 @@ mod tests {
                     crate::i18n::titlebar_licenses(),
                     crate::i18n::titlebar_about(),
                 ] {
-                    let one = ui
+                    let rows = ui
                         .painter()
-                        .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT)
-                        .size()
-                        .x;
-                    widest = widest.max(one);
+                        .layout(label.to_owned(), font.clone(), theme::TEXT, wrap)
+                        .rows
+                        .len();
+                    if rows != 1 {
+                        folded.push((label.to_owned(), rows));
+                    }
                 }
             });
             assert!(
-                width >= widest + SETTINGS_MENU_PADDING,
-                "{language:?}의 가장 긴 라벨이 {widest}px인데 메뉴 폭이 {width}px다"
-            );
-            assert!(
-                width >= SETTINGS_MENU_MIN_WIDTH,
-                "{language:?}에서 메뉴가 최소 폭보다 좁다: {width}px"
+                folded.is_empty(),
+                "{language:?}에서 접힌 항목이 있다: {folded:?}"
             );
         }
     }
