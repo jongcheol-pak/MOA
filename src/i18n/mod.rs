@@ -140,6 +140,11 @@ strings! {
     titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
     titlebar_about => "정보" / "About";
 
+    // ── 정보 대화 (FR-58) ──
+    /// 화면에 보이는 앱 이름 — 두 언어에서 값이 같아도 카탈로그를 거친다
+    /// (`settings_language_english`와 같은 선례. 소스에 직접 박으면 이 규약이 갈린다)
+    about_app_name => "MOA" / "MOA";
+
     // ── 오픈소스 라이선스 대화 (FR-57) ──
     /// 목록 위 안내 — 이 앱이 무엇을 쓰는지 한 줄로 밝힌다
     licenses_intro
@@ -608,6 +613,14 @@ pub mod dynamic {
             Language::English if count == 1 => "1 failed".to_owned(),
             Language::English => format!("{count} failed"),
         }
+    }
+
+    /// 정보 대화의 이름·버전 줄 (FR-58) — `MOA 0.1.0`.
+    ///
+    /// 두 언어에서 어순이 같아 갈래를 두지 않는다. 값이 끼어드는 문구라 `strings!`가 아니라
+    /// 여기 있으며, 버전은 `Cargo.toml`이 정본이라 컴파일 시점에 박는다
+    pub fn about_version_line() -> String {
+        format!("{} {}", super::about_app_name(), env!("CARGO_PKG_VERSION"))
     }
 
     /// 라이선스 목록의 구성 요소 수 (FR-57) — 한국어는 수 뒤에 단위가 붙는다
@@ -1084,8 +1097,9 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 27] = [
+        const EXEMPT_LITERALS: [&str; 28] = [
             // 위젯 ID
+            "정보 대화",
             "라이선스 대화",
             "라이선스 목록",
             "라이선스 전문",
