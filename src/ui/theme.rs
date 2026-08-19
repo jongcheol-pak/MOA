@@ -71,9 +71,11 @@ pub const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x8A, 0x8A);
 pub const ERROR_FILL: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x1A, 0x1A);
 pub const ERROR_BORDER: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x26, 0x26);
 
-/// 끝난 전송을 나타내는 초록 — 사이트 관리자의 `연결` 버튼이 채움으로 쓰던 색이며,
-/// 그 버튼이 평면이 된 뒤로는 전송 큐의 진행 막대만 쓴다
-pub const PRIMARY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
+/// 끝난 전송의 진행 막대 채움 — 이 색을 쓰는 곳은 전송 큐뿐이다.
+///
+/// `OK_BORDER`와 값이 같지만 합치지 않는다 — 한쪽은 상태 배지의 테두리이고 이쪽은 막대의
+/// 채움이라, 합치면 한쪽 색을 조정할 때 다른 쪽이 함께 끌려간다.
+pub const OK_BAR: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
 
 /// 입력·목록 웰 배경 — 사이트 관리자의 입력칸과 목록이 이 색 위에 앉는다
 pub const WELL_BG: egui::Color32 = egui::Color32::from_rgb(0x15, 0x15, 0x15);

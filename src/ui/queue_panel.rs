@@ -185,7 +185,7 @@ pub fn state_text(state: &TransferState) -> (String, egui::Color32) {
 fn bar_color(state: &TransferState) -> egui::Color32 {
     match state {
         TransferState::Error { .. } => theme::ERROR,
-        TransferState::Done => theme::PRIMARY_FILL,
+        TransferState::Done => theme::OK_BAR,
         _ => theme::ACCENT,
     }
 }
@@ -881,7 +881,7 @@ mod tests {
     fn 진행_막대_색이_상태별로_갈린다() {
         // Acceptance ⑦ (`:701`)
         assert_eq!(bar_color(&TransferState::Wait), theme::ACCENT);
-        assert_eq!(bar_color(&TransferState::Done), theme::PRIMARY_FILL);
+        assert_eq!(bar_color(&TransferState::Done), theme::OK_BAR);
         assert_eq!(
             bar_color(&TransferState::Error {
                 message: String::new()
