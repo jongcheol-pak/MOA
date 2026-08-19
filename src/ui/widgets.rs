@@ -347,10 +347,11 @@ pub fn dropdown_field(
     let mut chosen = None;
     egui::Popup::menu(&response)
         .frame(
+            // 모서리는 적지 않는다 — `Frame::menu`가 테마의 공통 값을 읽는다
+            // (`theme::MENU_CORNER_RADIUS`)
             egui::Frame::menu(ui.style())
                 .fill(theme::SURFACE_BG)
-                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
-                .corner_radius(0),
+                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER)),
         )
         .show(|ui| {
             ui.set_width(width);
