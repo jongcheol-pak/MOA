@@ -956,6 +956,21 @@ mod tests {
         assert!(!is_icon_font("가나"));
     }
 
+    /// `src/ui` 아래의 `.rs`를 **하위 폴더까지** 모아 온다.
+    ///
+    /// 비재귀로 훑으면 `ui/app/`·`ui/panel/` 같은 하위가 통째로 빠져 규약이 조용히 샌다
+    /// (`ui::theme`의 같은 시험이 그 함정을 먼저 피했고, 2026-08-20에 이쪽도 맞췄다)
+    fn ui_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("ui 디렉터리") {
+            let path = entry.expect("항목").path();
+            if path.is_dir() {
+                ui_sources(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
     #[test]
     fn 화면_코드에_원본_아이콘_기호가_남아_있지_않다() {
         // **규약: 아이콘은 `egui_phosphor`에서만 가져온다** (2026-08-05 사용자 결정).
@@ -975,12 +990,10 @@ mod tests {
             ('\u{2022}', "글머리 점"),
         ];
         let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut 소스 = Vec::new();
+        ui_sources(&ui_dir, &mut 소스);
         let mut 발견 = Vec::new();
-        for entry in std::fs::read_dir(&ui_dir).expect("ui 디렉터리") {
-            let path = entry.expect("항목").path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-                continue;
-            }
+        for path in 소스 {
             let text = std::fs::read_to_string(&path).expect("소스 읽기");
             for (line_no, line) in text.lines().enumerate() {
                 // 주석은 설명하려고 그 기호를 적을 수 있다 — 코드 부분만 본다
