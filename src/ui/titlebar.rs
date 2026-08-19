@@ -35,6 +35,17 @@ const TITLE_FONT_PX: f32 = 14.0;
 /// 타이틀바 아래 구분선 두께
 const SEPARATOR_THICKNESS: f32 = 1.0;
 
+/// 설정 메뉴 폭.
+///
+/// **폭을 주지 않으면 언어를 바꾼 뒤 항목이 두 줄로 접힌다** — `egui::Area`는 직전 프레임의
+/// 크기를 기억해 다음 프레임의 레이아웃 한계로 쓰므로(`egui`의 `containers/area.rs`),
+/// 한국어 폭 안에서 더 긴 영어 라벨(`Open source licenses`)이 줄바꿈된 채 굳는다.
+/// 처음부터 영어로 켜면 기억된 크기가 없어 한 줄로 잡히던 것이 그 증거다 (2026-08-19 사용자 보고).
+///
+/// 값은 라벨 최대 폭에 여유를 두고 잡는다 — 글꼴을 바꿀 수 있어(FR-48) 딱 맞추면
+/// 조금만 넓어져도 다시 접힌다. 그 여유가 남아 있는지는 아래 시험이 지킨다
+const SETTINGS_MENU_WIDTH: f32 = 200.0;
+
 /// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
 /// 넓히면 목록 스크롤바·스플리터처럼 창 끝에 닿는 위젯을 자주 가로챈다
 const RESIZE_MARGIN: f32 = 4.0;
@@ -251,6 +262,7 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
     )
     .on_hover_text(crate::i18n::settings_title());
     egui::Popup::menu(&response).show(|ui| {
+        ui.set_width(SETTINGS_MENU_WIDTH);
         if ui.button(crate::i18n::settings_title()).clicked() {
             *out = Some(Command::OpenAppSettings);
             ui.close();
@@ -538,6 +550,60 @@ mod tests {
             frames.contains(&Some(WindowRequest::ToggleMaximize)),
             "더블클릭이 최대화 토글로 이어지지 않았다: {frames:?}"
         );
+    }
+
+    /// 설정 메뉴 다섯 항목의 라벨 — 지금 언어로 읽는다.
+    ///
+    /// 그리는 쪽은 항목을 배열로 묶지 않는다(각자 다른 화면으로 갈라질 자리라 묶으면
+    /// 곧 다시 풀어야 한다). 여기서만 폭을 재려고 모은다
+    fn 설정_메뉴_라벨() -> [&'static str; 5] {
+        [
+            crate::i18n::settings_title(),
+            crate::i18n::titlebar_updates(),
+            crate::i18n::titlebar_release_notes(),
+            crate::i18n::titlebar_licenses(),
+            crate::i18n::titlebar_about(),
+        ]
+    }
+
+    /// 지금 언어에서 가장 넓은 라벨의 폭 (px)
+    fn 가장_넓은_라벨_폭() -> f32 {
+        let ctx = egui::Context::default();
+        let mut widest: f32 = 0.0;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let font = egui::TextStyle::Button.resolve(ui.style());
+            for label in 설정_메뉴_라벨() {
+                let width = ui
+                    .painter()
+                    .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT)
+                    .size()
+                    .x;
+                widest = widest.max(width);
+            }
+        });
+        widest
+    }
+
+    #[test]
+    fn 설정_메뉴_폭은_두_언어_라벨을_여유롭게_담는다() {
+        // 폭이 모자라면 긴 라벨이 두 줄로 접힌다 — 사용자가 영어로 바꿨을 때 실제로 그랬다.
+        //
+        // **여유까지 보는 이유**: 이 시험은 `Context::default()`의 **내장 글꼴**로 재는데
+        // 실제 화면은 맑은 고딕이고 사용자가 글꼴을 바꿀 수도 있다(FR-48). 잰 값이 곧
+        // 화면 폭이 아니므로 딱 맞추면 안 되고, 그 차이를 흡수할 몫을 남겨 둔다.
+        // 문구가 길어져 이 여유를 먹으면 시험이 먼저 깨져 폭을 다시 보게 한다
+        const 여유_비율: f32 = 0.75;
+        for language in [
+            crate::app::settings::LanguageSetting::Korean,
+            crate::app::settings::LanguageSetting::English,
+        ] {
+            let _guard = crate::i18n::LanguageGuard::lock(language);
+            let widest = 가장_넓은_라벨_폭();
+            assert!(
+                widest <= SETTINGS_MENU_WIDTH * 여유_비율,
+                "{language:?}의 가장 긴 라벨이 {widest}px라 메뉴 폭                  {SETTINGS_MENU_WIDTH}px의 {여유_비율}배를 넘는다 — 폭을 늘려야 한다"
+            );
+        }
     }
 
     #[test]
