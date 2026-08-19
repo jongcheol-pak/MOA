@@ -7,7 +7,7 @@
 //! (`pending_conflicts`·`conflict_lists`·`conflict_dialog` 등)를 직접 만진다. 형제 모듈로
 //! 두면 그 필드를 `pub(crate)`로 넓혀야 하지만, 자식이면 가시성을 그대로 두고 나눌 수 있다.
 //!
-//! 원격 처리(`ui::app::remote`)와 서로 부른다 — 확인 결과가 서버 조회로 오는 갈래가 있어
+//! 원격 처리와 서로 부른다 — 확인 결과가 서버 조회로 오는 갈래가 있어 `app.rs`의
 //! `poll_remote`가 `settle_conflict`를 부르고, 이쪽은 `site_connection`·`request_tree`를 쓴다.
 
 use super::ExplorerApp;
@@ -179,7 +179,7 @@ impl ExplorerApp {
     /// **로컬 → 원격은 올리기, 원격 → 로컬은 받기**다. 로컬끼리·원격끼리는 아무 일도 하지
     /// 않는다(PRD Out of Scope) — 항목의 종류와 놓은 자리의 종류가 같으면 걸러진다.
     /// 폴더는 파일 단위로 펼쳐 넣는다(T17 규약): 로컬은 그 자리에서, 원격은 워커에 훑기를 맡긴다
-    pub(super) fn apply_drop(&mut self, drop: DropOutcome) {
+    fn apply_drop(&mut self, drop: DropOutcome) {
         match &drop.target {
             DropTarget::Remote { site, dir } => {
                 // 폴더를 펼치는 것은 디렉터리를 재귀로 읽는 일이라 **워커 스레드**가 한다
@@ -342,8 +342,8 @@ pub(super) fn apply_conflict_choice(
 /// 같은 이름 확인을 기다리는 전송 한 벌 (FR-55)
 pub(super) struct ConflictCheck {
     /// 이 확인의 번호 — 워커·서버 답이 어느 조작의 것인지 잇는다
-    pub(super) id: u64,
-    pub(super) drop: DropOutcome,
+    id: u64,
+    drop: DropOutcome,
 }
 
 #[cfg(test)]

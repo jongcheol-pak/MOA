@@ -20,6 +20,8 @@
 
 ## Deferred / Follow-up
 
+- **[SUGGEST] 충돌 상태 6개 필드를 `ConflictState` 구조체로 묶기** — `pending_conflicts`·`conflict_tx/rx`·`conflict_lists`·`conflict_queue`·`conflict_dialog`·`next_conflict`를 한데 모으면 `panel/workers.rs`의 `DirLoad`와 같은 캡슐화가 되고 자식 모듈에 노출되는 부모 필드가 6개 → 1개로 준다. **이번엔 순수 이동 제약을 넘어 하지 않았다**(상태 필드 이동은 구조 변경이다) — T1 quality 리뷰 S1.
+
 - app.rs에 남는 나머지 책임(세션·워크스페이스 211줄 · 창·트레이 173줄 · 도크·큐·로그 184줄 · 그 밖 화면 206줄 · 명령 배선 112줄)의 추가 분리 — 이번에 둘을 떼면 ①이 얼마나 남는지 실측 후 판단한다.
 - `ui/app.rs`의 시험 644줄도 `app/tests.rs`로 뺄지 — `panel/tests.rs` 선례가 있다. 이번엔 **옮긴 자유 함수의 시험만** 따라 옮기고 나머지는 그대로 둔다.
 
@@ -144,7 +146,7 @@
 
 ## Tasks
 
-- [ ] **T1. 전송 충돌 확인을 `src/ui/app/transfer_conflict.rs`로 옮긴다** — Type D
+- [x] **T1. 전송 충돌 확인을 `src/ui/app/transfer_conflict.rs`로 옮긴다** — Type D
   - **Design**: ① 배치 — `src/ui/app.rs`에 `mod transfer_conflict;`를 선언하고 새 파일 `src/ui/app/transfer_conflict.rs`를 만든다. ② 신규 심볼과 책임 — **없다.** 이 파일은 기존 심볼(메서드 **6** · 상수 1 · 자유 함수 4 · 타입 3)을 담을 뿐이고 `impl ExplorerApp` 블록 하나를 연다. ③ 의존 방향 — `ui::app`의 자식이며 부모의 private 필드·메서드를 쓴다. 밖으로는 아무것도 내보내지 않는다(옮긴 메서드는 `pub(super)`). ④ 비추상화 — 상태를 별도 타입으로 뽑지 않는다(D4). 「충돌 확인 서비스」 같은 추상을 만들지 않는다.
   - **Acceptance**:
     - `src/ui/app/transfer_conflict.rs`가 생기고 4-A 표의 **T1 대상 전부**(메서드 **6**(`apply_drop` 포함) · `CONFLICT_LIST_BASE` · 자유 함수 4 · 타입 3)가 거기 있다. `app.rs`에는 그 심볼들의 정의가 **하나도 남지 않는다**(각 이름으로 `app.rs`를 검색해 정의 잔존 0).
