@@ -169,7 +169,7 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
   - **Edge Cases**: 재귀 호출에서 `RemoteRowCtx`를 다시 만들지 않고 그대로 넘겨야 한다 — 매 깊이마다 새로 만들면 `cache` 참조 수명이 꼬인다. `folder`는 `Copy`(i32)라 값으로 든다.
   - **Halt Forecast**: 없음 — 한 파일 안이고 시그니처 누락은 컴파일 오류다. 파일을 지우거나 옮기지 않는다.
   - **Files**: 주 — `src/ui/tree.rs`
-- [ ] **T6. `apply_conflict_choice`를 3상태 enum으로 바꾼다** — Type C
+- [x] **T6. `apply_conflict_choice`를 3상태 enum으로 바꾼다** — Type C
   - **Design**: ① 배치 — `src/ui/app.rs`, `apply_conflict_choice` 바로 위. ② 신규 심볼과 책임 — `ConflictDecision { NotAsked, Overwrite, Skip }`(같은 이름 확인이 **어느 단계에 있는지와 사용자가 무엇을 골랐는지**를 한 타입에 담는다) + `impl From<ConflictChoice> for ConflictDecision`. ③ 의존 방향 — `ui::app`만 안다. `ui::remote_menu`는 종전대로 `ConflictChoice`만 쓴다(D4). ④ 비추상화 — `DialogOutcome`과 합치지 않고, `Cancelled`를 이 enum에 넣지 않는다(취소는 호출부가 아예 부르지 않는다는 기존 계약을 그대로 지킨다 — `list_common.rs:74`의 주석과 같은 취지).
   - **Acceptance**:
     - `apply_conflict_choice`의 셋째 인자가 `ConflictDecision`이 되고, 본문 매치가 `NotAsked`·`Overwrite`·`Skip` 셋을 각각 다룬다. `Option`의 `Some`/`None` 중첩이 사라진다.

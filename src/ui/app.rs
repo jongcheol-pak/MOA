@@ -1339,7 +1339,7 @@ impl ExplorerApp {
             return;
         };
         let check = self.pending_conflicts.remove(at);
-        match apply_conflict_choice(check.drop.clone(), &conflicts, None) {
+        match apply_conflict_choice(check.drop.clone(), &conflicts, ConflictDecision::NotAsked) {
             // 겹치는 것이 없다 — 물을 것도 없이 보낸다
             Some(drop) => self.apply_drop(drop),
             None => self.conflict_queue.push((check, conflicts)),
@@ -1368,7 +1368,7 @@ impl ExplorerApp {
             // 취소 — 이 전송은 아무것도 큐에 넣지 않는다 (D6)
             DialogOutcome::Cancelled => {}
             DialogOutcome::Confirmed(choice) => {
-                if let Some(drop) = apply_conflict_choice(check.drop, &conflicts, Some(choice)) {
+                if let Some(drop) = apply_conflict_choice(check.drop, &conflicts, choice.into()) {
                     self.apply_drop(drop);
                 }
             }
@@ -3062,21 +3062,45 @@ fn conflict_names(names: &[String], existing: &[String], ignore_case: bool) -> V
         .collect()
 }
 
+/// 같은 이름 확인이 **어느 단계까지 왔는지**.
+///
+/// `Option<ConflictChoice>`로 들면 `None`이 「아직 묻기 전」을 뜻하게 되는데, 읽는 사람은
+/// 그것을 「고르지 않음」이나 「취소」로 읽기 쉽다. 세 상태를 이름으로 세워 그 겹침을 없앤다.
+/// **취소는 여기 없다** — 취소하면 호출부가 이 함수를 아예 부르지 않는다 (D6)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictDecision {
+    /// 겹침을 확인만 했고 아직 사용자에게 묻지 않았다
+    NotAsked,
+    /// 있던 것을 덮어쓰고 전부 보낸다
+    Overwrite,
+    /// 겹치는 것만 빼고 나머지를 보낸다
+    Skip,
+}
+
+impl From<ConflictChoice> for ConflictDecision {
+    fn from(choice: ConflictChoice) -> ConflictDecision {
+        match choice {
+            ConflictChoice::Overwrite => ConflictDecision::Overwrite,
+            ConflictChoice::Skip => ConflictDecision::Skip,
+        }
+    }
+}
+
 /// 확인 결과와 사용자의 결정으로 **실제로 큐에 넣을 것**을 정한다 (FR-55).
 ///
-/// D6의 계약을 이 한 함수에 담는다 — 아직 묻지 않았는데(`choice`가 `None`) 충돌이 있으면
-/// `None`을 돌려주어 **아무것도 큐에 들어가지 않게** 한다. 취소는 호출부가 아예 부르지 않는다
+/// D6의 계약을 이 한 함수에 담는다 — 아직 묻지 않았는데 충돌이 있으면 `None`을 돌려주어
+/// **아무것도 큐에 들어가지 않게** 한다. 취소는 호출부가 아예 부르지 않는다
 fn apply_conflict_choice(
     drop: DropOutcome,
     conflicts: &[String],
-    choice: Option<ConflictChoice>,
+    decision: ConflictDecision,
 ) -> Option<DropOutcome> {
-    match choice {
+    match decision {
         // 아직 묻기 전 — 겹치는 것이 없을 때만 그대로 보낸다
-        None if conflicts.is_empty() => Some(drop),
-        None => None,
-        Some(ConflictChoice::Overwrite) => Some(drop),
-        Some(ConflictChoice::Skip) => {
+        ConflictDecision::NotAsked if conflicts.is_empty() => Some(drop),
+        ConflictDecision::NotAsked => None,
+        ConflictDecision::Overwrite => Some(drop),
+        ConflictDecision::Skip => {
             let items: Vec<DragItem> = drop
                 .items
                 .into_iter()
@@ -3663,9 +3687,10 @@ mod tests {
         // D6 — 취소가 절반만 취소되지 않게 하는 계약이다
         let drop = 받기_전송(&["report.zip", "a.txt", "b.txt"]);
         let 겹침 = vec!["report.zip".to_owned()];
-        assert!(apply_conflict_choice(drop.clone(), &겹침, None).is_none());
+        assert!(apply_conflict_choice(drop.clone(), &겹침, ConflictDecision::NotAsked).is_none());
         // 겹치는 것이 없으면 묻지 않고 그대로 간다
-        let 그대로 = apply_conflict_choice(drop.clone(), &[], None).expect("보낼 것이 있다");
+        let 그대로 = apply_conflict_choice(drop.clone(), &[], ConflictDecision::NotAsked)
+            .expect("보낼 것이 있다");
         assert_eq!(이름들(&그대로).len(), 3);
     }
 
@@ -3674,11 +3699,11 @@ mod tests {
         let drop = 받기_전송(&["report.zip", "a.txt", "b.txt"]);
         let 겹침 = vec!["report.zip".to_owned()];
 
-        let 덮어쓰기 = apply_conflict_choice(drop.clone(), &겹침, Some(ConflictChoice::Overwrite))
+        let 덮어쓰기 = apply_conflict_choice(drop.clone(), &겹침, ConflictDecision::Overwrite)
             .expect("덮어쓰면 전부 간다");
         assert_eq!(이름들(&덮어쓰기).len(), 3);
 
-        let 건너뛰기 = apply_conflict_choice(drop.clone(), &겹침, Some(ConflictChoice::Skip))
+        let 건너뛰기 = apply_conflict_choice(drop.clone(), &겹침, ConflictDecision::Skip)
             .expect("나머지는 간다");
         assert_eq!(이름들(&건너뛰기), vec!["a.txt", "b.txt"]);
     }
@@ -3687,7 +3712,7 @@ mod tests {
     fn 건너뛰어_남는_것이_없으면_보내지_않는다() {
         let drop = 받기_전송(&["report.zip"]);
         let 겹침 = vec!["report.zip".to_owned()];
-        assert!(apply_conflict_choice(drop, &겹침, Some(ConflictChoice::Skip)).is_none());
+        assert!(apply_conflict_choice(drop, &겹침, ConflictDecision::Skip).is_none());
     }
 
     #[test]
@@ -3717,14 +3742,12 @@ mod tests {
                 "겹침 목록이 비어 대화를 띄울 수 없다"
             );
             assert!(
-                apply_conflict_choice(check.drop.clone(), conflicts, None).is_none(),
+                apply_conflict_choice(check.drop.clone(), conflicts, ConflictDecision::NotAsked)
+                    .is_none(),
                 "겹치는데도 묻지 않고 통과했다"
             );
-            let 덮어쓰기 = apply_conflict_choice(
-                check.drop.clone(),
-                conflicts,
-                Some(ConflictChoice::Overwrite),
-            );
+            let 덮어쓰기 =
+                apply_conflict_choice(check.drop.clone(), conflicts, ConflictDecision::Overwrite);
             assert!(덮어쓰기.is_some(), "차례가 와도 보낼 수 없는 상태다");
         }
     }
