@@ -10,9 +10,11 @@
 use eframe::egui;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_SHARED, LoadImageW,
-    SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
+    GCLP_HICON, GCLP_HICONSM, GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR,
+    LR_SHARED, LoadImageW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW,
+    SetClassLongPtrW, WM_SETICON,
 };
 use windows::core::PCWSTR;
 
@@ -45,16 +47,25 @@ pub fn icon_data() -> Option<egui::IconData> {
 /// exe 리소스의 아이콘 그룹 id — `build.rs`가 이 번호로 담는다(그쪽 `GROUP_ID`와 짝이다)
 const ICON_GROUP_ID: u16 = 1;
 
-/// exe 리소스의 아이콘을 이 창의 큰·작은 아이콘으로 붙인다 (작업 표시줄·Alt+Tab).
+/// exe 리소스의 아이콘을 이 창에 붙인다 — **창이 보이기 전에 한 번** 부른다.
 ///
-/// **eframe도 창 아이콘을 설정하지만 작업 표시줄이 그 값을 집어가지 못한다** — 창 아이콘
-/// (`WM_GETICON`)과 exe 리소스가 모두 정상인데 버튼만 Windows 기본 아이콘이었다
-/// (2026-08-19 실측). 원인은 아래 재전송 주석에 적은 **같은 핸들 재설정**이며,
-/// eframe이 붙인 값을 그대로 다시 넣어서는 바뀌지 않는다. 호출 시점은 `ui::app`이 쥔다.
+/// **winit이 하지 않는 일을 대신 채운다.** 보통 Windows 앱은 창 클래스를 등록할 때
+/// 리소스 아이콘을 함께 넣어 두고(그러면 실행 파일·창 좌상단·작업 표시줄이 한 번에 같은
+/// 그림이 된다), 실제로 gpui 같은 다른 백엔드는 그렇게 한다. 그런데 winit 0.30은
+/// `register_window_class`에서 `hIcon: 0`으로 등록하고 `WM_SETICON`도 ICON_SMALL만
+/// 세운다(`platform_impl/windows/window.rs`).
+///
+/// 그 결과 **작업 표시줄이 버튼을 만드는 순간 이 창에는 아이콘이 없다** — eframe이
+/// 뒤늦게 `WM_SETICON`을 보내지만(`GetActiveWindow()`가 잡힐 때까지 매 프레임 재시도한다)
+/// 그때는 버튼이 이미 만들어진 뒤라 기본 아이콘이 그대로 남는다. 2026-08-19 실측:
+/// 창 아이콘도 exe 리소스도 정상인데 작업 표시줄만 Windows 기본 아이콘이었다.
+///
+/// 그래서 **창이 보이기 전에** 창 아이콘과 창 클래스 아이콘을 함께 세운다. 그 시점은
+/// `ui::app`이 쥔다(HWND를 얻는 자리이자 첫 프레임 이전이다).
 ///
 /// 아이콘을 ICO에서 직접 펼치지 않고 `LoadImageW`로 exe 리소스에서 얻는 이유: OS가
 /// 요청한 크기에 가장 알맞은 항목을 스스로 고른다. `LR_SHARED`라 수명도 시스템이 쥐어
-/// `DestroyIcon`이 필요 없고, 여러 번 불러도 핸들이 새지 않는다
+/// `DestroyIcon`이 필요 없다
 pub fn apply_to_window(hwnd: HWND) {
     // 안전성: 인자 없는 `GetModuleHandleW`는 이 실행 파일의 인스턴스를 돌려준다(실패 없음에
     // 가깝지만 반환이 `Result`라 그대로 받는다). 이어지는 호출은 그 핸들과 방금 받은 창
@@ -64,9 +75,9 @@ pub fn apply_to_window(hwnd: HWND) {
             return;
         };
         let name = PCWSTR(ICON_GROUP_ID as usize as *const u16);
-        for (kind, cx, cy) in [
-            (ICON_BIG, SM_CXICON, SM_CYICON),
-            (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+        for (kind, class_index, cx, cy) in [
+            (ICON_BIG, GCLP_HICON, SM_CXICON, SM_CYICON),
+            (ICON_SMALL, GCLP_HICONSM, SM_CXSMICON, SM_CYSMICON),
         ] {
             let size = (GetSystemMetrics(cx), GetSystemMetrics(cy));
             // 실패하면 그 크기는 건너뛴다 — OS 기본 아이콘이 남을 뿐 앱은 그대로 돈다
@@ -80,11 +91,9 @@ pub fn apply_to_window(hwnd: HWND) {
             ) else {
                 continue;
             };
-            // **비웠다가 다시 붙인다** — 같은 핸들을 다시 넣으면 값이 그대로라
-            // 작업 표시줄이 변화를 알아채지 못한다(2026-08-19 실측: 창 아이콘은 제대로
-            // 붙었는데 버튼은 기본 아이콘이었고, 바깥에서 **다른** 핸들을 보냈을 때만
-            // 바뀌었다). 지운 상태는 다음 줄에서 곧바로 덮이므로 화면에 드러나지 않는다
-            SendMessageW(hwnd, WM_SETICON, Some(WPARAM(kind as usize)), None);
+            // 클래스 아이콘 — winit이 비워 둔 자리다. 창 아이콘이 없을 때 OS가 보는 값이라
+            // 둘을 함께 세워야 어느 경로로 조회하든 같은 그림이 나온다
+            SetClassLongPtrW(hwnd, class_index, icon.0 as isize);
             SendMessageW(
                 hwnd,
                 WM_SETICON,
@@ -93,6 +102,17 @@ pub fn apply_to_window(hwnd: HWND) {
             );
         }
     }
+}
+
+/// 이 창이 지금 **이 스레드의 활성 창**인가.
+///
+/// eframe이 아이콘을 붙이는 조건과 같은 것을 본다(`eframe`의 `native/app_icon.rs`는
+/// `GetActiveWindow()`가 잡힐 때까지 매 프레임 재시도한다). 우리가 그 뒤에 한 번 더
+/// 붙이려면 **그 조건이 참이 된 것을 보고** 다음 프레임에 보내면 된다 —
+/// 시간을 재거나 여러 번 보내는 것보다 이쪽이 정확하다
+pub fn window_is_active(hwnd: HWND) -> bool {
+    // 안전성: 인자 없는 조회이고 반환값을 비교만 한다
+    unsafe { GetActiveWindow() == hwnd }
 }
 
 /// 타이틀바에 그릴 텍스처. 한 번만 만들어 앱이 들고 있는다
