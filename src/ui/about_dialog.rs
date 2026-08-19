@@ -161,9 +161,9 @@ fn decode_icon(size: u32) -> Option<egui::ColorImage> {
 /// 텍스처를 표시 크기와 같은 물리 크기로 만들어도 좌상단이 반픽셀 어긋난 자리에 놓이면
 /// GPU가 이웃 픽셀에 걸쳐 섞어 그려, 애써 CPU에서 곱게 줄인 것이 다시 흐려진다
 fn snap_to_pixels(rect: egui::Rect, pixels_per_point: f32) -> egui::Rect {
-    // `> 0.0`을 부정해 판정한다 — `<= 0.0`으로 쓰면 NaN이 그 비교에서 거짓이 되어
-    // 가드를 통과하고, 좌표가 통째로 NaN인 사각형이 나온다(`physical_icon_px`와 같은 방어)
-    if !(pixels_per_point > 0.0) {
+    // NaN을 따로 거른다 — `<= 0.0`만 두면 NaN이 그 비교에서 거짓이 되어 가드를 통과하고,
+    // 좌표가 통째로 NaN인 사각형이 나온다(`physical_icon_px`와 같은 방어)
+    if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 {
         return rect;
     }
     let snap = |value: f32| (value * pixels_per_point).round() / pixels_per_point;
@@ -219,7 +219,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut dialog = AboutDialog::new();
         dialog.open();
-        ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        let _first = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
         let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
         assert!(dialog.is_open(), "그리는 것만으로 닫히지 않는다");
         let shapes: usize = output
