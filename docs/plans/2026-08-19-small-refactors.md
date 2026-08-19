@@ -147,7 +147,7 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
   - **Edge Cases**: `OK_BORDER`와 값이 같아 실수로 합치기 쉽다 — D2대로 **합치지 않고** 두 상수를 각각 남긴다.
   - **Halt Forecast**: 없음 — 크레이트 내부 상수이고 누락은 컴파일 오류다.
   - **Files**: 주 — `src/ui/theme.rs`, `src/ui/queue_panel.rs`
-- [ ] **T4. 옛 세션 호환 시험을 `serde_json::Value` 방식으로 바꾼다** — Type C
+- [x] **T4. 옛 세션 호환 시험을 `serde_json::Value` 방식으로 바꾼다** — Type C
   - **Acceptance**:
     - `session.rs:383~388`의 `.replace()` 다섯 줄이 사라지고, 직렬화 결과를 `serde_json::Value`로 파싱해 **패널 객체에서 `columns`·`view_mode` 키를 제거**하는 방식이 된다.
     - 제거가 실제로 됐는지 보는 기존 `assert!`(「테스트가 새 필드를 실제로 걷어내지 못했다」)가 남는다.
