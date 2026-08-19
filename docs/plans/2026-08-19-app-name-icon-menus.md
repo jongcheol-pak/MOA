@@ -175,7 +175,7 @@
   - **Halt Forecast**: 없음 — 파일 삭제·외부 호출·의존성 변경이 모두 없고 Files의 여섯 파일이 전부 편집 대상이다.
   - **Acceptance**: ① `cargo test` 통과 — `LanguageGuard`로 언어를 잠근 새 시험이 `app_name()`이 한국어에서 `"모아"`, 영어에서 `"MOA"`임을 단언한다. ② `dynamic::about_version_line()`이 한국어에서 `"모아 0.1.0"`을 준다(시험). ③ **화면을 그리는 코드 경로에 앱 이름 리터럴이 없다** — `grep '"MOA"' src/main.rs src/ui/tray.rs` 결과 0건(둘 다 `i18n::app_name()`을 부른다). 이 항목은 `src/` 전체를 재지 않는다: 카탈로그 정의(`i18n/mod.rs`의 영어 값)와 시험 기대값(`about_dialog.rs`·새 시험)은 **규약이 원문 리터럴을 요구**하므로 남는 것이 정상이고, 데이터용 넷(`autostart`·`settings`·`hostkey`·`single_instance`)과 구 Win32(`app/window.rs`)는 Out of Scope다. ④ `cargo clippy --all-targets -- -D warnings` 경고 0. ⑤ 창 제목·트레이 툴팁이 언어를 따라 바뀌는 것은 화면 축이라 **⏳ HUMAN-VERIFY**.
 
-- [ ] **T2. 작업 표시줄 아이콘이 뜨게 한다** — Type C
+- [x] **T2. 작업 표시줄 아이콘이 뜨게 한다** — Type C
   - **Design**: ① 배치 — `src/ui/app_icon.rs`(아이콘을 다루는 기존 모듈)에 창 아이콘 적용 함수를 더하고, 호출 시점 판단은 `src/ui/app.rs`가 쥔다. ② 신규 심볼 — `app_icon::apply_to_window(hwnd: HWND)`(exe 리소스에서 큰·작은 아이콘을 얻어 `WM_SETICON` 둘을 보낸다), `ExplorerApp`에 적용 여부·시각을 들 필드. ③ 의존 — `app_icon`이 `windows` 크레이트를 새로 참조한다(같은 모듈의 기존 파서는 그대로 순수 함수로 둔다). ④ 비추상화 — "창 속성 설정" 같은 일반 계층을 만들지 않는다. `app/theme.rs`가 이미 창 Win32 호출을 개별 함수로 두는 방식과 같게 간다.
   - `app_icon.rs`: `apply_to_window` 추가 — `GetModuleHandleW(None)` + `LoadImageW(..., IMAGE_ICON, cx, cy, LR_SHARED)`로 `SM_CXICON`·`SM_CXSMICON` 크기를 각각 얻어 `SendMessageW(hwnd, WM_SETICON, ICON_BIG/ICON_SMALL, hicon)`. `unsafe`는 함수 안에 가두고 사유 주석을 단다(AGENTS.md 규약).
   - `app.rs`: 창이 보이는 상태(`!self.hidden`)가 된 뒤 **정해진 지연이 지나면 반복 전송 창(window)을 연다** — `Visible(true)`로 되살릴 때도 같은 창을 다시 연다.
