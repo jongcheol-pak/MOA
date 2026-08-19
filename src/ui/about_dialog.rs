@@ -161,7 +161,9 @@ fn decode_icon(size: u32) -> Option<egui::ColorImage> {
 /// 텍스처를 표시 크기와 같은 물리 크기로 만들어도 좌상단이 반픽셀 어긋난 자리에 놓이면
 /// GPU가 이웃 픽셀에 걸쳐 섞어 그려, 애써 CPU에서 곱게 줄인 것이 다시 흐려진다
 fn snap_to_pixels(rect: egui::Rect, pixels_per_point: f32) -> egui::Rect {
-    if pixels_per_point <= 0.0 {
+    // `> 0.0`을 부정해 판정한다 — `<= 0.0`으로 쓰면 NaN이 그 비교에서 거짓이 되어
+    // 가드를 통과하고, 좌표가 통째로 NaN인 사각형이 나온다(`physical_icon_px`와 같은 방어)
+    if !(pixels_per_point > 0.0) {
         return rect;
     }
     let snap = |value: f32| (value * pixels_per_point).round() / pixels_per_point;
@@ -187,6 +189,47 @@ mod tests {
         assert!(dialog.is_open());
         dialog.close();
         assert!(!dialog.is_open());
+    }
+
+    /// 닫힌 대화가 아무것도 그리지 않는지 — `show`의 첫 줄이 그 가드다.
+    ///
+    /// `egui::Context`를 만들어 한 프레임 돌려 셰이프가 하나도 나오지 않는 것으로 잰다
+    /// (라이선스·설정 대화가 쓰는 것과 같은 기법)
+    #[test]
+    fn 닫혀_있으면_아무것도_그리지_않는다() {
+        let ctx = egui::Context::default();
+        let mut dialog = AboutDialog::new();
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        assert!(!dialog.is_open());
+        let shapes: usize = output
+            .shapes
+            .iter()
+            .filter(|shape| !matches!(shape.shape, egui::epaint::Shape::Noop))
+            .count();
+        assert_eq!(shapes, 0, "닫힌 대화가 무언가를 그렸다");
+    }
+
+    /// 열린 대화는 실제로 그린다 — 위 시험이 "그리지 않는다"만 재면 `show` 전체가
+    /// 죽어 있어도 통과한다. 아이콘 텍스처를 올리는 경로도 여기서 함께 돈다.
+    ///
+    /// **두 프레임을 돌린다** — egui의 떠 있는 영역은 첫 프레임에 크기를 재고 그 다음
+    /// 프레임에 자리를 잡아 그린다(첫 프레임만 재면 셰이프가 0으로 나온다)
+    #[test]
+    fn 열려_있으면_그린다() {
+        let ctx = egui::Context::default();
+        let mut dialog = AboutDialog::new();
+        dialog.open();
+        ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        assert!(dialog.is_open(), "그리는 것만으로 닫히지 않는다");
+        let shapes: usize = output
+            .shapes
+            .iter()
+            .filter(|shape| !matches!(shape.shape, egui::epaint::Shape::Noop))
+            .count();
+        assert!(shapes > 0, "열린 대화가 아무것도 그리지 않았다");
+        // 아이콘 텍스처가 실제로 올라갔는가 — 이 경로가 죽으면 이름만 뜬다
+        assert!(dialog.icon.is_some(), "아이콘 텍스처가 만들어지지 않았다");
     }
 
     #[test]
@@ -262,8 +305,11 @@ mod tests {
     }
 
     #[test]
-    fn 배율이_0이면_그대로_둔다() {
+    fn 비정상_배율이면_그대로_둔다() {
         let rect = egui::Rect::from_min_size(egui::pos2(10.3, 20.6), egui::Vec2::splat(96.0));
         assert_eq!(snap_to_pixels(rect, 0.0), rect);
+        assert_eq!(snap_to_pixels(rect, -1.0), rect);
+        // NaN은 어떤 비교에서도 거짓이라 가드를 잘못 쓰면 좌표가 통째로 NaN이 된다
+        assert_eq!(snap_to_pixels(rect, f32::NAN), rect);
     }
 }
