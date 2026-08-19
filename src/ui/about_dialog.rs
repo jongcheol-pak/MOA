@@ -236,7 +236,8 @@ mod tests {
     fn 이름과_버전을_한_줄로_잇는다() {
         let _guard = LanguageGuard::lock(LanguageSetting::Korean);
         let line = i18n::dynamic::about_version_line();
-        assert!(line.starts_with("MOA "), "이름이 앞에 선다: {line}");
+        // 한국어 화면이므로 이름도 한국어다 — 언어를 잠갔으니 기대값은 원문 리터럴로 적는다
+        assert!(line.starts_with("모아 "), "이름이 앞에 선다: {line}");
         assert!(
             line.ends_with(env!("CARGO_PKG_VERSION")),
             "버전이 뒤에 붙는다: {line}"
@@ -244,16 +245,16 @@ mod tests {
     }
 
     #[test]
-    fn 앱_이름은_두_언어에서_같다() {
+    fn 앱_이름은_언어를_따라_갈린다() {
         let korean = {
             let _guard = LanguageGuard::lock(LanguageSetting::Korean);
-            i18n::about_app_name()
+            i18n::app_name()
         };
         let english = {
             let _guard = LanguageGuard::lock(LanguageSetting::English);
-            i18n::about_app_name()
+            i18n::app_name()
         };
-        assert_eq!(korean, "MOA");
+        assert_eq!(korean, "모아");
         assert_eq!(english, "MOA");
     }
 

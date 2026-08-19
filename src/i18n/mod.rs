@@ -141,10 +141,13 @@ strings! {
     titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
     titlebar_about => "정보" / "About";
 
-    // ── 정보 대화 (FR-58) ──
-    /// 화면에 보이는 앱 이름 — 두 언어에서 값이 같아도 카탈로그를 거친다
-    /// (`settings_language_english`와 같은 선례. 소스에 직접 박으면 이 규약이 갈린다)
-    about_app_name => "MOA" / "MOA";
+    // ── 앱 이름 (FR-53·FR-58) ──
+    /// 화면에 보이는 앱 이름 — 한국어는 `모아`, 영어는 `MOA`다.
+    ///
+    /// 정보 대화뿐 아니라 **창 제목(작업 표시줄·Alt+Tab)과 트레이 툴팁**도 이 값을 쓴다.
+    /// 데이터가 걸린 이름(레지스트리 값·`%APPDATA%` 폴더·단일 인스턴스 뮤텍스)은
+    /// **여기를 따르지 않는다** — 언어에 따라 바뀌면 자동 실행 등록과 기존 설정을 잃는다
+    app_name => "모아" / "MOA";
 
     // ── 오픈소스 라이선스 대화 (FR-57) ──
     /// 목록 위 안내 — 이 앱이 무엇을 쓰는지 한 줄로 밝힌다
@@ -616,12 +619,12 @@ pub mod dynamic {
         }
     }
 
-    /// 정보 대화의 이름·버전 줄 (FR-58) — `MOA 0.1.0`.
+    /// 정보 대화의 이름·버전 줄 (FR-58) — 한국어 `모아 0.1.0`, 영어 `MOA 0.1.0`.
     ///
-    /// 두 언어에서 어순이 같아 갈래를 두지 않는다. 값이 끼어드는 문구라 `strings!`가 아니라
-    /// 여기 있으며, 버전은 `Cargo.toml`이 정본이라 컴파일 시점에 박는다
+    /// 두 언어에서 어순이 같아 갈래를 두지 않는다(이름만 갈린다). 값이 끼어드는 문구라
+    /// `strings!`가 아니라 여기 있으며, 버전은 `Cargo.toml`이 정본이라 컴파일 시점에 박는다
     pub fn about_version_line() -> String {
-        format!("{} {}", super::about_app_name(), env!("CARGO_PKG_VERSION"))
+        format!("{} {}", super::app_name(), env!("CARGO_PKG_VERSION"))
     }
 
     /// 라이선스 목록의 구성 요소 수 (FR-57) — 한국어는 수 뒤에 단위가 붙는다
@@ -1498,6 +1501,21 @@ mod tests {
             dynamic::queue_summary(3, Some("12.4 MB/s"), Some("00:41"), "—"),
             "3 pending · 12.4 MB/s · 00:41 left"
         );
+    }
+
+    #[test]
+    fn 앱_이름과_버전_줄이_언어를_따른다() {
+        // 이름은 정보 대화·창 제목·트레이 툴팁 셋이 함께 쓴다 (FR-53·FR-58).
+        // 데이터가 걸린 이름(레지스트리 값·`%APPDATA%` 폴더)은 이 값을 따르지 않는다
+        let version = env!("CARGO_PKG_VERSION");
+        {
+            let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+            assert_eq!(app_name(), "모아");
+            assert_eq!(dynamic::about_version_line(), format!("모아 {version}"));
+        }
+        let _guard = LanguageGuard::lock(LanguageSetting::English);
+        assert_eq!(app_name(), "MOA");
+        assert_eq!(dynamic::about_version_line(), format!("MOA {version}"));
     }
 
     #[test]

@@ -1950,6 +1950,14 @@ impl ExplorerApp {
         if outcome.language_changed {
             // 이 프레임은 이미 옛 언어로 그려졌다 — 다음 프레임이 오도록 청한다 (전제 3-b)
             crate::i18n::set_language(self.settings.language);
+            // 창 밖에 있는 두 이름은 다시 그린다고 따라오지 않는다 — 앱이 직접 알린다 (FR-53).
+            // 창 제목은 작업 표시줄·Alt+Tab에, 툴팁은 알림 영역에 보인다
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                crate::i18n::app_name().to_owned(),
+            ));
+            if let Some(tray) = &self.tray {
+                tray.update_tooltip();
+            }
             ctx.request_repaint();
         }
         if outcome.font_changed {

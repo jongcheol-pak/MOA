@@ -50,7 +50,8 @@ fn main() -> eframe::Result {
     // 창 장식을 끄고 제목 표시줄을 앱이 그린다 (FR-22) — 그 줄에 사이드바 토글·설정 버튼을 두기 위함.
     // 대가로 창 그림자·둥근 모서리를 잃는다(eframe에는 winit의 무장식 그림자 확장에 닿을 길이 없다)
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("MOA")
+        // 제목은 위에서 언어를 적용한 뒤에 읽는다 — 한국어면 `모아`, 영어면 `MOA`다 (FR-53)
+        .with_title(moa::i18n::app_name())
         .with_decorations(false);
     // 작업 표시줄·Alt+Tab에 뜨는 창 아이콘. 실행 파일 자체의 아이콘은 `build.rs`가
     // 같은 그림을 리소스로 담아 처리한다 — 창 아이콘은 OS가 리소스에서 자동으로 가져가지 않는다
