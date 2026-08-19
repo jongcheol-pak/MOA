@@ -208,7 +208,7 @@
   - **Halt Forecast**: 없음 — 편집 대상이 `titlebar.rs` 한 파일이고 삭제·외부 호출·의존성 변경이 없다.
   - **Acceptance**: ① 새 시험이 두 언어 모두에서 통과한다(`LanguageGuard`로 잠근다). ② `cargo test`·`cargo clippy --all-targets -- -D warnings` 통과. ③ 한국어로 시작해 영어로 바꿨을 때 `Open source licenses`가 한 줄인 것은 **⏳ HUMAN-VERIFY**.
 
-- [ ] **T5. 팝업 메뉴 모서리를 6px로 통일한다** — Type C
+- [x] **T5. 팝업 메뉴 모서리를 6px로 통일한다** — Type C
   - **Design**: ① 배치 — 값의 정본은 `src/ui/theme.rs`(팔레트·스타일이 모이는 자리), 적용은 `apply_dark` 한 줄. ② 신규 심볼 — `theme::MENU_CORNER_RADIUS: u8 = 6`. ③ 의존 — 없음(egui `Visuals`에 세우면 `Frame::menu`가 알아서 읽는다). ④ 비추상화 — 메뉴 프레임을 만드는 공통 함수(`menu_frame()`)를 만들지 않는다. 각 메뉴가 채움·테두리를 조금씩 달리 쓰므로 함수로 묶으면 인자만 늘어난다 — 값만 정본화하는 것으로 충분하다.
   - `theme::apply_dark`: `visuals.menu_corner_radius = egui::CornerRadius::same(MENU_CORNER_RADIUS)`.
   - `panel.rs:1543` · `tree.rs:306` · `widgets.rs:353`의 `.corner_radius(0)`을 **지운다**(그러면 `Frame::menu` 기본이 위 값을 읽는다). 각 자리의 doc 주석이 각진 모양을 전제하면 함께 고친다.
