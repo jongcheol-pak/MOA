@@ -158,7 +158,7 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
   - **Edge Cases**: 세션 JSON에서 패널 객체가 중첩 배열 안에 있으면 키 제거가 그 깊이까지 닿아야 한다 — 재귀로 훑거나 실제 구조를 따라 내려간다. 제거 대상이 하나도 없으면 위 `assert!`가 실패해 즉시 드러난다.
   - **Halt Forecast**: 없음 — 시험 함수 하나의 내부이며 프로덕션 코드에 닿지 않는다.
   - **Files**: 주 — `src/ui/session.rs`
-- [ ] **T5. `show_remote_node`의 `too_many_arguments`를 없앤다** — Type C
+- [x] **T5. `show_remote_node`의 `too_many_arguments`를 없앤다** — Type C
   - **Design**: ① 배치 — `src/ui/tree.rs`, 기존 `RowCtx` 곁. ② 신규 심볼과 책임 — `RemoteRowCtx<'a>`(원격 노드를 그리는 동안 불변인 `conn: ConnectionId`·`cache: &'a TreeCache`·`folder: i32`를 든다). ③ 의존 방향 — `ui::tree` 안에서만 쓰이며 밖으로 내보내지 않는다(`pub` 아님). ④ 비추상화 — `RowCtx`와 합치지 않고, 로컬 경로용 대응 구조체도 만들지 않는다(로컬은 인자가 상한 아래다).
   - **Acceptance**:
     - `#[allow(clippy::too_many_arguments)]`가 `show_remote_node`에서 **사라진다**.
