@@ -164,6 +164,49 @@ mod tests {
         }
     }
 
+    /// `Frame::menu(...)`로 시작하는 체인 안에서 `.corner_radius(`를 부르는가.
+    ///
+    /// 같은 파일에 메뉴가 아닌 프레임(대화 셸 등)이 함께 있을 수 있어 파일 전체를
+    /// 훑지 않고 **그 호출에서 이어지는 구간만** 본다. 체인은 `.show(`에서 끝난다
+    fn menu_frame_sets_corner(source: &str) -> bool {
+        let mut rest = source;
+        while let Some(at) = rest.find("Frame::menu(") {
+            let tail = &rest[at..];
+            let end = tail.find(".show(").unwrap_or(tail.len());
+            if tail[..end].contains(".corner_radius(") {
+                return true;
+            }
+            rest = &tail[end.min(tail.len())..];
+            // 진행이 없으면(찾은 자리가 끝) 무한히 돌지 않도록 끊는다
+            if rest.is_empty() {
+                break;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn 규약_검사는_값을_가리지_않는다() {
+        // 검사기 자신을 시험한다 — `0`만 잡던 종전 방식이 놓치던 두 형태를 든다
+        assert!(menu_frame_sets_corner(
+            "egui::Frame::menu(s).fill(a).corner_radius(0).show(ui, |ui| {})"
+        ));
+        assert!(menu_frame_sets_corner(
+            "egui::Frame::menu(s).corner_radius(2).show(ui, |ui| {})"
+        ));
+        assert!(menu_frame_sets_corner(
+            "egui::Frame::menu(s).corner_radius(egui::CornerRadius::ZERO).show(ui, |ui| {})"
+        ));
+        // 메뉴 프레임이 모서리를 적지 않으면 통과한다
+        assert!(!menu_frame_sets_corner(
+            "egui::Frame::menu(s).fill(a).stroke(b).show(ui, |ui| {})"
+        ));
+        // 메뉴가 아닌 프레임의 모서리는 대상이 아니다 (대화 셸 등)
+        assert!(!menu_frame_sets_corner(
+            "egui::Frame::new().corner_radius(12).show(ui, |ui| {})"
+        ));
+    }
+
     #[test]
     fn 팝업_메뉴는_모서리를_따로_적지_않는다() {
         // 규약: 메뉴 모서리의 정본은 `theme::MENU_CORNER_RADIUS` 하나이고, 각 메뉴는
@@ -184,7 +227,10 @@ mod tests {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");
-            if source.contains(".corner_radius(0)") {
+            // **값을 가리지 않고 잡는다** — `.corner_radius(0)`만 찾으면 `.corner_radius(2)`나
+            // `.corner_radius(CornerRadius::ZERO)`로 적은 곳이 규약을 어긴 채 통과한다.
+            // 메뉴 프레임을 만드는 자리에서는 모서리를 **아예 적지 않는 것**이 규약이다
+            if menu_frame_sets_corner(&source) {
                 발견.push(
                     path.file_name()
                         .unwrap_or_default()

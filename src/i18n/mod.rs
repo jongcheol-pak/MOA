@@ -207,6 +207,9 @@ strings! {
 
     // ── 탭 스트립·주소창 ──
     tabs_new => "새 탭" / "New tab";
+    /// 탭 줄 `+` 버튼의 안내 — 누르면 곧바로 탭이 생기는 것이 아니라 메뉴가 열린다.
+    /// `새 탭`을 그대로 쓰면 버튼이 즉시 탭을 만드는 것처럼 읽힌다 (2026-08-19)
+    tabs_new_menu => "새 탭 열기" / "Open a new tab";
     tabs_close => "탭 닫기" / "Close tab";
     tabs_menu => "메뉴" / "Menu";
     address_back => "뒤로" / "Back";

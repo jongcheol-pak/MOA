@@ -270,7 +270,9 @@ fn show_new_tab_menu(
         theme::TEXT,
         NEW_TAB_ICON_PX,
     )
-    .on_hover_text(crate::i18n::tabs_new());
+    // 안내는 `새 탭`이 아니다 — 이 버튼은 탭을 만들지 않고 메뉴를 연다.
+    // 메뉴 첫 항목과 같은 글자를 쓰면 누르는 즉시 탭이 생기는 것처럼 읽힌다
+    .on_hover_text(crate::i18n::tabs_new_menu());
     egui::Popup::menu(&response).show(|ui| {
         new_tab_menu_items(ui, remote, action, open_site);
     });
