@@ -22,7 +22,7 @@ use crate::remote::manager::ConnectionManager;
 use crate::remote::queue::TransferQueue;
 use crate::remote::sftp::SftpSession;
 use crate::remote::sites::SiteStore;
-use crate::remote::transfer::{self, TransferRunner};
+use crate::remote::transfer::TransferRunner;
 use crate::remote::tree_cache::TreeCache;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
@@ -33,7 +33,7 @@ use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::font_scan::FontScan;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::license_dialog::LicenseDialog;
-use crate::ui::list_common::{self, ConflictChoice, DragItem, DropOutcome, DropTarget};
+use crate::ui::list_common::{DragItem, DropOutcome, DropTarget};
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{DisplayRules, PanelState, RemoteAction};
@@ -59,6 +59,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+
+mod transfer_conflict;
+
+use transfer_conflict::{ConflictCheck, conflict_id, conflict_names};
 
 /// 맑은 고딕 — egui 기본 폰트에는 한글 글리프가 없어 파일명이 두부(□)로 보인다
 const KOREAN_FONT_PATH: &str = r"C:\Windows\Fonts\malgun.ttf";
@@ -1217,232 +1221,6 @@ impl ExplorerApp {
                 None => None,
             };
             (dock_action, queue_action)
-        }
-    }
-
-    /// 전송을 시작한다 — `apply_drop`의 **유일한 앞문**이다 (FR-55).
-    ///
-    /// 대상에 같은 이름이 이미 있으면 먼저 물어본다. 확인이 끝나기 전에는 **아무것도 큐에
-    /// 넣지 않는다** — 그래야 사용자가 고른 `취소`가 절반만 취소되지 않는다.
-    /// 원격 메뉴의 받기·올리기와 끌어다 놓기가 모두 이 문을 지난다
-    fn start_transfer(&mut self, drop: DropOutcome) {
-        match drop.target.clone() {
-            // 받는 곳은 파일시스템이다 — 존재 확인은 워커 스레드가 한다
-            // (AGENTS: UI 스레드에서 블로킹 I/O 금지)
-            DropTarget::Local(dir) => {
-                let names: Vec<String> = drop
-                    .items
-                    .iter()
-                    .filter(|item| list_common::drop_direction(item, &drop.target).is_some())
-                    .map(DragItem::name)
-                    .collect();
-                if names.is_empty() {
-                    return;
-                }
-                let id = self.next_conflict;
-                self.next_conflict += 1;
-                self.pending_conflicts.push(ConflictCheck { id, drop });
-                let tx = self.conflict_tx.clone();
-                let wake = self.repaint.clone();
-                std::thread::spawn(move || {
-                    // 받는 곳은 Windows라 대소문자를 가리지 않는다 — `A.TXT`가 있으면
-                    // `a.txt`도 실제로 덮인다(D5)
-                    let existing: Vec<String> = std::fs::read_dir(&dir)
-                        .into_iter()
-                        .flatten()
-                        .flatten()
-                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                        .collect();
-                    if tx
-                        .send((id, conflict_names(&names, &existing, true)))
-                        .is_ok()
-                    {
-                        wake();
-                    }
-                });
-            }
-            // 올리는 곳은 서버다 — 대상 폴더를 조회해 이름을 대조한다
-            DropTarget::Remote { site, dir } => {
-                let names: Vec<String> = drop
-                    .items
-                    .iter()
-                    .filter(|item| list_common::drop_direction(item, &drop.target).is_some())
-                    .map(DragItem::name)
-                    .collect();
-                // 연결이 없으면 물어볼 길이 없다 — 확인을 건너뛰고 보낸다 (D10)
-                let Some(conn) = self.site_connection(site).filter(|_| !names.is_empty()) else {
-                    self.apply_drop(drop);
-                    return;
-                };
-                let id = self.next_conflict;
-                self.next_conflict += 1;
-                self.pending_conflicts.push(ConflictCheck { id, drop });
-                // 조회 번호는 패널 목록·트리와 **다른 공간**에서 센다 — 같은 번호가 겹치면
-                // 한쪽의 답을 다른 쪽이 가져가 서로 영영 기다린다.
-                // **등록과 발송이 같은 값을 쓴다**: 한쪽만 기준값을 더하면 답이 와도 찾지 못해
-                // 그 전송이 대화도 못 뜨고 큐에도 못 들어간 채 사라진다
-                let generation = conflict_generation(id);
-                self.conflict_lists.insert(generation, (conn, names));
-                self.manager.send(
-                    conn,
-                    ConnCommand::List {
-                        generation,
-                        path: dir,
-                    },
-                );
-            }
-        }
-    }
-
-    /// 확인 결과가 온 전송을 처리한다 (FR-55).
-    ///
-    /// 겹치는 것이 없으면 그대로 큐로 보내고, 있으면 물어볼 것으로 쌓아 둔다.
-    ///
-    /// **대화는 한 번에 하나만** 뜨므로 그 사이에 도착한 결과는 `conflict_queue`에서 차례를
-    /// 기다린다 — 워커는 답을 한 번만 보내니 여기서 그 답까지 함께 들고 있어야 한다.
-    /// 들지 않고 되돌리면 그 전송은 대화도 못 뜨고 큐에도 못 들어간 채 사라진다
-    fn drain_conflict_checks(&mut self) {
-        while let Ok((id, conflicts)) = self.conflict_rx.try_recv() {
-            self.settle_conflict(id, conflicts);
-        }
-        // 대화 자리가 비어 있으면 기다리던 것 중 먼저 온 것을 올린다
-        if self.conflict_dialog.is_none() && !self.conflict_queue.is_empty() {
-            self.conflict_dialog = Some(self.conflict_queue.remove(0));
-        }
-    }
-
-    /// 그 연결에 물어 둔 확인을 모두 포기한다 (FR-55).
-    ///
-    /// 연결이 끊기면 답이 오지 않는다 — 붙잡아 두면 그 전송은 대화도 못 뜨고 큐에도 못
-    /// 들어간 채 남는다. 확인은 안전장치이지 관문이 아니므로 겹침 없음으로 보고 보낸다 (D10)
-    fn abandon_conflict_lists(&mut self, conn: ConnectionId) {
-        // **그 연결로** 물어 둔 것만 거둔다 — 같은 사이트의 다른 연결에 물어 둔 확인은
-        // 그대로 답을 기다린다(사이트 하나가 연결 셋을 쓴다 — FR-37)
-        let abandoned: Vec<u64> = self
-            .conflict_lists
-            .iter()
-            .filter(|(_, (asked, _))| *asked == conn)
-            .map(|(generation, _)| *generation)
-            .collect();
-        for generation in abandoned {
-            self.conflict_lists.remove(&generation);
-            self.settle_conflict(conflict_id(generation), Vec::new());
-        }
-    }
-
-    /// 확인이 끝난 전송 하나를 처리한다 — 받기(워커)와 올리기(서버 조회)가 함께 쓴다 (FR-55).
-    ///
-    /// **어디서 확인했는지는 여기서 상관없다** — 겹친 이름 목록만 있으면 그 다음 일은 같다.
-    /// 대화로 올리는 것은 `drain_conflict_checks`가 프레임마다 한 번 한다
-    fn settle_conflict(&mut self, id: u64, conflicts: Vec<String>) {
-        let Some(at) = self.pending_conflicts.iter().position(|c| c.id == id) else {
-            return;
-        };
-        let check = self.pending_conflicts.remove(at);
-        match apply_conflict_choice(check.drop.clone(), &conflicts, ConflictDecision::NotAsked) {
-            // 겹치는 것이 없다 — 물을 것도 없이 보낸다
-            Some(drop) => self.apply_drop(drop),
-            None => self.conflict_queue.push((check, conflicts)),
-        }
-    }
-
-    /// 같은 이름 확인 대화를 그리고 고른 대로 처리한다 (FR-55)
-    fn show_conflict_dialog(&mut self, ctx: &egui::Context) {
-        let Some((check, conflicts)) = self.conflict_dialog.take() else {
-            return;
-        };
-        // 목록에 폴더 표시를 붙이려면 원래 항목에서 종류를 되찾아야 한다
-        let names: Vec<(String, bool)> = conflicts
-            .iter()
-            .map(|name| {
-                let is_dir = check
-                    .drop
-                    .items
-                    .iter()
-                    .any(|item| item.is_dir() && item.name() == *name);
-                (name.clone(), is_dir)
-            })
-            .collect();
-        match remote_menu::show_conflict_dialog(ctx, &names) {
-            DialogOutcome::Pending => self.conflict_dialog = Some((check, conflicts)),
-            // 취소 — 이 전송은 아무것도 큐에 넣지 않는다 (D6)
-            DialogOutcome::Cancelled => {}
-            DialogOutcome::Confirmed(choice) => {
-                if let Some(drop) = apply_conflict_choice(check.drop, &conflicts, choice.into()) {
-                    self.apply_drop(drop);
-                }
-            }
-        }
-    }
-
-    /// 끌어다 놓은 것을 전송 큐에 넣는다 (FR-38).
-    ///
-    /// **로컬 → 원격은 올리기, 원격 → 로컬은 받기**다. 로컬끼리·원격끼리는 아무 일도 하지
-    /// 않는다(PRD Out of Scope) — 항목의 종류와 놓은 자리의 종류가 같으면 걸러진다.
-    /// 폴더는 파일 단위로 펼쳐 넣는다(T17 규약): 로컬은 그 자리에서, 원격은 워커에 훑기를 맡긴다
-    fn apply_drop(&mut self, drop: DropOutcome) {
-        match &drop.target {
-            DropTarget::Remote { site, dir } => {
-                // 폴더를 펼치는 것은 디렉터리를 재귀로 읽는 일이라 **워커 스레드**가 한다
-                // (AGENTS: UI 스레드 블로킹 I/O 금지 — 큰 폴더면 프레임이 멈춘다).
-                // 결과는 채널로 받아 다음 프레임에 큐로 옮긴다 (`DirLoad`와 같은 방식)
-                let roots: Vec<PathBuf> = drop
-                    .items
-                    .iter()
-                    .filter(|item| list_common::drop_direction(item, &drop.target).is_some())
-                    .filter_map(|item| match item {
-                        DragItem::Local { path, .. } => Some(path.clone()),
-                        DragItem::Remote { .. } => None,
-                    })
-                    .collect();
-                if roots.is_empty() {
-                    return;
-                }
-                let tx = self.expand_tx.clone();
-                self.expanding += 1;
-                let (site, dir) = (*site, dir.clone());
-                let wake = self.repaint.clone();
-                std::thread::spawn(move || {
-                    let mut files = Vec::new();
-                    let mut skipped = 0;
-                    for root in roots {
-                        let expanded = transfer::expand_for_transfer(&root);
-                        skipped += expanded.skipped;
-                        for (path, relative) in expanded.files {
-                            let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-                            files.push((path, dir.join(&relative), size));
-                        }
-                    }
-                    if tx.send((site, files, skipped)).is_ok() {
-                        wake();
-                    }
-                });
-            }
-            DropTarget::Local(local_dir) => {
-                let Some(site) = drop.source_site else {
-                    return;
-                };
-                for item in &drop.items {
-                    // 종류가 같으면(로컬 → 로컬) 아무 일도 하지 않는다
-                    if list_common::drop_direction(item, &drop.target).is_none() {
-                        continue;
-                    }
-                    let DragItem::Remote { path, is_dir, size } = item else {
-                        continue;
-                    };
-                    if *is_dir {
-                        self.request_tree(site, path.clone(), local_dir.clone());
-                        continue;
-                    }
-                    self.queue.enqueue(
-                        site,
-                        TransferDirection::Download,
-                        local_dir.join(item.name()),
-                        path.clone(),
-                        *size,
-                    );
-                }
-            }
         }
     }
 
@@ -2937,23 +2715,6 @@ struct RemoteOps {
 /// 가져가 서로 영영 기다린다. 실제로 부딪히려면 패널이 이 값만큼 폴더를 옮겨야 한다
 const TREE_LIST_BASE: u64 = 1 << 40;
 
-/// 같은 이름 확인 조회의 세대 기준값 (FR-55) — 패널 목록·트리와 번호 공간을 나눈다.
-///
-/// 세 번째 종류가 되면서 기준값도 셋이 됐다. 요청에 출처를 명시하는 `enum ListSource`로
-/// 바꾸는 것은 별도 작업으로 미뤘다(plan D8) — 연결·패널·트리 캐시까지 닿는 리팩터다
-const CONFLICT_LIST_BASE: u64 = 2 << 40;
-
-/// 확인 번호 → 조회 세대. **등록·발송·조회가 모두 이 한 쌍만 쓴다** — 양쪽에서 손으로
-/// 더하고 빼면 한쪽만 고쳐졌을 때 답을 영영 찾지 못한다(실제로 그렇게 어긋났다)
-fn conflict_generation(id: u64) -> u64 {
-    CONFLICT_LIST_BASE + id
-}
-
-/// 조회 세대 → 확인 번호 — 위의 역이다
-fn conflict_id(generation: u64) -> u64 {
-    generation - CONFLICT_LIST_BASE
-}
-
 /// 트리에 보일 차례로 줄을 세운다 — **목록과 같은 규칙**이라야 화면이 두 벌로 갈리지 않는다.
 /// (`remote::tree_cache`는 `panel`을 모르므로 정렬은 이쪽에서 맞춰 넘긴다)
 fn sort_tree_children(entries: &mut [crate::remote::types::RemoteEntry]) {
@@ -3038,85 +2799,6 @@ fn delete_command(path: RemotePath, is_dir: bool) -> ConnCommand {
     } else {
         ConnCommand::Remove(path)
     }
-}
-
-/// 고른 최상위 항목 중 **대상에 이미 있는 이름**들 (FR-55).
-///
-/// 판정 단위가 최상위 항목인 이유(D4): 대상 폴더 목록을 한 번만 읽으면 되어 확인 대화가
-/// 곧바로 뜬다. 폴더는 통째로 덮어쓰기·건너뛰기가 되고, 그 안까지 파고들지 않는다.
-///
-/// `ignore_case`는 **받는 쪽 파일시스템의 규칙**이다 — 받기는 Windows라 참(대소문자를 가려
-/// 봐야 실제로는 덮인다), 올리기는 대개 POSIX라 거짓(가리지 않으면 헛경고가 난다)
-fn conflict_names(names: &[String], existing: &[String], ignore_case: bool) -> Vec<String> {
-    let same = |a: &str, b: &str| {
-        if ignore_case {
-            a.eq_ignore_ascii_case(b)
-        } else {
-            a == b
-        }
-    };
-    names
-        .iter()
-        .filter(|name| existing.iter().any(|had| same(name, had)))
-        .cloned()
-        .collect()
-}
-
-/// 같은 이름 확인이 **어느 단계까지 왔는지**.
-///
-/// `Option<ConflictChoice>`로 들면 `None`이 「아직 묻기 전」을 뜻하게 되는데, 읽는 사람은
-/// 그것을 「고르지 않음」이나 「취소」로 읽기 쉽다. 세 상태를 이름으로 세워 그 겹침을 없앤다.
-/// **취소는 여기 없다** — 취소하면 호출부가 이 함수를 아예 부르지 않는다 (D6)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConflictDecision {
-    /// 겹침을 확인만 했고 아직 사용자에게 묻지 않았다
-    NotAsked,
-    /// 있던 것을 덮어쓰고 전부 보낸다
-    Overwrite,
-    /// 겹치는 것만 빼고 나머지를 보낸다
-    Skip,
-}
-
-impl From<ConflictChoice> for ConflictDecision {
-    fn from(choice: ConflictChoice) -> ConflictDecision {
-        match choice {
-            ConflictChoice::Overwrite => ConflictDecision::Overwrite,
-            ConflictChoice::Skip => ConflictDecision::Skip,
-        }
-    }
-}
-
-/// 확인 결과와 사용자의 결정으로 **실제로 큐에 넣을 것**을 정한다 (FR-55).
-///
-/// D6의 계약을 이 한 함수에 담는다 — 아직 묻지 않았는데 충돌이 있으면 `None`을 돌려주어
-/// **아무것도 큐에 들어가지 않게** 한다. 취소는 호출부가 아예 부르지 않는다
-fn apply_conflict_choice(
-    drop: DropOutcome,
-    conflicts: &[String],
-    decision: ConflictDecision,
-) -> Option<DropOutcome> {
-    match decision {
-        // 아직 묻기 전 — 겹치는 것이 없을 때만 그대로 보낸다
-        ConflictDecision::NotAsked if conflicts.is_empty() => Some(drop),
-        ConflictDecision::NotAsked => None,
-        ConflictDecision::Overwrite => Some(drop),
-        ConflictDecision::Skip => {
-            let items: Vec<DragItem> = drop
-                .items
-                .into_iter()
-                .filter(|item| !conflicts.contains(&item.name()))
-                .collect();
-            // 겹치는 것을 빼고 나니 남는 것이 없으면 보낼 일도 없다
-            (!items.is_empty()).then_some(DropOutcome { items, ..drop })
-        }
-    }
-}
-
-/// 같은 이름 확인을 기다리는 전송 한 벌 (FR-55)
-struct ConflictCheck {
-    /// 이 확인의 번호 — 워커·서버 답이 어느 조작의 것인지 잇는다
-    id: u64,
-    drop: DropOutcome,
 }
 
 /// 지금 뜬 원격 대화의 종류
@@ -3652,144 +3334,13 @@ mod tests {
         assert!(!targets.can_download);
     }
 
-    /// 원격에서 받아 오는 전송 한 벌 — 이름만 다른 파일 셋
-    fn 받기_전송(names: &[&str]) -> DropOutcome {
-        DropOutcome {
-            items: names
-                .iter()
-                .map(|name| DragItem::Remote {
-                    path: RemotePath::new(&format!("/pub/{name}")),
-                    is_dir: false,
-                    size: 10,
-                })
-                .collect(),
-            source_site: Some(SiteId(1)),
-            target: DropTarget::Local(PathBuf::from(r"D:\받은 파일")),
-        }
-    }
-
-    fn 이름들(drop: &DropOutcome) -> Vec<String> {
-        drop.items.iter().map(DragItem::name).collect()
-    }
-
-    #[test]
-    fn 받는_쪽은_대소문자를_가리지_않는다() {
-        // Windows는 A.TXT가 있으면 a.txt도 실제로 덮인다 — 가려 보면 경고를 놓친다 (D5)
-        let 고른_것 = ["report.zip".to_owned(), "a.txt".to_owned()];
-        let 이미 = ["REPORT.ZIP".to_owned(), "b.txt".to_owned()];
-        assert_eq!(conflict_names(&고른_것, &이미, true), vec!["report.zip"]);
-        // 올리는 쪽(POSIX)은 가린다 — 가리지 않으면 헛경고가 난다
-        assert!(conflict_names(&고른_것, &이미, false).is_empty());
-    }
-
-    #[test]
-    fn 묻기_전에는_겹치는_것이_있으면_아무것도_보내지_않는다() {
-        // D6 — 취소가 절반만 취소되지 않게 하는 계약이다
-        let drop = 받기_전송(&["report.zip", "a.txt", "b.txt"]);
-        let 겹침 = vec!["report.zip".to_owned()];
-        assert!(apply_conflict_choice(drop.clone(), &겹침, ConflictDecision::NotAsked).is_none());
-        // 겹치는 것이 없으면 묻지 않고 그대로 간다
-        let 그대로 = apply_conflict_choice(drop.clone(), &[], ConflictDecision::NotAsked)
-            .expect("보낼 것이 있다");
-        assert_eq!(이름들(&그대로).len(), 3);
-    }
-
-    #[test]
-    fn 덮어쓰기는_전부_건너뛰기는_겹치는_것만_뺀다() {
-        let drop = 받기_전송(&["report.zip", "a.txt", "b.txt"]);
-        let 겹침 = vec!["report.zip".to_owned()];
-
-        let 덮어쓰기 = apply_conflict_choice(drop.clone(), &겹침, ConflictDecision::Overwrite)
-            .expect("덮어쓰면 전부 간다");
-        assert_eq!(이름들(&덮어쓰기).len(), 3);
-
-        let 건너뛰기 = apply_conflict_choice(drop.clone(), &겹침, ConflictDecision::Skip)
-            .expect("나머지는 간다");
-        assert_eq!(이름들(&건너뛰기), vec!["a.txt", "b.txt"]);
-    }
-
-    #[test]
-    fn 건너뛰어_남는_것이_없으면_보내지_않는다() {
-        let drop = 받기_전송(&["report.zip"]);
-        let 겹침 = vec!["report.zip".to_owned()];
-        assert!(apply_conflict_choice(drop, &겹침, ConflictDecision::Skip).is_none());
-    }
-
-    #[test]
-    fn 확인_결과는_대화가_떠_있어도_유실되지_않는다() {
-        // 회귀 — 되돌려 넣을 때 계산된 겹침 목록을 버리면 워커가 답을 다시 보내지 않아
-        // 그 전송은 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다 (리뷰 B1)
-        let 대기: Vec<(ConflictCheck, Vec<String>)> = vec![
-            (
-                ConflictCheck {
-                    id: 1,
-                    drop: 받기_전송(&["a.txt"]),
-                },
-                vec!["a.txt".to_owned()],
-            ),
-            (
-                ConflictCheck {
-                    id: 2,
-                    drop: 받기_전송(&["b.txt"]),
-                },
-                vec!["b.txt".to_owned()],
-            ),
-        ];
-        // 대기열에 든 것은 겹침 목록을 **함께** 들고 있어야 다음 차례에 그대로 물어볼 수 있다
-        for (check, conflicts) in &대기 {
-            assert!(
-                !conflicts.is_empty(),
-                "겹침 목록이 비어 대화를 띄울 수 없다"
-            );
-            assert!(
-                apply_conflict_choice(check.drop.clone(), conflicts, ConflictDecision::NotAsked)
-                    .is_none(),
-                "겹치는데도 묻지 않고 통과했다"
-            );
-            let 덮어쓰기 =
-                apply_conflict_choice(check.drop.clone(), conflicts, ConflictDecision::Overwrite);
-            assert!(덮어쓰기.is_some(), "차례가 와도 보낼 수 없는 상태다");
-        }
-    }
-
-    #[test]
-    fn 올리는_쪽은_대소문자를_가린다() {
-        // 원격은 대개 POSIX다 — 가리지 않으면 Setup.exe 때문에 setup.exe가 헛경고를 받는다 (D5)
-        let 올릴_것 = ["setup.exe".to_owned(), "data.bin".to_owned()];
-        let 원격 = ["setup.exe".to_owned(), "log".to_owned()];
-        assert_eq!(conflict_names(&올릴_것, &원격, false), vec!["setup.exe"]);
-
-        let 대문자만 = ["Setup.exe".to_owned()];
-        assert!(
-            conflict_names(&올릴_것, &대문자만, false).is_empty(),
-            "대소문자가 다른 이름을 겹친 것으로 봤다"
-        );
-    }
-
-    #[test]
-    fn 확인_번호와_조회_세대는_서로_되돌아온다() {
-        // 회귀 — 등록은 확인 번호로, 조회는 기준값을 더한 세대로 하는 바람에 답이 와도
-        // 찾지 못했다. 올리기가 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다 (완료 검증 B1)
-        for id in [0, 1, 7, 4096, u32::MAX as u64] {
-            let generation = conflict_generation(id);
-            assert_eq!(
-                conflict_id(generation),
-                id,
-                "세대에서 확인 번호를 되찾지 못했다"
-            );
-            assert!(
-                generation >= CONFLICT_LIST_BASE,
-                "확인 조회가 자기 번호 공간 밖으로 나갔다"
-            );
-        }
-        // 서로 다른 확인은 서로 다른 세대를 쓴다 — 겹치면 한쪽 답을 다른 쪽이 가져간다
-        assert_ne!(conflict_generation(1), conflict_generation(2));
-    }
-
     #[test]
     fn 조회_세대는_다른_조회와_번호가_겹치지_않는다() {
         // 겹치면 한쪽의 답을 다른 쪽이 가져가 서로 영영 기다린다 (D8).
-        // 두 공간 사이의 간격이 한 실행에서 쓸 번호보다 훨씬 크다
+        // 두 공간 사이의 간격이 한 실행에서 쓸 번호보다 훨씬 크다.
+        // **두 상수가 서로 다른 자식 모듈에 있다** — 확인 쪽은 `transfer_conflict`,
+        // 트리 쪽은 이 파일이다. 그래서 이 시험만 경로를 명시해 견준다
+        use transfer_conflict::CONFLICT_LIST_BASE;
         const { assert!(CONFLICT_LIST_BASE - TREE_LIST_BASE == 1 << 40) };
         // 확인 번호는 기준값에 더해 보내고 답에서 다시 빼 되찾는다 — 그 왕복이 맞는지 본다
         let 보낸_세대 = CONFLICT_LIST_BASE + 7;
