@@ -135,7 +135,7 @@
 
 ## Tasks
 
-- [ ] **T1. 아이콘 자산과 생성기** — Type C
+- [x] **T1. 아이콘 자산과 생성기** — Type C
   - **Design**: ① 배치 — `examples/gen_app_icon.rs`(신규 개발용 CLI), 산출물 `assets/app_icon_256.png`(커밋). ② 신규 심볼과 책임 — `fn main() -> Result<(), String>`(원본을 읽어 256×256 Lanczos3로 줄여 PNG로 쓴다). ③ 의존 방향 — `image`만 참조하고 앱 코드를 참조하지 않는다. ④ 비추상화 — 크기·필터를 인자로 받는 옵션 파서를 만들지 않는다(부를 일이 한 가지다).
   - **Acceptance**:
     - `Cargo.toml`에 `image`가 D7의 형태로 추가되고 `cargo tree --target x86_64-pc-windows-msvc -e normal`의 패키지 수가 **변하지 않는다**(실측 155 유지 — 변하면 라이선스 자산 재생성이 필요하다는 신호다).
@@ -217,3 +217,6 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T1 완료: `examples/gen_app_icon.rs`가 `docs/AppIcon.png`(1083×1105)를 256×256 Lanczos3로 줄여 `assets/app_icon_256.png`를 만든다. **생성물 실측 75,943B**(D1의 `60KB 안팎(추정)`을 이 값으로 확정 — 추정보다 약 16KB 크다). 두 번 실행해 md5가 같아 재현성을 확인했다.
+  - 확인: `cargo tree --target x86_64-pc-windows-msvc -e normal` 중복 제거 **155개로 불변**, `cargo run --example gen_licenses` 후 `assets/licenses.json` **md5 불변(diff 0)** — D7의 "패키지·feature 집합이 변하지 않아 라이선스 자산 재생성 불요"가 실측으로 확인됐다(`git status`가 M으로 표시한 것은 CRLF 정규화 때문이며 내용 변화는 0이다).
