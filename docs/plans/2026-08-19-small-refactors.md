@@ -138,7 +138,7 @@ Deferred 대장의 소품 리팩터 **6건을 코드에 반영**하고, 나머�
   - **Edge Cases**: `SHGetFileInfoW`가 0을 돌려주는 실패 경로에서 `info`를 읽지 않는 기존 규칙이 유지돼야 한다(`icon_index_for_path`는 `dir_icon`으로, `shell_display_name`은 `None`으로 떨어진다). 블록이 `ok`만 내보내므로 `info`는 밖에 그대로 남는다.
   - **Halt Forecast**: 없음 — 한 파일 지역 변경이고 `unsafe` 범위가 늘지 않는다(오히려 준다).
   - **Files**: 주 — `src/fs/icons.rs`
-- [ ] **T3. `theme::PRIMARY_FILL`을 `OK_BAR`로 개명한다** — Type C
+- [x] **T3. `theme::PRIMARY_FILL`을 `OK_BAR`로 개명한다** — Type C
   - **Acceptance**:
     - `theme.rs:76`의 상수 이름이 `OK_BAR`가 되고 **값은 그대로**(`0x2F, 0x6B, 0x4F`)다. doc 주석이 「전송 큐 완료 막대 채움」이라는 실제 용도를 적는다.
     - `queue_panel.rs:188`(프로덕션)·`:884`(시험) 둘 다 새 이름을 쓴다.
