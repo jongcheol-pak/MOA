@@ -61,7 +61,8 @@ raw-window-handle = "0.6"
 #
 # eframe·arboard가 이미 이것을 링크하고 `png` feature까지 켜 두지만(2026-08-19 `cargo tree
 # -e features` 실측), 전이 의존에 기대면 상위가 그것을 끊는 순간 조용히 깨진다. 명시로
-# 올려도 패키지·feature 집합이 그대로라 exe도 라이선스 자산도 변하지 않는다
+# 올려도 패키지·feature 집합이 그대로라 **라이선스 자산 재생성은 불요**하다. 다만 우리가 새로 부르는
+# 디코드·리샘플 경로가 링크되므로 exe는 약 60KB 는다(2026-08-19 실측: 자산 76KB를 더해 +136KB)
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # 원격 연결 (FR-27~FR-46). 둘 다 **동기(blocking) API**라 이 앱의 std::thread + 채널 구조에
