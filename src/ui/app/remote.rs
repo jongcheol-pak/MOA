@@ -720,7 +720,7 @@ impl ExplorerApp {
     /// 쥔다 — 연결 관리자가 세션을 만들면 `remote`가 화면을 알아야 한다 (T4 결정).
     ///
     /// 사이트를 새 탭으로 여는 진입점(사이드바·주소창·드롭다운)은 T12·T13이 붙인다
-    pub(super) fn connect_site(&mut self, site: SiteId) -> Option<ConnectionId> {
+    pub fn connect_site(&mut self, site: SiteId) -> Option<ConnectionId> {
         let record = self.sites.get(site)?.clone();
         // 익명 로그온이면 비밀번호가 없다 — 서버가 관례대로 무시한다
         let password = self.sites.password(site).unwrap_or_default();
