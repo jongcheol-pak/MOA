@@ -358,8 +358,9 @@ pub(crate) struct ShellGuard {
     _inner: std::sync::MutexGuard<'static, ()>,
 }
 
-/// 실행 파일에서는 빈 구조체다 — `IconCache`를 만드는 쪽마다 자기 것을 들고(드라이브 조회
-/// 워커도 그렇다) 인스턴스를 스레드 사이에 나눠 쓰지 않으므로 겨룰 상대가 없다
+/// 실행 파일에서는 빈 구조체다 — 위 `SHELL_LOCK`이 적은 대로 이 잠금은 **시험이 병렬로 도는
+/// 동안** 셸을 동시에 물어 `SHGetImageList`가 16px로 폴백하는 것을 막으려고 둔 것이고, 실행
+/// 파일에는 그렇게 몰아치는 동시 호출이 없다
 #[cfg(not(test))]
 pub(crate) struct ShellGuard;
 
