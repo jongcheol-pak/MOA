@@ -175,10 +175,12 @@ mod tests {
         ui_sources(&ui_dir, &mut sources);
         assert!(!sources.is_empty(), "ui 소스를 하나도 읽지 못했다");
 
+        // 이 파일은 규약을 설명하느라 그 문자열을 주석에 담는다. **경로 전체로 견준다** —
+        // 이름만 보면 하위 폴더에 같은 이름이 생겼을 때 그 파일까지 조용히 빠진다
+        let self_path = ui_dir.join("theme.rs");
         let mut 발견 = Vec::new();
         for path in sources {
-            // 이 파일은 규약을 설명하느라 그 문자열을 주석에 담는다
-            if path.file_name().is_some_and(|name| name == "theme.rs") {
+            if path == self_path {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");
