@@ -162,7 +162,7 @@
 
 ## Tasks
 
-- [ ] **T1. 화면 앱 이름을 언어별로 가른다** — Type C
+- [x] **T1. 화면 앱 이름을 언어별로 가른다** — Type C
   - **Design**: ① 배치 — 값은 `src/i18n/mod.rs` 카탈로그, 소비는 `about_dialog`·`main`·`tray`·`app` 넷. ② 신규 심볼 — `i18n::app_name`(개명), `Tray::update_tooltip(&self)`(툴팁만 `NIM_MODIFY`로 다시 올린다). ③ 의존 — `tray`가 `i18n`을 참조(단방향 유지, `i18n`은 아무것도 모른다). ④ 비추상화 — "앱 이름을 쓰는 곳"을 묶는 헬퍼나 트레이트를 만들지 않는다. 넷은 각자 다른 API(egui 명령·Win32 구조체·문자열)를 쓰므로 묶으면 오히려 늘어난다.
   - `i18n/mod.rs`: `about_app_name` → `app_name`, 값 `"모아" / "MOA"`. doc 주석의 "두 언어에서 값이 같아도" 서술을 새 사실로 고친다.
   - `main.rs:53`: `with_title(moa::i18n::app_name())` — `set_language` 뒤에 있음을 확인하고 둔다.
