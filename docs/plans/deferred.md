@@ -1,6 +1,9 @@
 # Deferred 대장
 
 ## 대기
+- [2026-08-19] 라이선스 대화의 목록 검색·필터 — 구성 요소가 158개라 이름으로 좁히면 편하다. 목록이 정렬돼 있고 스크롤로 닿아 없이도 성립한다 (출처: 2026-08-18-open-source-licenses)
+- [2026-08-19] 라이선스 종류별 묶어 보기(같은 전문을 쓰는 크레이트를 한 항목으로) — 자산이 이미 전문을 중복 제거해 담으므로 화면만 바꾸면 되는 확장 지점이다 (출처: 2026-08-18-open-source-licenses)
+- [2026-08-19] [SUGGEST] `examples/gen_licenses.rs`의 `main`에서 원문 있는 갈래와 없는 갈래가 `CrateEntry` 필드 넷(`name`·`version`·`spdx`·`authors`)을 똑같이 채운다 — 공통 필드를 먼저 만들고 `text_indices`·`standard_text` 둘만 분기하면 중복이 준다 (출처: 2026-08-18-open-source-licenses T2 quality S1)
 - [2026-08-17] [SUGGEST] `fs::icons`의 `icon_index_for_path`·`shell_display_name`도 `icon_index`·`type_name`처럼 잠금을 블록 스코프로 좁히면 네 곳의 해제 시점이 통일된다 — 기능 차이는 없고, 두 곳은 여러 지역 변수를 써서 블록으로 감싸면 오히려 길어진다 (출처: 2026-08-17-icon-texture-lock T3 quality S1)
 - [2026-08-17] **아이콘 재시도가 성공으로 회복되는 경로에 시험이 없다** — `IconTextures::convert_into`의 성공 분기(`retries.remove` + `created_this_frame` 증가)가 **재시도 맥락에서는 한 번도 실행되지 않는다**. 신설 시험 5건이 모두 음수 인덱스(결정론적 실패)를 쓰기 때문이며, **주입 지점 없이는 일시적 실패를 만들 수 없다**(`icon_to_image`가 자유 함수라 갈아 끼울 수 없다). "다시 시도된다"까지는 시험이 지키지만 "복원된다"는 미검증이다 — 필요해지면 변환을 시험에서 대체 가능하게 만드는 별도 회차 (출처: 2026-08-17-icon-texture-lock F-7 m2)
 - [2026-07-23] FR-14 분할 프리셋 버튼 1/2/4 (Could) (출처: 2026-07-23-file-explorer-part1)
@@ -13,7 +16,7 @@
 - [2026-07-28] master 미병합 커밋 다수 — 다크 테마·사이드바·PoC·egui 이식이 모두 `task/*` 브랜치에 쌓여 있다. 병합 전략을 사용자와 결정해야 한다 (출처: 2026-07-26-egui-migration-part2)
 - [2026-07-28] 워크스페이스 Delete 키 배정 — 사이드바가 키를 전역으로 보는 현재 구조에서는 파일 목록에서 누른 Delete까지 워크스페이스를 지운다. 키 미배정 + 메뉴 표기 제거로 처리했고, 카드에 포커스를 주는(`has_focus`) 방식으로 전환할 때 되살린다. F2도 같은 성질 (출처: 2026-07-26-egui-migration-part2 F-7 M2)
 - [2026-07-28] 워크스페이스 키보드 위/아래 전환 — 현행 Win32 판에 있던 것이 이식에서 빠짐. PRD 요구는 아님 (출처: 2026-07-26-egui-migration-part2 F-7)
-- [2026-07-29] 설정 팝업 **세 항목**의 실제 기능 — 업데이트·릴리즈 노트·정보. 표시만 하고 비활성이다 (`설정`은 2026-08-13-app-settings-part1 T2에서, `오픈소스 라이선스`는 2026-08-18-open-source-licenses에서 활성화됐다) (출처: 2026-07-29-custom-titlebar T5, 2026-08-18 재확인: 유지 — 남은 셋은 그대로 비활성)
+- [2026-07-29] 설정 팝업 **두 항목**의 실제 기능 — 업데이트·릴리즈 노트. 표시만 하고 비활성이다 (`설정`은 2026-08-13-app-settings-part1 T2에서, `오픈소스 라이선스`는 2026-08-18-open-source-licenses에서, `정보`는 2026-08-19-about-dialog에서 활성화됐다) (출처: 2026-07-29-custom-titlebar T5, 2026-08-19 재확인: 유지 — 남은 둘은 그대로 비활성)
 - [2026-07-29] 커스텀 타이틀바의 창 그림자·둥근 모서리 — winit의 무장식 그림자 확장을 eframe이 노출하지 않아 이번엔 포기. `DwmSetWindowAttribute`의 코너 설정으로 모서리만 되살릴 여지는 있다 (출처: 2026-07-29-custom-titlebar D10)
 - [2026-07-29] 탭 폭 고정(Windows 11은 탭마다 같은 폭) — 현재는 제목 길이에 맞춘다. 좁은 분할 패널에서 고정폭이 나은지 화면을 보고 판단 (출처: 2026-07-29-tab-strip-and-pane-borders)
 - [2026-07-29] `ui/address_bar.rs`의 `nav_button` 활성 경로가 `theme::TEXT`·16px을 수동 재기술 — `widgets::icon_button` 래퍼를 쓰면 짧아지나 "활성·비활성 글꼴 동일" 제약이 코드에서 안 보이게 된다. `DEFAULT_ICON_PX`를 pub으로 올릴지와 함께 판단 (출처: 2026-07-29-tab-strip-and-pane-borders T3 quality S1)

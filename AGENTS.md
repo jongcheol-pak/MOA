@@ -5,7 +5,7 @@
 ## Stack
 - **언어**: Rust stable (1.80+)
 - **에디션**: 2024
-- **주요 crates**: eframe/egui (UI — glow 백엔드), windows (windows-rs — Win32·COM·셸 API), serde + serde_json (설정 직렬화), suppaftp (FTP·FTPS), ssh2 (SFTP)
+- **주요 crates**: eframe/egui (UI — glow 백엔드), windows (windows-rs — Win32·COM·셸 API), serde + serde_json (설정 직렬화), image (정보 화면 아이콘 디코드·축소 — png feature만), suppaftp (FTP·FTPS), ssh2 (SFTP)
 - **빌드 도구**: Cargo
 - **대상 플랫폼**: Windows 11 이상, x64 전용 (GUI 앱, 콘솔 창 없음)
 
@@ -18,6 +18,7 @@
 - **Format check**: `cargo fmt --check`
 - **Format**: `cargo fmt`
 - **라이선스 자산 재생성**: `cargo run --example gen_licenses` — 의존성을 더하거나 버전을 올린 뒤 반드시 돌린다. `assets/licenses.json`이 낡으면 `Cargo.lock` 지문 대조 시험이 실패한다
+- **아이콘 자산 재생성**: `cargo run --example gen_app_icon` — `docs/AppIcon.png`를 바꾼 뒤에만 돌린다. `assets/app_icon_256.png`를 덮어쓰며, 그 자산은 정보 화면(FR-58)이 읽는다
 
 ## 데이터 접근
 - **DB/스토어**: 없음 (`%APPDATA%\MOA\settings.json` 로컬 파일 하나에 **세션 + 앱 설정**을 함께 담는다 — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
@@ -43,9 +44,11 @@
 │   └── prd.md               # 승인된 PRD (요구사항 정본)
 ├── assets/                  # 실행 파일에 담기는 생성물·원문 (커밋 대상)
 │   ├── licenses.json        # 라이선스 고지 자산 — 생성기가 만든다 (손으로 고치지 않는다)
+│   ├── app_icon_256.png     # 정보 화면 아이콘 자산 — 생성기가 만든다 (손으로 고치지 않는다)
 │   └── spdx/                # SPDX 표준 전문 — 배포 패키지에 원문이 없는 구성 요소에 쓴다
 ├── examples/
-│   └── gen_licenses.rs      # 라이선스 자산 생성기 (개발용 — `cargo build`가 빌드하지 않는다)
+│   ├── gen_licenses.rs      # 라이선스 자산 생성기 (개발용 — `cargo build`가 빌드하지 않는다)
+│   └── gen_app_icon.rs      # 아이콘 자산 생성기 (`docs/AppIcon.png` → 256px)
 ├── src/
 │   ├── main.rs              # 진입점 — COM 초기화, 세션 로드, egui 창 실행
 │   ├── ui/                  # egui(eframe/glow) UI 계층 — 화면·입력 전부
@@ -63,7 +66,9 @@
 ## 산출물·파일 관리
 - **빌드 산출물**: `target/` (gitignore)
 - **런타임 생성물**: `%APPDATA%\MOA\settings.json` (설정·세션)
-- **커밋되는 생성물**: `assets/licenses.json` — `examples/gen_licenses.rs`가 만들며 **손으로 고치지 않는다**. 레지스트리 캐시를 훑어 만들므로 생성은 개발 PC에서만 하고, 빌드·시험은 그 결과만 읽는다(네트워크·캐시 비의존)
+- **커밋되는 생성물**: 둘 다 **손으로 고치지 않는다** — 생성기가 만든다.
+  - `assets/licenses.json` — `examples/gen_licenses.rs`가 만든다. 레지스트리 캐시를 훑어 만들므로 생성은 개발 PC에서만 하고, 빌드·시험은 그 결과만 읽는다(네트워크·캐시 비의존)
+  - `assets/app_icon_256.png` — `examples/gen_app_icon.rs`가 `docs/AppIcon.png`에서 만든다. 원본 그림을 바꿨을 때만 다시 돌리면 된다
 
 ## Conventions
 - **아키텍처**: 계층형(단일 crate) — 모듈로만 분리 (ui / app / panel / fs). 의존은 단방향이며 `ui`만 상위다: `app`·`panel`·`fs`는 `ui`를 모른다. GUI 도구로 도메인 규칙이 얇아 crate 분리는 하지 않는다.
