@@ -195,7 +195,7 @@
   - **Files**: `src/ui/tabs.rs` · `src/ui/site_dropdown.rs`(삭제) · `src/ui/mod.rs`(선언 제거) · `src/i18n/mod.rs`(키 2개 삭제). `src/ui/panel.rs`는 **손대지 않는다**(출력 계약 불변 — acceptance ④가 그것을 지킨다).
   - **Edge Cases**: 숨긴 사이트만 남으면 목록이 비어 `새 탭`만 보인다(`SiteStore::visible`) · 사이트 이름이 길면 종전처럼 프로토콜 라벨을 먼저 오른쪽에 붙이고 이름을 줄인다 · 메뉴를 연 채 사이트가 지워지면 다음 프레임에 목록에서 빠진다(값을 사본으로 들지 않는다) · 좁은 분할 패널에서 메뉴가 화면 밖으로 나가면 `Popup`이 스스로 자리를 고른다(`RectAlign::find_best_align`) · 이름이 지워진 사이트는 목록에 오지 않는다.
   - **Halt Forecast**: **파일 삭제**(`src/ui/site_dropdown.rs`) — 아래 `## 사전 승인 항목`에 등재한다(git 이력이 복구 경로라 되돌릴 수 있다).
-  - **Acceptance**: ① `cargo test` 통과 — 새 시험 2건 포함. ② `cargo clippy --all-targets -- -D warnings` 경고 0. ③ `grep -rn 'site_dropdown' src/ README.md docs/` 결과 0건 — **레포 밖 문서까지 함께 재서** 삭제된 파일이 README 구조 트리나 PRD에 남지 않게 한다(T6이 README를 고치므로 두 task가 끝난 뒤 이 조건이 성립한다). ④ `panel.rs`의 diff가 0줄(출력 계약 불변 확인). ⑤ 메뉴가 실제로 뜨고 사이트를 고르면 탭이 열리는 것은 **⏳ HUMAN-VERIFY**.
+  - **Acceptance**: ① `cargo test` 통과 — 새 시험 2건 포함. ② `cargo clippy --all-targets -- -D warnings` 경고 0. ③ `grep -rn 'site_dropdown' src/ README.md docs/prd.md AGENTS.md` 결과 0건 — 삭제된 파일이 README 구조 트리나 PRD에 남지 않게 한다(T6이 README를 고치므로 두 task가 끝난 뒤 이 조건이 성립한다). **과거 회차의 `docs/plans/*.md`는 대상이 아니다** — 그 시점의 기록이라 지금 사실에 맞춰 고치면 이력이 왜곡된다(구현 중 확인: `2026-08-04-ftp-integration.md` 등이 그 파일을 신설했다고 적고 있다). ④ `panel.rs`의 diff가 0줄(출력 계약 불변 확인). ⑤ 메뉴가 실제로 뜨고 사이트를 고르면 탭이 열리는 것은 **⏳ HUMAN-VERIFY**.
 
 - [ ] **T4. 설정 메뉴에 가로 폭을 준다** — Type C
   - **Design**: ① 배치 — `src/ui/titlebar.rs`의 `show_settings_menu` 한 곳. ② 신규 심볼 — `SETTINGS_MENU_WIDTH` 상수(다른 메뉴가 자기 폭 상수를 두는 관례와 같다). ③ 의존 — 없음(파일 안에서 끝난다). ④ 비추상화 — 모든 메뉴의 폭을 공통 상수로 묶지 않는다. 메뉴마다 담는 문구 길이가 달라 한 값으로 묶으면 좁은 메뉴가 헐렁해진다.

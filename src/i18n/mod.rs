@@ -215,8 +215,6 @@ strings! {
 
     // ── 사이트 드롭다운 (FR-27) ──
     /// 사이트 드롭다운 캡션 (인벤토리 #92)
-    site_dropdown_open => "연결 사이트를 새 탭으로" / "Open site in a new tab";
-    site_dropdown_other => "다른 사이트로 새 탭 열기" / "Open another site in a new tab";
 
     // ── 폴더 트리 (FR-9) ──
     /// 아직 읽는 중인 노드의 자리 표시 — 로컬·원격 트리가 같은 문구를 쓴다
