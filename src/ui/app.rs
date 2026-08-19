@@ -447,6 +447,34 @@ impl WorkspaceView {
     }
 }
 
+/// 작업 표시줄 아이콘을 다시 붙일 차례가 남았는가 (`ui::app_icon::apply_to_window`).
+///
+/// 한 번에 끝내지 않고 예약·반복하는 이유는 **작업 표시줄 버튼이 만들어지는 순간과
+/// 아이콘 전송이 겹치면 그 갱신이 반영되지 않기** 때문이다(그 실측은 `app_icon` 참조).
+/// 창이 보인 뒤 조금 지나서 몇 번 나눠 보내면 어느 한 번은 버튼이 준비된 뒤에 닿는다
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TaskbarIcon {
+    /// 창이 보이면 예약한다 (앱 시작 직후·트레이에서 창을 되살린 직후)
+    Pending,
+    /// 예약됨 — (다음 전송 시각, 남은 횟수)
+    Scheduled(f64, u8),
+    /// 다 보냈다. 창을 다시 보일 때 `Pending`으로 되돌린다
+    Done,
+}
+
+/// 창이 보인 뒤 첫 전송까지 기다리는 시간 (초).
+/// 작업 표시줄이 버튼을 만들 틈을 준다 — 0이면 eframe의 전송과 같은 순간이 되어 소용없다
+const TASKBAR_ICON_DELAY: f64 = 0.3;
+/// 전송 사이 간격 (초)
+const TASKBAR_ICON_INTERVAL: f64 = 0.2;
+/// 전송 횟수 — 0.3초부터 0.2초 간격으로 다섯 번(약 1.1초까지) 보내고 멈춘다.
+///
+/// 한 번으로 끝내지 않는 이유는 **작업 표시줄 버튼이 아직 만들어지기 전에 보내면
+/// 그 전송이 헛돌기 때문**이다. 반대로 오래 끌 이유는 없다 — 갱신이 안 되던 원인은
+/// 지연이 아니라 같은 핸들을 다시 넣은 것이었고(`app_icon::apply_to_window`),
+/// 그것을 고친 뒤에는 이 범위에서 실측으로 확인됐다(2026-08-19)
+const TASKBAR_ICON_ATTEMPTS: u8 = 5;
+
 /// 탐색기 앱 상태.
 pub struct ExplorerApp {
     com: ComStatus,
@@ -508,6 +536,8 @@ pub struct ExplorerApp {
     /// **`ctx.input(|i| i.viewport().visible())`로 파생시키지 않는다** — Windows에서 그 값은
     /// 늘 `None`이라(winit이 `occluded`를 채우지 않는다) 숨김과 표시를 구분하지 못한다
     hidden: bool,
+    /// 작업 표시줄 아이콘 재전송 상태 (`TaskbarIcon` 참조)
+    taskbar_icon: TaskbarIcon,
     /// 트레이 메뉴 `종료`로 끝내는 중인가 — 그때는 닫기를 가로채지 않는다
     quitting: bool,
     /// 자동 실행으로 시작해 **창 없이 트레이로만** 올라와야 하는가 (FR-49).
@@ -674,6 +704,7 @@ impl ExplorerApp {
             tray: None,
             tray_rx,
             hidden: false,
+            taskbar_icon: TaskbarIcon::Pending,
             quitting: false,
             hide_on_start: start_hidden,
             pending_clipboard: None,
@@ -1797,6 +1828,43 @@ impl ExplorerApp {
 
     /// 자동 실행으로 시작했으면 창을 숨긴다 — **최대화 복원이 끝난 뒤에** (FR-49).
     ///
+    /// 작업 표시줄 아이콘을 다시 붙인다 — 창이 보인 뒤 몇 번에 나눠 보낸다.
+    ///
+    /// eframe이 이미 창 아이콘을 설정하지만 작업 표시줄이 그것을 집어가지 못한다
+    /// (사유·실측은 `ui::app_icon::apply_to_window`). 창이 숨겨져 있으면 작업 표시줄에
+    /// 버튼 자체가 없으므로 아무것도 하지 않고, 창이 보일 때 다시 예약된다
+    fn refresh_taskbar_icon(&mut self, ctx: &egui::Context) {
+        if self.hidden || self.taskbar_icon == TaskbarIcon::Done {
+            return;
+        }
+        let Some(shell) = self.shell.as_ref() else {
+            // 창 핸들이 없으면(다른 백엔드·headless) 붙일 곳이 없다 — 셸 메뉴와 같은 취급
+            self.taskbar_icon = TaskbarIcon::Done;
+            return;
+        };
+        let now = ctx.input(|input| input.time);
+        let (at, left) = match self.taskbar_icon {
+            TaskbarIcon::Pending => (now + TASKBAR_ICON_DELAY, TASKBAR_ICON_ATTEMPTS),
+            TaskbarIcon::Scheduled(at, left) => (at, left),
+            TaskbarIcon::Done => return,
+        };
+        if now < at {
+            // 유휴 상태로 프레임이 끊기면 예약 시각이 지나도 아무도 오지 않는다 —
+            // 그 시각에 한 번 깨워 달라고 청한다
+            self.taskbar_icon = TaskbarIcon::Scheduled(at, left);
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64((at - now).max(0.0)));
+            return;
+        }
+        app_icon::apply_to_window(shell.hwnd());
+        self.taskbar_icon = match left.saturating_sub(1) {
+            0 => TaskbarIcon::Done,
+            remaining => TaskbarIcon::Scheduled(now + TASKBAR_ICON_INTERVAL, remaining),
+        };
+        if self.taskbar_icon != TaskbarIcon::Done {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(TASKBAR_ICON_INTERVAL));
+        }
+    }
+
     /// 트레이 아이콘이 올라간 것을 확인하고 숨긴다: 아이콘 없이 숨기면 창을 되부를
     /// 방법이 사라진다(`종료` 토글이 꺼져 있는 경우가 그렇다 — 그때는 그냥 창을 띄운다)
     fn hide_on_start(&mut self, ctx: &egui::Context) {
@@ -1910,6 +1978,8 @@ impl ExplorerApp {
                     if self.hidden {
                         self.hidden = false;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        // 작업 표시줄 버튼이 다시 만들어진다 — 아이콘도 다시 붙인다
+                        self.taskbar_icon = TaskbarIcon::Pending;
                     }
                 }
                 // 탐색기가 되살아나 아이콘이 사라졌다 — 비워 두면 다음 `sync_tray`가 다시 올린다
@@ -2879,6 +2949,7 @@ impl eframe::App for ExplorerApp {
         self.sync_tray(ctx.input(|input| input.time));
         self.poll_tray(&ctx);
         self.hide_on_start(&ctx);
+        self.refresh_taskbar_icon(&ctx);
         self.show_settings_dialog(&ctx);
         // 오픈소스 라이선스 대화 (FR-57) — 상태를 저장하지 않아 배선이 한 줄이다
         self.license_dialog.show(&ctx);

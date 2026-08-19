@@ -4,9 +4,17 @@
 //! RGBA로 펼친다 — 256px 항목은 PNG로 담겨 있는데, 그것을 풀려면 PNG 디코더(새 의존성)가
 //! 필요한 반면 타이틀바(20px)·창 아이콘(64px)에는 작은 항목이면 충분하기 때문이다.
 //!
-//! 실행 파일 자체의 아이콘(탐색기·작업 표시줄이 exe에서 읽는 것)은 `build.rs`가 같은 파일을
-//! 리소스로 담아 처리한다. 이 모듈이 다루는 것은 **창 안에 그릴 픽셀**이다.
+//! 실행 파일 자체의 아이콘은 `build.rs`가 같은 파일을 리소스로 담아 처리한다.
+//! 이 모듈이 다루는 것은 **창 안에 그릴 픽셀**과, 그 리소스를 **창에 붙이는 일**
+//! (`apply_to_window` — 작업 표시줄·Alt+Tab이 읽는 창 아이콘)이다.
 use eframe::egui;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_SHARED, LoadImageW,
+    SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
+};
+use windows::core::PCWSTR;
 
 /// 아이콘 원본 — exe에 정적으로 담긴다(실행 시 파일을 찾지 않는다)
 pub const ICO_BYTES: &[u8] = include_bytes!("../../docs/AppIcon.ico");
@@ -32,6 +40,61 @@ pub fn icon_data() -> Option<egui::IconData> {
         width: image.width,
         height: image.height,
     })
+}
+
+/// exe 리소스의 아이콘 그룹 id — `build.rs`가 이 번호로 담는다(그쪽 `GROUP_ID`와 짝이다)
+const ICON_GROUP_ID: u16 = 1;
+
+/// exe 리소스의 아이콘을 이 창의 큰·작은 아이콘으로 붙인다 (작업 표시줄·Alt+Tab).
+///
+/// **eframe도 창 아이콘을 설정하지만 작업 표시줄이 그 값을 집어가지 못한다** — eframe은
+/// `GetActiveWindow()`가 잡히는 첫 프레임에 `WM_SETICON`을 보내는데(`eframe`의
+/// `native/app_icon.rs`), 이 앱은 첫 프레임을 그린 뒤에야 창을 보이므로 그 전송이
+/// 작업 표시줄 버튼이 만들어지는 순간과 겹친다. 그래서 기본 아이콘이 그대로 남는다
+/// (2026-08-19 실측: 창 아이콘·exe 리소스 모두 정상인데 작업 표시줄만 기본 아이콘이었고,
+/// 창이 뜬 뒤 같은 메시지를 다시 보내자 즉시 바뀌었다). 호출 시점은 `ui::app`이 쥔다.
+///
+/// 아이콘을 ICO에서 직접 펼치지 않고 `LoadImageW`로 exe 리소스에서 얻는 이유: OS가
+/// 요청한 크기에 가장 알맞은 항목을 스스로 고른다. `LR_SHARED`라 수명도 시스템이 쥐어
+/// `DestroyIcon`이 필요 없고, 여러 번 불러도 핸들이 새지 않는다
+pub fn apply_to_window(hwnd: HWND) {
+    // 안전성: 인자 없는 `GetModuleHandleW`는 이 실행 파일의 인스턴스를 돌려준다(실패 없음에
+    // 가깝지만 반환이 `Result`라 그대로 받는다). 이어지는 호출은 그 핸들과 방금 받은 창
+    // 핸들만 쓰며, 아이콘은 `LR_SHARED`라 우리가 해제하지 않는다
+    unsafe {
+        let Ok(instance) = GetModuleHandleW(PCWSTR::null()) else {
+            return;
+        };
+        let name = PCWSTR(ICON_GROUP_ID as usize as *const u16);
+        for (kind, cx, cy) in [
+            (ICON_BIG, SM_CXICON, SM_CYICON),
+            (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+        ] {
+            let size = (GetSystemMetrics(cx), GetSystemMetrics(cy));
+            // 실패하면 그 크기는 건너뛴다 — OS 기본 아이콘이 남을 뿐 앱은 그대로 돈다
+            let Ok(icon) = LoadImageW(
+                Some(instance.into()),
+                name,
+                IMAGE_ICON,
+                size.0,
+                size.1,
+                LR_DEFAULTCOLOR | LR_SHARED,
+            ) else {
+                continue;
+            };
+            // **비웠다가 다시 붙인다** — 같은 핸들을 다시 넣으면 값이 그대로라
+            // 작업 표시줄이 변화를 알아채지 못한다(2026-08-19 실측: 창 아이콘은 제대로
+            // 붙었는데 버튼은 기본 아이콘이었고, 바깥에서 **다른** 핸들을 보냈을 때만
+            // 바뀌었다). 지운 상태는 다음 줄에서 곧바로 덮이므로 화면에 드러나지 않는다
+            SendMessageW(hwnd, WM_SETICON, Some(WPARAM(kind as usize)), None);
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(kind as usize)),
+                Some(LPARAM(icon.0 as isize)),
+            );
+        }
+    }
 }
 
 /// 타이틀바에 그릴 텍스처. 한 번만 만들어 앱이 들고 있는다
