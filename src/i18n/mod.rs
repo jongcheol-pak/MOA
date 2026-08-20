@@ -764,6 +764,29 @@ pub mod dynamic {
         }
     }
 
+    /// 로컬 복사가 셸 오류로 끝났을 때 (FR-60).
+    ///
+    /// `detail`은 셸이 준 사유라 **그대로 싣는다** — 문장 틀만 카탈로그가 만든다
+    /// (전송 실패 사유를 서버 원문으로 보이는 것과 같은 방식)
+    pub fn local_copy_failed(detail: &str) -> String {
+        match current() {
+            Language::Korean => format!("복사하지 못했습니다 — {detail}"),
+            Language::English => format!("Could not copy — {detail}"),
+        }
+    }
+
+    /// 사용자가 셸 복사 대화에서 그만뒀을 때 (FR-60) — 오류가 아니라 사실 전달이다.
+    ///
+    /// **몇 개가 실제로 복사됐는지는 적지 않는다** — 셸만 아는 값이라 앱이 적으면 틀린다.
+    /// `count`는 걸었던 항목 수다
+    pub fn local_copy_cancelled(count: usize) -> String {
+        match current() {
+            Language::Korean => format!("복사를 그만뒀습니다 — {count}개 항목"),
+            Language::English if count == 1 => "Copy stopped — 1 item".to_owned(),
+            Language::English => format!("Copy stopped — {count} items"),
+        }
+    }
+
     pub fn remote_list_failed(detail: &str) -> String {
         match current() {
             Language::Korean => format!("목록을 읽지 못했습니다 — {detail}"),
@@ -1361,6 +1384,29 @@ mod tests {
             out.push(lit);
         }
         out
+    }
+
+    #[test]
+    fn 로컬_복사_알림은_두_언어를_모두_낸다() {
+        // Acceptance ⓕ (FR-60) — 기대값은 원문 리터럴이고 언어를 잠근다 (AGENTS 시험 규약)
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::local_copy_failed("액세스가 거부되었습니다."),
+            "복사하지 못했습니다 — 액세스가 거부되었습니다."
+        );
+        assert_eq!(
+            dynamic::local_copy_cancelled(3),
+            "복사를 그만뒀습니다 — 3개 항목"
+        );
+
+        set_language(LanguageSetting::English);
+        assert_eq!(
+            dynamic::local_copy_failed("Access is denied."),
+            "Could not copy — Access is denied."
+        );
+        // 영어는 한 개일 때 복수형을 쓰지 않는다
+        assert_eq!(dynamic::local_copy_cancelled(1), "Copy stopped — 1 item");
+        assert_eq!(dynamic::local_copy_cancelled(3), "Copy stopped — 3 items");
     }
 
     #[test]

@@ -28,6 +28,7 @@ use crate::ui::dock::{self, DockAction, DockPanel, DockState, DockView};
 use crate::ui::font_scan::FontScan;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::license_dialog::LicenseDialog;
+use crate::ui::list_common;
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
 use crate::ui::panel::{DisplayRules, PanelState};
@@ -549,7 +550,8 @@ pub struct ExplorerApp {
     remote_ops: RemoteOps,
     /// 전송이 끝나 다시 읽어야 할 원격 폴더들 (FR-37) — `pump_relist`가 프레임마다 거둔다
     relist: RelistPending,
-    /// 상태 줄에 잠깐 띄울 실패 사유와 그 만료 시각 (FR-39)
+    /// 상태 줄에 잠깐 띄울 사유와 그 만료 시각 — 원격 파일 작업의 실패(FR-39)와
+    /// 로컬 복사의 실패·취소(FR-60)가 같은 자리를 쓴다
     notice: Option<(String, f64)>,
     /// 지금 펼치고 있는 로컬 폴더 수 (T22 Edge Case) — 상태 줄이 이것을 알린다.
     /// 펼치기는 별도 스레드에서 돌아 화면이 멈추지는 않지만, 아무 표시가 없으면
@@ -569,6 +571,10 @@ pub struct ExplorerApp {
     /// 확인 번호 발급기
     next_conflict: u64,
     /// 받는 곳의 존재 확인 결과가 오는 통로 — `(확인 번호, 겹친 이름들)`
+    /// 셸 복사의 결과를 받는 자리 (FR-60) — `pump_local_copy`가 프레임마다 거둔다.
+    /// 워커가 여럿 돌 수 있어 채널 하나를 나눠 쓴다
+    copy_tx: std::sync::mpsc::Sender<crate::fs::file_op::CopyOutcome>,
+    copy_rx: std::sync::mpsc::Receiver<crate::fs::file_op::CopyOutcome>,
     conflict_tx: std::sync::mpsc::Sender<(u64, Vec<String>)>,
     conflict_rx: std::sync::mpsc::Receiver<(u64, Vec<String>)>,
     /// 올리기 확인이 서버에 물어 둔 것 — `조회 세대 → (물어본 연결, 올릴 최상위 이름들)`.
@@ -623,6 +629,7 @@ impl ExplorerApp {
         }
         let (expand_tx, expand_rx) = std::sync::mpsc::channel();
         let (conflict_tx, conflict_rx) = std::sync::mpsc::channel();
+        let (copy_tx, copy_rx) = std::sync::mpsc::channel();
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = cc.egui_ctx.clone();
             Arc::new(move || ctx.request_repaint())
@@ -696,6 +703,8 @@ impl ExplorerApp {
             expand_rx,
             pending_conflicts: Vec::new(),
             next_conflict: 0,
+            copy_tx,
+            copy_rx,
             conflict_tx,
             conflict_rx,
             conflict_lists: HashMap::new(),
@@ -1695,6 +1704,50 @@ impl ExplorerApp {
     /// **사이트 목록이 바뀌면 그 자리에서 적는다** — 종료 때만 적으면 그 사이에 앱이
     /// 비정상 종료됐을 때(패닉·강제 종료·전원 차단) 등록한 사이트가 통째로 사라진다.
     /// 파일이 작고 사이트 등록은 드문 일이라 그때마다 적어도 부담이 없다
+    /// 로컬끼리의 복사를 셸에 건다 (FR-60).
+    ///
+    /// **FR-55의 같은 이름 확인을 거치지 않는다** — `IFileOperation`이 자기 충돌 대화를
+    /// 띄우므로 앞에 하나 더 두면 같은 것을 두 번 묻게 되고, 앱 대화에서 `덮어쓰기`를 골라도
+    /// 셸이 다시 묻는다 (plan D9)
+    fn start_local_copy(&mut self, dest: std::path::PathBuf, drop: &list_common::DropOutcome) {
+        let sources: Vec<std::path::PathBuf> = drop
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                list_common::DragItem::Local { path, .. } => Some(path.clone()),
+                list_common::DragItem::Remote { .. } => None,
+            })
+            .collect();
+        // 창을 얻지 못했으면 소유자 없이 건다 — 셸 대화가 앱 위에 서지 않을 뿐 복사는 된다
+        let owner = self
+            .shell
+            .as_ref()
+            .map(|shell| shell.hwnd())
+            .unwrap_or_default();
+        crate::fs::file_op::copy_into(
+            dest,
+            sources,
+            owner,
+            self.copy_tx.clone(),
+            self.repaint.clone(),
+        );
+    }
+
+    /// 끝난 셸 복사의 결과를 알린다 (FR-60).
+    ///
+    /// **성공은 알리지 않는다** — 셸이 자기 진행률 대화로 이미 알렸고 대상 목록에 파일이
+    /// 나타나는 것이 곧 확인이라, 여기서 또 띄우면 조작 하나에 알림이 둘이 된다
+    fn pump_local_copy(&mut self, now: f64) {
+        while let Ok(outcome) = self.copy_rx.try_recv() {
+            let text = match (&outcome.error, outcome.cancelled) {
+                (Some(detail), _) => crate::i18n::dynamic::local_copy_failed(detail),
+                (None, true) => crate::i18n::dynamic::local_copy_cancelled(outcome.requested),
+                (None, false) => continue,
+            };
+            self.notice = Some((text, now + NOTICE_SECS));
+        }
+    }
+
     fn persist_session(&self) {
         save_session(&self.collect_session());
     }
@@ -1754,6 +1807,8 @@ impl eframe::App for ExplorerApp {
             }
         }
         self.drain_conflict_checks();
+        // 셸 복사가 끝났으면 그 사실을 알린다 (FR-60)
+        self.pump_local_copy(now);
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
         self.runner
             .start_ready(&mut self.queue, &self.manager, &self.sites, now);
@@ -1934,10 +1989,17 @@ impl eframe::App for ExplorerApp {
                 if let Some((target, url)) = remote_url {
                     self.open_remote_url(target, url, area);
                 }
-                // 끌어다 놓은 것을 큐에 넣는다 — 어느 패널에 놓였는지는 쓰지 않는다(항목의
-                // 종류와 놓은 자리의 종류만으로 방향이 정해진다)
+                // 끌어다 놓은 것을 처리한다 — 어느 패널에 놓였는지는 쓰지 않는다(항목의
+                // 종류와 놓은 자리의 종류만으로 무엇을 할지가 정해진다).
+                //
+                // **로컬끼리는 전송이 아니라 셸 복사다** (FR-60) — `start_transfer`보다
+                // 먼저 갈라야 한다. 그쪽은 전송 큐에 넣는 앞문이라 복사할 것이 흘러들면
+                // 옮기지도 못한 채 큐에 쌓인다
                 if let Some((_, drop)) = dropped.take() {
-                    self.start_transfer(drop);
+                    match list_common::local_copy_target(&drop) {
+                        Some(dir) => self.start_local_copy(dir.to_path_buf(), &drop),
+                        None => self.start_transfer(drop),
+                    }
                 }
                 // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
                 if let Some((target, (action, targets))) = remote_menu.take() {

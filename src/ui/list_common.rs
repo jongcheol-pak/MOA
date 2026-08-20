@@ -61,7 +61,7 @@ impl DragItem {
 /// 목록에서 끌기 시작할 때 싣는 값 (FR-38).
 ///
 /// **패널 번호를 싣지 않는다** — 받는 쪽이 알아야 하는 것은 "어디서 왔나"가 아니라
-/// "로컬인가 원격인가"뿐이고(로컬↔로컬·원격↔원격은 이번 범위 밖이다), 번호를 실으면
+/// "로컬인가 원격인가"뿐이고(그 조합만으로 전송인지 복사인지가 정해진다), 번호를 실으면
 /// 그 사이 패널이 닫혔을 때 가리키는 곳이 사라진다
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileDrag {
@@ -107,7 +107,12 @@ pub struct DropOutcome {
 /// 끌어다 놓은 항목 하나가 실제로 옮겨지는가, 옮겨진다면 어느 방향인가 (FR-38).
 ///
 /// **로컬 → 원격은 올리기, 원격 → 로컬은 받기**뿐이다. 로컬끼리·원격끼리는 `None`이다 —
-/// 로컬↔로컬 이동·복사와 원격↔원격 전송은 PRD Out of Scope다(같은 자리에 놓은 경우도 여기 든다)
+/// 원격↔원격은 PRD Out of Scope이고, **로컬↔로컬은 전송이 아니라 셸 복사**라서
+/// 아래 `local_copy_target`이 따로 판정한다(FR-60).
+///
+/// **이 함수에 복사를 섞지 않는다** — 이 값은 전송 큐에 넣을 항목을 거르는 필터로도
+/// 쓰이므로(`ui::app::transfer_conflict`), 로컬↔로컬이 여기를 통과하면 복사할 것이
+/// 전송 큐에 들어간다
 pub fn drop_direction(
     item: &DragItem,
     target: &DropTarget,
@@ -118,6 +123,28 @@ pub fn drop_direction(
         (DragItem::Remote { .. }, DropTarget::Local(_)) => Some(TransferDirection::Download),
         _ => None,
     }
+}
+
+/// 이 드롭이 **로컬끼리의 복사**인가 — 맞으면 놓인 폴더를 돌려준다 (FR-60).
+///
+/// 항목이 전부 로컬이고 놓인 자리도 로컬일 때만 성립한다. 원격이 하나라도 섞이면
+/// `None`이며 그 드롭은 종전대로 전송 경로(`drop_direction`)로 간다.
+///
+/// **같은 폴더에 놓은 것을 걸러내지 않는다** — 사본을 만들지 거부할지는 셸이 정한다(D9).
+/// 빈 항목도 `None`이다: 복사를 걸 것이 없으면 아무 일도 일어나지 않아야 한다
+pub fn local_copy_target(drop: &DropOutcome) -> Option<&std::path::Path> {
+    let DropTarget::Local(dir) = &drop.target else {
+        return None;
+    };
+    if drop.items.is_empty()
+        || !drop
+            .items
+            .iter()
+            .all(|item| matches!(item, DragItem::Local { .. }))
+    {
+        return None;
+    }
+    Some(dir.as_path())
 }
 
 /// 숨김·시스템 항목을 그릴 때 글자·아이콘에 곱하는 불투명도 (FR-13).
@@ -229,9 +256,57 @@ mod tests {
 
     #[test]
     fn 같은_쪽끼리_끌면_아무_일도_없다() {
-        // Acceptance ② — 로컬↔로컬·원격↔원격은 PRD Out of Scope다(자기 자신에게 놓은 것도 포함)
+        // Acceptance ② — 이 함수는 **전송 방향만** 답한다. 원격↔원격은 PRD Out of Scope이고,
+        // 로컬↔로컬은 전송이 아니라 셸 복사라 `local_copy_target`이 판정한다(FR-60)
         assert_eq!(drop_direction(&local_item(), &local_target()), None);
         assert_eq!(drop_direction(&remote_item(), &remote_target()), None);
+    }
+
+    #[test]
+    fn 로컬끼리_놓으면_그_폴더로_복사한다() {
+        // Acceptance ⓐ (FR-60)
+        let drop = DropOutcome {
+            items: vec![local_item()],
+            source_site: None,
+            target: local_target(),
+        };
+        assert_eq!(
+            local_copy_target(&drop),
+            Some(std::path::Path::new(r"C:\down"))
+        );
+    }
+
+    #[test]
+    fn 원격이_섞이거나_대상이_원격이면_복사가_아니다() {
+        // Acceptance ⓑⓒ — 그 드롭은 종전대로 전송 경로로 간다
+        let 섞임 = DropOutcome {
+            items: vec![local_item(), remote_item()],
+            source_site: None,
+            target: local_target(),
+        };
+        assert_eq!(
+            local_copy_target(&섞임),
+            None,
+            "원격이 하나라도 섞이면 복사가 아니다"
+        );
+
+        let 원격_대상 = DropOutcome {
+            items: vec![local_item()],
+            source_site: None,
+            target: remote_target(),
+        };
+        assert_eq!(local_copy_target(&원격_대상), None, "올리기는 전송이다");
+    }
+
+    #[test]
+    fn 놓은_것이_없으면_복사할_것도_없다() {
+        // Acceptance ⓓ
+        let 빈_드롭 = DropOutcome {
+            items: Vec::new(),
+            source_site: None,
+            target: local_target(),
+        };
+        assert_eq!(local_copy_target(&빈_드롭), None);
     }
 
     #[test]
