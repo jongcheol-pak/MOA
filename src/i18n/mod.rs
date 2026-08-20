@@ -193,7 +193,12 @@ strings! {
     // ── 워크스페이스 사이드바 (FR-20) ──
     sidebar_workspaces => "워크스페이스" / "Workspaces";
     sidebar_saved_sites => "등록된 사이트" / "Saved sites";
-    sidebar_add_site => "새 사이트 추가…" / "Add site…";
+    /// 연결 메뉴의 마지막 항목 — 사이트 관리자를 연다.
+    ///
+    /// **원본 인벤토리 #8의 문구와 갈린다** — 그쪽은 「추가」만 가리켜 이 항목이 하는 일보다
+    /// 좁게 읽혔고, 사용자가 2026-08-20에 바꿔 달라고 했다(등록만이 아니라 관리자 전체를 연다).
+    /// 대화 제목(`site_title`)과 값이 같아졌지만 키는 따로 둔다 — 한쪽만 바꿀 때 다시 갈라야 한다
+    sidebar_site_manager => "사이트 관리자" / "Site Manager";
     sidebar_new_workspace => "새 워크스페이스" / "New workspace";
     sidebar_refresh_sites => "사이트 목록 새로 고침" / "Refresh site list";
     /// 사이트 우클릭 메뉴 (인벤토리 #10) — **`삭제`가 아니다.**
@@ -481,6 +486,73 @@ strings! {
 
     /// 새로 만드는 사이트의 기본 이름 (FR-27)
     site_default_name => "새 사이트" / "New site";
+
+    // ── 사이트 목록 내보내기·가져오기 (FR-59) ──
+    /// 파일 대화의 형식 필터 — 괄호 안은 실제 확장자다
+    file_dialog_filter
+        => "MOA 사이트 목록 (*.moasites)"
+        / "MOA site list (*.moasites)";
+    /// 내보내기 대화에 미리 채워 두는 파일 이름
+    file_dialog_export_name => "MOA 사이트.moasites" / "MOA sites.moasites";
+    /// 사이트 관리자 좌측 아랫줄 버튼 둘
+    site_export => "내보내기" / "Export";
+    site_import => "가져오기" / "Import";
+    /// 내보내기 암호 대화
+    site_export_title => "사이트 목록 내보내기" / "Export site list";
+    site_export_hint
+        => "등록된 사이트를 모두 파일 하나로 저장합니다."
+        / "Saves every registered site to a single file.";
+    site_export_passphrase => "암호:" / "Password:";
+    site_export_passphrase_again => "암호 확인:" / "Confirm password:";
+    /// 암호를 비웠을 때 무슨 일이 일어나는지 미리 알린다
+    site_export_empty_hint
+        => "암호를 비우면 비밀번호를 빼고 저장합니다."
+        / "Leave it empty to save without passwords.";
+    /// 잊으면 되돌릴 길이 없다는 것을 대화에서 못 박는다
+    site_export_forget_warning
+        => "암호를 잊으면 그 파일은 다시 열 수 없습니다."
+        / "If you forget this password, the file cannot be opened again.";
+    site_export_mismatch => "두 칸의 암호가 서로 다릅니다" / "The two passwords do not match";
+    /// 암호 없이 내보내기 직전의 되물음
+    site_export_empty_title => "비밀번호 없이 저장할까요?" / "Save without passwords?";
+    site_export_empty_detail
+        => "사이트 주소와 아이디는 저장되지만 비밀번호는 빠집니다. 옮긴 곳에서 다시 입력해야 합니다."
+        / "Addresses and user names are saved, but passwords are not. You will need to enter them again.";
+    /// 주 동작 버튼 — 「내보내기」와 겹치지 않게 「저장」으로 적는다
+    site_export_save => "저장" / "Save";
+    /// 가져오기 암호 대화
+    site_import_title => "사이트 목록 가져오기" / "Import site list";
+    site_import_passphrase_hint
+        => "이 파일은 암호로 보호되어 있습니다."
+        / "This file is protected with a password.";
+    site_import_open => "가져오기" / "Import";
+    /// 가져오기가 막힌 까닭들
+    site_import_wrong_passphrase
+        => "암호가 맞지 않습니다"
+        / "That password is not correct";
+    site_import_broken
+        => "이 파일은 MOA 사이트 목록이 아니거나 손상되었습니다"
+        / "This file is not a MOA site list, or it is damaged";
+    site_import_unsupported
+        => "더 새로운 버전에서 만든 파일이라 읽을 수 없습니다"
+        / "This file was made by a newer version and cannot be read";
+    site_import_read_failed => "파일을 읽지 못했습니다" / "Could not read the file";
+    site_import_empty => "파일에 사이트가 없습니다" / "The file contains no sites";
+    site_export_write_failed => "파일을 저장하지 못했습니다" / "Could not save the file";
+    site_export_seal_failed
+        => "암호로 보호하지 못해 저장을 멈췄습니다"
+        / "Stopped saving because the passwords could not be protected";
+    /// 파일 대화를 띄울 창을 찾지 못한 경우 — 실제로는 거의 없다
+    site_file_dialog_unavailable
+        => "파일 창을 열지 못했습니다"
+        / "Could not open the file window";
+    /// 겹치는 사이트 확인
+    site_conflict_title => "같은 서버가 이미 있습니다" / "These servers are already registered";
+    site_conflict_detail
+        => "덮어쓰면 그 사이트의 설정과 로그인 정보가 파일의 것으로 바뀝니다."
+        / "Overwriting replaces their settings and sign-in details with the ones in the file.";
+    site_conflict_overwrite => "덮어쓰기" / "Overwrite";
+    site_conflict_skip => "건너뛰기" / "Skip";
 
     // ── 원격 계층: 작업 이름 (오류 문구 앞에 붙는 동사 조각) ──
     /// `RemoteOp`가 이 함수들로 풀린다 — 조각과 문장 틀을 함께 옮겨야 뜻이 통한다
@@ -1003,6 +1075,73 @@ pub mod dynamic {
             Language::English => format!("{host} added · double-click to connect"),
         }
     }
+
+    /// 내보내기를 마친 뒤의 알림 (FR-59) — 비밀번호를 읽지 못한 것이 있으면 함께 알린다
+    pub fn site_export_done(count: usize, unreadable: usize) -> String {
+        let mut out = match current() {
+            Language::Korean => format!("사이트 {count}개를 저장했습니다"),
+            Language::English if count == 1 => "Saved 1 site".to_owned(),
+            Language::English => format!("Saved {count} sites"),
+        };
+        if unreadable > 0 {
+            match current() {
+                Language::Korean => {
+                    out.push_str(&format!(
+                        " · {unreadable}개는 비밀번호를 읽지 못해 뺐습니다"
+                    ));
+                }
+                Language::English => {
+                    out.push_str(&format!(
+                        " · {unreadable} of them lost their password (it could not be read)"
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// 가져오기를 마친 뒤의 알림 (FR-59)
+    pub fn site_import_done(
+        added: usize,
+        replaced: usize,
+        skipped: usize,
+        password_failed: usize,
+    ) -> String {
+        let mut out = match current() {
+            Language::Korean => format!("{added}개 추가 · {replaced}개 덮어씀"),
+            Language::English => format!("{added} added · {replaced} replaced"),
+        };
+        if skipped > 0 {
+            match current() {
+                Language::Korean => out.push_str(&format!(" · {skipped}개 건너뜀")),
+                Language::English => out.push_str(&format!(" · {skipped} skipped")),
+            }
+        }
+        if password_failed > 0 {
+            match current() {
+                Language::Korean => {
+                    out.push_str(&format!(
+                        " · {password_failed}개는 비밀번호를 저장하지 못했습니다"
+                    ));
+                }
+                Language::English => {
+                    out.push_str(&format!(
+                        " · {password_failed} could not have their password saved"
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// 겹치는 사이트 확인 대화의 첫 줄 (FR-59)
+    pub fn site_conflict_count(count: usize) -> String {
+        match current() {
+            Language::Korean => format!("사이트 {count}개가 이미 등록되어 있습니다."),
+            Language::English if count == 1 => "1 site is already registered.".to_owned(),
+            Language::English => format!("{count} sites are already registered."),
+        }
+    }
 }
 
 /// 전역 언어를 건드리는 시험끼리 겹치지 않게 한다.
@@ -1099,7 +1238,7 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 28] = [
+        const EXEMPT_LITERALS: [&str; 35] = [
             // 위젯 ID
             "정보 대화",
             "라이선스 대화",
@@ -1118,6 +1257,13 @@ mod tests {
             "사이트 관리자",
             "사이트 삭제 확인",
             "사이트 이름 바꾸기",
+            "사이트 내보내기",
+            "사이트 내보내기 확인",
+            "사이트 가져오기 암호",
+            "사이트 가져오기 충돌",
+            "내보내기 암호",
+            "내보내기 암호 확인",
+            "가져오기 암호",
             "원격 알림",
             // 글꼴 검증에 쓰는 내부 값 (`ui::font_scan`)
             "한글",

@@ -139,7 +139,7 @@ pub struct SiteRecord {
 pub const CONNECTION_LIMIT_RANGE: std::ops::RangeInclusive<u8> = 1..=10;
 
 impl SiteRecord {
-    /// 새 사이트의 기본값 — 사이트 관리자가 `새 사이트 추가…`에서 쓰는 초안
+    /// 새 사이트의 기본값 — 사이트 관리자가 빈 초안으로 열릴 때 쓴다
     pub fn new(id: SiteId, name: String) -> SiteRecord {
         let protocol = Protocol::Ftp;
         SiteRecord {

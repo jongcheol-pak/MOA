@@ -18,6 +18,21 @@ use crate::ui::theme;
 use crate::ui::widgets;
 use eframe::egui;
 
+/// 내보내기·가져오기 흐름 (FR-59) — 이 대화의 자식 모듈.
+///
+/// **부모의 자식으로 둔 이유**: 그 흐름은 `SiteManager`의 private 필드
+/// (`exchange`·`pending_file`·`notice`·`error`)를 직접 만진다. 형제 모듈로 두면 그 필드를
+/// `pub(crate)`로 넓혀야 하지만, 자식이면 가시성을 그대로 두고 나눌 수 있다
+/// (`ui::app`과 `ui::app::transfer_conflict`가 같은 배치다).
+///
+/// 나눈 까닭은 변경 이유가 둘이기 때문이다 — 사이트 목록을 고치는 일과 파일로 주고받는
+/// 일은 서로 다른 이유로 바뀐다 (AGENTS 「파일」 규약의 네 질문 중 ①·③).
+mod exchange;
+
+/// 앱이 이 이름으로 파일 요청을 받는다 — 실체는 자식 모듈에 있다 (FR-59)
+pub use exchange::FileRequest;
+use exchange::{Exchange, ExchangeAction};
+
 // ── 대화 치수 (원본 `FileExplorer-FTP.dc.html`, plan 시각 속성 표) ──
 /// 대화 크기 — 고정이다(`:385`)
 const DIALOG_WIDTH: f32 = 1080.0;
@@ -63,6 +78,9 @@ const SELECTED_FG: egui::Color32 = egui::Color32::WHITE;
 
 /// 좌측 버튼 3열 — `grid 1fr 1fr 1fr` gap 8px · `padding 2px 30px 6px` · 28px (`:407-409`)
 const GRID_GAP: f32 = 8.0;
+/// 버튼 줄이 둘이다 — 윗줄 `이름 바꾸기·삭제·복제`(원본), 아랫줄 `내보내기·가져오기`(FR-59).
+/// 아랫줄은 좌우 끝을 윗줄에 맞춰 **두 칸 균등**으로 나눈다 (plan D10)
+const GRID_ROWS: f32 = 2.0;
 const GRID_PAD_X: f32 = 30.0;
 const GRID_PAD_TOP: f32 = 2.0;
 const GRID_PAD_BOTTOM: f32 = 6.0;
@@ -211,6 +229,8 @@ struct BodyOutcome {
     /// 목록에서 새로 고른 사이트
     picked: Option<SiteId>,
     action: Option<ListAction>,
+    /// 내보내기·가져오기 버튼 (FR-59)
+    exchange: Option<ExchangeAction>,
     /// 이름 바꾸기가 끝났는가(Enter 또는 포커스 잃음)
     rename_done: bool,
 }
@@ -382,6 +402,12 @@ pub struct SiteManager {
     /// 삭제를 묻는 중인 사이트 — 확인 대화가 떠 있는 동안만 값이 있다.
     /// 되돌릴 수 없는 일이라 곧바로 지우지 않는다 (2026-08-16 검토)
     pending_delete: Option<SiteId>,
+    /// 내보내기·가져오기가 지나는 단계 (FR-59)
+    exchange: Exchange,
+    /// 앱에 청해 둔 파일 고르기 — 앱이 한 번 꺼내 가면 비워진다
+    pending_file: Option<FileRequest>,
+    /// 앱이 알림으로 띄울 결과 문구 — 마찬가지로 한 번만 꺼내 간다
+    notice: Option<String>,
 }
 
 impl SiteManager {
@@ -408,7 +434,7 @@ impl SiteManager {
         }
     }
 
-    /// `새 사이트 추가…`(인벤토리 #8) — **빈 초안**으로 연다.
+    /// 연결 메뉴의 `사이트 관리자`(인벤토리 #8) — **빈 초안**으로 연다.
     ///
     /// 이 진입점만 첫 항목을 고르지 않는다. 여기서 기존 사이트를 골라 두면 `확인(O)`이 그것을
     /// 덮어쓰게 되어, 디자인이 `새 사이트` 버튼을 없앤 뒤(README §9) 남은 유일한 추가 경로가 사라진다
@@ -432,6 +458,11 @@ impl SiteManager {
         self.open = false;
         // 묻던 것도 함께 접는다 — 남겨 두면 다음에 열 때 확인 대화부터 뜬다
         self.pending_delete = None;
+        // 내보내기·가져오기도 접는다 — **적어 둔 암호가 여기서 함께 사라진다** (FR-59).
+        // 아직 띄우지 못한 파일 대화 요청도 함께 버린다: 대화를 닫았다는 것은 그 흐름을
+        // 그만두겠다는 뜻이라, 닫은 뒤에 파일 창이 뒤늦게 뜨는 편이 오히려 놀랍다
+        self.exchange = Exchange::Idle;
+        self.pending_file = None;
         self.renaming = None;
         self.rename_focus = false;
         self.error = None;
@@ -568,10 +599,11 @@ impl SiteManager {
                 self.show_error_row(ui, error_row);
             },
         );
-        // 삭제를 묻는 동안에는 이 대화의 조작을 받지 않는다 — 위에 뜬 확인이 답을 기다린다.
+        // 위에 다른 대화가 떠 있는 동안에는 이 대화의 조작을 받지 않는다 — 그것이 답을 기다린다.
         // egui가 아래 모달의 입력을 막아 주지만 그 판정은 **다음 프레임**부터라, 묻기
-        // 시작한 그 프레임에 이 대화의 버튼이 함께 눌리는 것을 여기서 막는다
-        let asking = self.pending_delete.is_some();
+        // 시작한 그 프레임에 이 대화의 버튼이 함께 눌리는 것을 여기서 막는다.
+        // 내보내기·가져오기도 같다 (FR-59) — 파일 대화를 기다리는 동안도 포함한다
+        let asking = self.pending_delete.is_some() || self.exchange != Exchange::Idle;
         if let Some(index) = shell.clicked.filter(|_| !asking) {
             let connect = index == CONNECT_BUTTON;
             outcome = match index {
@@ -595,8 +627,13 @@ impl SiteManager {
         if let Some(action) = body.action {
             self.apply_list_action(action, store);
         }
+        if let Some(action) = body.exchange {
+            self.apply_exchange_action(action);
+        }
         // 삭제 확인은 **관리자 위에** 뜬다 — 뒤의 대화는 그대로 두고 답만 기다린다
         self.show_delete_confirm(ctx, store);
+        // 내보내기·가져오기 대화도 같은 자리다 (FR-59)
+        self.show_exchange(ctx, store);
         if shell.should_close && !asking {
             outcome = SiteManagerOutcome::Close;
         }
@@ -700,6 +737,7 @@ impl SiteManager {
         );
         let (picked, rename_done) = self.show_list(ui, left, store, connected);
         let action = self.show_list_buttons(ui, left);
+        let exchange = self.show_exchange_buttons(ui, left, store);
         self.show_tabs(ui, right);
         // 이미 연결된 사이트의 전송 모드를 바꿨으면 그 사실을 알린다 (plan Edge Case)
         let transfer_hint = self.selected.is_some_and(|id| {
@@ -712,6 +750,7 @@ impl SiteManager {
         BodyOutcome {
             picked,
             action,
+            exchange,
             rename_done,
         }
     }
@@ -781,9 +820,14 @@ impl SiteManager {
         (picked, rename_done)
     }
 
-    /// 버튼 3열이 시작하는 y — 목록 웰의 아래끝을 정하는 데도 쓴다
+    /// **윗줄** 버튼이 시작하는 y — 목록 웰의 아래끝을 정하는 데도 쓴다.
+    ///
+    /// 줄이 둘이 되면서 목록 웰이 한 줄 높이(28px)와 줄 간격(8px)만큼 짧아졌다 (plan D10)
     fn buttons_top(&self, column: egui::Rect) -> f32 {
-        column.bottom() - GRID_PAD_BOTTOM - GRID_BUTTON_HEIGHT
+        column.bottom()
+            - GRID_PAD_BOTTOM
+            - GRID_BUTTON_HEIGHT * GRID_ROWS
+            - GRID_GAP * (GRID_ROWS - 1.0)
     }
 
     /// 좌측 버튼 3열 (`:407-409`, 인벤토리 #63~65)
@@ -1376,6 +1420,10 @@ mod tests {
         assert_eq!(crate::i18n::site_rename(), "이름 바꾸기(R)");
         assert_eq!(crate::i18n::site_delete(), "삭제(D)");
         assert_eq!(crate::i18n::site_duplicate(), "복제(I)");
+        // 아래 둘은 **원본 인벤토리에 없는 항목**이다 — 사용자 요청(2026-08-20)으로 더한
+        // 내보내기·가져오기 버튼이며, 원본과 갈린 사실을 여기 적어 둔다 (FR-59)
+        assert_eq!(crate::i18n::site_export(), "내보내기");
+        assert_eq!(crate::i18n::site_import(), "가져오기");
         assert_eq!(crate::i18n::site_tab_general(), "일반");
         assert_eq!(crate::i18n::site_tab_transfer(), "전송 설정");
         assert_eq!(crate::i18n::site_tab_charset(), "문자셋");

@@ -1,8 +1,8 @@
 # Deferred 대장
 
 ## 대기
-- [2026-08-20] **`ui/toast.rs`의 `문구는_인벤토리_원문_그대로다`가 언어를 잠그지 않아 간헐 실패한다** — `cargo test`를 4회 돌리면 1회쯤 `862 passed; 1 failed`가 난다(2026-08-20 실측). 이 시험만 `i18n::LanguageGuard::lock`을 들지 않아, 영어를 잠그는 다른 시험(`i18n`·`about_dialog`·`settings_dialog`·`titlebar`)과 병렬로 돌면 영어 문구를 만난다. AGENTS.md 「화면 문구」 규약이 요구하는 잠금이 빠진 것이며 **한 줄이면 고쳐진다**(`let _guard = crate::i18n::LanguageGuard::lock(LanguageSetting::Korean);`). 이번 회차의 Files 밖이라 손대지 않았다 — 그대로 두면 앞으로도 「전건 통과」 보고가 확률적으로 흔들린다 (출처: 2026-08-20-menu-item-style F-7 M1)
 - [2026-08-20] `ui/app.rs`의 시험(현 18건)을 `app/tests.rs`로 뺄지 — `panel/tests.rs` 선례가 있다. 이번 회차는 **옮긴 자유 함수의 시험만** 따라 보냈고(충돌 7건 → `app/transfer_conflict.rs`, 원격 6건 → `app/remote.rs`) 나머지는 `app.rs`에 남겼다 (출처: 2026-08-20-app-rs-split D7, F-7 M1이 대장 누락을 잡음)
+- [2026-08-20] **재현하지 못한 `cargo test` 간헐 실패 1건** — 2026-08-20-site-export-import의 Phase F-2 첫 실행에서 `899 passed; 1 failed`가 났는데 **실패한 시험 이름을 잡지 못했고**(출력에서 놓쳤다) 이후 lib 6회 + 전체 8회, 합 14회 연속 통과로 재현되지 않았다. 같은 날 해소한 `toast.rs` 잠금 누락과는 다른 건이다(그것은 그 실행 이전에 이미 고쳐져 있었다). 2026-08-15 항목(「CPU가 붐빌 때 lib 시험 1건이 간헐 실패」)과 같은 것일 수 있으나 단정할 근거가 없다. **다음에 실패를 만나면 이름부터 확보할 것** — `cargo test 2>&1 | tee`로 로그를 남기고 돌린다
 - [2026-08-20] **[SUGGEST] `ui_sources` 재귀 헬퍼가 세 곳에 중복**(`theme.rs`·`dialog.rs`·`widgets.rs`, 바이트 단위로 동일) — 공통화 문턱 3회를 정확히 채웠다. plan이 든 보류 사유(「`#[cfg(test)]` 가시성 배선」)를 **quality 리뷰가 「과장됐다」고 지적했다** — `#[cfg(test)] pub(crate) fn`을 공통 모듈에 두는 것은 표준 패턴이다. 다만 이 레포에 그런 test-support 모듈 관례가 없어 신규 모듈을 여는 비용은 실재한다. 제안 형태: `src/ui/mod.rs`에 `#[cfg(test)] pub(crate) mod test_support;`. **네 번째 시험이 같은 헬퍼를 쓰게 되면 그때는 공용화가 명백하다** (출처: 2026-08-20-app-rs-split T3 quality m1)
 - [2026-08-20] **[SUGGEST] `app/remote.rs`(1038줄)를 손자 모듈로 더 쪼개기** — 세 관심사가 한 `impl` 블록에 있다(①연결 수명주기 ②원격 메뉴 대화 ③이벤트 폴링·트리 조회). 네 질문의 ①③이 「예」에 가깝다. **`pub(super)`는 `ui::app`의 후손 전체에 보이므로 손자 모듈(`remote::menu`·`remote::poll` 등)로 쪼개도 가시성 근거가 유지된다.** 이번엔 순수 이동 범위를 지켜 하지 않았다 (출처: 2026-08-20-app-rs-split T2 quality m1)
 - [2026-08-20] **[SUGGEST] 충돌 상태 6개 필드를 `ConflictState`로 묶기** — `pending_conflicts`·`conflict_tx/rx`·`conflict_lists`·`conflict_queue`·`conflict_dialog`·`next_conflict`를 모으면 `panel/workers.rs`의 `DirLoad`와 같은 캡슐화가 되고 자식 모듈에 노출되는 부모 필드가 6 → 1로 준다. 상태 필드 이동은 구조 변경이라 「순수 이동」 회차에서는 하지 않았다 (출처: 2026-08-20-app-rs-split T1 quality S1)
@@ -84,6 +84,10 @@
 - [2026-08-18] 라이선스 전문 라벨이 **파일 이름에 기대는 구간이 남아 있다** — `GPLv2`·`LIBM-MIT`·`UNICODE`·`BSD`는 `normalize_label`의 매핑에 없어 그대로 화면에 뜬다. 표기가 갈리는 것(`APACHE`·`mit` 등)만 맞췄고 나머지는 파일 이름이 더 정확하다고 보았다. 라이선스 텍스트를 실제로 판별하는 길이 생기면 다시 볼 자리. **폴백이 라벨을 넓히는 구간도 있다** — `LICENSE`·`COPYING`처럼 종류를 담지 않은 이름이면 그 크레이트의 **선언 전체**를 붙이므로, `miniz_oxide`의 MIT 본문에 `MIT OR Zlib OR Apache-2.0`이, `moxcms`·`pxfm`의 BSD 본문에 `BSD-3-Clause OR Apache-2.0`이 붙는다(틀린 라이선스를 붙이는 것은 아니고 표기가 넓어진다) (출처: 같은 plan T6 · F-7 1회차 m1 · 2회차 m1)
 
 ## 종결
+
+### 2026-08-20 — 사이트 목록 내보내기·가져오기 (plan `2026-08-20-site-export-import`)
+
+- [2026-08-20 → 2026-08-20] `ui/toast.rs`의 `문구는_인벤토리_원문_그대로다`가 언어를 잠그지 않아 간헐 실패 → **반영**(2026-08-20-site-export-import T4). 대장이 적은 대로 `LanguageGuard::lock` 한 줄로 끝났고 4회 연속 통과로 확인했다. 이번 회차의 Files 밖이었지만 남겨 두면 **이후 모든 task의 「전건 통과」 판정이 흔들려** 그 자리에서 고쳤다
 
 ### 2026-08-20 — 화면 확인 (사용자 수동 검증)
 
