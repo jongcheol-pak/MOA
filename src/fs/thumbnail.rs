@@ -319,7 +319,8 @@ fn make_thumbnail(path: &Path) -> Option<ThumbnailImage> {
 /// 32bpp 비트맵을 RGBA로 읽는다.
 ///
 /// `ui::icon_tex`의 아이콘 변환과 같은 GDI 절차지만 그쪽은 `ui` 계층이라 여기서 쓸 수 없다
-/// (`fs`는 `ui`를 모른다). 세 번째 사용처가 생기면 공통 위치를 찾는다.
+/// (`fs`는 `ui`를 모른다). **세 번째 사용처가 2026-08-21에 생겼다**(`fs::drag_image`) — 반환 형태가
+/// 서로 달라 그 회차에는 합치지 않고 Deferred 대장에 `[SUGGEST]`로 미뤘다.
 ///
 /// 안전성: 유효한 HBITMAP에만 호출한다. 내부에서 만든 DC는 이 함수에서 해제한다
 unsafe fn bitmap_to_rgba(bitmap: HBITMAP) -> Option<ThumbnailImage> {

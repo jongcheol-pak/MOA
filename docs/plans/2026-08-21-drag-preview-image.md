@@ -268,6 +268,9 @@
 
 ## Phase Ledger
 
+- **Phase F 통과** — `plan-completion-reviewer`가 BLOCKER 0·MAJOR 1·MINOR 3을 냈고 넷 모두 이번 변경이 유발한 기록·규약 어긋남이라 그 자리에서 해소했다(PRD 결정 이력 누락 · `thumbnail.rs` 주석 · 대장 미정리 · plan 기록 정합). 자기 유발 결함의 이연은 0건으로 확인됐다.
+- **Phase G 통과 (Must 100%)** — 이번 회차가 커버 대상으로 선언한 것은 FR-61 ⓑ(Should) 하나이며 코드 경로로 충족된다. **active Must FR 미충족 0건**이라 재루프 사유가 없다. 다만 FR-61의 검증 방법이 정한 대로 **끄는 동안 화면에 실제로 보이는 그림·문구는 HUMAN-VERIFY**로 남는다.
+
 ## Retry Ledger
 
 - T3: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 B1(모듈 doc 주석의 「직접 만드는 것은 `IDropSource` 하나」가 옛 문면 그대로)로 1회 되돌림. 수정이 주석 한 문단이라 증분 재리뷰 표 ①(실행 경로 무영향)에 해당해 재리뷰는 생략하고 `grep`으로 잔존 0건을 확인했다.
@@ -275,7 +278,9 @@
 ## Progress Log
 
 - T1-T2 완료 (커밋 9fb4a53, dc48bd6): PRD FR-61 ⓑ에 미리보기 그림 서술을 더하고, 셸 그림을 GDI 비트맵으로 만드는 `fs::drag_image`를 신설했다. 시험 5건 신규(픽셀 변환 2·경계 2·실제 셸 조회 1) — 실제 조회 시험이 `Some`을 강제하도록 고친 결과 **이 PC에서 셸 조회 경로가 실제로 돈다는 것이 확인**됐다(spec 리뷰 M1).
-- T3 완료 (커밋 후속): `start_copy_drag`에 `preview_px` 인자를 더하고 `DoDragDrop` 앞에서 헬퍼 → 문구 플래그 → 그림 → `InitializeFromBitmap` 순으로 얹는다. 호출부는 `ui::app::pump_export_drag` 한 곳이며 `96 × 배율`을 넘긴다. `AGENTS.md:98`의 UI 스레드 예외 열거도 함께 갱신했다.
+- T3 완료 (커밋 d745ed7): `start_copy_drag`에 `preview_px` 인자를 더하고 `DoDragDrop` 앞에서 헬퍼 → 문구 플래그 → 그림 → `InitializeFromBitmap` 순으로 얹는다. 호출부는 `ui::app::pump_export_drag` 한 곳이며 `96 × 배율`을 넘긴다. `AGENTS.md:98`의 UI 스레드 예외 열거도 함께 갱신했다.
+- T4 완료 (커밋 26630ff): README의 「끌어다 놓아 복사」에 그림·문구 한 구를 더했다.
+- Phase F 마무리 (F-7 지적 반영): PRD `## 결정 이력`에 2026-08-21 항목을 더하고(M1), `thumbnail.rs:322`의 「세 번째 사용처가 생기면」 주석을 실제 상태에 맞게 고쳤으며(m1), Deferred 대장에 이번 항목의 종결 표시와 신규 `[SUGGEST]` 1건을 넣었다(m2). DPI 재조회는 **액션이 없는 성질**이라 대장 대신 위키 `[PROJECT-FACT]` 큐와 이 회차 커밋에 남겼다.
 
 ## Next Steps
 
