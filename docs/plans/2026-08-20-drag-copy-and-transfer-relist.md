@@ -275,7 +275,7 @@
   - **Halt Forecast**: (i) 드래그 중 앱이 다시 그려지지 않으면 강조가 보이지 않는다 → OLE 드래그 중에도 winit이 `HoveredFile` 이벤트를 보내고 egui-winit이 `repaint: true`를 돌려준다(`egui-winit-0.35.0/src/lib.rs:445~455`)
   - **Depends on**: T5
 
-- [ ] T7. 앱에서 탐색기로 끌어내기
+- [x] T7. 앱에서 탐색기로 끌어내기
   - **Type**: D
   - **Design**: ① 신규 모듈 `src/fs/drag_source.rs` — `start_copy_drag(paths: &[PathBuf]) -> bool`이 경로마다 `SHParseDisplayName`으로 PIDL을 얻어(`windows-0.62.2/.../UI/Shell/mod.rs:3689`) `SHCreateShellItemArrayFromIDLists`(`:2807`)로 묶고, `IShellItemArray::BindToHandler(None, &BHID_DataObject, ...)`(`:6138`)로 `IDataObject`를 얻는다. 그 다음 최소 `IDropSource` 구현(`windows::core::implement`)과 함께 `DoDragDrop(..., DROPEFFECT_COPY, ...)`을 부른다. **PIDL은 얻은 쪽이 `CoTaskMemFree`로 되돌린다**(누수 방지). ② 발동은 `ui::app`의 **그리기가 모두 끝난 뒤**, 셸 메뉴·파일 대화와 같은 자리에서 셋 중 하나만 뜨게 상호 배제한다(`app.rs:1988~1999`의 기존 규칙). ③ 조건은 D7 — egui 드래그가 진행 중이고 실린 항목이 전부 로컬이며 **포인터가 뷰포트 밖으로 나갔을 때** 한 번만. 시작하면 egui 페이로드를 거둬 앱 안 드롭과 겹치지 않게 한다. ④ 의존 방향 — `fs::drag_source`는 `windows`와 `std`만 안다. ⑤ 비추상화 선언 — 드래그 이미지(`IDragSourceHelper`)·이동/링크 효과·원격 항목의 지연 렌더링은 만들지 않는다(Deferred)
   - **Acceptance**: Given 로컬 탭에서 파일·폴더를 골라 끌기 시작, When 포인터가 MOA 창 밖의 탐색기·바탕화면으로 나가 놓음, Then 그 자리에 복사된다. 창 안에서 놓으면 종전대로 앱 안 드롭(T4·기존 전송)이 처리한다. 원격 항목을 끌 때는 OLE 드래그가 시작되지 않는다. `cargo build`·`cargo test`·`cargo clippy -- -D warnings`가 경고 0으로 통과한다. 실제 드래그는 수동 검증
@@ -289,8 +289,8 @@
 
 - [ ] T8. README 갱신
   - **Type**: A
-  - **Acceptance**: Given 개정된 PRD와 구현된 동작, When README를 갱신, Then 드래그 관련 서술이 ⓐ 로컬↔원격 전송 ⓑ 로컬↔로컬 복사 ⓒ 탐색기에서 받기 ⓓ 탐색기로 내보내기(T7이 살아남은 경우만) ⓔ 전송 완료 후 원격 목록 자동 갱신을 모두 담고, **구현되지 않은 것이 하나도 적혀 있지 않다**(요청받지 않은 새 절(`##`)은 만들지 않는다)
-  - **Files**: 주: `README.md`
+  - **Acceptance**: Given 개정된 PRD와 구현된 동작, When README를 갱신, Then 드래그 관련 서술이 ⓐ 로컬↔원격 전송 ⓑ 로컬↔로컬 복사 ⓒ 탐색기에서 받기 ⓓ 탐색기로 내보내기(T7이 살아남은 경우만) ⓔ 전송 완료 후 원격 목록 자동 갱신을 모두 담고, **구현되지 않은 것이 하나도 적혀 있지 않다**(요청받지 않은 새 절(`##`)은 만들지 않는다) ⓕ `AGENTS.md`의 UI 스레드 블로킹 예외 목록이 세 건으로 갱신된다
+  - **Files**: 주: `README.md`, `AGENTS.md`(「UI 스레드 블로킹 호출 예외는 지금 둘뿐이다」가 이번 회차로 사실이 아니게 된다 — `fs::drag_source`의 `SHParseDisplayName`이 세 번째다. T7 quality 리뷰 m1)
   - **Edge Cases**: T7이 Halt로 빠졌으면 ⓓ를 적지 않는다 — README는 현재 존재하는 기능만 적는다
   - **Halt Forecast**: 없음 — 문서 갱신이라 파괴적·외부 요소가 없고, 유일한 분기(T7 실패 시 ⓓ 제외)는 위 Edge Cases가 이미 정한다
   - **Depends on**: T1, T2, T4, T5, T6, T7
@@ -334,6 +334,7 @@
 - T4: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 M1(필드 삽입으로 doc 주석 오귀속)로 1회 되돌림.
 - T5: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — quality 리뷰 M1(자유 항목 삽입으로 `NOTICE_SECS` doc 주석 오귀속)로 1회 되돌림. **세 회차 연속 같은 유형이다**(T2·T4·T5).
 - T6: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — quality 리뷰 M1(블록 삽입으로 `drive_observed` 주석과 그 `for`문의 인접성이 깨짐)로 1회 되돌림. **네 번째다** — 이번엔 `///`가 아니라 함수 본문 주석이었다.
+- T7: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — quality 리뷰 M1(주석 오귀속)로 1회 되돌림. **다섯 번째이며, T5에서 이미 `persist_session`의 주석까지 가로챈 것이 이번에야 드러났다** — 그때 내 V-8 자기점검이 「주석 일치」를 통과로 적었는데 실제로는 깨져 있었다.
 
 ## Progress Log
 
