@@ -86,7 +86,7 @@ pub fn unseal(sealed: &[u8]) -> Option<String> {
 /// **평범한 대입으로는 부족하다** — 그 뒤로 아무도 읽지 않는 저장이라 최적화가 통째로 지울 수
 /// 있고, 그러면 평문이 그대로 메모리에 남는다. volatile 쓰기로 지우고 울타리를 세워 그 저장이
 /// 사라지지 않게 한다(이것 하나 때문에 소거 전용 패키지를 들이지 않는다).
-fn zeroize(buffer: &mut [u8]) {
+pub(crate) fn zeroize(buffer: &mut [u8]) {
     for byte in buffer.iter_mut() {
         // 안전성: 유효한 가변 참조에서 얻은 포인터라 정렬·범위가 보장된다
         unsafe { std::ptr::write_volatile(byte, 0) };

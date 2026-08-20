@@ -12,6 +12,7 @@
 //! `std::thread` + 채널로 충분하다 (AGENTS 동시성 규약).
 pub mod charset;
 pub mod connection;
+pub mod envelope;
 pub mod ftp;
 pub mod hostkey;
 pub mod log;
