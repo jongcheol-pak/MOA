@@ -8,7 +8,10 @@
 //! 다만 사이트 목록 자체의 변경(이름 바꾸기·삭제·복제·등록)은 `SiteStore`를 직접 고친다:
 //! 평문 비밀번호를 봉인해 담을 수 있는 곳이 `SiteStore::set_password`뿐이라(FR-28),
 //! 초안을 값으로 넘기면 봉인 경로가 화면 쪽에 한 벌 더 생긴다.
+use std::path::PathBuf;
+
 use crate::remote::charset;
+use crate::remote::site_export::{self, ImportPlan, ImportSummary, SiteExport};
 use crate::remote::sites::SiteStore;
 use crate::remote::types::{
     CONNECTION_LIMIT_RANGE, Charset, Encryption, LogonType, Protocol, SiteId, TransferMode,
@@ -25,6 +28,15 @@ const DIALOG_HEIGHT: f32 = 680.0;
 /// 삭제 확인 대화의 본문 폭 — 워크스페이스 삭제 확인과 같은 값이다.
 /// 같은 성격의 물음이 자리마다 다른 크기로 뜨면 판이 흔들려 보인다
 const DELETE_CONFIRM_WIDTH: f32 = 360.0;
+/// 내보내기·가져오기 대화의 본문 폭 — 같은 이름 확인 대화(`remote_menu`)와 같은 값이다.
+/// 새 폭을 만들지 않는 것은 대화마다 폭이 갈리는 것을 더 늘리지 않기 위함이다
+const EXCHANGE_WIDTH: f32 = 420.0;
+/// 겹치는 사이트를 몇 개까지 미리 보일지 — 같은 이름 확인 대화와 같은 규칙이다
+const CONFLICT_PREVIEW: usize = 5;
+/// 대화 제목 글자 — 확인 대화들이 쓰는 값
+const DIALOG_TITLE_PX: f32 = 16.0;
+/// 미리 보기가 잘렸음을 알리는 표식 — 같은 이름 확인 대화와 같은 글자다
+const OVERFLOW_MARK: &str = "\u{2026}";
 /// 헤더 — 높이 40px · `padding 0 8px 0 16px` (`:386`)
 const HEADER_HEIGHT: f32 = 40.0;
 const HEADER_PAD_LEFT: f32 = 16.0;
@@ -63,6 +75,9 @@ const SELECTED_FG: egui::Color32 = egui::Color32::WHITE;
 
 /// 좌측 버튼 3열 — `grid 1fr 1fr 1fr` gap 8px · `padding 2px 30px 6px` · 28px (`:407-409`)
 const GRID_GAP: f32 = 8.0;
+/// 버튼 줄이 둘이다 — 윗줄 `이름 바꾸기·삭제·복제`(원본), 아랫줄 `내보내기·가져오기`(FR-59).
+/// 아랫줄은 좌우 끝을 윗줄에 맞춰 **두 칸 균등**으로 나눈다 (plan D10)
+const GRID_ROWS: f32 = 2.0;
 const GRID_PAD_X: f32 = 30.0;
 const GRID_PAD_TOP: f32 = 2.0;
 const GRID_PAD_BOTTOM: f32 = 6.0;
@@ -211,6 +226,8 @@ struct BodyOutcome {
     /// 목록에서 새로 고른 사이트
     picked: Option<SiteId>,
     action: Option<ListAction>,
+    /// 내보내기·가져오기 버튼 (FR-59)
+    exchange: Option<ExchangeAction>,
     /// 이름 바꾸기가 끝났는가(Enter 또는 포커스 잃음)
     rename_done: bool,
 }
@@ -221,6 +238,55 @@ enum ListAction {
     StartRename,
     Delete,
     Duplicate,
+}
+
+/// 좌측 아랫줄 버튼 둘 (FR-59)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExchangeAction {
+    Export,
+    Import,
+}
+
+/// 대화가 앱에 청하는 파일 고르기 (FR-59).
+///
+/// **사이트 관리자가 파일 대화를 직접 띄우지 않는다** (plan D7) — `IFileDialog::Show`가 자체
+/// 메시지 루프를 돌려 이벤트 루프를 재진입시키므로, egui가 위젯 트리를 만드는 도중에 부르면
+/// 안 된다. 여기서는 「필요하다」만 세워 두고 앱이 프레임을 다 그린 뒤 꺼내 간다
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileRequest {
+    /// 저장할 자리를 고른다 — `suggested`는 이름 칸에 미리 채울 이름이다
+    Save { suggested: String },
+    /// 열 파일을 고른다
+    Open,
+}
+
+/// 내보내기·가져오기가 지나는 단계 (FR-59).
+///
+/// 한 번에 하나만 진행한다 — 두 흐름이 겹치면 어느 대화가 어느 파일을 기다리는지 알 수 없다
+#[derive(Debug, Clone, PartialEq, Default)]
+enum Exchange {
+    #[default]
+    Idle,
+    /// 내보내기 암호를 받는 중
+    ExportAsk {
+        pass: String,
+        confirm: String,
+        error: Option<String>,
+    },
+    /// 암호를 비운 채 저장하려 한다 — 한 번 더 묻는다 (plan D6)
+    ExportConfirmEmpty,
+    /// 파일 저장 자리를 기다리는 중 — 암호를 들고 있다
+    ExportWaitFile { pass: String },
+    /// 열 파일을 기다리는 중
+    ImportWaitFile,
+    /// 가져올 파일의 암호를 받는 중
+    ImportAsk {
+        document: Box<SiteExport>,
+        pass: String,
+        error: Option<String>,
+    },
+    /// 겹치는 사이트를 어떻게 할지 묻는 중
+    ImportConflict { plan: Box<ImportPlan> },
 }
 
 /// 편집 중인 사이트 설정 한 벌.
@@ -382,6 +448,12 @@ pub struct SiteManager {
     /// 삭제를 묻는 중인 사이트 — 확인 대화가 떠 있는 동안만 값이 있다.
     /// 되돌릴 수 없는 일이라 곧바로 지우지 않는다 (2026-08-16 검토)
     pending_delete: Option<SiteId>,
+    /// 내보내기·가져오기가 지나는 단계 (FR-59)
+    exchange: Exchange,
+    /// 앱에 청해 둔 파일 고르기 — 앱이 한 번 꺼내 가면 비워진다
+    pending_file: Option<FileRequest>,
+    /// 앱이 알림으로 띄울 결과 문구 — 마찬가지로 한 번만 꺼내 간다
+    notice: Option<String>,
 }
 
 impl SiteManager {
@@ -432,6 +504,9 @@ impl SiteManager {
         self.open = false;
         // 묻던 것도 함께 접는다 — 남겨 두면 다음에 열 때 확인 대화부터 뜬다
         self.pending_delete = None;
+        // 내보내기·가져오기도 접는다 — **적어 둔 암호가 여기서 함께 사라진다** (FR-59)
+        self.exchange = Exchange::Idle;
+        self.pending_file = None;
         self.renaming = None;
         self.rename_focus = false;
         self.error = None;
@@ -568,10 +643,11 @@ impl SiteManager {
                 self.show_error_row(ui, error_row);
             },
         );
-        // 삭제를 묻는 동안에는 이 대화의 조작을 받지 않는다 — 위에 뜬 확인이 답을 기다린다.
+        // 위에 다른 대화가 떠 있는 동안에는 이 대화의 조작을 받지 않는다 — 그것이 답을 기다린다.
         // egui가 아래 모달의 입력을 막아 주지만 그 판정은 **다음 프레임**부터라, 묻기
-        // 시작한 그 프레임에 이 대화의 버튼이 함께 눌리는 것을 여기서 막는다
-        let asking = self.pending_delete.is_some();
+        // 시작한 그 프레임에 이 대화의 버튼이 함께 눌리는 것을 여기서 막는다.
+        // 내보내기·가져오기도 같다 (FR-59) — 파일 대화를 기다리는 동안도 포함한다
+        let asking = self.pending_delete.is_some() || self.exchange != Exchange::Idle;
         if let Some(index) = shell.clicked.filter(|_| !asking) {
             let connect = index == CONNECT_BUTTON;
             outcome = match index {
@@ -595,8 +671,13 @@ impl SiteManager {
         if let Some(action) = body.action {
             self.apply_list_action(action, store);
         }
+        if let Some(action) = body.exchange {
+            self.apply_exchange_action(action);
+        }
         // 삭제 확인은 **관리자 위에** 뜬다 — 뒤의 대화는 그대로 두고 답만 기다린다
         self.show_delete_confirm(ctx, store);
+        // 내보내기·가져오기 대화도 같은 자리다 (FR-59)
+        self.show_exchange(ctx, store);
         if shell.should_close && !asking {
             outcome = SiteManagerOutcome::Close;
         }
@@ -604,6 +685,404 @@ impl SiteManager {
             self.close(store);
         }
         outcome
+    }
+
+    /// 앱이 띄워 줄 파일 대화를 청한다 — **한 번 꺼내면 비워진다** (FR-59, plan D7).
+    ///
+    /// 앱은 이것을 프레임을 다 그린 뒤에 꺼내 실제 대화를 띄우고, 결과를 [`supply_file`]로 되돌린다
+    ///
+    /// [`supply_file`]: SiteManager::supply_file
+    pub fn take_file_request(&mut self) -> Option<FileRequest> {
+        self.pending_file.take()
+    }
+
+    /// 사용자가 고른 파일을 받아 하던 일을 잇는다. `None`이면 고르지 않았다는 뜻이다.
+    ///
+    /// 취소는 오류가 아니다 — 아무 말 없이 처음 상태로 돌아간다
+    pub fn supply_file(&mut self, path: Option<PathBuf>, store: &mut SiteStore) {
+        let stage = std::mem::take(&mut self.exchange);
+        let Some(path) = path else {
+            return;
+        };
+        match stage {
+            Exchange::ExportWaitFile { pass } => self.finish_export(&path, &pass, store),
+            Exchange::ImportWaitFile => self.begin_import(&path, store),
+            // 파일을 기다리던 중이 아니면 받을 것이 없다 — 상태만 되돌린다
+            other => self.exchange = other,
+        }
+    }
+
+    /// 앱이 알림으로 띄울 결과 문구 — 한 번 꺼내면 비워진다
+    pub fn take_notice(&mut self) -> Option<String> {
+        self.notice.take()
+    }
+
+    /// 좌측 아랫줄 버튼을 흐름으로 잇는다 (FR-59)
+    fn apply_exchange_action(&mut self, action: ExchangeAction) {
+        self.error = None;
+        self.exchange = match action {
+            ExchangeAction::Export => Exchange::ExportAsk {
+                pass: String::new(),
+                confirm: String::new(),
+                error: None,
+            },
+            ExchangeAction::Import => {
+                self.pending_file = Some(FileRequest::Open);
+                Exchange::ImportWaitFile
+            }
+        };
+    }
+
+    /// 고른 자리에 문서를 쓴다 (FR-59)
+    fn finish_export(&mut self, path: &std::path::Path, passphrase: &str, store: &SiteStore) {
+        let outcome = match site_export::build(store, passphrase) {
+            Ok(outcome) => outcome,
+            Err(site_export::ExportError::Seal) => {
+                self.error = Some(crate::i18n::site_export_seal_failed().to_owned());
+                return;
+            }
+            Err(_) => {
+                self.error = Some(crate::i18n::site_export_write_failed().to_owned());
+                return;
+            }
+        };
+        if site_export::write_file(path, &outcome.document).is_err() {
+            self.error = Some(crate::i18n::site_export_write_failed().to_owned());
+            return;
+        }
+        self.notice = Some(crate::i18n::dynamic::site_export_done(
+            outcome.document.sites.len(),
+            outcome.password_unreadable,
+        ));
+    }
+
+    /// 고른 파일을 읽어 다음 단계를 정한다 — 암호가 필요하면 묻고, 아니면 곧바로 계획을 세운다
+    fn begin_import(&mut self, path: &std::path::Path, store: &mut SiteStore) {
+        let document = match site_export::read_file(path) {
+            Ok(document) => document,
+            Err(error) => {
+                self.error = Some(import_error_text(&error).to_owned());
+                return;
+            }
+        };
+        if site_export::needs_passphrase(&document) {
+            self.exchange = Exchange::ImportAsk {
+                document: Box::new(document),
+                pass: String::new(),
+                error: None,
+            };
+            return;
+        }
+        self.settle_import(&document, "", store);
+    }
+
+    /// 문서로 계획을 세운다 — 겹치는 것이 있으면 묻고, 없으면 그대로 반영한다.
+    ///
+    /// 암호가 틀리면 `false`를 돌려준다(호출부가 대화 안에 사유를 남긴다)
+    fn settle_import(
+        &mut self,
+        document: &SiteExport,
+        passphrase: &str,
+        store: &mut SiteStore,
+    ) -> bool {
+        let plan = match site_export::plan_import(document, store, passphrase) {
+            Ok(plan) => plan,
+            Err(site_export::ImportError::WrongPassphrase) => return false,
+            Err(error) => {
+                self.error = Some(import_error_text(&error).to_owned());
+                return true;
+            }
+        };
+        if plan.is_empty() {
+            self.error = Some(crate::i18n::site_import_empty().to_owned());
+            return true;
+        }
+        if plan.conflicts.is_empty() {
+            let summary = site_export::apply_import(store, &plan, false);
+            self.report_import(summary);
+        } else {
+            self.exchange = Exchange::ImportConflict {
+                plan: Box::new(plan),
+            };
+        }
+        true
+    }
+
+    /// 반영 결과를 알림 문구로 만든다
+    fn report_import(&mut self, summary: ImportSummary) {
+        self.notice = Some(crate::i18n::dynamic::site_import_done(
+            summary.added,
+            summary.replaced,
+            summary.skipped,
+            summary.password_failed,
+        ));
+    }
+
+    /// 내보내기·가져오기 대화들을 그린다 — 한 번에 하나만 뜬다 (FR-59)
+    fn show_exchange(&mut self, ctx: &egui::Context, store: &mut SiteStore) {
+        match std::mem::take(&mut self.exchange) {
+            Exchange::Idle => {}
+            Exchange::ExportAsk {
+                pass,
+                confirm,
+                error,
+            } => self.show_export_ask(ctx, pass, confirm, error),
+            Exchange::ExportConfirmEmpty => self.show_export_empty_confirm(ctx),
+            Exchange::ImportAsk {
+                document,
+                pass,
+                error,
+            } => self.show_import_ask(ctx, document, pass, error, store),
+            Exchange::ImportConflict { plan } => self.show_import_conflict(ctx, plan, store),
+            // 파일을 기다리는 동안에는 대화를 그리지 않는다 — 앱이 띄운 파일 대화가 화면을 쥔다
+            waiting => self.exchange = waiting,
+        }
+    }
+
+    /// 내보내기 암호 대화 (FR-59)
+    fn show_export_ask(
+        &mut self,
+        ctx: &egui::Context,
+        mut pass: String,
+        mut confirm: String,
+        mut error: Option<String>,
+    ) {
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::site_export_save()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("사이트 내보내기"),
+            EXCHANGE_WIDTH,
+            &buttons,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_export_title())
+                        .size(DIALOG_TITLE_PX)
+                        .color(theme::TEXT),
+                );
+                ui.add_space(8.0);
+                ui.label(crate::i18n::site_export_hint());
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_export_empty_hint())
+                        .color(theme::TEXT_MUTED),
+                );
+                ui.add_space(10.0);
+                passphrase_row(
+                    ui,
+                    crate::i18n::site_export_passphrase(),
+                    "내보내기 암호",
+                    &mut pass,
+                );
+                ui.add_space(6.0);
+                passphrase_row(
+                    ui,
+                    crate::i18n::site_export_passphrase_again(),
+                    "내보내기 암호 확인",
+                    &mut confirm,
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_export_forget_warning())
+                        .color(theme::TEXT_MUTED),
+                );
+                if let Some(reason) = &error {
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(reason.as_str()).color(theme::ERROR_TEXT));
+                }
+            },
+        );
+
+        if shell.should_close || shell.clicked == Some(1) {
+            return;
+        }
+        if shell.clicked != Some(0) {
+            // 아직 고르지 않았다 — 적던 것을 그대로 들고 다음 프레임으로 간다
+            self.exchange = Exchange::ExportAsk {
+                pass,
+                confirm,
+                error,
+            };
+            return;
+        }
+        if pass != confirm {
+            error = Some(crate::i18n::site_export_mismatch().to_owned());
+            self.exchange = Exchange::ExportAsk {
+                pass,
+                confirm,
+                error,
+            };
+            return;
+        }
+        if pass.is_empty() {
+            // 비밀번호 없이 저장하는 것이 맞는지 한 번 더 묻는다 (plan D6)
+            self.exchange = Exchange::ExportConfirmEmpty;
+            return;
+        }
+        self.request_export_file(pass);
+    }
+
+    /// 저장할 자리를 앱에 청하고 암호를 들고 기다린다
+    fn request_export_file(&mut self, pass: String) {
+        self.pending_file = Some(FileRequest::Save {
+            suggested: crate::i18n::file_dialog_export_name().to_owned(),
+        });
+        self.exchange = Exchange::ExportWaitFile { pass };
+    }
+
+    /// 암호 없이 저장하기 직전의 되물음 (plan D6)
+    fn show_export_empty_confirm(&mut self, ctx: &egui::Context) {
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::site_export_save()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("사이트 내보내기 확인"),
+            DELETE_CONFIRM_WIDTH,
+            &buttons,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_export_empty_title())
+                        .size(DIALOG_TITLE_PX)
+                        .color(theme::TEXT),
+                );
+                ui.add_space(8.0);
+                ui.label(crate::i18n::site_export_empty_detail());
+            },
+        );
+        match shell.clicked {
+            Some(0) => self.request_export_file(String::new()),
+            Some(_) => {}
+            None => {
+                if !shell.should_close {
+                    self.exchange = Exchange::ExportConfirmEmpty;
+                }
+            }
+        }
+    }
+
+    /// 가져오기 암호 대화 (FR-59)
+    fn show_import_ask(
+        &mut self,
+        ctx: &egui::Context,
+        document: Box<SiteExport>,
+        mut pass: String,
+        mut error: Option<String>,
+        store: &mut SiteStore,
+    ) {
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::site_import_open()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("사이트 가져오기 암호"),
+            EXCHANGE_WIDTH,
+            &buttons,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_import_title())
+                        .size(DIALOG_TITLE_PX)
+                        .color(theme::TEXT),
+                );
+                ui.add_space(8.0);
+                ui.label(crate::i18n::site_import_passphrase_hint());
+                ui.add_space(10.0);
+                passphrase_row(
+                    ui,
+                    crate::i18n::site_export_passphrase(),
+                    "가져오기 암호",
+                    &mut pass,
+                );
+                if let Some(reason) = &error {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(reason.as_str()).color(theme::ERROR_TEXT));
+                }
+            },
+        );
+
+        if shell.should_close || shell.clicked == Some(1) {
+            return;
+        }
+        if shell.clicked != Some(0) {
+            self.exchange = Exchange::ImportAsk {
+                document,
+                pass,
+                error,
+            };
+            return;
+        }
+        if self.settle_import(&document, &pass, store) {
+            return;
+        }
+        // 암호가 맞지 않았다 — 대화를 그대로 두고 사유만 남긴다
+        error = Some(crate::i18n::site_import_wrong_passphrase().to_owned());
+        self.exchange = Exchange::ImportAsk {
+            document,
+            pass,
+            error,
+        };
+    }
+
+    /// 겹치는 사이트 확인 (FR-59) — 같은 이름 확인 대화와 같은 구성이다 (plan D4)
+    fn show_import_conflict(
+        &mut self,
+        ctx: &egui::Context,
+        plan: Box<ImportPlan>,
+        store: &mut SiteStore,
+    ) {
+        let names = plan.conflict_names();
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::site_conflict_overwrite()),
+            dialog::ButtonSpec::plain(crate::i18n::site_conflict_skip()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("사이트 가져오기 충돌"),
+            EXCHANGE_WIDTH,
+            &buttons,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_conflict_title())
+                        .size(DIALOG_TITLE_PX)
+                        .color(theme::TEXT),
+                );
+                ui.add_space(8.0);
+                ui.label(crate::i18n::dynamic::site_conflict_count(names.len()));
+                for name in names.iter().take(CONFLICT_PREVIEW) {
+                    ui.label(egui::RichText::new(name.as_str()).color(theme::TEXT_MUTED));
+                }
+                if names.len() > CONFLICT_PREVIEW {
+                    ui.label(egui::RichText::new(OVERFLOW_MARK).color(theme::TEXT_MUTED));
+                }
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(crate::i18n::site_conflict_detail())
+                        .color(theme::ERROR_TEXT),
+                );
+            },
+        );
+
+        match shell.clicked {
+            Some(0) => {
+                let summary = site_export::apply_import(store, &plan, true);
+                self.report_import(summary);
+            }
+            Some(1) => {
+                let summary = site_export::apply_import(store, &plan, false);
+                self.report_import(summary);
+            }
+            // 취소는 아무것도 하지 않는다 — 절반만 들어오는 일이 없게 한다
+            Some(_) => {}
+            None => {
+                if !shell.should_close {
+                    self.exchange = Exchange::ImportConflict { plan };
+                }
+            }
+        }
     }
 
     /// 사이트 삭제 확인 (2026-08-16 검토) — 워크스페이스 삭제 대화와 같은 구성이다.
@@ -700,6 +1179,7 @@ impl SiteManager {
         );
         let (picked, rename_done) = self.show_list(ui, left, store, connected);
         let action = self.show_list_buttons(ui, left);
+        let exchange = self.show_exchange_buttons(ui, left, store);
         self.show_tabs(ui, right);
         // 이미 연결된 사이트의 전송 모드를 바꿨으면 그 사실을 알린다 (plan Edge Case)
         let transfer_hint = self.selected.is_some_and(|id| {
@@ -712,6 +1192,7 @@ impl SiteManager {
         BodyOutcome {
             picked,
             action,
+            exchange,
             rename_done,
         }
     }
@@ -781,8 +1262,18 @@ impl SiteManager {
         (picked, rename_done)
     }
 
-    /// 버튼 3열이 시작하는 y — 목록 웰의 아래끝을 정하는 데도 쓴다
+    /// **윗줄** 버튼이 시작하는 y — 목록 웰의 아래끝을 정하는 데도 쓴다.
+    ///
+    /// 줄이 둘이 되면서 목록 웰이 한 줄 높이(28px)와 줄 간격(8px)만큼 짧아졌다 (plan D10)
     fn buttons_top(&self, column: egui::Rect) -> f32 {
+        column.bottom()
+            - GRID_PAD_BOTTOM
+            - GRID_BUTTON_HEIGHT * GRID_ROWS
+            - GRID_GAP * (GRID_ROWS - 1.0)
+    }
+
+    /// 아랫줄 버튼이 시작하는 y
+    fn export_buttons_top(&self, column: egui::Rect) -> f32 {
         column.bottom() - GRID_PAD_BOTTOM - GRID_BUTTON_HEIGHT
     }
 
@@ -807,6 +1298,61 @@ impl SiteManager {
             (crate::i18n::site_rename(), ListAction::StartRename),
             (crate::i18n::site_delete(), ListAction::Delete),
             (crate::i18n::site_duplicate(), ListAction::Duplicate),
+        ] {
+            let clicked = child
+                .add_enabled_ui(enabled, |ui| {
+                    widgets::design_button(
+                        ui,
+                        label,
+                        if enabled {
+                            theme::TEXT_BUTTON
+                        } else {
+                            theme::TEXT_DIM
+                        },
+                        0.0,
+                        egui::vec2(button_width, GRID_BUTTON_HEIGHT),
+                    )
+                })
+                .inner
+                .clicked();
+            if clicked {
+                action = Some(candidate);
+            }
+        }
+        action
+    }
+
+    /// 좌측 버튼 아랫줄 — `내보내기`·`가져오기` 두 칸 (FR-59, plan D10).
+    ///
+    /// 윗줄 셋과 좌우 끝을 맞추고 폭만 둘로 나눈다. **`내보내기`는 등록된 사이트가 없으면
+    /// 비활성**이다(내보낼 것이 없다). `가져오기`는 목록이 비어 있어도 할 일이 있으므로 늘 활성이다
+    fn show_exchange_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        column: egui::Rect,
+        store: &SiteStore,
+    ) -> Option<ExchangeAction> {
+        let top = self.export_buttons_top(column);
+        let grid = egui::Rect::from_min_max(
+            egui::pos2(column.left() + GRID_PAD_X, top),
+            egui::pos2(column.right() - GRID_PAD_X, top + GRID_BUTTON_HEIGHT),
+        );
+        let button_width = (grid.width() - GRID_GAP) / 2.0;
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(grid)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.spacing_mut().item_spacing.x = GRID_GAP;
+
+        let mut action = None;
+        for (label, candidate, enabled) in [
+            (
+                crate::i18n::site_export(),
+                ExchangeAction::Export,
+                !store.is_empty(),
+            ),
+            (crate::i18n::site_import(), ExchangeAction::Import, true),
         ] {
             let clicked = child
                 .add_enabled_ui(enabled, |ui| {
@@ -1241,6 +1787,38 @@ impl SiteManager {
     }
 }
 
+/// 암호 한 줄 — 라벨과 가려진 입력칸. 내보내기·가져오기 대화가 함께 쓴다 (FR-59).
+///
+/// `id_salt`는 같은 화면의 입력칸끼리 위젯 상태가 섞이지 않게 한다 — 화면 언어를 따르면
+/// 언어를 바꿀 때 적던 글자가 사라지므로 **번역하지 않는다** (AGENTS i18n 예외)
+fn passphrase_row(ui: &mut egui::Ui, label: &str, id_salt: &str, value: &mut String) {
+    ui.horizontal(|ui| {
+        widgets::form_inline_label(ui, label, true);
+        let width = (ui.available_width() - widgets::FORM_GAP).max(0.0);
+        widgets::text_field(
+            ui,
+            id_salt,
+            value,
+            egui::vec2(width, widgets::FORM_FIELD_HEIGHT),
+            true,
+            true,
+        );
+    });
+}
+
+/// 가져오기가 막힌 까닭을 사용자 문구로 옮긴다 (FR-59).
+///
+/// `ImportError::WrongPassphrase`는 여기서 다루지 않는다 — 그것만은 대화를 닫지 않고
+/// 그 안에 남기므로 부르는 자리가 다르다
+fn import_error_text(error: &site_export::ImportError) -> &'static str {
+    match error {
+        site_export::ImportError::Unsupported => crate::i18n::site_import_unsupported(),
+        site_export::ImportError::Io(_) => crate::i18n::site_import_read_failed(),
+        // 손상된 파일과 남은 갈래(암호는 위에서 걸러진다)는 같은 문구로 알린다
+        _ => crate::i18n::site_import_broken(),
+    }
+}
+
 /// 목록의 한 줄 — 아이콘·이름. 눌렸으면 `true` (`:396-404`)
 fn show_site_row(ui: &mut egui::Ui, name: &str, dot: egui::Color32, selected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
@@ -1376,6 +1954,10 @@ mod tests {
         assert_eq!(crate::i18n::site_rename(), "이름 바꾸기(R)");
         assert_eq!(crate::i18n::site_delete(), "삭제(D)");
         assert_eq!(crate::i18n::site_duplicate(), "복제(I)");
+        // 아래 둘은 **원본 인벤토리에 없는 항목**이다 — 사용자 요청(2026-08-20)으로 더한
+        // 내보내기·가져오기 버튼이며, 원본과 갈린 사실을 여기 적어 둔다 (FR-59)
+        assert_eq!(crate::i18n::site_export(), "내보내기");
+        assert_eq!(crate::i18n::site_import(), "가져오기");
         assert_eq!(crate::i18n::site_tab_general(), "일반");
         assert_eq!(crate::i18n::site_tab_transfer(), "전송 설정");
         assert_eq!(crate::i18n::site_tab_charset(), "문자셋");
@@ -1865,5 +2447,253 @@ mod tests {
                 manager.show(ui.ctx(), &mut store, &[]);
             });
         }
+    }
+
+    /// 내보내기·가져오기 시험용 — 사이트 둘과 비밀번호 하나를 채운 관리자
+    fn manager_with_two_sites() -> (SiteManager, SiteStore) {
+        let mut store = SiteStore::new();
+        let first = store.add("배포 서버");
+        if let Some(record) = store.get_mut(first) {
+            record.host = "deploy.test".to_owned();
+            record.user = "deploy".to_owned();
+        }
+        assert!(store.set_password(first, "비밀!1234"));
+        let second = store.add("스테이징");
+        if let Some(record) = store.get_mut(second) {
+            record.host = "stage.test".to_owned();
+            record.user = "stage".to_owned();
+        }
+        let mut manager = SiteManager::new();
+        manager.open_new();
+        (manager, store)
+    }
+
+    /// 시험용 임시 파일 자리 — 이름을 시험마다 갈라 서로 밟지 않게 한다
+    fn temp_path(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("moa-site-manager-test");
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join(format!("{tag}.moasites"))
+    }
+
+    #[test]
+    fn 내보내기는_암호를_받고_파일을_청한다() {
+        let (mut manager, mut store) = manager_with_two_sites();
+        assert_eq!(manager.exchange, Exchange::Idle);
+
+        // 버튼을 누르면 암호를 받는 단계로 간다
+        manager.apply_exchange_action(ExchangeAction::Export);
+        let Exchange::ExportAsk { .. } = &manager.exchange else {
+            panic!("암호 단계가 아니다: {:?}", manager.exchange);
+        };
+        assert_eq!(
+            manager.take_file_request(),
+            None,
+            "아직 파일을 청하지 않는다"
+        );
+
+        // 암호가 맞으면 파일 자리를 청하고 그 암호를 들고 기다린다
+        manager.request_export_file("암호".to_owned());
+        assert_eq!(
+            manager.exchange,
+            Exchange::ExportWaitFile {
+                pass: "암호".to_owned()
+            }
+        );
+        let request = manager.take_file_request().expect("파일 요청");
+        assert!(matches!(request, FileRequest::Save { .. }));
+        assert_eq!(manager.take_file_request(), None, "한 번만 꺼내 간다");
+
+        // 파일을 받으면 쓰고 알림을 남긴 뒤 처음 상태로 돌아간다
+        let path = temp_path("export");
+        manager.supply_file(Some(path.clone()), &mut store);
+        assert_eq!(manager.exchange, Exchange::Idle);
+        assert_eq!(manager.error, None);
+        let notice = manager.take_notice().expect("결과 알림");
+        assert!(notice.contains('2'), "사이트 수가 없다: {notice}");
+        assert!(path.exists(), "파일이 만들어지지 않았다");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 내보내기를_취소하면_아무_일도_없다() {
+        let (mut manager, mut store) = manager_with_two_sites();
+        manager.request_export_file("암호".to_owned());
+        let _ = manager.take_file_request();
+        manager.supply_file(None, &mut store);
+        assert_eq!(manager.exchange, Exchange::Idle);
+        assert_eq!(manager.take_notice(), None);
+        assert_eq!(manager.error, None);
+    }
+
+    #[test]
+    fn 가져오기는_파일을_청하고_겹치면_묻는다() {
+        // 먼저 파일을 하나 만들어 둔다
+        let (mut manager, mut store) = manager_with_two_sites();
+        let path = temp_path("import-conflict");
+        manager.request_export_file(String::new());
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(path.clone()), &mut store);
+        let _ = manager.take_notice();
+
+        // 같은 목록에 그대로 가져오면 둘 다 겹친다
+        manager.apply_exchange_action(ExchangeAction::Import);
+        assert_eq!(manager.exchange, Exchange::ImportWaitFile);
+        assert_eq!(manager.take_file_request(), Some(FileRequest::Open));
+        manager.supply_file(Some(path.clone()), &mut store);
+        let Exchange::ImportConflict { plan } = &manager.exchange else {
+            panic!("충돌 단계가 아니다: {:?}", manager.exchange);
+        };
+        assert_eq!(plan.conflict_names().len(), 2);
+        assert!(plan.fresh.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 암호로_보호된_파일은_암호를_묻는다() {
+        let (mut manager, mut store) = manager_with_two_sites();
+        let path = temp_path("import-passphrase");
+        manager.request_export_file("맞는 암호".to_owned());
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(path.clone()), &mut store);
+        let _ = manager.take_notice();
+
+        // 빈 목록으로 가져오면 겹치는 것이 없다
+        let mut target = SiteStore::new();
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(path.clone()), &mut target);
+        let Exchange::ImportAsk { document, .. } = &manager.exchange else {
+            panic!("암호 단계가 아니다: {:?}", manager.exchange);
+        };
+        // 빌려 온 것을 먼저 복사해 둔다 — 아래에서 `manager`를 가변으로 빌려야 한다
+        let document = document.clone();
+        assert_eq!(document.sites.len(), 2);
+
+        // 틀린 암호는 계획을 세우지 못한다 — 저장소도 그대로다
+        assert!(!manager.settle_import(&document, "틀린 암호", &mut target));
+        assert!(target.is_empty());
+
+        // 맞는 암호면 겹치는 것이 없으므로 곧바로 반영된다
+        assert!(manager.settle_import(&document, "맞는 암호", &mut target));
+        assert_eq!(target.sites().len(), 2);
+        assert_eq!(
+            target.password(target.sites()[0].id).as_deref(),
+            Some("비밀!1234")
+        );
+        assert!(manager.take_notice().is_some());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 우리_파일이_아니면_사유를_남긴다() {
+        let (mut manager, mut store) = manager_with_two_sites();
+        let path = temp_path("broken");
+        std::fs::write(&path, "이건 우리 파일이 아니다").expect("임시 파일");
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(path.clone()), &mut store);
+        assert_eq!(manager.exchange, Exchange::Idle);
+        assert_eq!(manager.take_notice(), None);
+        assert!(manager.error.is_some(), "사유가 남지 않았다");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 사이트가_없으면_가져올_것도_없다고_알린다() {
+        // 빈 목록을 내보낸 파일을 다시 가져오는 경우
+        let mut store = SiteStore::new();
+        let mut manager = SiteManager::new();
+        manager.open_new();
+        let path = temp_path("empty");
+        manager.request_export_file(String::new());
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(path.clone()), &mut store);
+        let _ = manager.take_notice();
+
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(path.clone()), &mut store);
+        assert!(manager.error.is_some(), "빈 파일이라는 사유가 없다");
+        assert_eq!(manager.exchange, Exchange::Idle);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 대화를_닫으면_적던_암호가_함께_사라진다() {
+        let (mut manager, mut store) = manager_with_two_sites();
+        manager.exchange = Exchange::ExportAsk {
+            pass: "적던 암호".to_owned(),
+            confirm: "적던 암호".to_owned(),
+            error: None,
+        };
+        manager.pending_file = Some(FileRequest::Open);
+        manager.close(&mut store);
+        assert_eq!(manager.exchange, Exchange::Idle);
+        assert_eq!(manager.pending_file, None);
+    }
+
+    #[test]
+    fn 파일을_기다리던_중이_아니면_받을_것이_없다() {
+        let (mut manager, mut store) = manager_with_two_sites();
+        manager.exchange = Exchange::ExportConfirmEmpty;
+        manager.supply_file(Some(temp_path("stray")), &mut store);
+        assert_eq!(
+            manager.exchange,
+            Exchange::ExportConfirmEmpty,
+            "하던 단계를 잃지 않는다"
+        );
+        assert_eq!(manager.take_notice(), None);
+    }
+
+    #[test]
+    fn 내보내기는_사이트가_있을_때만_누를_수_있다() {
+        // 활성 판정은 `show_exchange_buttons`가 `store.is_empty()`로 한다 —
+        // 그리기 없이 그 조건만 견준다
+        let store = SiteStore::new();
+        assert!(store.is_empty(), "빈 목록이면 내보낼 것이 없다");
+        let (_, filled) = manager_with_two_sites();
+        assert!(!filled.is_empty(), "사이트가 있으면 누를 수 있다");
+    }
+
+    #[test]
+    fn 내보내기_대화가_한_프레임을_그린다() {
+        // 대화 넷의 그리기 경로가 패닉 없이 도는지 본다 (FR-59)
+        let (mut manager, mut store) = manager_with_two_sites();
+        let ctx = egui::Context::default();
+        let stages = [
+            Exchange::ExportAsk {
+                pass: "암호".to_owned(),
+                confirm: String::new(),
+                error: Some("서로 다릅니다".to_owned()),
+            },
+            Exchange::ExportConfirmEmpty,
+        ];
+        for stage in stages {
+            manager.exchange = stage;
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                manager.show(ui.ctx(), &mut store, &[]);
+            });
+        }
+
+        // 가져오기 쪽 둘은 문서·계획이 있어야 한다
+        let document = site_export::build(&store, "암호")
+            .expect("내보내기")
+            .document;
+        manager.exchange = Exchange::ImportAsk {
+            document: Box::new(document.clone()),
+            pass: String::new(),
+            error: Some("맞지 않습니다".to_owned()),
+        };
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+        });
+
+        let plan = site_export::plan_import(&document, &store, "암호").expect("계획");
+        manager.exchange = Exchange::ImportConflict {
+            plan: Box::new(plan),
+        };
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+        });
     }
 }

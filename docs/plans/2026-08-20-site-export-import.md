@@ -319,7 +319,7 @@
     - (i) `IFileDialog`의 Rust 바인딩 형태(`IShellItem`→경로 추출)가 막힘 → `GetResult` → `GetDisplayName(SIGDN_FILESYSPATH)` → `PWSTR` 해제까지가 이 task의 정해진 경로다. 그 절차는 `fs::shell_menu`가 이미 쓰는 PIDL·PWSTR 해제 방식과 같다
   - **Depends on**: -
 
-- [ ] T4. 사이트 관리자에 버튼 두 개와 대화 두 개를 더한다
+- [x] T4. 사이트 관리자에 버튼 두 개와 대화 네 개를 더한다
   - **Type**: D
   - **Design**: ① 배치 — `src/ui/site_manager.rs` 안. ② 신규 심볼 — `FileRequest { Save { suggested: String }, Open }`(공개 — 앱이 받는다), `SiteManager::take_file_request() -> Option<FileRequest>`, `SiteManager::supply_file(&mut self, path: Option<PathBuf>, store: &mut SiteStore)`, `SiteManager::take_notice() -> Option<String>`(가져오기·내보내기 결과 문구를 앱이 토스트로 띄운다 — **봉인·해제 실패 건수가 0이 아니면 그 사실을 문구에 함께 담는다**, D15), 내부 `Exchange`(진행 상태: `Idle` / `ExportAsk { pass, confirm, error }` / `ExportConfirmEmpty { pass }` / `ExportWaitFile { pass }` / `ImportWaitFile` / `ImportAsk { doc, pass, error }` / `ImportConflict { plan }`), `show_export_dialog`·`show_import_passphrase_dialog`·`show_import_conflict_dialog`(전부 `dialog::show`를 거친다), 좌측 아랫줄을 그리는 `show_export_buttons`. ③ 의존 — `remote::site_export`·`remote::sites`·`ui::dialog`·`ui::widgets`·`i18n`. 파일 대화(`fs::file_dialog`)는 **직접 부르지 않는다**(D7). ④ 비추상화 — 세 대화를 하나의 「단계 대화」 부품으로 합치지 않는다(본문 구성이 서로 달라 합치면 분기만 늘어난다).
   - **Acceptance**:
