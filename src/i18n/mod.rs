@@ -497,34 +497,12 @@ strings! {
     /// 사이트 관리자 좌측 아랫줄 버튼 둘
     site_export => "내보내기" / "Export";
     site_import => "가져오기" / "Import";
-    /// 내보내기 암호 대화
-    site_export_title => "사이트 목록 내보내기" / "Export site list";
-    site_export_hint
-        => "등록된 사이트를 모두 파일 하나로 저장합니다."
-        / "Saves every registered site to a single file.";
-    site_export_passphrase => "암호:" / "Password:";
-    site_export_passphrase_again => "암호 확인:" / "Confirm password:";
-    /// 암호를 비웠을 때 무슨 일이 일어나는지 미리 알린다
-    site_export_empty_hint
-        => "암호를 비우면 비밀번호를 빼고 저장합니다."
-        / "Leave it empty to save without passwords.";
-    /// 잊으면 되돌릴 길이 없다는 것을 대화에서 못 박는다
-    site_export_forget_warning
-        => "암호를 잊으면 그 파일은 다시 열 수 없습니다."
-        / "If you forget this password, the file cannot be opened again.";
-    site_export_mismatch => "두 칸의 암호가 서로 다릅니다" / "The two passwords do not match";
-    /// 암호 없이 내보내기 직전의 되물음
-    site_export_empty_title => "비밀번호 없이 저장할까요?" / "Save without passwords?";
-    site_export_empty_detail
-        => "사이트 주소와 아이디는 저장되지만 비밀번호는 빠집니다. 옮긴 곳에서 다시 입력해야 합니다."
-        / "Addresses and user names are saved, but passwords are not. You will need to enter them again.";
-    /// 주 동작 버튼 — 「내보내기」와 겹치지 않게 「저장」으로 적는다
-    site_export_save => "저장" / "Save";
-    /// 가져오기 암호 대화
+    /// 가져오기 암호 대화 — **내보내기 쪽에는 대화가 없다**(앱 내장 키로 봉하므로 물을 것이 없다)
     site_import_title => "사이트 목록 가져오기" / "Import site list";
     site_import_passphrase_hint
         => "이 파일은 암호로 보호되어 있습니다."
         / "This file is protected with a password.";
+    site_import_passphrase => "암호:" / "Password:";
     site_import_open => "가져오기" / "Import";
     /// 가져오기가 막힌 까닭들
     site_import_wrong_passphrase
@@ -1076,12 +1054,18 @@ pub mod dynamic {
         }
     }
 
-    /// 내보내기를 마친 뒤의 알림 (FR-59) — 비밀번호를 읽지 못한 것이 있으면 함께 알린다
+    /// 내보내기를 마친 뒤의 알림 (FR-59).
+    ///
+    /// **비밀번호가 함께 담겼다는 것을 여기서 알린다** — 내보내기에 대화가 없어져(plan D2)
+    /// 그 파일의 성질을 사용자에게 알릴 자리가 이 알림뿐이다. 비밀번호를 읽지 못한 것이
+    /// 있으면 그 사실도 뒤에 잇는다
     pub fn site_export_done(count: usize, unreadable: usize) -> String {
         let mut out = match current() {
-            Language::Korean => format!("사이트 {count}개를 저장했습니다"),
-            Language::English if count == 1 => "Saved 1 site".to_owned(),
-            Language::English => format!("Saved {count} sites"),
+            Language::Korean => {
+                format!("사이트 {count}개를 저장했습니다 · 비밀번호가 함께 담겼습니다")
+            }
+            Language::English if count == 1 => "Saved 1 site · passwords included".to_owned(),
+            Language::English => format!("Saved {count} sites · passwords included"),
         };
         if unreadable > 0 {
             match current() {
@@ -1238,7 +1222,7 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 35] = [
+        const EXEMPT_LITERALS: [&str; 31] = [
             // 위젯 ID
             "정보 대화",
             "라이선스 대화",
@@ -1257,12 +1241,8 @@ mod tests {
             "사이트 관리자",
             "사이트 삭제 확인",
             "사이트 이름 바꾸기",
-            "사이트 내보내기",
-            "사이트 내보내기 확인",
             "사이트 가져오기 암호",
             "사이트 가져오기 충돌",
-            "내보내기 암호",
-            "내보내기 암호 확인",
             "가져오기 암호",
             "원격 알림",
             // 글꼴 검증에 쓰는 내부 값 (`ui::font_scan`)
@@ -1627,6 +1607,36 @@ mod tests {
         assert_eq!(
             dynamic::remote_delete_count(3),
             "3 items will be deleted from the server."
+        );
+    }
+
+    #[test]
+    fn 내보내기_알림은_비밀번호가_담겼음을_두_언어로_알린다() {
+        // 내보내기에 대화가 없어져(FR-59) 이 알림이 파일의 성질을 알릴 유일한 자리다.
+        // 비밀번호를 읽지 못한 것이 겹칠 때 문장이 어떻게 이어지는지도 여기서 고정한다
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::site_export_done(3, 0),
+            "사이트 3개를 저장했습니다 · 비밀번호가 함께 담겼습니다"
+        );
+        assert_eq!(
+            dynamic::site_export_done(3, 1),
+            "사이트 3개를 저장했습니다 · 비밀번호가 함께 담겼습니다 · 1개는 비밀번호를 읽지 못해 뺐습니다"
+        );
+        // 사이트가 없어도 문장이 성립한다
+        assert_eq!(
+            dynamic::site_export_done(0, 0),
+            "사이트 0개를 저장했습니다 · 비밀번호가 함께 담겼습니다"
+        );
+
+        set_language(LanguageSetting::English);
+        assert_eq!(
+            dynamic::site_export_done(1, 0),
+            "Saved 1 site · passwords included"
+        );
+        assert_eq!(
+            dynamic::site_export_done(3, 2),
+            "Saved 3 sites · passwords included · 2 of them lost their password (it could not be read)"
         );
     }
 

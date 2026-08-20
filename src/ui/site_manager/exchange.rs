@@ -1,8 +1,9 @@
 //! 사이트 목록 내보내기·가져오기 흐름 (FR-59) — `ui::site_manager`의 자식 모듈.
 //!
-//! 좌측 아랫줄 버튼 둘과 그 뒤에 이어지는 대화 넷(내보내기 암호 · 암호 없이 저장 확인 ·
-//! 가져오기 암호 · 겹치는 사이트 확인)이 여기 있다. 부모(`SiteManager`)의 private 필드를
-//! 그대로 만지므로 가시성을 넓히지 않는다 — 모듈을 나눈 까닭은 부모 파일의 모듈 주석에 있다.
+//! 좌측 아랫줄 버튼 둘과 그 뒤에 이어지는 대화 둘(가져오기 암호 · 겹치는 사이트 확인)이
+//! 여기 있다. **내보내기 쪽에는 대화가 없다** — 봉인을 앱 내장 키로 하므로 물을 것이 없고,
+//! 버튼을 누르면 곧바로 저장할 자리를 청한다. 부모(`SiteManager`)의 private 필드를 그대로
+//! 만지므로 가시성을 넓히지 않는다 — 모듈을 나눈 까닭은 부모 파일의 모듈 주석에 있다.
 //!
 //! **파일 대화는 여기서 띄우지 않는다** (plan D7) — `IFileDialog::Show`가 자체 메시지 루프를
 //! 돌려 이벤트 루프를 재진입시키므로, 「필요하다」만 세워 두고 앱이 프레임을 다 그린 뒤 가져간다.
@@ -10,9 +11,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use super::{
-    DELETE_CONFIRM_WIDTH, GRID_BUTTON_HEIGHT, GRID_GAP, GRID_PAD_BOTTOM, GRID_PAD_X, SiteManager,
-};
+use super::{GRID_BUTTON_HEIGHT, GRID_GAP, GRID_PAD_BOTTOM, GRID_PAD_X, SiteManager};
 use crate::remote::site_export::{self, ImportPlan, ImportSummary, SiteExport};
 use crate::remote::sites::SiteStore;
 use crate::ui::dialog;
@@ -56,16 +55,10 @@ pub enum FileRequest {
 pub(super) enum Exchange {
     #[default]
     Idle,
-    /// 내보내기 암호를 받는 중
-    ExportAsk {
-        pass: String,
-        confirm: String,
-        error: Option<String>,
-    },
-    /// 암호를 비운 채 저장하려 한다 — 한 번 더 묻는다 (plan D6)
-    ExportConfirmEmpty,
-    /// 파일 저장 자리를 기다리는 중 — 암호를 들고 있다
-    ExportWaitFile { pass: String },
+    /// 파일 저장 자리를 기다리는 중.
+    ///
+    /// **들고 다닐 암호가 없다** — 봉인은 앱 내장 키로 하므로 사용자에게 받을 것이 없다
+    ExportWaitFile,
     /// 열 파일을 기다리는 중
     ImportWaitFile,
     /// 가져올 파일의 암호를 받는 중
@@ -97,7 +90,7 @@ impl SiteManager {
             return;
         };
         match stage {
-            Exchange::ExportWaitFile { pass } => self.finish_export(&path, &pass, store),
+            Exchange::ExportWaitFile => self.finish_export(&path, store),
             Exchange::ImportWaitFile => self.begin_import(&path, store),
             // 파일을 기다리던 중이 아니면 받을 것이 없다 — 상태만 되돌린다
             other => self.exchange = other,
@@ -121,11 +114,13 @@ impl SiteManager {
     pub(super) fn apply_exchange_action(&mut self, action: ExchangeAction) {
         self.error = None;
         self.exchange = match action {
-            ExchangeAction::Export => Exchange::ExportAsk {
-                pass: String::new(),
-                confirm: String::new(),
-                error: None,
-            },
+            // 물을 것이 없다 — 봉인이 앱 내장 키라 곧바로 저장할 자리를 청한다 (plan D2)
+            ExchangeAction::Export => {
+                self.pending_file = Some(FileRequest::Save {
+                    suggested: crate::i18n::file_dialog_export_name().to_owned(),
+                });
+                Exchange::ExportWaitFile
+            }
             ExchangeAction::Import => {
                 self.pending_file = Some(FileRequest::Open);
                 Exchange::ImportWaitFile
@@ -134,8 +129,8 @@ impl SiteManager {
     }
 
     /// 고른 자리에 문서를 쓴다 (FR-59)
-    fn finish_export(&mut self, path: &std::path::Path, passphrase: &str, store: &SiteStore) {
-        let outcome = match site_export::build(store, passphrase) {
+    fn finish_export(&mut self, path: &std::path::Path, store: &SiteStore) {
+        let outcome = match site_export::build(store) {
             Ok(outcome) => outcome,
             Err(site_export::ExportError::Seal) => {
                 self.error = Some(crate::i18n::site_export_seal_failed().to_owned());
@@ -173,12 +168,19 @@ impl SiteManager {
             };
             return;
         }
-        self.settle_import(&document, "", store);
+        if !self.settle_import(&document, "", store) {
+            // 여기서의 `false`는 「암호가 틀렸다」가 아니다 — 이 경로는 암호를 물은 적이 없다.
+            // 앱 내장 키 봉투가 변조됐거나 둘 중 어느 열쇠도 아닌 `kdf`라는 뜻이라 손상으로 알린다.
+            // 알리지 않으면 사용자에게는 파일을 골랐는데 아무 일도 없는 것으로 보인다
+            self.error = Some(crate::i18n::site_import_broken().to_owned());
+        }
     }
 
     /// 문서로 계획을 세운다 — 겹치는 것이 있으면 묻고, 없으면 그대로 반영한다.
     ///
-    /// 암호가 틀리면 `false`를 돌려준다(호출부가 대화 안에 사유를 남긴다)
+    /// **봉투를 열지 못하면 `false`를 돌려주고 사유는 남기지 않는다** — 그 뜻이 호출부마다
+    /// 다르기 때문이다. 암호 대화 안에서는 「암호가 맞지 않는다」이고, 대화를 거치지 않은
+    /// 경로에서는 「파일이 손상됐다」이다
     fn settle_import(
         &mut self,
         document: &SiteExport,
@@ -222,12 +224,6 @@ impl SiteManager {
     pub(super) fn show_exchange(&mut self, ctx: &egui::Context, store: &mut SiteStore) {
         match std::mem::take(&mut self.exchange) {
             Exchange::Idle => {}
-            Exchange::ExportAsk {
-                pass,
-                confirm,
-                error,
-            } => self.show_export_ask(ctx, pass, confirm, error),
-            Exchange::ExportConfirmEmpty => self.show_export_empty_confirm(ctx),
             Exchange::ImportAsk {
                 document,
                 pass,
@@ -236,130 +232,6 @@ impl SiteManager {
             Exchange::ImportConflict { plan } => self.show_import_conflict(ctx, plan, store),
             // 파일을 기다리는 동안에는 대화를 그리지 않는다 — 앱이 띄운 파일 대화가 화면을 쥔다
             waiting => self.exchange = waiting,
-        }
-    }
-
-    /// 내보내기 암호 대화 (FR-59)
-    fn show_export_ask(
-        &mut self,
-        ctx: &egui::Context,
-        mut pass: String,
-        mut confirm: String,
-        mut error: Option<String>,
-    ) {
-        let buttons = [
-            dialog::ButtonSpec::strong(crate::i18n::site_export_save()),
-            dialog::ButtonSpec::plain(crate::i18n::cancel()),
-        ];
-        let shell = dialog::show(
-            ctx,
-            egui::Id::new("사이트 내보내기"),
-            EXCHANGE_WIDTH,
-            &buttons,
-            |ui| {
-                ui.label(
-                    egui::RichText::new(crate::i18n::site_export_title())
-                        .size(DIALOG_TITLE_PX)
-                        .color(theme::TEXT),
-                );
-                ui.add_space(8.0);
-                ui.label(crate::i18n::site_export_hint());
-                ui.label(
-                    egui::RichText::new(crate::i18n::site_export_empty_hint())
-                        .color(theme::TEXT_MUTED),
-                );
-                ui.add_space(10.0);
-                passphrase_row(
-                    ui,
-                    crate::i18n::site_export_passphrase(),
-                    "내보내기 암호",
-                    &mut pass,
-                );
-                ui.add_space(6.0);
-                passphrase_row(
-                    ui,
-                    crate::i18n::site_export_passphrase_again(),
-                    "내보내기 암호 확인",
-                    &mut confirm,
-                );
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(crate::i18n::site_export_forget_warning())
-                        .color(theme::TEXT_MUTED),
-                );
-                if let Some(reason) = &error {
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(reason.as_str()).color(theme::ERROR_TEXT));
-                }
-            },
-        );
-
-        if shell.should_close || shell.clicked == Some(1) {
-            return;
-        }
-        if shell.clicked != Some(0) {
-            // 아직 고르지 않았다 — 적던 것을 그대로 들고 다음 프레임으로 간다
-            self.exchange = Exchange::ExportAsk {
-                pass,
-                confirm,
-                error,
-            };
-            return;
-        }
-        if pass != confirm {
-            error = Some(crate::i18n::site_export_mismatch().to_owned());
-            self.exchange = Exchange::ExportAsk {
-                pass,
-                confirm,
-                error,
-            };
-            return;
-        }
-        if pass.is_empty() {
-            // 비밀번호 없이 저장하는 것이 맞는지 한 번 더 묻는다 (plan D6)
-            self.exchange = Exchange::ExportConfirmEmpty;
-            return;
-        }
-        self.request_export_file(pass);
-    }
-
-    /// 저장할 자리를 앱에 청하고 암호를 들고 기다린다
-    fn request_export_file(&mut self, pass: String) {
-        self.pending_file = Some(FileRequest::Save {
-            suggested: crate::i18n::file_dialog_export_name().to_owned(),
-        });
-        self.exchange = Exchange::ExportWaitFile { pass };
-    }
-
-    /// 암호 없이 저장하기 직전의 되물음 (plan D6)
-    fn show_export_empty_confirm(&mut self, ctx: &egui::Context) {
-        let buttons = [
-            dialog::ButtonSpec::strong(crate::i18n::site_export_save()),
-            dialog::ButtonSpec::plain(crate::i18n::cancel()),
-        ];
-        let shell = dialog::show(
-            ctx,
-            egui::Id::new("사이트 내보내기 확인"),
-            DELETE_CONFIRM_WIDTH,
-            &buttons,
-            |ui| {
-                ui.label(
-                    egui::RichText::new(crate::i18n::site_export_empty_title())
-                        .size(DIALOG_TITLE_PX)
-                        .color(theme::TEXT),
-                );
-                ui.add_space(8.0);
-                ui.label(crate::i18n::site_export_empty_detail());
-            },
-        );
-        match shell.clicked {
-            Some(0) => self.request_export_file(String::new()),
-            Some(_) => {}
-            None => {
-                if !shell.should_close {
-                    self.exchange = Exchange::ExportConfirmEmpty;
-                }
-            }
         }
     }
 
@@ -392,7 +264,7 @@ impl SiteManager {
                 ui.add_space(10.0);
                 passphrase_row(
                     ui,
-                    crate::i18n::site_export_passphrase(),
+                    crate::i18n::site_import_passphrase(),
                     "가져오기 암호",
                     &mut pass,
                 );
@@ -609,29 +481,13 @@ mod tests {
     }
 
     #[test]
-    fn 내보내기는_암호를_받고_파일을_청한다() {
+    fn 내보내기는_곧바로_파일을_청한다() {
         let (mut manager, mut store) = manager_with_two_sites();
         assert_eq!(manager.exchange, Exchange::Idle);
 
-        // 버튼을 누르면 암호를 받는 단계로 간다
+        // 버튼 한 번으로 저장할 자리를 청한다 — 중간에 묻는 대화가 없다 (plan D2)
         manager.apply_exchange_action(ExchangeAction::Export);
-        let Exchange::ExportAsk { .. } = &manager.exchange else {
-            panic!("암호 단계가 아니다: {:?}", manager.exchange);
-        };
-        assert_eq!(
-            manager.take_file_request(),
-            None,
-            "아직 파일을 청하지 않는다"
-        );
-
-        // 암호가 맞으면 파일 자리를 청하고 그 암호를 들고 기다린다
-        manager.request_export_file("암호".to_owned());
-        assert_eq!(
-            manager.exchange,
-            Exchange::ExportWaitFile {
-                pass: "암호".to_owned()
-            }
-        );
+        assert_eq!(manager.exchange, Exchange::ExportWaitFile);
         let request = manager.take_file_request().expect("파일 요청");
         assert!(matches!(request, FileRequest::Save { .. }));
         assert_eq!(manager.take_file_request(), None, "한 번만 꺼내 간다");
@@ -650,7 +506,7 @@ mod tests {
     #[test]
     fn 내보내기를_취소하면_아무_일도_없다() {
         let (mut manager, mut store) = manager_with_two_sites();
-        manager.request_export_file("암호".to_owned());
+        manager.apply_exchange_action(ExchangeAction::Export);
         let _ = manager.take_file_request();
         manager.supply_file(None, &mut store);
         assert_eq!(manager.exchange, Exchange::Idle);
@@ -663,7 +519,7 @@ mod tests {
         // 먼저 파일을 하나 만들어 둔다
         let (mut manager, mut store) = manager_with_two_sites();
         let path = temp_path("import-conflict");
-        manager.request_export_file(String::new());
+        manager.apply_exchange_action(ExchangeAction::Export);
         let _ = manager.take_file_request();
         manager.supply_file(Some(path.clone()), &mut store);
         let _ = manager.take_notice();
@@ -695,13 +551,19 @@ mod tests {
     }
 
     #[test]
-    fn 암호로_보호된_파일은_암호를_묻는다() {
-        let (mut manager, mut store) = manager_with_two_sites();
+    fn 구버전_암호_보호_파일은_암호를_묻는다() {
+        // 직전 버전이 사용자 암호로 만든 파일. 지금의 내보내기는 이 형태를 만들지 않으므로
+        // 픽스처로 세워 파일에 쓴다 — 그 파일을 아직 열 수 있는지가 이 시험의 명제다
+        let (mut manager, store) = manager_with_two_sites();
         let path = temp_path("import-passphrase");
-        manager.request_export_file("맞는 암호".to_owned());
-        let _ = manager.take_file_request();
-        manager.supply_file(Some(path.clone()), &mut store);
-        let _ = manager.take_notice();
+        let sites = site_export::build(&store).expect("내보내기").document.sites;
+        let legacy = site_export::legacy_document(
+            &sites,
+            // `sites`와 같은 순서 — 둘째 사이트는 비밀번호가 없다
+            &["비밀!1234".to_owned(), String::new()],
+            "맞는 암호",
+        );
+        site_export::write_file(&path, &legacy).expect("파일 쓰기");
 
         // 빈 목록으로 가져오면 겹치는 것이 없다
         let mut target = SiteStore::new();
@@ -718,6 +580,8 @@ mod tests {
         // 틀린 암호는 계획을 세우지 못한다 — 저장소도 그대로다
         assert!(!manager.settle_import(&document, "틀린 암호", &mut target));
         assert!(target.is_empty());
+        // 이 경로의 사유는 대화 안에 남는다 — 바닥에 「손상됐다」가 뜨면 안 된다 (Phase F M1)
+        assert_eq!(manager.error, None, "암호 대화 경로가 바닥에 사유를 남겼다");
 
         // 맞는 암호면 겹치는 것이 없으므로 곧바로 반영된다
         assert!(manager.settle_import(&document, "맞는 암호", &mut target));
@@ -728,6 +592,42 @@ mod tests {
         );
         assert!(manager.take_notice().is_some());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 봉투를_열지_못하면_대화_없이_사유를_남긴다() {
+        // 앱 내장 키 봉투는 암호를 묻지 않고 곧바로 열려 하므로, 열지 못하면 그 자리에서
+        // 알려야 한다 — 알리지 않으면 파일을 골랐는데 아무 일도 없는 것으로 보인다 (Phase F M1)
+        let (mut manager, mut store) = manager_with_two_sites();
+
+        // ⓐ 봉인 바이트가 손상된 파일
+        let tampered = temp_path("import-tampered");
+        let mut document = site_export::build(&store).expect("내보내기").document;
+        if let Some(sealed) = document.secret.as_mut() {
+            sealed.ciphertext = "00".repeat(sealed.ciphertext.len() / 2);
+        }
+        site_export::write_file(&tampered, &document).expect("파일 쓰기");
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(tampered.clone()), &mut store);
+        assert_eq!(manager.exchange, Exchange::Idle);
+        assert_eq!(manager.take_notice(), None, "가져온 것이 없다");
+        assert!(manager.error.is_some(), "사유가 남지 않았다");
+        let _ = std::fs::remove_file(&tampered);
+
+        // ⓑ 둘 중 어느 열쇠도 아닌 `kdf` — 더 새로운 앱이 만든 파일이 여기 걸린다
+        let unknown = temp_path("import-unknown-kdf");
+        let mut document = site_export::build(&store).expect("내보내기").document;
+        if let Some(sealed) = document.secret.as_mut() {
+            sealed.kdf = "PBKDF2-HMAC-SHA512-미래".to_owned();
+        }
+        site_export::write_file(&unknown, &document).expect("파일 쓰기");
+        manager.error = None;
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(unknown.clone()), &mut store);
+        assert!(manager.error.is_some(), "사유가 남지 않았다");
+        let _ = std::fs::remove_file(&unknown);
     }
 
     #[test]
@@ -751,7 +651,7 @@ mod tests {
         let mut manager = SiteManager::new();
         manager.open_new();
         let path = temp_path("empty");
-        manager.request_export_file(String::new());
+        manager.apply_exchange_action(ExchangeAction::Export);
         let _ = manager.take_file_request();
         manager.supply_file(Some(path.clone()), &mut store);
         let _ = manager.take_notice();
@@ -766,10 +666,12 @@ mod tests {
 
     #[test]
     fn 대화를_닫으면_적던_암호가_함께_사라진다() {
+        // 암호를 들고 있는 단계는 이제 가져오기 쪽 하나뿐이다
         let (mut manager, mut store) = manager_with_two_sites();
-        manager.exchange = Exchange::ExportAsk {
+        let document = site_export::build(&store).expect("내보내기").document;
+        manager.exchange = Exchange::ImportAsk {
+            document: Box::new(document),
             pass: "적던 암호".to_owned(),
-            confirm: "적던 암호".to_owned(),
             error: None,
         };
         manager.pending_file = Some(FileRequest::Open);
@@ -798,13 +700,14 @@ mod tests {
     #[test]
     fn 파일을_기다리던_중이_아니면_받을_것이_없다() {
         let (mut manager, mut store) = manager_with_two_sites();
-        manager.exchange = Exchange::ExportConfirmEmpty;
+        let document = site_export::build(&store).expect("내보내기").document;
+        let plan = site_export::plan_import(&document, &store, "").expect("계획");
+        let stage = Exchange::ImportConflict {
+            plan: Box::new(plan),
+        };
+        manager.exchange = stage.clone();
         manager.supply_file(Some(temp_path("stray")), &mut store);
-        assert_eq!(
-            manager.exchange,
-            Exchange::ExportConfirmEmpty,
-            "하던 단계를 잃지 않는다"
-        );
+        assert_eq!(manager.exchange, stage, "하던 단계를 잃지 않는다");
         assert_eq!(manager.take_notice(), None);
     }
 
@@ -819,29 +722,12 @@ mod tests {
     }
 
     #[test]
-    fn 내보내기_대화가_한_프레임을_그린다() {
-        // 대화 넷의 그리기 경로가 패닉 없이 도는지 본다 (FR-59)
+    fn 가져오기_대화가_한_프레임을_그린다() {
+        // 이 모듈에 남은 대화 둘의 그리기 경로가 패닉 없이 도는지 본다 (FR-59).
+        // 내보내기 쪽은 대화가 없어져 그릴 것이 없다
         let (mut manager, mut store) = manager_with_two_sites();
         let ctx = egui::Context::default();
-        let stages = [
-            Exchange::ExportAsk {
-                pass: "암호".to_owned(),
-                confirm: String::new(),
-                error: Some("서로 다릅니다".to_owned()),
-            },
-            Exchange::ExportConfirmEmpty,
-        ];
-        for stage in stages {
-            manager.exchange = stage;
-            let _ = ctx.run_ui(Default::default(), |ui| {
-                manager.show(ui.ctx(), &mut store, &[]);
-            });
-        }
-
-        // 가져오기 쪽 둘은 문서·계획이 있어야 한다
-        let document = site_export::build(&store, "암호")
-            .expect("내보내기")
-            .document;
+        let document = site_export::build(&store).expect("내보내기").document;
         manager.exchange = Exchange::ImportAsk {
             document: Box::new(document.clone()),
             pass: String::new(),
@@ -851,7 +737,7 @@ mod tests {
             manager.show(ui.ctx(), &mut store, &[]);
         });
 
-        let plan = site_export::plan_import(&document, &store, "암호").expect("계획");
+        let plan = site_export::plan_import(&document, &store, "").expect("계획");
         manager.exchange = Exchange::ImportConflict {
             plan: Box::new(plan),
         };
