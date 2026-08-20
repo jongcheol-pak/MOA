@@ -325,8 +325,9 @@ mod tests {
     /// 이 파일이 여는 팝업 목록의 수.
     ///
     /// `Frame::menu(`는 팝업을 여는 것이 아니라 **그 껍데기 모양을 적는 것**이라, 같은 파일에
-    /// `Popup::menu(`가 있으면 그 팝업의 프레임을 지정한 것으로 보고 따로 세지 않는다
-    /// (`widgets.rs`의 드롭다운이 그 형태다)
+    /// 팝업을 여는 구문이 있으면 그 팝업의 프레임을 지정한 것으로 보고 따로 세지 않는다
+    /// (`widgets.rs`의 드롭다운이 그 형태다). **컨텍스트 메뉴도 함께 본다** — `Popup::menu(`만
+    /// 보면 우클릭 메뉴에 프레임을 지정한 파일이 이중으로 세어져 거짓 실패한다
     fn menu_openers(source: &str) -> usize {
         let code = code_only(source);
         let popup = code.matches("Popup::menu(").count();
@@ -334,7 +335,7 @@ mod tests {
             code.matches("Popup::context_menu(").count() + code.matches(".context_menu(").count();
         // 하위 메뉴는 부모 스타일을 잇지 않는 별도 `Area`라 자체 호출이 필요하다
         let submenu = code.matches("SubMenuButton").count();
-        let frame = if popup > 0 {
+        let frame = if popup + context > 0 {
             0
         } else {
             code.matches("Frame::menu(").count()
@@ -380,9 +381,14 @@ mod tests {
             menu_openers("// `SubMenuButton`이 hover로 여는 팝업이다"),
             0
         );
-        // ⓓ 같은 자리의 `Popup::menu(` + `Frame::menu(`는 하나로 센다
+        // ⓓ 같은 자리의 팝업 + `Frame::menu(`는 하나로 센다 — 여는 구문이 `Popup::menu(`든
+        // 컨텍스트 메뉴든 마찬가지다(앞엣것만 보면 우클릭 메뉴 쪽이 이중으로 세어진다)
         assert_eq!(
             menu_openers("egui::Popup::menu(&r).frame(egui::Frame::menu(s)).show(|ui| {})"),
+            1
+        );
+        assert_eq!(
+            menu_openers("r.context_menu(|ui| { egui::Frame::menu(s).show(ui, |ui| {}) });"),
             1
         );
 
