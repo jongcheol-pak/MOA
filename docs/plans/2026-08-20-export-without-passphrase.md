@@ -290,6 +290,27 @@
     - (i) 없음 — 문서 문면 수정과 화면 문구 1건뿐이고 파괴적·외부 요소가 없다
   - **Depends on**: T1, T2, T3
 
+- [ ] T5. 대화를 거치지 않는 가져오기의 실패를 화면에 알린다 (Phase F M1)
+  - **Type**: C
+  - **왜 지금인가**: T2가 `needs_passphrase`를 `secret.is_some()`에서 `kdf == KDF_NAME`으로 좁히면서 생긴 **오류 보고의 회귀**다. 종전에는 봉투가 있는 문서가 전부 `ImportAsk` 대화로 가서 「암호가 맞지 않습니다」가 떴는데, 지금은 ⓐ 내장 키 봉투인데 변조·절단된 파일 ⓑ 둘 다 아닌 `kdf` 파일이 대화를 거치지 않는 경로로 들어와 `settle_import`이 `false`만 돌려주고 `begin_import`이 그것을 버린다 — 화면은 `Idle`, `error`도 `notice`도 없어 **버튼이 먹지 않는 것처럼 보인다**. 이번 변경이 유발한 결함이므로 이연 대상이 아니다.
+  - **Acceptance**:
+    - Given 내장 키 봉투가 변조된 `.moasites`, When `가져오기`로 그 파일을 고르면, Then 바닥에 사유가 남는다(`error.is_some()`)
+    - Given 둘 중 어느 열쇠도 아닌 `kdf`의 파일, Then 같다
+    - 문구는 **「이 파일은 MOA 사이트 목록이 아니거나 손상되었습니다」**(`site_import_broken`)를 쓴다 — 사용자가 암호를 적은 적이 없는 경로라 「암호가 맞지 않습니다」는 무슨 암호인지 알 수 없다
+    - **암호 대화를 거치는 경로는 종전 그대로다** — 구버전 파일에서 암호가 틀리면 대화 안에 「암호가 맞지 않습니다」가 남고 바닥에는 남지 않는다(회귀 금지)
+    - `src/remote/site_export.rs`의 「사용자에게는 「암호가 맞지 않는다」로 보인다」 주석이 **실제 동작으로 고쳐진다** — 지금 그 서술은 사실이 아니다
+    - `settle_import`의 doc 주석도 두 호출부가 각자 다르게 처리한다는 사실로 고쳐진다
+  - **Files**:
+    - 주: `src/ui/site_manager/exchange.rs`
+    - 동반: `src/remote/site_export.rs`(주석 정정) · `src/ui/app.rs`(Phase F m1 — `pump_site_file_dialog` doc의 「암호에서 키를 파생하고」가 주 경로에서 더 이상 참이 아니다) · `docs/prd.md`(Phase F m2 — FR-59의 화면 서술을 실제 알림 문구 수준으로 맞춘다)
+    - 테스트: `exchange.rs`의 `#[cfg(test)] mod tests`
+  - **Edge Cases**:
+    - 빈 목록 파일(`plan.is_empty()`)은 이미 `site_import_empty`로 사유가 남는다 — 그 갈래를 덮어쓰지 않는다
+    - 겹침 확인 대화가 뜨는 정상 경로에 사유가 끼어들지 않는다
+  - **Halt Forecast**:
+    - (i) 없음 — 국소 수정이며 새 API·의존이 없다
+  - **Depends on**: T2, T3
+
 ## 사전 승인 항목 (일괄 승인 대상)
 
 - T1 — `remote::envelope`에 공개 심볼 2개(`seal_with_app_key`·`open_with_app_key`)와 공개 상수 1개(`KDF_APP_KEY`) 추가
