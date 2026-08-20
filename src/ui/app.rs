@@ -2093,21 +2093,27 @@ impl eframe::App for ExplorerApp {
                     // 이 `for`문을 지워도 붉어지는 시험이 없으니 **리뷰가 지키는 자리**다.
                     // 앞뒤 층은 시험이 덮는다 — 패널이 관측을 세우는 것(`ui/panel/tests.rs`),
                     // 여럿을 모으는 것(`ui/splitter.rs`), 반영 규칙(`app/drives.rs`)
+                    for (path, reachable) in outcome.drive_observed {
+                        self.drives.observe(&path, reachable);
+                    }
+
                     // OS에서 끌어온 파일이 창 위를 지나는 동안 놓일 패널을 두른다 (FR-61).
                     // **`show_layout`이 돌아온 뒤에 그린다** — 강조할 패널을 정하려면 그
                     // 함수가 반환한 `pane_rects`가 필요해, 인자로 되먹이면 순환이 된다
                     let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
-                    let cursor = self
-                        .shell
-                        .as_ref()
-                        .and_then(|shell| shell.cursor_client_pos(ctx.pixels_per_point()));
+                    // 끌고 있지 않으면 커서를 읽지 않는다 — 이 자리는 매 프레임 도는데
+                    // `GetCursorPos`·`ScreenToClient`는 끌고 있을 때만 쓸 값을 만든다
+                    let cursor = hovering
+                        .then(|| {
+                            self.shell
+                                .as_ref()
+                                .and_then(|shell| shell.cursor_client_pos(ctx.pixels_per_point()))
+                        })
+                        .flatten();
                     if let Some(target) = drop_highlight(hovering, cursor, &pane_rects)
                         && let Some((_, rect)) = pane_rects.iter().find(|(id, _)| *id == target)
                     {
                         splitter::draw_drop_highlight(ui, *rect);
-                    }
-                    for (path, reachable) in outcome.drive_observed {
-                        self.drives.observe(&path, reachable);
                     }
                 }
                 // 패널 메뉴 명령은 그리기가 끝난 뒤에 실행한다 — 분할·닫기는 트리를 바꾸므로
