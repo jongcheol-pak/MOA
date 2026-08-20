@@ -35,6 +35,7 @@
 - **원격 항목을 탐색기로 끌어내기** — T7은 로컬 항목만 OLE 드래그로 내보낸다. 원격 항목은 「끌기 시작 시점에는 아직 로컬에 파일이 없다」라 지연 렌더링(`CFSTR_FILEDESCRIPTOR`/`CFSTR_FILECONTENTS`)을 구현해야 하며, 이번 범위의 몇 배다.
 - **드래그 중 미리보기 그림**(끌고 있는 항목의 반투명 썸네일). `IDragSourceHelper`가 필요하다.
 - **`ExplorerApp`의 채널·상태 필드가 이번 회차에 더 늘었다** — `relist`(T2)·`copy_tx`/`copy_rx`(T4)·외부 드롭의 `is_dir` 측정 채널(T5). 대장의 `[SUGGEST] 충돌 상태 6개 필드를 ConflictState로 묶기`(2026-08-20)와 대상이 겹치지는 않지만(그 항목은 `conflict_*` 한정) **같은 범주가 커졌다**는 것을 다음 회차가 알아야 한다. 캡슐화를 다룰 때 이번에 는 것까지 함께 본다.
+- **[SUGGEST] `views → panels` 이중 순회가 세 곳에 반복**(`src/ui/app/remote.rs`의 `list_moved_panels`·`request_remote_list`·`pump_relist`) — 공통화 문턱 3회에 닿았다. 조건만 받는 순회 헬퍼로 묶을 수 있다(T2 quality 리뷰 S1).
 - 직전 회차에서 이월된 항목 셋(다음 회차 대상): 내보내기 진행 표시 · 내보내기 기본 파일 이름의 앱 이름 표기 · `remote::connection::tests::늦게_도착한_이전_세대의_목록은_버려진다`의 간헐 실패.
 
 ## Investigation Log
@@ -217,7 +218,7 @@
 
 - [ ] T2. 전송이 끝나면 그 폴더를 보는 원격 패널의 목록을 다시 읽는다
   - **Type**: C
-  - **Design**: ① `src/ui/app/remote.rs`에 `RelistPending`(순수 상태)과 그것을 소비하는 `pump_relist`를 둔다 — 원격 배선이 이미 사는 자리다. ② `RelistPending`: `dirty: HashSet<(SiteId, RemotePath)>`와 **사이트별** `last_sent: HashMap<SiteId, f64>`를 들고, `mark(site, dir)`·`take_ready(site_pending_counts, now) -> Vec<(SiteId, RemotePath)>` 두 메서드만 노출한다(시점 판정이 여기 있어야 서버 없이 시험된다). **`site_pending_counts`는 이미 있는 `TransferQueue::counts_by_site`(`src/remote/queue.rs:352`)로 만든다** — 큐에 새 조회 API를 더하지 않는다. **시각을 사이트별로 두는 이유**: 하나로 두면 사이트 A의 발송이 사이트 B의 2초 창을 먹어, B가 조건을 채웠는데도 내주지 않는다. ③ 의존 방향: `remote.rs`가 `remote::queue`·`remote::types`를 참조하고, 아무도 `RelistPending`을 참조하지 않는다(`ExplorerApp` 필드로만 산다). ④ 비추상화 선언 — 「새로 고침 정책」을 트레이트로 추상화하지 않는다. 로컬 감시는 `DirWatcher`가 이미 다른 방식으로 하고 있어 공통 뼈대를 만들면 양쪽 다 어색해진다
+  - **Design**: ① `src/ui/app/remote.rs`에 `RelistPending`(순수 상태)과 그것을 소비하는 `pump_relist`를 둔다 — 원격 배선이 이미 사는 자리다. ② `RelistPending`: `dirty: HashSet<(SiteId, RemotePath)>`와 **사이트별** `last_sent: HashMap<SiteId, f64>`를 들고, `mark(site, dir)`·`take_ready(busy: &HashSet<SiteId>, now) -> Vec<(SiteId, RemotePath)>` 두 메서드만 노출한다(시점 판정이 여기 있어야 서버 없이 시험된다). **`busy`는 대기·진행이 남은 사이트들이며 기존 공개 API `TransferQueue::items()` + `TransferState::is_pending()`으로 만든다** — 큐에 새 조회 API를 더하지 않는다. **`counts_by_site`를 쓰지 않는 이유**(2026-08-20 T2 구현 중 확인): `QueueFilter`에 `Pending` 갈래가 없어(`All`·`Done`·`Error` 셋뿐 — `src/remote/queue.rs:104~108`) 대기·진행만 세려면 세 번 호출해 빼야 한다. 게다가 `take_ready`가 쓰는 것은 건수가 아니라 **「남아 있는가」 하나**라 집합이면 족하다. **시각을 사이트별로 두는 이유**: 하나로 두면 사이트 A의 발송이 사이트 B의 2초 창을 먹어, B가 조건을 채웠는데도 내주지 않는다. ③ 의존 방향: `remote.rs`가 `remote::queue`·`remote::types`를 참조하고, 아무도 `RelistPending`을 참조하지 않는다(`ExplorerApp` 필드로만 산다). ④ 비추상화 선언 — 「새로 고침 정책」을 트레이트로 추상화하지 않는다. 로컬 감시는 `DirWatcher`가 이미 다른 방식으로 하고 있어 공통 뼈대를 만들면 양쪽 다 어색해진다
   - **Acceptance**: Given 원격 폴더 `/pub`를 보고 있는 패널과 그 폴더로 가는 업로드, When 업로드가 성공하고 그 사이트의 대기·진행 항목이 0이 됨, Then 그 패널이 목록을 다시 청한다(같은 사이트라도 **다른 폴더**를 보는 패널은 청하지 않는다). 단위 시험으로 고정할 것: ⓐ 성공한 업로드가 목적지 폴더를 대기로 표시한다 ⓑ 실패한 전송은 표시하지 않는다 ⓒ 받기(다운로드)는 원격을 표시하지 않는다 ⓓ 사이트에 대기·진행이 남아 있으면 2초 전에는 내주지 않는다 ⓔ 2초가 지나면 진행 중이어도 한 번 내준다 ⓕ 같은 폴더로 100건이 끝나도 내주는 항목은 하나다 ⓖ **사이트 A에 방금 보냈어도 사이트 B는 자기 조건만으로 내준다**(간격 상한이 사이트별이다)
   - **Files**:
     - 주: `src/ui/app/remote.rs`
