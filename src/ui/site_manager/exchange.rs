@@ -109,6 +109,14 @@ impl SiteManager {
         self.notice.take()
     }
 
+    /// 앱이 파일 대화를 띄우지 못했다 — 하던 흐름을 접고 사유를 바닥에 남긴다.
+    ///
+    /// 창 핸들을 얻지 못한 환경에서만 쓰인다. 조용히 접으면 사용자는 버튼이 먹지 않는다고 읽는다
+    pub fn fail_file_request(&mut self, reason: &str) {
+        self.exchange = Exchange::Idle;
+        self.error = Some(reason.to_owned());
+    }
+
     /// 좌측 아랫줄 버튼을 흐름으로 잇는다 (FR-59)
     pub(super) fn apply_exchange_action(&mut self, action: ExchangeAction) {
         self.error = None;

@@ -37,7 +37,7 @@ use crate::ui::session::{self, PanelTabs, RemoteSnapshot, TabSpec, WorkspaceStat
 use crate::ui::settings_dialog::{FontChoices, SettingsDialog};
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
-use crate::ui::site_manager::{SiteManager, SiteManagerOutcome};
+use crate::ui::site_manager::{FileRequest, SiteManager, SiteManagerOutcome};
 use crate::ui::splitter;
 use crate::ui::status_bar::{self, StatusAction, StatusView};
 use crate::ui::tabs::TransferTargets;
@@ -1498,6 +1498,49 @@ impl ExplorerApp {
                 }
             }
         }
+        // 겹치는 사이트 확인에서 고른 결과가 여기서 나온다 (FR-59)
+        self.flush_site_notice(ctx);
+    }
+
+    /// 사이트 관리자가 청한 파일 대화를 띄운다 (FR-59).
+    ///
+    /// **부르는 자리가 정해져 있다** — `IFileDialog::Show`는 셸 컨텍스트 메뉴와 마찬가지로 자체
+    /// 메시지 루프를 돌려 이벤트 루프를 재진입시키므로, 위젯 트리를 만드는 도중이 아니라
+    /// **그리기가 모두 끝난 뒤**에 띄운다. 그래서 이 함수는 `update`의 맨 끝에서만 불린다.
+    ///
+    /// 이 배선은 **리뷰가 지키는 자리**다 — `ExplorerApp`은 실 창 핸들이 있어야 만들어져
+    /// 프레임을 돌리는 시험을 세울 수 없다(AGENTS: HWND가 필요한 UI 로직은 시험 비대상)
+    fn pump_site_file_dialog(&mut self, ctx: &egui::Context) {
+        let Some(request) = self.site_manager.take_file_request() else {
+            return;
+        };
+        let Some(shell) = self.shell.as_ref() else {
+            // 창 핸들이 없으면 띄울 수 없다 — 조용히 접지 않고 관리자에 사유를 남긴다
+            self.site_manager
+                .fail_file_request(crate::i18n::site_file_dialog_unavailable());
+            return;
+        };
+        let picked = match request {
+            FileRequest::Save { suggested } => {
+                crate::fs::file_dialog::pick_save(shell.hwnd(), &suggested)
+            }
+            FileRequest::Open => crate::fs::file_dialog::pick_open(shell.hwnd()),
+        };
+        self.site_manager.supply_file(picked, &mut self.sites);
+        self.flush_site_notice(ctx);
+    }
+
+    /// 내보내기·가져오기 결과를 알린다 (FR-59).
+    ///
+    /// 목록이 바뀌었을 수 있으므로 함께 적는다 — 내보내기는 목록을 바꾸지 않지만, 그때 한 번 더
+    /// 적는 값이 설정 파일 쓰기 한 번뿐이라 「바뀌었는가」를 따로 알리는 계약을 두지 않는다
+    fn flush_site_notice(&mut self, ctx: &egui::Context) {
+        let Some(text) = self.site_manager.take_notice() else {
+            return;
+        };
+        self.persist_session();
+        let now = ctx.input(|input| input.time);
+        self.toast.show(text, now);
     }
 
     /// 워크스페이스와 그 탐색 상태(패널·탭·열거 스레드)를 함께 버린다
@@ -1936,11 +1979,18 @@ impl eframe::App for ExplorerApp {
 
         // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
         // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다
+        let shell_menu_pending = menu.is_some();
         if let (Some(menu), Some(shell)) = (menu, self.shell.as_ref()) {
             // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
             let scale = ctx.pixels_per_point();
             let (x, y) = shell.to_screen((menu.pos.x * scale) as i32, (menu.pos.y * scale) as i32);
             shell.popup(&menu.folder, &menu.items, x, y);
+        }
+        // 사이트 목록 파일 대화도 같은 제약이다 (FR-59). **셸 메뉴가 뜬 프레임에는 미룬다** —
+        // 두 모달을 겹쳐 띄우면 어느 쪽이 답을 기다리는지 알 수 없다. 요청은 그대로 남아
+        // 다음 프레임에 뜬다
+        if !shell_menu_pending {
+            self.pump_site_file_dialog(&ctx);
         }
     }
 }

@@ -355,9 +355,9 @@
     - (i) 상태가 많아 `show`가 길어짐 → 대화 셋을 별도 메서드로 나누고 `show` 말미에서 차례로 부른다(기존 `show_delete_confirm` 배치와 같다)
   - **Depends on**: T2, T3
 
-- [ ] T5. 앱에 파일 대화와 결과 알림을 배선한다
+- [x] T5. 앱에 파일 대화와 결과 알림을 배선한다
   - **Type**: C
-  - **Design**: ① 배치 — `src/ui/app.rs`의 `show_site_manager`와 `update` 말미. ② 신규 심볼 없음 — 기존 `self.shell`(HWND)·`self.toast`·`self.persist_session()`을 쓴다. ③ 의존 — `fs::file_dialog`·`ui::site_manager::FileRequest`. ④ 비추상화 — 파일 요청을 나르는 전용 큐·채널을 두지 않는다(요청은 프레임당 최대 하나다). 봉투 연산·파일 읽기·쓰기도 **워커로 내리지 않고 이 자리에서 그대로 돈다**(D13) — 그 결정을 코드 주석에 사유와 함께 적는다.
+  - **Design**: ① 배치 — `src/ui/app.rs`의 `show_site_manager`와 `update` 말미. ② 신규 심볼 — `ExplorerApp::pump_site_file_dialog`(파일 대화를 띄우고 결과를 되돌린다)·`ExplorerApp::flush_site_notice`(결과를 토스트로 알리고 목록을 적는다) 둘. 그 밖에는 기존 `self.shell`(HWND)·`self.toast`·`self.persist_session()`을 쓴다. **`SiteManager::fail_file_request`를 하나 더 열었다** — 창 핸들이 없을 때 사유를 관리자 바닥에 남기는 통로이며, plan T5 acceptance가 요구한 동작이라 T4의 공개 메서드 셋에 하나가 더해진다. ③ 의존 — `fs::file_dialog`·`ui::site_manager::FileRequest`. ④ 비추상화 — 파일 요청을 나르는 전용 큐·채널을 두지 않는다(요청은 프레임당 최대 하나다). 봉투 연산·파일 읽기·쓰기도 **워커로 내리지 않고 이 자리에서 그대로 돈다**(D13) — 그 결정을 코드 주석에 사유와 함께 적는다.
   - **Acceptance**:
     - Given 사이트 관리자가 파일 요청을 세웠을 때, When 그 프레임의 그리기가 끝나면, Then 셸 메뉴를 띄우는 자리(`update` 말미)에서 파일 대화가 뜨고 결과가 `supply_file`로 돌아간다 — 그리기 도중에는 띄우지 않는다
     - Given 가져오기·내보내기가 목록을 바꿨을 때, Then `persist_session()`이 불려 `settings.json`에 반영된다
