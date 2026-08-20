@@ -31,7 +31,7 @@
 <!-- 아래 항목의 `docs/plans/deferred.md` 등재와, 이번에 해소하는 대장 항목(2026-08-20 「드래그 중 미리보기 그림」)의 종결 표시는 `pjc:implement-task` Phase F-6.5가 맡는다. -->
 
 - **원격 항목을 탐색기로 끌어내기** — 대장의 2026-08-20 항목 그대로 유지. 이번 변경은 로컬 항목 경로에만 닿는다.
-- **[SUGGEST] 프리멀티플라이 알파 되돌리기가 세 곳이 된다** — `fs::thumbnail::bitmap_to_rgba`·`ui::icon_tex::color_bitmap_to_image`에 이어 `fs::drag_image`가 세 번째다. `thumbnail.rs:322`의 주석이 「세 번째 사용처가 생기면 공통 위치를 찾는다」고 이미 예고했다. **이번엔 공통화하지 않는다** — 기존 둘은 RGBA `Vec`을 돌려주는데 이번 것은 BGRA를 DIB 섹션 메모리에 직접 쓰므로, 합치려면 세 곳의 반환 형태를 함께 손봐야 해 이번 범위의 몇 배다(4-D 참조).
+- **[SUGGEST] 프리멀티플라이 알파 되돌리기가 세 곳이 된다** — `fs::thumbnail::bitmap_to_rgba`·`ui::icon_tex::color_bitmap_to_image`에 이어 `fs::drag_image`가 세 번째다. `thumbnail.rs:322`의 주석이 「세 번째 사용처가 생기면 공통 위치를 찾는다」고 이미 예고했다. **이번엔 공통화하지 않는다** — 기존 둘은 RGBA `Vec`을 돌려주는데 이번 것은 BGRA를 DIB 섹션 메모리에 직접 쓰므로, 합치려면 세 곳의 반환 형태를 함께 손봐야 해 이번 범위의 몇 배다(4-D 참조). **중복 범위는 처음 본 것보다 넓다**(T2 quality 리뷰 S1) — `GetObjectW` → 헤더 세우기 → `CreateCompatibleDC` → `GetDIBits` → `DeleteDC`로 이어지는 **읽기 루틴 자체**는 세 곳이 바이트 단위로 같은 절차이며 반환 형태와 무관하다(`drag_image.rs:91~125` · `thumbnail.rs:325~360` · `icon_tex.rs:262~296`). 공통 위치는 `fs` 쪽이어야 한다(`ui::icon_tex`가 `fs`를 알지 그 반대가 아니다).
 - **미리보기 그림의 DPI 재조회** — 그림 크기는 끌기를 시작하는 순간의 배율로 한 번 정한다. 끄는 도중 다른 배율의 모니터로 넘어가도 그림은 그대로다(셸의 드래그 이미지가 원래 그렇게 동작한다 — 다시 얹을 통로가 없다).
 
 ## Investigation Log
@@ -175,7 +175,7 @@
     - (ii-b) 수동 검증 1에서 그림이 전혀 붙지 않으면(전제 8 부정) 이 문면은 **없는 기능을 정본에 적은 것이 된다** → `## 불가피한 Halt` (T4와 같은 위험을 공유한다). 그 밖에는 없음 — 문서 문면 수정이며 파괴적·외부 요소가 없다(PRD 개정 승인은 `## 사전 승인 항목`에 있다)
   - **Depends on**: -
 
-- [ ] T2. `fs::drag_image` — 셸에서 그림을 얻어 GDI 비트맵으로 만든다
+- [x] T2. `fs::drag_image` — 셸에서 그림을 얻어 GDI 비트맵으로 만든다
   - **Type**: C
   - **Design**: ① **배치** — 신규 `src/fs/drag_image.rs`, `src/fs/mod.rs`에 `pub mod drag_image;` 등록(D4). ② **신규 심볼** — `DragImage { bitmap: HBITMAP, width: i32, height: i32 }`(셸에 넘길 비트맵과 그 크기) · `pub fn build(path: &Path, px: i32) -> Option<DragImage>`(경로 하나의 그림을 만든다) · `impl DragImage { pub fn delete(self) }`(실패 경로에서 되돌린다 — `SHDRAGIMAGE`를 채우는 것은 이 모듈이 아니라 `drag_source`이며 그 값은 D8이 정한다) · `fn unpremultiply(pixels: &mut [u8])`(BGRA 버퍼를 제자리에서 스트레이트 알파로 되돌리는 **순수 함수** — 시험 대상). ③ **의존 방향** — `windows`와 `std`만 안다. `fs::thumbnail`·`ui`를 참조하지 않고 아무도 이 모듈을 참조하지 않는다(T3에서 `drag_source`가 부른다). ④ **비추상화 선언** — 캐시를 두지 않는다(끌 때마다 한 번 조회) · 여러 항목 합성·개수 배지를 만들지 않는다 · 워커 스레드로 미루지 않는다(`DoDragDrop`이 UI 스레드에서 마우스를 쥐므로 그 자리에서 끝나야 한다) · 기존 두 곳의 픽셀 변환과 공통화하지 않는다(4-D).
   - **Acceptance**:
