@@ -310,6 +310,133 @@ mod tests {
         );
     }
 
+    /// 주석 줄을 걷어낸 소스 — 규약을 설명하는 문장이 검사에 걸리지 않게 한다.
+    ///
+    /// `menu.rs`가 「`SubMenuButton`이 hover로 여는 팝업이다」를 주석에 적고 있어, 이것이
+    /// 없으면 그 파일의 팝업 수가 부풀어 거짓 실패한다
+    fn code_only(source: &str) -> String {
+        source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 이 파일이 여는 팝업 목록의 수.
+    ///
+    /// `Frame::menu(`는 팝업을 여는 것이 아니라 **그 껍데기 모양을 적는 것**이라, 같은 파일에
+    /// `Popup::menu(`가 있으면 그 팝업의 프레임을 지정한 것으로 보고 따로 세지 않는다
+    /// (`widgets.rs`의 드롭다운이 그 형태다)
+    fn menu_openers(source: &str) -> usize {
+        let code = code_only(source);
+        let popup = code.matches("Popup::menu(").count();
+        let context =
+            code.matches("Popup::context_menu(").count() + code.matches(".context_menu(").count();
+        // 하위 메뉴는 부모 스타일을 잇지 않는 별도 `Area`라 자체 호출이 필요하다
+        let submenu = code.matches("SubMenuButton").count();
+        let frame = if popup > 0 {
+            0
+        } else {
+            code.matches("Frame::menu(").count()
+        };
+        popup + context + submenu + frame
+    }
+
+    /// 이 파일이 공통 경로를 거친 횟수 — `theme::menu_style` 또는 `widgets::menu_row`.
+    ///
+    /// **자격 형태를 먼저 세고 그 자리를 지운 뒤 무자격을 센다** — `theme::menu_style(`는
+    /// `menu_style(`를 부분 문자열로 품고 있어, 따로 세면 한 호출이 둘로 세어져 검사가
+    /// 통과하지만 아무것도 보증하지 못한다
+    fn style_calls(source: &str) -> usize {
+        let code = code_only(source);
+        // egui 자신의 메뉴 스타일은 앱 토큰을 세우지 않는다 — 인정하지 않는다
+        let code = code.replace("egui::containers::menu::menu_style(", "");
+        let qualified =
+            code.matches("theme::menu_style(").count() + code.matches("widgets::menu_row(").count();
+        let rest = code
+            .replace("theme::menu_style(", "")
+            .replace("widgets::menu_row(", "")
+            // 정의는 호출이 아니다
+            .replace("fn menu_style(", "")
+            .replace("fn menu_row(", "");
+        let bare = rest.matches("menu_style(").count() + rest.matches("menu_row(").count();
+        qualified + bare
+    }
+
+    #[test]
+    fn 항목_규약_검사는_네_가지_오차를_피한다() {
+        // 검사기 자신을 시험한다 — 아래 넷 중 하나만 어긋나도 검사가 통과하면서
+        // 아무것도 보증하지 못하는 상태가 된다
+        // ⓐ 자격/무자격 이중계수: `theme::menu_style(` 하나는 **1**이어야 한다
+        assert_eq!(style_calls("theme::menu_style(ui);"), 1);
+        assert_eq!(style_calls("crate::ui::theme::menu_style(ui);"), 1);
+        // ⓑ 정의는 호출이 아니다
+        assert_eq!(
+            style_calls("pub(crate) fn menu_row(ui: &mut Ui) -> bool {}"),
+            0
+        );
+        // ⓒ 주석 줄은 세지 않는다
+        assert_eq!(
+            menu_openers("// `SubMenuButton`이 hover로 여는 팝업이다"),
+            0
+        );
+        // ⓓ 같은 자리의 `Popup::menu(` + `Frame::menu(`는 하나로 센다
+        assert_eq!(
+            menu_openers("egui::Popup::menu(&r).frame(egui::Frame::menu(s)).show(|ui| {})"),
+            1
+        );
+
+        // 통과해야 할 형태 — 팝업 둘에 호출 둘
+        let 성한_파일 = "egui::Popup::menu(&a).show(|ui| { theme::menu_style(ui); });
+                         egui::Popup::menu(&b).show(|ui| { theme::menu_style(ui); });";
+        assert_eq!(menu_openers(성한_파일), 2);
+        assert_eq!(style_calls(성한_파일), 2);
+        // 실패해야 할 형태 — 팝업 둘에 호출 하나(한 곳만 고친 상태)
+        let 빠뜨린_파일 = "egui::Popup::menu(&a).show(|ui| { theme::menu_style(ui); });
+                           egui::Popup::menu(&b).show(|ui| { 항목(ui); });";
+        assert!(menu_openers(빠뜨린_파일) > style_calls(빠뜨린_파일));
+        // 실패해야 할 형태 — 하위 메뉴만 있고 호출이 없다
+        let 하위메뉴만 = "SubMenuButton::from_button(b).ui(ui, |ui| items(ui));";
+        assert!(menu_openers(하위메뉴만) > style_calls(하위메뉴만));
+    }
+
+    #[test]
+    fn 팝업_메뉴는_항목_스타일을_거친다() {
+        // 규약: 팝업 목록을 여는 자리는 모두 `theme::menu_style`을 거치거나
+        // `widgets::menu_row`로 그린다. **개수를 견주는 이유**는 한 파일에 팝업이 여럿인 곳
+        // (`sidebar.rs` 셋·`tabs.rs` 둘)에서 하나만 고쳐도 「있는지」만 보는 검사는 통과하기 때문이다
+        let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut sources = Vec::new();
+        ui_sources(&ui_dir, &mut sources);
+        assert!(!sources.is_empty(), "ui 소스를 하나도 읽지 못했다");
+
+        // 예외는 **경로 전체로** 견준다 — 이름만 보면 하위 폴더의 동명 파일이 조용히 빠진다
+        let 예외 = [
+            // 이 파일은 규약을 설명하느라 그 문자열을 담고, 시험이 egui 쪽 `menu_style`을 부른다
+            ui_dir.join("theme.rs"),
+            // 프레임만 열고 한 줄은 `remote_menu`가 그린다 — 그 모듈이 `widgets::menu_row`를 거친다
+            ui_dir.join("panel.rs"),
+        ];
+        let mut 발견 = Vec::new();
+        for path in sources {
+            if 예외.contains(&path) {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");
+            let (열림, 호출) = (menu_openers(&source), style_calls(&source));
+            if 열림 > 호출 {
+                발견.push(format!(
+                    "{}(팝업 {열림} · 호출 {호출})",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+        }
+        assert!(
+            발견.is_empty(),
+            "팝업을 열면서 공통 항목 스타일을 거치지 않은 곳: {발견:?}"
+        );
+    }
+
     #[test]
     fn 메뉴_항목_토큰은_정해진_값이다() {
         // 값이 바뀌면 화면의 모든 메뉴가 함께 바뀐다 — 정본이 여기 하나임을 이 시험이 못 박는다
