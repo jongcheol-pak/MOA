@@ -321,7 +321,7 @@
 
 - [x] T4. 사이트 관리자에 버튼 두 개와 대화 네 개를 더한다
   - **Type**: D
-  - **Design**: ① 배치 — `src/ui/site_manager.rs` 안. ② 신규 심볼 — `FileRequest { Save { suggested: String }, Open }`(공개 — 앱이 받는다), `SiteManager::take_file_request() -> Option<FileRequest>`, `SiteManager::supply_file(&mut self, path: Option<PathBuf>, store: &mut SiteStore)`, `SiteManager::take_notice() -> Option<String>`(가져오기·내보내기 결과 문구를 앱이 토스트로 띄운다 — **봉인·해제 실패 건수가 0이 아니면 그 사실을 문구에 함께 담는다**, D15), 내부 `Exchange`(진행 상태: `Idle` / `ExportAsk { pass, confirm, error }` / `ExportConfirmEmpty { pass }` / `ExportWaitFile { pass }` / `ImportWaitFile` / `ImportAsk { doc, pass, error }` / `ImportConflict { plan }`), `show_export_dialog`·`show_import_passphrase_dialog`·`show_import_conflict_dialog`(전부 `dialog::show`를 거친다), 좌측 아랫줄을 그리는 `show_export_buttons`. ③ 의존 — `remote::site_export`·`remote::sites`·`ui::dialog`·`ui::widgets`·`i18n`. 파일 대화(`fs::file_dialog`)는 **직접 부르지 않는다**(D7). ④ 비추상화 — 세 대화를 하나의 「단계 대화」 부품으로 합치지 않는다(본문 구성이 서로 달라 합치면 분기만 늘어난다).
+  - **Design**: ① 배치 — `src/ui/site_manager.rs` 안. ② 신규 심볼 — `FileRequest { Save { suggested: String }, Open }`(공개 — 앱이 받는다), `SiteManager::take_file_request() -> Option<FileRequest>`, `SiteManager::supply_file(&mut self, path: Option<PathBuf>, store: &mut SiteStore)`, `SiteManager::take_notice() -> Option<String>`(가져오기·내보내기 결과 문구를 앱이 토스트로 띄운다 — **봉인·해제 실패 건수가 0이 아니면 그 사실을 문구에 함께 담는다**, D15), 내부 `Exchange`(진행 상태: `Idle` / `ExportAsk { pass, confirm, error }` / `ExportConfirmEmpty { pass }` / `ExportWaitFile { pass }` / `ImportWaitFile` / `ImportAsk { doc, pass, error }` / `ImportConflict { plan }`), `show_export_ask`·`show_export_empty_confirm`·`show_import_ask`·`show_import_conflict`(넷 전부 `dialog::show`를 거친다 — `ExportConfirmEmpty` 상태가 D6의 되물음을 별도 대화로 요구하므로 셋이 아니라 넷이다), 좌측 아랫줄을 그리는 `show_export_buttons`. ③ 의존 — `remote::site_export`·`remote::sites`·`ui::dialog`·`ui::widgets`·`i18n`. 파일 대화(`fs::file_dialog`)는 **직접 부르지 않는다**(D7). ④ 비추상화 — 세 대화를 하나의 「단계 대화」 부품으로 합치지 않는다(본문 구성이 서로 달라 합치면 분기만 늘어난다).
   - **Acceptance**:
     - Given 사이트 관리자가 열려 있고 사이트가 1개 이상, When 좌측을 보면, Then 기존 세 버튼 아래 줄에 `내보내기`·`가져오기`가 좌우 균등 폭으로 서고 목록 웰이 그만큼(36px) 짧아진다
     - Given 사이트가 0개, When 좌측을 보면, Then `내보내기`는 비활성이고 `가져오기`는 활성이다(가져올 것은 있다)
@@ -333,14 +333,17 @@
     - Given 겹치는 사이트가 있으면, Then 그 이름 목록(앞 5건 + `…`)과 `덮어쓰기`·`건너뛰기`·`취소` 세 버튼이 뜨고, 각 선택이 T2의 요약대로 목록에 반영된다
     - Given `ImportSummary.password_failed`가 0이 아니면, Then 결과 문구가 "N개는 비밀번호를 저장하지 못했습니다"를 함께 알린다(D15)
     - Given 사이트 관리자를 닫으면, Then 진행 중이던 `Exchange` 상태와 입력한 암호가 함께 버려진다(`close`에서 지운다)
-    - 화면 문구가 모두 `i18n` 카탈로그를 거치고, 새 위젯 Id 3건이 `EXEMPT_LITERALS`에 등재돼 소스 훑기 시험이 통과한다
-    - `ui::dialog::대화는_모두_이_모듈을_거친다` 통과(세 대화 모두 `dialog::show` 경유)
+    - 화면 문구가 모두 `i18n` 카탈로그를 거치고, 새 리터럴 7건(대화 Id 4 + 입력칸 salt 3)이 `EXEMPT_LITERALS`에 등재돼 소스 훑기 시험이 통과한다
+    - `ui::dialog::대화는_모두_이_모듈을_거친다` 통과(네 대화 모두 `dialog::show` 경유)
     - `site_manager::문구는_인벤토리_원문_그대로다`(`:1370`)에 신규 버튼 두 개의 문구 단언이 더해진다 — 그 시험은 새 문구를 넣지 않아도 통과하므로 acceptance로 못 박지 않으면 조용히 빠진다. 그 시험 주석(인벤토리 #60~75·#88~90)에 **신규 버튼 두 개는 원본 인벤토리에 없는 항목**이라는 사실과 사유(사용자 요청 2026-08-20)를 함께 적는다 — 적지 않으면 시험 이름("인벤토리 원문 그대로")과 내용이 어긋난 채 남는다
     - 시험: 상태 기계가 `Idle → ExportAsk → ExportWaitFile → Idle`, `Idle → ImportWaitFile → ImportAsk → ImportConflict → Idle`로 도는 것을 프레임 없이 직접 부르는 단위 시험으로 덮는다(대화 그리기는 기존 `대화가_한_프레임을_그린다` 방식으로 1프레임 확인)
   - **Files**:
-    - 주: `src/ui/site_manager.rs`
-    - 동반: `src/i18n/mod.rs`(문구 키 약 18건(추정 — 이 task가 확정) + `EXEMPT_LITERALS` 3건)
-    - 테스트: `src/ui/site_manager.rs`의 `#[cfg(test)] mod tests`
+    - 주: `src/ui/site_manager.rs` · `src/ui/site_manager/exchange.rs`(신규 — 구현 중 분할, 아래 사유)
+    - 동반: `src/i18n/mod.rs`(문구 키 32건(실측) + `EXEMPT_LITERALS` 7건) · `src/ui/toast.rs`(범위 밖 1줄 — 아래 사유)
+    - 테스트: `src/ui/site_manager/exchange.rs`의 `#[cfg(test)] mod tests`(교환 시험 10건) · `src/ui/site_manager.rs`의 기존 시험
+  - **구현 중 판정 2건**:
+    - **파일 분할** — 이 흐름을 더하자 `site_manager.rs`가 2,699줄이 됐고 AGENTS 「파일」 네 질문에서 ①(변경 이유가 둘: 사이트 CRUD ↔ 파일로 주고받기)·③이 「예」, ④가 「아니오」로 나와 자식 모듈 `site_manager/exchange.rs`로 나눴다(1,916 + 832줄). `ui::app` ↔ `ui::app::transfer_conflict`와 같은 배치라 부모의 private 필드를 그대로 만진다.
+    - **`src/ui/toast.rs` 1줄** — `문구는_인벤토리_원문_그대로다`가 언어를 잠그지 않아 병렬 실행에서 간헐 실패했다(2026-08-20 실측 3회 중 1회). 이 task가 만든 결함은 아니고 대장에 이미 있던 항목이지만, 남겨 두면 **이후 모든 task의 `cargo test` 판정이 흔들리므로** 그 자리에서 `LanguageGuard::lock`을 더해 해소했다(4회 연속 통과 확인).
   - **Edge Cases**:
     - 암호에 비ASCII·아주 긴 문자열 / 확인 칸만 채운 경우
     - 가져온 파일에 사이트가 0건 → "가져올 사이트가 없습니다"

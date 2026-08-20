@@ -113,7 +113,12 @@ mod tests {
 
     #[test]
     fn 문구는_인벤토리_원문_그대로다() {
-        // 인벤토리 #91 (`:582`·README §9·§10)
+        // 인벤토리 #91 (`:582`·README §9·§10).
+        // **언어를 잠그고 견준다** — 잠그지 않으면 병렬 실행에서 다른 시험이 영어로 바꾼 찰나에
+        // 이 단언이 돌아 간헐 실패한다(2026-08-20 실측: 3회 중 1회). 카탈로그 값을 단언하는
+        // 시험은 언제나 잠근다는 것이 AGENTS i18n 규약이다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         assert_eq!(
             registered_text("example.test"),
             "example.test 등록됨 · 더블클릭하여 연결"
