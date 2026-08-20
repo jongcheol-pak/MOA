@@ -563,6 +563,29 @@ mod tests {
     }
 
     #[test]
+    fn 봉투가_없는_구버전_파일은_설정만_들여온다() {
+        // 직전 버전에서 암호를 비우고 내보낸 파일 — 봉투 자체가 없다. `needs_passphrase`를
+        // `secret.is_some()`으로 뭉뚱그리면 이 갈래도 참이 되어 열 수 없는 암호를 묻게 된다
+        let mut source = SiteStore::new();
+        let id = add_site(&mut source, "배포 서버", "deploy.test", "deploy");
+        assert!(source.set_password(id, "비밀"));
+        let document = SiteExport {
+            secret: None,
+            ..build(&source).expect("내보내기").document
+        };
+
+        assert!(!needs_passphrase(&document), "물을 것이 없다");
+        let mut target = SiteStore::new();
+        let plan = plan_import(&document, &target, "").expect("계획");
+        assert_eq!(plan.fresh.len(), 1);
+        assert_eq!(plan.fresh[0].password, None, "담긴 비밀번호가 없다");
+        apply_import(&mut target, &plan, true);
+        let copied = target.sites().first().expect("사이트");
+        assert_eq!(copied.host, "deploy.test", "설정은 그대로 들어온다");
+        assert_eq!(target.password(copied.id), None);
+    }
+
+    #[test]
     fn 구버전_파일은_암호를_묻고_틀리면_거부한다() {
         // 직전 버전이 사용자 암호로 만든 파일. 지금의 `build`는 이 형태를 만들지 않으므로
         // 픽스처로 세운다 — 이미 만들어 둔 백업이 무용해지지 않는지 여기서 지킨다
@@ -578,6 +601,22 @@ mod tests {
             plan_import(&document, &target, "틀린 암호"),
             Err(ImportError::WrongPassphrase)
         );
+        // 빈 암호도 틀린 암호다 — 새 파일처럼 그냥 열리지 않는다
+        assert_eq!(
+            plan_import(&document, &target, ""),
+            Err(ImportError::WrongPassphrase)
+        );
+
+        // 둘 중 어느 열쇠도 아닌 `kdf`는 어느 쪽으로도 열리지 않는다 (손댄 파일·더 새로운 앱)
+        let mut unknown = document.clone();
+        if let Some(sealed) = unknown.secret.as_mut() {
+            sealed.kdf = "PBKDF2-HMAC-SHA512-미래".to_owned();
+        }
+        assert_eq!(
+            plan_import(&unknown, &target, "맞는 암호"),
+            Err(ImportError::WrongPassphrase)
+        );
+
         // 맞는 암호면 비밀번호까지 그대로 나온다
         let plan = plan_import(&document, &target, "맞는 암호").expect("계획");
         assert_eq!(plan.fresh.len(), 1);

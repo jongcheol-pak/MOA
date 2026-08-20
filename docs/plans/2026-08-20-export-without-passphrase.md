@@ -30,6 +30,7 @@
 
 - 내보내기 진행 표시(사이트가 아주 많을 때의 진행률) — 직전 회차에서 이월. 실측상 수십 건은 즉시 끝난다.
 - **내보내기 기본 파일 이름의 앱 이름 표기** — 한국어 화면에서도 `MOA 사이트.moasites`다. FR-53이 적용처를 창 제목·트레이 툴팁으로 한정해 파일 이름은 미정이다(직전 회차 F-7 m2 — 사용자 판단 사항).
+- **간헐 실패 시험의 이름을 확보했다**: `remote::connection::tests::늦게_도착한_이전_세대의_목록은_버려진다`. 직전 회차에 「899 passed; 1 failed」로 한 번 나왔으나 이름을 못 잡았던 그것이며, T2 리뷰 중 다시 관찰돼 이번에 특정했다. `wait_events(&mut connection, 4, Duration::from_secs(2))`가 병렬 실행 부하에서 2초를 넘겨 이벤트 4개를 못 모으는 것으로 **추정**한다(격리 재실행은 통과). 이번 변경과 인과가 없어(`connection.rs`는 이 회차 어느 task의 Files에도 없다) 이연하며, **고칠 때는 타임아웃을 늘리기 전에 이벤트가 정말 4개 오는지부터 확인한다** — 상수만 키우면 원인을 덮는다.
 
 ## Investigation Log
 
@@ -211,7 +212,7 @@
     - (i) 없음 — 기존 내부 함수를 재사용하는 추가라 새 API 조사가 필요 없다
   - **Depends on**: -
 
-- [ ] T2. `remote::site_export`가 내장 키로 봉하고, 구버전 파일도 읽게 한다
+- [x] T2. `remote::site_export`가 내장 키로 봉하고, 구버전 파일도 읽게 한다
   - **Type**: C
   - **Design**: ① 배치 — `src/remote/site_export.rs` 안. ② 신규 심볼 없음 — 기존 `build`·`needs_passphrase`·`plan_import`의 **동작만** 바꾼다(`build`는 인자 하나가 줄어 시그니처가 바뀐다). ③ 의존 — `envelope`의 새 두 함수. ④ 비추상화 — 「봉인 전략」 열거형을 두지 않는다. 판정은 `Envelope.kdf` 값 비교 한 줄이면 끝난다.
   - **Acceptance**:
@@ -321,9 +322,14 @@
 
 ## Progress Log
 
+- **T1 완료** (`4ddee68`) — `remote::envelope`에 앱 내장 키 봉인 경로를 더했다. 두 열쇠가 `kdf` 값(`KDF_APP_KEY` / `KDF_NAME`)으로 갈리고 서로의 봉투를 열지 못한다. 시험 6건 신규.
+- **T2 완료** — `site_export::build`가 인자를 잃고 언제나 내장 키로 봉한다. `needs_passphrase`는 사용자 암호 봉투에만 참이고, `plan_import`은 `kdf`로 갈라 연다(구버전 파일 호환). 연쇄로 `finish_export`의 `passphrase` 인자·`ExportWaitFile.pass` 필드·`request_export_file` 인자가 사라졌다. 시험 픽스처 `legacy_document` 신설.
+  - 리뷰: code-quality 지적 0. spec-compliance **MAJOR 1건**(`secret: None` 갈래를 통과시키는 시험 부재) → `봉투가_없는_구버전_파일은_설정만_들여온다`로 해소. 함께 Edge Cases 둘(구버전+빈 암호 / 모르는 `kdf`)의 단언도 더했다.
+  - `cargo test --lib` 907 passed · `cargo clippy --all-targets -- -D warnings` 경고 0 · `cargo fmt --check` 통과.
+
 ## Next Steps
 
-- 권장 다음 액션: `pjc:implement-task`로 T1부터 실행
+- 권장 다음 액션: T3(대화 둘 제거·i18n 정리)부터 계속
 
 ## Open Questions
 
