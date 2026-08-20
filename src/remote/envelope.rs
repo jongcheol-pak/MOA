@@ -1,15 +1,26 @@
-//! 암호 기반 봉투 — 사이트 목록 내보내기 파일 전용 (FR-59).
+//! 사이트 목록 내보내기 파일의 봉투 (FR-59).
 //!
-//! `remote::secret`(DPAPI)과 **쓰임이 다르다**. DPAPI는 지금 로그인한 사용자에게 묶인 키를 쓰므로
-//! 다른 PC·다른 계정에서는 풀리지 않는데(그것이 설정 파일 보호에는 맞는 성질이다), 내보내기 파일은
-//! 애초에 **다른 PC로 옮기려고** 만드는 것이라 그 성질이 그대로 걸림돌이 된다. 그래서 이쪽은
-//! 사용자가 정한 암호에서 키를 파생한다 — 파일과 암호만 있으면 어디서든 풀린다.
+//! `remote::secret`(DPAPI)과 **쓰임이 다르다**. DPAPI는 지금 로그인한 사용자에게 묶인 키로 암·복호
+//! 하는데(그것이 설정 파일 보호에는 맞는 성질이다), 내보내기 파일은
+//! 애초에 **다른 PC로 옮기려고** 만드는 것이라 그 성질이 그대로 걸림돌이 된다.
+//!
+//! 그래서 열쇠가 둘이다:
+//!
+//! - **앱 내장 키**([`seal_with_app_key`]) — 지금 내보내기가 쓰는 길이다. 사용자가 아무것도
+//!   적지 않아도 되지만, **키가 실행 파일에 실려 있어 MOA를 가진 사람은 누구나 풀 수 있다.**
+//!   즉 이것은 「잠금」이 아니라 「눈에 안 보임」이며, **그 파일 자체가 자격증명**이라고 보아야
+//!   한다(2026-08-20 사용자 결정 — 편의를 위해 그 대가를 받아들였다).
+//! - **사용자 암호**([`seal_with_passphrase`]) — 파일과 암호를 아는 사람만 푼다. 지금은 새로
+//!   만드는 길이 화면에 없고, **직전 버전이 만든 파일을 읽기 위해** 남아 있다.
+//!
+//! 두 봉투는 [`Envelope::kdf`] 값으로 갈리며, 서로의 열쇠로는 열리지 않는다.
 //!
 //! 알고리즘은 Windows CNG가 그대로 제공하는 것만 쓴다 (plan D2):
 //! **PBKDF2-HMAC-SHA256으로 키를 파생하고 AES-256-GCM으로 봉한다.** 새 패키지를 들이지 않는
 //! 이유가 그것이며, GCM의 인증 태그가 「틀린 암호」와 「손댄 파일」을 한 검사로 함께 걸러 준다.
 //!
-//! 키 저장소를 추상화하지 않는 것은 `secret`과 같은 판단이다 — 쓰는 조합이 하나뿐이라 갈래가 없다.
+//! 키 저장소를 추상화하지 않는 것은 `secret`과 같은 판단이다 — 갈래가 둘뿐이고 그 차이가
+//! 「어떤 비밀을 몇 번 파생하는가」에 그쳐, 트레이트를 두면 그 두 값을 찾으러 파일을 오가게 된다.
 use serde::{Deserialize, Serialize};
 use windows::Win32::Security::Cryptography::{
     BCRYPT_AES_ALGORITHM, BCRYPT_ALG_HANDLE, BCRYPT_ALG_HANDLE_HMAC_FLAG,
@@ -21,11 +32,32 @@ use windows::Win32::Security::Cryptography::{
 };
 use windows::core::PCWSTR;
 
-/// 봉투가 쓰는 키 파생 방식 — 파일에 그대로 적히고, 풀 때 이 값이 아니면 거부한다.
+/// **사용자 암호** 봉투의 파생 방식 — 파일에 그대로 적히고, 풀 때 이 값이 아니면 거부한다.
 ///
 /// 문자열로 두는 이유: 훗날 다른 방식이 생겨도 **옛 파일이 자기 방식을 스스로 밝힐 수 있다**.
-/// 지금은 갈래가 하나뿐이라 열거형을 두지 않는다
+/// 갈래가 둘뿐이라 열거형을 두지 않는다
 pub const KDF_NAME: &str = "PBKDF2-HMAC-SHA256";
+
+/// **앱 내장 키** 봉투의 파생 방식. 두 봉투를 가르는 유일한 표식이다 (plan D3).
+///
+/// 이 값이면 가져오기가 암호를 묻지 않고, `KDF_NAME`이면 묻는다
+pub const KDF_APP_KEY: &str = "PBKDF2-HMAC-SHA256-appkey";
+
+/// 앱 내장 키 — 이 실행 파일이 만든 내보내기 파일을 여는 비밀.
+///
+/// **이것은 감춰진 값이 아니다.** 상수로 두든 어떻게 흩어 두든 실행 파일 안에 있는 이상
+/// 꺼낼 수 있으므로, 난독화로 얻는 것이 없다고 보고 그냥 상수로 둔다 — 대신 그 성질을
+/// 모듈 주석·PRD·README에 적어 「이 파일은 자격증명이다」를 사용자가 알게 한다 (plan D1).
+///
+/// 값은 아무 뜻이 없는 고정 문자열이다. **바꾸면 그 전에 만든 파일을 못 연다**
+const APP_KEY: &str = "MOA/site-export/v1 4f8a1c93e2b7d05a6c1e9f4b8d3a7250";
+
+/// 앱 내장 키의 파생 반복 — **1회다** (plan D4).
+///
+/// PBKDF2 반복은 **약한 비밀**의 사전 공격을 늦추려는 것인데, 내장 키는 고정 고엔트로피 값이라
+/// 그 공격의 대상이 아니다(공격자는 키를 추측하는 대신 바이너리에서 읽는다). 600,000회를 돌면
+/// 0.126초를 값 없이 쓰게 된다. 소금은 그대로 매번 새로 뽑으므로 같은 목록도 매번 다른 암호문이 된다
+const APP_KEY_ITERATIONS: u64 = 1;
 
 /// PBKDF2 반복 횟수 — OWASP가 PBKDF2-SHA256에 권하는 값.
 ///
@@ -50,7 +82,8 @@ const KEY_LEN: usize = 32;
 /// 본문 수백 바이트뿐이라 base64의 크기 이점이 뜻이 없고, hex는 변환표도 패딩도 없어 짧게 끝난다
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
-    /// 키 파생 방식 — 지금은 [`KDF_NAME`] 하나뿐이다
+    /// 키 파생 방식 — [`KDF_APP_KEY`](앱 내장 키) 또는 [`KDF_NAME`](사용자 암호).
+    /// **이 값이 두 봉투를 가르며, 서로의 열쇠로는 열리지 않는다**
     pub kdf: String,
     pub iterations: u64,
     pub salt: String,
@@ -59,25 +92,56 @@ pub struct Envelope {
     pub ciphertext: String,
 }
 
-/// 암호로 봉한다. 봉하지 못하면(난수·파생·암호화 실패) `None`이다.
+/// **앱 내장 키**로 봉한다 — 지금 내보내기가 쓰는 길이다 (plan D1).
 ///
-/// **빈 암호를 여기서 막지 않는다** — 「암호를 비우면 비밀번호를 담지 않는다」는 판단은 호출부의
-/// 몫이고(plan D6), 이 함수는 받은 것을 그대로 봉한다
+/// 사용자가 아무것도 적지 않아도 되지만, 그 대가로 **MOA를 가진 사람은 누구나 풀 수 있다**
+/// (모듈 주석 참조)
+pub fn seal_with_app_key(plain: &[u8]) -> Option<Envelope> {
+    seal_with(plain, APP_KEY, KDF_APP_KEY, APP_KEY_ITERATIONS)
+}
+
+/// 앱 내장 키로 봉한 봉투를 푼다. **사용자 암호 봉투는 열지 않는다**(`kdf`가 다르다)
+pub fn open_with_app_key(envelope: &Envelope) -> Option<Vec<u8>> {
+    open_with(envelope, APP_KEY, KDF_APP_KEY)
+}
+
+/// 사용자가 정한 암호로 봉한다. 봉하지 못하면(난수·파생·암호화 실패) `None`이다.
+///
+/// **지금 이 길로 새 파일을 만드는 화면은 없다** (plan D2) — 남겨 둔 것은 직전 버전이 만든
+/// 파일을 읽는 짝(`open_with_passphrase`)이 필요하고, 암호 보호 요구가 다시 오면 그대로 쓰기
+/// 위해서다. 빈 암호도 그대로 봉한다(막을 판단은 호출부의 몫이다)
 pub fn seal_with_passphrase(plain: &[u8], passphrase: &str) -> Option<Envelope> {
+    seal_with(plain, passphrase, KDF_NAME, PBKDF2_ITERATIONS)
+}
+
+/// 사용자 암호 봉투를 푼다. **틀린 암호와 손댄 파일을 구분하지 않고 둘 다 `None`**이다 —
+/// 어느 쪽인지 알려 주면 공격자에게 단서가 되고, 사용자가 할 일(암호를 다시 넣는다)도 같다.
+///
+/// 앱 내장 키 봉투·모르는 파생 방식·길이가 어긋난 값도 `None`이다
+pub fn open_with_passphrase(envelope: &Envelope, passphrase: &str) -> Option<Vec<u8>> {
+    open_with(envelope, passphrase, KDF_NAME)
+}
+
+/// 봉인 절차 — 두 열쇠가 함께 쓴다.
+///
+/// **두 벌로 늘어놓지 않는 이유**: 갈리는 것이 「어떤 비밀을 몇 번 파생하는가」 둘뿐인데,
+/// 본문을 복사해 두면 소금·nonce 생성과 키 소거 같은 **지켜야 할 순서가 두 곳이 되어**
+/// 한쪽만 고치는 사고가 난다
+fn seal_with(plain: &[u8], secret: &str, kdf: &str, iterations: u64) -> Option<Envelope> {
     let mut salt = [0u8; SALT_LEN];
     let mut nonce = [0u8; NONCE_LEN];
     random_bytes(&mut salt)?;
     random_bytes(&mut nonce)?;
 
-    let mut key = derive_key(passphrase, &salt, PBKDF2_ITERATIONS)?;
+    let mut key = derive_key(secret, &salt, iterations)?;
     let sealed = encrypt(&key, &nonce, plain);
     // 파생한 키는 여기서 쓸 일이 끝났다 — 봉인 결과와 함께 메모리에 남기지 않는다
     crate::remote::secret::zeroize(&mut key);
     let (ciphertext, tag) = sealed?;
 
     Some(Envelope {
-        kdf: KDF_NAME.to_owned(),
-        iterations: PBKDF2_ITERATIONS,
+        kdf: kdf.to_owned(),
+        iterations,
         salt: to_hex(&salt),
         nonce: to_hex(&nonce),
         tag: to_hex(&tag),
@@ -85,12 +149,11 @@ pub fn seal_with_passphrase(plain: &[u8], passphrase: &str) -> Option<Envelope> 
     })
 }
 
-/// 봉투를 푼다. **틀린 암호와 손댄 파일을 구분하지 않고 둘 다 `None`**이다 —
-/// 어느 쪽인지 알려 주면 공격자에게 단서가 되고, 사용자가 할 일(암호를 다시 넣는다)도 같다.
+/// 해제 절차 — `expected_kdf`가 아닌 봉투는 **열지 않는다**.
 ///
-/// 모르는 파생 방식·길이가 어긋난 값도 `None`이다
-pub fn open_with_passphrase(envelope: &Envelope, passphrase: &str) -> Option<Vec<u8>> {
-    if envelope.kdf != KDF_NAME {
+/// 이 검사가 두 열쇠를 갈라 준다: 내장 키 봉투를 암호로 열려 하거나 그 반대여도 `None`이다
+fn open_with(envelope: &Envelope, secret: &str, expected_kdf: &str) -> Option<Vec<u8>> {
+    if envelope.kdf != expected_kdf {
         return None;
     }
     let salt = from_hex(&envelope.salt)?;
@@ -101,7 +164,7 @@ pub fn open_with_passphrase(envelope: &Envelope, passphrase: &str) -> Option<Vec
         return None;
     }
 
-    let mut key = derive_key(passphrase, &salt, envelope.iterations)?;
+    let mut key = derive_key(secret, &salt, envelope.iterations)?;
     let opened = decrypt(&key, &nonce, &tag, &ciphertext);
     crate::remote::secret::zeroize(&mut key);
     opened
@@ -316,6 +379,84 @@ fn decrypt(key: &[u8], nonce: &[u8], tag: &[u8], ciphertext: &[u8]) -> Option<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 앱_내장_키로_봉하고_푼다() {
+        // 지금 내보내기가 쓰는 길 — 사용자가 아무것도 적지 않는다 (plan D1)
+        let plain = "사이트 목록과 비밀번호가 담긴 본문".as_bytes();
+        let sealed = seal_with_app_key(plain).expect("봉인");
+        assert_eq!(sealed.kdf, KDF_APP_KEY);
+        assert_eq!(sealed.iterations, 1, "내장 키는 반복이 1이다 (plan D4)");
+        assert_eq!(open_with_app_key(&sealed).as_deref(), Some(plain));
+    }
+
+    #[test]
+    fn 내장_키_봉투는_빈_평문과_긴_평문도_왕복한다() {
+        let empty = seal_with_app_key(&[]).expect("빈 평문 봉인");
+        assert_eq!(open_with_app_key(&empty), Some(Vec::new()));
+
+        let long = "가".repeat(1024);
+        let sealed = seal_with_app_key(long.as_bytes()).expect("긴 평문 봉인");
+        assert_eq!(open_with_app_key(&sealed).as_deref(), Some(long.as_bytes()));
+    }
+
+    #[test]
+    fn 두_봉투는_서로의_열쇠로_열리지_않는다() {
+        // `kdf` 검사가 둘을 가른다 — 이것이 빠지면 교차 해제가 조용히 성공할 수 있다
+        let by_app = seal_with_app_key(b"body").expect("내장 키 봉인");
+        assert_eq!(
+            open_with_passphrase(&by_app, "아무 암호"),
+            None,
+            "내장 키 봉투를 암호로 열면 안 된다"
+        );
+
+        let by_pass = seal_with_passphrase(b"body", "암호").expect("암호 봉인");
+        assert_eq!(
+            open_with_app_key(&by_pass),
+            None,
+            "암호 봉투를 내장 키로 열면 안 된다"
+        );
+    }
+
+    #[test]
+    fn 내장_키_봉투도_봉할_때마다_달라지고_손대면_풀리지_않는다() {
+        // 소금·nonce는 내장 키에서도 매번 새로 뽑는다 — 같으면 두 파일을 견줘 내용을 짐작할 수 있다
+        let first = seal_with_app_key(b"same body").expect("첫째");
+        let second = seal_with_app_key(b"same body").expect("둘째");
+        assert_ne!(first.salt, second.salt);
+        assert_ne!(first.nonce, second.nonce);
+        assert_ne!(first.ciphertext, second.ciphertext);
+
+        // 인증 태그가 변조를 잡는다
+        let mut broken = first.clone();
+        let mut bytes = from_hex(&broken.ciphertext).expect("hex");
+        bytes[0] ^= 0xff;
+        broken.ciphertext = to_hex(&bytes);
+        assert_eq!(open_with_app_key(&broken), None);
+    }
+
+    #[test]
+    fn 내장_키_봉투를_직렬화해도_평문이_남지_않는다() {
+        let plain = "찾을수있는평문";
+        let sealed = seal_with_app_key(plain.as_bytes()).expect("봉인");
+        let json = serde_json::to_string(&sealed).expect("직렬화");
+        assert!(!json.contains(plain), "평문이 남았다: {json}");
+        assert_eq!(
+            open_with_app_key(&sealed).as_deref(),
+            Some(plain.as_bytes())
+        );
+    }
+
+    #[test]
+    fn 길이가_어긋난_내장_키_봉투는_풀리지_않는다() {
+        let mut sealed = seal_with_app_key(b"body").expect("봉인");
+        sealed.nonce = to_hex(&[0u8; 8]);
+        assert_eq!(open_with_app_key(&sealed), None);
+
+        let mut sealed = seal_with_app_key(b"body").expect("봉인");
+        sealed.tag = "not hex".to_owned();
+        assert_eq!(open_with_app_key(&sealed), None);
+    }
 
     #[test]
     fn 봉인과_해제가_원문을_되돌린다() {
