@@ -203,7 +203,7 @@
   - **Edge Cases**: ⓐ 열 메뉴(3번)는 항목 높이가 26 → 28로 커지므로 체크 글리프 세로 정렬이 어긋나지 않는지 본다(글리프는 `LayoutJob`으로 라벨과 같은 줄에 있어 함께 가운데 정렬된다). ⓑ 설정 메뉴의 비활성 두 항목은 `add_enabled(false)`라 `noninteractive` 상태로 그려진다 — 그 상태에도 모서리·높이가 적용되는지 확인(T1 ⓒ와 짝). ⓒ **여백이 2 → 12로 늘어 라벨에 남는 자리가 좌우 합 20px 줄어든다** — 폭이 고정된 `CONNECT_MENU_WIDTH`(246)·`SITE_MENU_WIDTH`(180)·`COLUMN_MENU_WIDTH`(186)·`NEW_TAB_MENU_WIDTH`(250) 넷에서 **한국어·English 각각 가장 긴 라벨이 접히지 않는지** 확인하고, 접히면 그 폭 상수를 늘린다(Out of Scope의 단서). ⓓ 「보기」 항목은 오른쪽에 `CARET_RIGHT` 아이콘이 붙어 라벨 폭 계산에 그 몫이 더 필요하다 — ⓒ 확인에 포함한다.
   - **Halt Forecast**: 없음 — 크레이트 내부 호출이고 상수 제거 누락은 컴파일 오류다. 파일을 지우거나 옮기지 않는다.
   - **Files**: 주 — `src/ui/tabs.rs`, `src/ui/menu.rs`, `src/ui/sidebar.rs`, `src/ui/titlebar.rs`, `src/ui/queue_panel.rs`, `src/ui/list_details.rs`
-- [ ] **T3. painter로 그리는 네 곳을 공통 행 함수와 토큰으로 모은다** — Type D
+- [x] **T3. painter로 그리는 네 곳을 공통 행 함수와 토큰으로 모은다** — Type D
   - **Design**: ① 배치 — `src/ui/widgets.rs`의 기존 private `menu_row`를 `pub(crate)`로 올려 공통 행 함수로 삼는다. ② 신규 심볼과 책임 — 없음(기존 함수 확장). 시그니처는 `menu_row(ui, label, enabled) -> bool`로, 비활성이면 hover를 그리지 않고 글자를 `TEXT_DIM`으로 그리며 클릭을 돌려주지 않는다(`remote_menu`·`tree` 사본이 이미 하던 동작). ③ 의존 방향 — `ui::{remote_menu,tree} → ui::widgets`. `widgets`는 `theme`만 참조한다(기존과 같다). ④ 비추상화 — `tabs::show_site_row`를 이 함수로 흡수하지 않는다(D6). 드롭다운 전용 옵션(스크롤·선택 표시)도 넣지 않는다.
   - **Acceptance**:
     - `remote_menu.rs`·`tree.rs`의 `menu_row` 사본이 **사라지고** 두 파일이 `widgets::menu_row`를 부른다. `fn menu_row`로 레포를 검색해 정의가 **1건**(`widgets.rs`)만 남는다.
@@ -298,3 +298,6 @@
   - 결정: `menu::column_menu_items` 안에서는 스타일을 세우지 않는다 — 「팝업을 여는 쪽이 부른다」는 한 가지 규칙으로 통일(두 곳에서 세우면 어느 값이 먹는지 흐려진다).
   - 실측: 폭이 고정된 메뉴 4곳에서 여백 확대 후에도 라벨이 접히지 않는다(가장 빠듯한 한국어 `사이드바에서 숨기기`+`Del`이 여유 15.0px) → **폭 상수는 그대로 뒀다**.
   - 결정: `titlebar::SETTINGS_MENU_PADDING`을 「항목 여백 두 번 + `SETTINGS_MENU_BREATH`(20.0)」로 분해했다 — 합만 유지하면 라벨 여유가 0이 되어 2026-08-19의 접힘 회귀로 돌아간다.
+- T3 완료 (커밋 예정): 직접 그리던 메뉴 한 줄 사본 3개(`remote_menu`·`tree`·`widgets`)를 `widgets::menu_row` 하나로 모으고, `tabs::show_site_row`는 흡수하지 않고 토큰만 공유했다(D6). 861/861 통과.
+  - 실측: 드롭다운 여백이 8 → 12px로 늘어 긴 항목이 잘리는지 확인했다 — 이 PC의 한글 글꼴 73개 중 최장 이름이 `Microsoft JhengHei UI Light`(165.2px)이고 가용 폭은 216px(`FONT_FIELD_WIDTH` 240 − 12×2)라 **여유 50.8px**. 그래서 `FONT_FIELD_WIDTH`를 늘리지 않았다.
+  - 결정: 공통 `menu_row`의 글꼴은 `TextStyle::Body.resolve`로 고른다 — 종전 세 사본은 13.0을 하드코딩했는데, egui가 버튼 라벨에 쓰는 것이 `Body`라 버튼 경로와 크기가 갈리지 않는다(D4의 「글자 크기 토큰을 만들지 않는다」와 정합).
