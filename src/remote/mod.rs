@@ -20,6 +20,7 @@ pub mod manager;
 pub mod queue;
 pub mod secret;
 pub mod sftp;
+pub mod site_export;
 pub mod sites;
 pub mod testing;
 pub mod transfer;

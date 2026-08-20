@@ -231,6 +231,13 @@
 - **Rationale**: `SiteStore::set_password`는 봉인 실패 시 `false`를 주고 **호출부가 알릴 의무**를 주석에 못 박고 있으며(`sites.rs:125-137`), `password`도 다른 계정에서 온 설정이면 `None`이다(`:140-147`). A는 "가져왔습니다"라고 해 놓고 연결할 때야 비밀번호가 없는 것을 알게 한다. B는 사이트 20개 중 하나가 실패했다고 나머지 19개를 버린다. 그래서 내보내기는 `password()`가 `None`인 사이트를 비밀번호 없이 담고 그 건수를 돌려주며, 가져오기는 `set_password`가 실패한 건수를 `ImportSummary`에 담아 결과 문구가 함께 알린다.
 - **Source**: `src/remote/sites.rs:125-137`·`:140-148`
 
+### D16. 문서에 비밀번호가 없을 때 기존 비밀번호를 어떻게 하는가
+
+- **Options**: A) 문서에 없으면 기존 것도 지운다(파일 내용으로 통째 교체) / B) 문서에 있을 때만 갈아 끼우고 없으면 기존 것을 지킨다
+- **Chosen**: B
+- **Rationale**: 「비밀번호를 빼고 내보냈다」(D6)는 것은 「비밀번호를 지우겠다」는 뜻이 아니다. A를 택하면 암호 없이 내보낸 파일을 같은 PC에서 되가져오는 것만으로 저장된 로그인 정보가 통째로 사라지는데, 사용자는 그것을 예상하지 않고 되돌릴 수도 없다(절대 규칙 10이 막는 데이터 손실과 같은 성질). 구현은 `write_record`가 기존 `password_sealed`를 옮겨 담고 `apply_password`가 문서에 값이 있을 때만 덮는 형태다.
+- **Source**: 구현 중 확정(T2) — plan D14가 「필드만 갈아 끼운다」까지만 정해 이 갈래가 열려 있었다. `remote/sites.rs:125-137`(`set_password`)·시험 `문서에_없는_비밀번호는_있던_것을_지우지_않는다`
+
 ## Tasks
 
 <!-- T1~T2 (순수 계층) → T3 (Win32) → T4~T5 (화면·배선) → T6~T7 (문구·문서) -->
@@ -261,7 +268,7 @@
     - (i) GCM 태그를 `BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO`로 주고받는 구체 절차가 막힘 → Investigation Log의 심볼 실측과 이 task의 Design이 쓸 함수를 이미 지목했다. 그래도 막히면 `BCryptEncrypt` 호출 규약을 MS 문서로 대조한다(외부 서비스 아님 — Halt 아님)
   - **Depends on**: -
 
-- [ ] T2. 내보내기 문서 모델과 병합 로직(`remote::site_export`)을 만든다
+- [x] T2. 내보내기 문서 모델과 병합 로직(`remote::site_export`)을 만든다
   - **Type**: D
   - **Design**: ① 배치 — 신규 `src/remote/site_export.rs`, `remote/mod.rs`에 선언. ② 신규 심볼 — `SiteExport { format, version, sites: Vec<ExportedSite>, secret: Option<Envelope> }`, `ExportedSite`(`SiteRecord`의 12개 필드에서 **`id`와 `password_sealed`를 함께 뺀 10개** + `hidden: bool`. **`password_sealed`를 빼는 것이 이 형식의 핵심 제약이다** — 그것을 담으면 같은 PC·같은 계정에서는 DPAPI가 그대로 풀려, 암호를 비워 "비밀번호 제외"로 내보낸 파일에서도 비밀번호가 복원된다(D6가 깨진다). 비밀번호가 문서로 나가는 통로는 `secret` 봉투 하나뿐이다), `build(store: &SiteStore, passphrase: &str) -> Result<SiteExport, ExportError>`(암호가 비면 `secret`을 `None`으로 두고 비밀번호를 담지 않는다), `write_file(path, &SiteExport) -> Result<(), ExportError>`, `read_file(path) -> Result<SiteExport, ImportError>`, `needs_passphrase(&SiteExport) -> bool`, `conflict_key(host, port, protocol, user) -> ConflictKey`, `plan_import(doc, store, passphrase) -> Result<ImportPlan, ImportError>`(`ImportPlan { fresh: Vec<PreparedSite>, conflicts: Vec<(String, SiteId, PreparedSite)> }`), `apply_import(store, plan, overwrite: bool) -> ImportSummary { added, replaced, skipped, password_failed }`. **보조 타입 정의** — `ConflictKey(String, u16, Protocol, String)`(D3의 네 값, 호스트만 소문자·trim), `PreparedSite { site: ExportedSite, password: Option<String> }`(문서의 한 항목과 그에 대응하는 평문 비밀번호를 묶은 것), `ExportError { Seal, Io(String), Serialize }`, `ImportError { Broken, Unsupported, WrongPassphrase, Io(String) }`. **비밀번호 대응 규칙** — 봉투의 평문은 `Vec<String>`을 JSON으로 직렬화한 것이고 **`sites` 배열과 같은 순서·같은 길이**다(사이트에 `id`가 없으므로 순서가 유일한 연결 고리다). 길이가 다르면 `ImportError::Broken`이다. ③ 의존 — `remote::{types, sites, envelope, secret}`과 `serde_json`만. `ui`를 모른다. ④ 비추상화 — 형식 버전이 하나뿐이므로 「마이그레이션 트레이트」를 두지 않고, `version != 1`이면 오류로 거부한다.
   - **Acceptance**:
