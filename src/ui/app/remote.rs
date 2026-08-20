@@ -447,7 +447,15 @@ impl ExplorerApp {
                 }
                 ConnEvent::TransferDone { id, result } => {
                     self.runner
-                        .on_done(&mut self.queue, id, result.map_err(|err| err.to_string()))
+                        .on_done(&mut self.queue, id, result.map_err(|err| err.to_string()));
+                    // 올린 것이 끝났으면 그 폴더를 다시 읽을 자리로 표시해 둔다 (FR-37).
+                    //
+                    // **완료 판정은 워커의 결과가 아니라 큐에서 다시 읽는다** — `on_done`이
+                    // 성공을 실패로 뒤집는 길이 있어(받은 파일의 이름 바꾸기 실패) 워커가 준
+                    // 값만 보면 실제 상태와 어긋난다
+                    if let Some((site, dir)) = self.queue.get(id).and_then(relist_target) {
+                        self.relist.mark(site, dir);
+                    }
                 }
                 // 조회 실패 — 트리가 청한 것이면 그 노드에만 사유를 남기고(T24 Edge Case),
                 // 패널이 청한 것이면 **옮기기를 무르고** 사유를 상태 줄에 남긴다 (F-7 리뷰 B2).
@@ -544,6 +552,42 @@ impl ExplorerApp {
     }
 
     /// 그 연결을 활성 탭으로 쓰는 패널들이 목록을 다시 청한다
+    /// 전송이 끝나 표시해 둔 폴더들을 실제로 다시 읽는다 (FR-37).
+    ///
+    /// **대상은 연결이 아니라 「사이트 + 폴더」로 고른다** — 한 사이트가 탭마다 연결을 따로
+    /// 열어(FR-37의 탐색 1 + 전송 2) 전송을 처리한 연결이 패널의 연결과 다를 수 있다.
+    /// 연결로 고르면 갱신이 새어 나가고, 반대로 그 연결로 다른 폴더를 보는 패널까지
+    /// 헛되이 다시 읽게 된다
+    pub(super) fn pump_relist(&mut self, now: f64) {
+        // 표시된 것이 없으면 큐를 훑지 않는다 — 이 자리는 매 프레임 불리고 큐는 1만 건까지 간다
+        if self.relist.is_empty() {
+            return;
+        }
+        let busy: std::collections::HashSet<SiteId> = self
+            .queue
+            .items()
+            .iter()
+            .filter(|item| item.state.is_pending())
+            .map(|item| item.site)
+            .collect();
+        let ready = self.relist.take_ready(&busy, now);
+        if ready.is_empty() {
+            return;
+        }
+        let ExplorerApp { views, manager, .. } = self;
+        for (site, dir) in ready {
+            for view in views.values_mut() {
+                for panel in view.panels.values_mut() {
+                    if panel.active_site() == Some(site)
+                        && panel.remote_dir().as_ref() == Some(&dir)
+                    {
+                        panel.request_remote_list(manager);
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn request_remote_list(&mut self, conn: ConnectionId) {
         let ExplorerApp { views, manager, .. } = self;
         for view in views.values_mut() {
@@ -743,6 +787,86 @@ impl ExplorerApp {
     }
 }
 
+/// 같은 사이트에 잇달아 다시 묻지 않을 최소 간격(초) — 오래 걸리는 전송 중에도
+/// 이 간격으로는 목록이 따라온다 (FR-37).
+///
+/// **이 값이 없으면 둘 중 하나가 된다**: 건마다 물으면 수천 건 업로드에서 서버 왕복이
+/// 파일 수에 비례하고, 큐가 빌 때만 물으면 오래 걸리는 전송 내내 화면이 그대로다
+const RELIST_MIN_INTERVAL: f64 = 2.0;
+
+/// 전송이 끝나 다시 읽어야 할 원격 폴더들 (FR-37).
+///
+/// **순수 상태다** — 연결도 패널도 모르고 "무엇을 언제 다시 물을지"만 안다. 그래서 시점
+/// 판정(아래 `take_ready`)을 서버 없이 시험할 수 있다. 실제 조회는 `pump_relist`가 한다
+#[derive(Debug, Default)]
+pub(super) struct RelistPending {
+    /// 다시 읽어야 할 자리들. 같은 폴더로 100건이 끝나도 항목은 하나다
+    dirty: std::collections::HashSet<(SiteId, RemotePath)>,
+    /// 사이트마다 마지막으로 조회를 보낸 시각.
+    ///
+    /// **사이트별로 두는 이유**: 하나로 두면 사이트 A에 보낸 것이 사이트 B의 간격까지
+    /// 먹어, B가 조건을 채웠는데도 내주지 않는다
+    last_sent: std::collections::HashMap<SiteId, f64>,
+}
+
+impl RelistPending {
+    /// 이 자리를 다시 읽어야 한다고 표시한다
+    pub(super) fn mark(&mut self, site: SiteId, dir: RemotePath) {
+        self.dirty.insert((site, dir));
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.dirty.is_empty()
+    }
+
+    /// 지금 물어도 되는 자리들을 꺼낸다 — 꺼낸 것은 목록에서 빠진다.
+    ///
+    /// `busy`는 **대기·진행 중인 전송이 남은 사이트들**이다. 그 사이트는 아직 끝나지
+    /// 않았으므로 간격(`RELIST_MIN_INTERVAL`)을 채웠을 때만 내주고, 전송이 다 끝난
+    /// 사이트는 곧바로 내준다 — 마지막 한 번은 지체 없이 화면에 반영돼야 한다
+    pub(super) fn take_ready(
+        &mut self,
+        busy: &std::collections::HashSet<SiteId>,
+        now: f64,
+    ) -> Vec<(SiteId, RemotePath)> {
+        let mut ready: Vec<(SiteId, RemotePath)> = Vec::new();
+        self.dirty.retain(|(site, dir)| {
+            let waited = self
+                .last_sent
+                .get(site)
+                // 이 사이트에 한 번도 보낸 적이 없으면 기다릴 것이 없다 —
+                // 대량 전송의 첫 완료가 곧바로 화면에 보인다
+                .is_none_or(|last| now - last >= RELIST_MIN_INTERVAL);
+            if !busy.contains(site) || waited {
+                ready.push((*site, dir.clone()));
+                return false;
+            }
+            true
+        });
+        for (site, _) in &ready {
+            self.last_sent.insert(*site, now);
+        }
+        ready
+    }
+}
+
+/// 전송 하나가 끝났을 때 다시 읽어야 할 자리 — 없으면 `None` (FR-37).
+///
+/// **올리기만 대상이다** — 받기는 로컬 폴더 감시(`ui::panel`의 `DirWatcher`)가 이미
+/// 갱신하므로 여기서 다루면 같은 일을 두 번 한다. 실패·진행 중인 것도 대상이 아니다
+pub(super) fn relist_target(
+    item: &crate::remote::queue::TransferItem,
+) -> Option<(SiteId, RemotePath)> {
+    if !item.state.is_done() || item.direction != TransferDirection::Upload {
+        return None;
+    }
+    // 서버 루트에 바로 올린 것은 그 위가 없다 — 루트 자신이 다시 읽을 자리다
+    Some((
+        item.site,
+        item.remote.parent().unwrap_or_else(RemotePath::root),
+    ))
+}
+
 /// 원격 파일 작업이 띄운 대화의 상태 (FR-39).
 ///
 /// **대상 경로를 대화가 뜰 때 붙잡아 둔다** — 대화가 떠 있는 동안 목록이 다시 읽히거나
@@ -900,6 +1024,121 @@ pub(super) fn to_tab_phase(phase: &ConnPhase) -> TabPhase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::remote::queue::{TransferItem, TransferState};
+    use std::collections::HashSet;
+
+    fn 올린_항목(site: u32, remote: &str, state: TransferState) -> TransferItem {
+        TransferItem {
+            id: crate::remote::connection::TransferId(1),
+            site: SiteId(site),
+            direction: TransferDirection::Upload,
+            local: PathBuf::from(r"C:\workpp.js"),
+            remote: RemotePath::new(remote),
+            size: 10,
+            state,
+        }
+    }
+
+    #[test]
+    fn 성공한_올리기는_그_폴더를_다시_읽을_자리로_준다() {
+        // Acceptance ⓐ
+        let item = 올린_항목(1, "/var/www/app.js", TransferState::Done);
+        assert_eq!(
+            relist_target(&item),
+            Some((SiteId(1), RemotePath::new("/var/www")))
+        );
+        // 서버 루트에 바로 올린 것은 루트 자신이 대상이다 (Edge Case)
+        let 루트 = 올린_항목(1, "/app.js", TransferState::Done);
+        assert_eq!(relist_target(&루트), Some((SiteId(1), RemotePath::root())));
+    }
+
+    #[test]
+    fn 끝나지_않았거나_실패한_전송은_다시_읽지_않는다() {
+        // Acceptance ⓑ — 실패를 다시 읽으면 없는 파일이 생긴 것처럼 보이지는 않지만 헛왕복이다
+        for state in [
+            TransferState::Wait,
+            TransferState::Active { sent: 5, speed: 1 },
+            TransferState::Error {
+                message: "550".to_owned(),
+            },
+        ] {
+            assert_eq!(relist_target(&올린_항목(1, "/var/www/app.js", state)), None);
+        }
+    }
+
+    #[test]
+    fn 받기는_다시_읽을_자리가_아니다() {
+        // Acceptance ⓒ — 로컬은 폴더 감시가 이미 갱신한다
+        let mut item = 올린_항목(1, "/var/www/app.js", TransferState::Done);
+        item.direction = crate::remote::connection::TransferDirection::Download;
+        assert_eq!(relist_target(&item), None);
+    }
+
+    #[test]
+    fn 전송이_남은_사이트는_간격을_채워야_내준다() {
+        // Acceptance ⓓⓔ
+        let mut pending = RelistPending::default();
+        pending.mark(SiteId(1), RemotePath::new("/pub"));
+        let busy: HashSet<SiteId> = [SiteId(1)].into_iter().collect();
+
+        // 한 번도 보낸 적이 없으면 곧바로 내준다 — 대량 전송의 첫 완료가 화면에 보인다
+        assert_eq!(
+            pending.take_ready(&busy, 100.0),
+            vec![(SiteId(1), RemotePath::new("/pub"))]
+        );
+
+        // 방금 보냈으므로 간격 안에서는 내주지 않는다 (ⓓ)
+        pending.mark(SiteId(1), RemotePath::new("/pub"));
+        assert!(pending.take_ready(&busy, 101.0).is_empty());
+        assert!(!pending.is_empty(), "내주지 않은 것은 그대로 남는다");
+
+        // 간격이 지나면 진행 중이어도 한 번 내준다 (ⓔ)
+        assert_eq!(
+            pending.take_ready(&busy, 102.0),
+            vec![(SiteId(1), RemotePath::new("/pub"))]
+        );
+    }
+
+    #[test]
+    fn 전송이_다_끝난_사이트는_간격을_기다리지_않는다() {
+        // 마지막 한 번은 지체 없이 반영돼야 한다
+        let mut pending = RelistPending::default();
+        pending.mark(SiteId(1), RemotePath::new("/pub"));
+        let busy: HashSet<SiteId> = [SiteId(1)].into_iter().collect();
+        assert_eq!(pending.take_ready(&busy, 100.0).len(), 1);
+
+        pending.mark(SiteId(1), RemotePath::new("/pub"));
+        // 큐가 비었다(busy 아님) → 간격 안이어도 내준다
+        assert_eq!(pending.take_ready(&HashSet::new(), 100.5).len(), 1);
+    }
+
+    #[test]
+    fn 같은_폴더로_여러_건이_끝나도_한_번만_묻는다() {
+        // Acceptance ⓕ
+        let mut pending = RelistPending::default();
+        for _ in 0..100 {
+            pending.mark(SiteId(1), RemotePath::new("/pub"));
+        }
+        assert_eq!(pending.take_ready(&HashSet::new(), 100.0).len(), 1);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn 간격은_사이트마다_따로_센다() {
+        // Acceptance ⓖ — 하나로 두면 A에 보낸 것이 B의 창을 먹는다
+        let mut pending = RelistPending::default();
+        pending.mark(SiteId(1), RemotePath::new("/a"));
+        let busy: HashSet<SiteId> = [SiteId(1), SiteId(2)].into_iter().collect();
+        assert_eq!(pending.take_ready(&busy, 100.0).len(), 1);
+
+        // 같은 순간 사이트 2가 표시돼도 그쪽은 자기 이력만 본다
+        pending.mark(SiteId(2), RemotePath::new("/b"));
+        assert_eq!(
+            pending.take_ready(&busy, 100.1),
+            vec![(SiteId(2), RemotePath::new("/b"))]
+        );
+    }
 
     #[test]
     fn 같은_서버의_주소는_사이트를_새로_만들지_않는다() {

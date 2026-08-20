@@ -56,7 +56,7 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 mod remote;
 mod transfer_conflict;
 
-use remote::RemoteOps;
+use remote::{RelistPending, RemoteOps};
 use transfer_conflict::ConflictCheck;
 
 /// 맑은 고딕 — egui 기본 폰트에는 한글 글리프가 없어 파일명이 두부(□)로 보인다
@@ -547,6 +547,8 @@ pub struct ExplorerApp {
     next_tree: u64,
     /// 원격 파일 작업 대화의 상태 (FR-39)
     remote_ops: RemoteOps,
+    /// 전송이 끝나 다시 읽어야 할 원격 폴더들 (FR-37) — `pump_relist`가 프레임마다 거둔다
+    relist: RelistPending,
     /// 상태 줄에 잠깐 띄울 실패 사유와 그 만료 시각 (FR-39)
     notice: Option<(String, f64)>,
     /// 지금 펼치고 있는 로컬 폴더 수 (T22 Edge Case) — 상태 줄이 이것을 알린다.
@@ -684,6 +686,7 @@ impl ExplorerApp {
             pending_trees: HashMap::new(),
             next_tree: 0,
             remote_ops: RemoteOps::default(),
+            relist: RelistPending::default(),
             notice: None,
             expanding: 0,
             tree_cache: TreeCache::new(),
@@ -1731,6 +1734,8 @@ impl eframe::App for ExplorerApp {
         // 보이지 않는 워크스페이스의 원격 탭이 옛 단계로 굳는다
         let now = ctx.input(|input| input.time);
         self.poll_remote(now);
+        // 끝난 전송의 목적지 폴더를 다시 읽는다 (FR-37) — 표시는 `poll_remote`가 남긴다
+        self.pump_relist(now);
         // 드라이브 줄·연결 상태 (T4) — 워커가 두 번에 나눠 올린다
         self.poll_drives();
         // 펼쳐진 로컬 폴더를 큐로 옮긴다 (FR-38)
