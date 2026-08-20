@@ -2093,6 +2093,19 @@ impl eframe::App for ExplorerApp {
                     // 이 `for`문을 지워도 붉어지는 시험이 없으니 **리뷰가 지키는 자리**다.
                     // 앞뒤 층은 시험이 덮는다 — 패널이 관측을 세우는 것(`ui/panel/tests.rs`),
                     // 여럿을 모으는 것(`ui/splitter.rs`), 반영 규칙(`app/drives.rs`)
+                    // OS에서 끌어온 파일이 창 위를 지나는 동안 놓일 패널을 두른다 (FR-61).
+                    // **`show_layout`이 돌아온 뒤에 그린다** — 강조할 패널을 정하려면 그
+                    // 함수가 반환한 `pane_rects`가 필요해, 인자로 되먹이면 순환이 된다
+                    let hovering = ctx.input(|input| !input.raw.hovered_files.is_empty());
+                    let cursor = self
+                        .shell
+                        .as_ref()
+                        .and_then(|shell| shell.cursor_client_pos(ctx.pixels_per_point()));
+                    if let Some(target) = drop_highlight(hovering, cursor, &pane_rects)
+                        && let Some((_, rect)) = pane_rects.iter().find(|(id, _)| *id == target)
+                    {
+                        splitter::draw_drop_highlight(ui, *rect);
+                    }
                     for (path, reachable) in outcome.drive_observed {
                         self.drives.observe(&path, reachable);
                     }
@@ -2201,6 +2214,24 @@ enum OsDropTarget {
     },
 }
 
+/// OS 드래그가 창 위를 지나는 동안 강조할 패널 — 없으면 `None` (FR-61).
+///
+/// **대상은 OS 드래그뿐이다** — 앱 안의 탭↔탭 드래그는 egui가 끌고 있는 항목을 이미
+/// 커서에 붙여 보이므로 테두리를 더하면 표시가 둘이 된다.
+///
+/// 판정을 그리기와 떼어 둔 이유는 이것만 시험할 수 있게 하기 위함이다 — 그리는 쪽은
+/// 실제 `Ui`가 있어야 돈다
+fn drop_highlight(
+    hovering: bool,
+    cursor: Option<egui::Pos2>,
+    pane_rects: &[(PanelId, egui::Rect)],
+) -> Option<PanelId> {
+    if !hovering {
+        return None;
+    }
+    panel_at(pane_rects, cursor?)
+}
+
 /// 그 자리에 있는 패널 — 어느 사각형에도 들지 않으면 `None` (FR-61).
 ///
 /// **뒤에서부터 찾는다** — `pane_rects`는 그리기 순서대로라 겹치면 나중에 그린 것이 위다.
@@ -2267,6 +2298,28 @@ mod tests {
         // 사이드바·전송 큐 위에 놓은 경우 — 어느 패널도 아니다
         assert_eq!(panel_at(&rects, egui::pos2(50.0, 500.0)), None);
         assert_eq!(panel_at(&[], egui::pos2(50.0, 50.0)), None);
+    }
+
+    #[test]
+    fn 끌고_있을_때만_그_패널을_강조한다() {
+        // Acceptance ⓐ~ⓓ (FR-61)
+        let rects = vec![(
+            PanelId(1),
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)),
+        )];
+        let 안 = Some(egui::pos2(50.0, 50.0));
+
+        // ⓐ 끌고 있지 않으면 강조하지 않는다 — 앱 안의 드래그는 대상이 아니다
+        assert_eq!(drop_highlight(false, 안, &rects), None);
+        // ⓑ 끌고 있고 커서가 패널 안이면 그 패널
+        assert_eq!(drop_highlight(true, 안, &rects), Some(PanelId(1)));
+        // ⓒ 끌고 있어도 패널 밖이면 강조하지 않는다 (사이드바·전송 큐 위)
+        assert_eq!(
+            drop_highlight(true, Some(egui::pos2(50.0, 500.0)), &rects),
+            None
+        );
+        // ⓓ 커서를 읽지 못하면 강조하지 않는다
+        assert_eq!(drop_highlight(true, None, &rects), None);
     }
 
     #[test]

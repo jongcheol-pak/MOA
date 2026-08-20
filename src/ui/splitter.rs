@@ -46,6 +46,27 @@ pub fn to_layout_rect(r: egui::Rect) -> LayoutRect {
     }
 }
 
+/// OS에서 끌어온 파일이 놓일 패널에 테두리를 두른다 (FR-61).
+///
+/// **`show_layout`의 인자로 받지 않고 따로 부르게 둔 이유**: 강조할 패널을 정하려면
+/// 그 함수가 **반환하는** `pane_rects`가 필요해, 인자로 되먹이면 같은 프레임 안에서
+/// 순환이 된다. 그리기가 끝난 뒤 같은 `Ui`에 덧그리면 나중에 그린 것이 위에 오므로
+/// 활성 테두리 위에 정상적으로 얹힌다(위 그리기 순서 주석과 같은 근거).
+///
+/// 굵기·모양은 활성 테두리와 같고 **색만 가른다** — 같은 자리에 다른 뜻의 선이 두 종류
+/// 서는 것이라, 굵기까지 다르면 어느 쪽이 무엇인지 알 수 없다
+pub fn draw_drop_highlight(ui: &egui::Ui, rect: egui::Rect) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(PANE_BORDER_WIDTH, theme::ACCENT),
+        egui::StrokeKind::Inside,
+    );
+}
+
 /// 레이아웃이 상위(앱)에 올려보내는 요청 — 어느 패널에서 왔는지까지 담는다
 #[derive(Default)]
 pub struct LayoutOutcome {
