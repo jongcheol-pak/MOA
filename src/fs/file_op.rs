@@ -41,11 +41,16 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 /// HWND를 워커 스레드로 넘기기 위한 래퍼.
 ///
-/// 안전성: HWND는 값 타입 핸들이고 `IFileOperation::SetOwnerWindow`는 그 핸들을 대화의
-/// 소유자로 적기만 한다. 창이 이미 파괴됐으면 셸이 소유자 없이 띄운다
-/// (`fs::enumerate`의 같은 래퍼와 같은 근거)
+/// 안전성: 핸들 값 자체는 스레드 간 옮겨도 무해하고, **다른 스레드가 만든 창을
+/// `SetOwnerWindow`에 주는 것은 `IFileOperation`을 워커에서 돌릴 때의 표준 방식**이다 —
+/// 진행률 대화는 이 워커 스레드에서 뜨고 소유자만 UI 스레드의 창을 가리킨다. 입력 큐를
+/// 붙이지(`AttachThreadInput`) 않고, UI 스레드도 이 워커를 기다리지 않아(결과는 채널로
+/// 온다) 서로 막을 자리가 없다. 창이 이미 파괴됐으면 셸이 소유자 없이 띄운다.
+///
+/// **`fs::enumerate`의 같은 이름 래퍼와는 근거가 다르다** — 그쪽은 `PostMessageW`가
+/// 어느 스레드에서나 안전하다는 그 API의 성질이 근거다
 struct HwndSend(isize);
-// 안전성: 위 주석 참조 — 핸들 값 자체는 스레드 간 이동해도 무해하다
+// 안전성: 위 주석 참조
 unsafe impl Send for HwndSend {}
 
 /// `sources`를 `dest` 폴더로 복사한다 — **곧바로 돌아오고** 결과는 `done`으로 온다 (FR-60).
@@ -181,6 +186,21 @@ mod tests {
         );
         assert!(!started);
         assert!(rx.try_recv().is_err(), "결과도 오지 않는다");
+    }
+
+    #[test]
+    fn 대상이_원본과_같은_폴더여도_그대로_셸에_넘긴다() {
+        // 같은 자리에 놓은 것을 앱이 미리 걸러내지 않는다 — 사본을 만들지 거부할지는
+        // 셸이 정한다(FR-60이 판단을 통째로 셸에 맡긴 그 자리다)
+        let (tx, _rx) = channel();
+        let started = copy_into(
+            PathBuf::from(r"C:\work"),
+            vec![PathBuf::from(r"C:\work\app.js")],
+            HWND(std::ptr::null_mut()),
+            tx,
+            가짜_깨우기(),
+        );
+        assert!(started, "같은 폴더라는 이유로 걸러내지 않는다");
     }
 
     #[test]

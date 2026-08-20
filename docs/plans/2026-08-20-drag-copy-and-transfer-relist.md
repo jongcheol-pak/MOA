@@ -230,11 +230,11 @@
 
 - [ ] T3. 로컬 파일 복사 엔진 — 셸 `IFileOperation` 위임
   - **Type**: D
-  - **Design**: ① 신규 모듈 `src/fs/file_op.rs`(`fs/mod.rs`에 등록). ② 신규 심볼 — `copy_into(dest: PathBuf, sources: Vec<PathBuf>, owner: HWND, done: Sender<CopyOutcome>, wake: Wake)`: 워커 스레드를 띄워 자체 STA에서 `IFileOperation`을 돌리고 결과만 채널로 보낸 뒤 다시 그리게 한다 / `CopyOutcome { requested: usize, cancelled: bool, error: Option<String> }`: UI가 알림에 쓸 최소 결과. **`error`는 Win32가 준 사유이며 카탈로그를 거치지 않는다**(외부에서 온 문자열 — AGENTS 「화면 문구」의 명시된 예외이고, 전송 실패 사유를 서버 원문 그대로 보이는 기존 처리와 같다). ③ 의존 방향 — `fs::file_op`은 `windows` crate와 `std`만 참조하고 `ui`를 모른다(AGENTS 계층 규약). 부르는 쪽은 `ui::app`뿐이다. ④ **`HWND`는 `Send`가 아니므로 워커 클로저에 그대로 넘어가지 않는다** — `src/fs/enumerate.rs:100~105`의 `struct HwndSend(isize); unsafe impl Send for HwndSend {}` 패턴을 그대로 쓴다(같은 파일 `:119`가 사용 예다). ⑤ 비추상화 선언 — 「파일 작업」 트레이트도, 이동·삭제·이름 바꾸기 갈래도 만들지 않는다. 이번에 필요한 것은 복사 하나다
+  - **Design**: ① 신규 모듈 `src/fs/file_op.rs`(`fs/mod.rs`에 등록). ② 신규 심볼 — `copy_into(dest: PathBuf, sources: Vec<PathBuf>, owner: HWND, done: Sender<CopyOutcome>, wake: Wake)`: 워커 스레드를 띄워 자체 STA에서 `IFileOperation`을 돌리고 결과만 채널로 보낸 뒤 다시 그리게 한다 / `CopyOutcome { requested: usize, cancelled: bool, error: Option<String> }`: UI가 알림에 쓸 최소 결과. **`error`는 대개 Win32가 준 사유이며 그때는 카탈로그를 거치지 않는다**(외부에서 온 문자열 — AGENTS 「화면 문구」의 명시된 예외이고, 전송 실패 사유를 서버 원문 그대로 보이는 기존 처리와 같다). **예외 하나 — 원본을 하나도 걸지 못한 경우**는 Win32가 준 사유가 아니라 이쪽 판정이므로 카탈로그를 거친다(`i18n::copy_no_source`). ③ 의존 방향 — `fs::file_op`은 `windows` crate·`std`·**`crate::i18n`**만 참조하고 `ui`를 모른다(AGENTS 계층 규약. `i18n`은 `ui` 하위가 아닌 독립 모듈이며 `src/fs/create.rs`가 같은 방식으로 `create_folder_base`를 쓴다). 부르는 쪽은 `ui::app`뿐이다. ④ **`HWND`는 `Send`가 아니므로 워커 클로저에 그대로 넘어가지 않는다** — `src/fs/enumerate.rs:100~105`의 `struct HwndSend(isize); unsafe impl Send for HwndSend {}` 패턴을 그대로 쓴다(같은 파일 `:119`가 사용 예다). ⑤ 비추상화 선언 — 「파일 작업」 트레이트도, 이동·삭제·이름 바꾸기 갈래도 만들지 않는다. 이번에 필요한 것은 복사 하나다
   - **Acceptance**: Given 원본 경로 목록과 대상 폴더, When `copy_into` 호출, Then 워커가 떠서 UI 스레드가 즉시 반환되고 복사가 끝나면 `CopyOutcome`이 채널로 온다. 빌드·clippy가 경고 0으로 통과하고, 순수 부분(빈 원본 목록이면 워커를 띄우지 않는다 · 대상과 원본이 같은 폴더면 그대로 셸에 넘긴다)이 단위 시험으로 고정된다. 실제 복사 동작은 수동 검증(Verification Strategy)
   - **Files**:
     - 주: `src/fs/file_op.rs`(신규)
-    - 동반: `src/fs/mod.rs`
+    - 동반: `src/fs/mod.rs`, `src/i18n/mod.rs`(카탈로그 키 `copy_no_source` — 원본을 하나도 걸지 못한 경우의 사유)
     - 테스트: `src/fs/file_op.rs`의 `mod tests`
   - **Edge Cases**: 원본이 0개 — 워커를 띄우지 않는다 · 대상 폴더가 사라진 뒤 — 셸이 자기 오류 대화를 띄우고 `CopyOutcome.error`에 사유가 담긴다 · 사용자가 셸 대화에서 취소 — `cancelled: true`(오류가 아니다) · 관리자 권한이 필요한 대상 — 셸이 승격 대화를 띄운다(우리가 판단하지 않는다) · COM 초기화 실패 — 워커가 곧바로 `error`를 돌려준다(패닉하지 않는다) · 원본에 대상 폴더 자신이 섞인 경우 — 셸이 거부한다
   - **Halt Forecast**: (ii-a) `windows` crate feature 확인이 필요할 수 있다 → `Win32_UI_Shell`·`Win32_System_Com`이 이미 있음을 확인했다(전제 8). 모자라면 `## 사전 승인 항목`의 feature 추가 위임에 든다
@@ -329,6 +329,8 @@
 ## Phase Ledger
 
 ## Retry Ledger
+
+- T3: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 B1(같은 폴더 순수 시험 누락)로 1회 되돌림.
 
 ## Progress Log
 
