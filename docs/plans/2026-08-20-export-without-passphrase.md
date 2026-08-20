@@ -290,7 +290,7 @@
     - (i) 없음 — 문서 문면 수정과 화면 문구 1건뿐이고 파괴적·외부 요소가 없다
   - **Depends on**: T1, T2, T3
 
-- [ ] T5. 대화를 거치지 않는 가져오기의 실패를 화면에 알린다 (Phase F M1)
+- [x] T5. 대화를 거치지 않는 가져오기의 실패를 화면에 알린다 (Phase F M1)
   - **Type**: C
   - **왜 지금인가**: T2가 `needs_passphrase`를 `secret.is_some()`에서 `kdf == KDF_NAME`으로 좁히면서 생긴 **오류 보고의 회귀**다. 종전에는 봉투가 있는 문서가 전부 `ImportAsk` 대화로 가서 「암호가 맞지 않습니다」가 떴는데, 지금은 ⓐ 내장 키 봉투인데 변조·절단된 파일 ⓑ 둘 다 아닌 `kdf` 파일이 대화를 거치지 않는 경로로 들어와 `settle_import`이 `false`만 돌려주고 `begin_import`이 그것을 버린다 — 화면은 `Idle`, `error`도 `notice`도 없어 **버튼이 먹지 않는 것처럼 보인다**. 이번 변경이 유발한 결함이므로 이연 대상이 아니다.
   - **Acceptance**:
@@ -354,6 +354,10 @@
 - **T4 완료** — PRD FR-59·FR-28 문면과 검증 방법 열, Out of Scope 취소선(해당 항목만), `## 결정 이력`의 번복 항목, README 사용자 문장, AGENTS.md의 「DPAPI급 보호가 아니다」 서술을 새 동작에 맞췄다. `site_export_done` 알림에 「비밀번호가 함께 담겼습니다」/「passwords included」를 두 언어로 얹고 조합 6가지를 고정하는 시험을 더했다.
   - 리뷰: spec-compliance·code-quality 둘 다 지적 0.
   - `cargo test` 916 passed(단위 908 + 통합 8) · clippy 경고 0 · fmt --check 통과 · `cargo build --release` 성공.
+- **Phase F** — plan-completion-reviewer가 **MAJOR 1건(M1)**을 잡았다: T2가 `needs_passphrase`를 좁히면서 대화를 거치지 않는 가져오기 실패에 사유가 남지 않게 됐다(오류 보고의 회귀). 이번 변경이 유발한 것이라 이연하지 않고 **T5로 추가해 고쳤다**. MINOR 둘(m1 `app.rs` doc·m2 PRD 화면 서술)도 T5에 함께 넣었다. 부모 모듈 주석의 버튼 수(직전 회차 누락)는 Phase F에서 바로잡았다.
+- **T5 완료** — `begin_import`이 `settle_import`의 `false`를 받아 「이 파일은 MOA 사이트 목록이 아니거나 손상되었습니다」를 남긴다. 어긋난 주석 셋(`site_export.rs`의 `plan_import` 분기·`settle_import` doc·`pump_site_file_dialog` doc)을 실제 동작으로 고쳤다. 회귀 시험 1건(변조 봉투·모르는 `kdf` 두 갈래) 신설 + 암호 대화 경로가 바닥에 사유를 남기지 않는지 단언 추가. **그 시험이 정말 결함을 잡는지 수정을 임시로 되돌려 실패를 확인했다.**
+  - 리뷰: spec-compliance·code-quality 둘 다 지적 0(SUGGEST 1건 — `settle_import`의 `bool` 반환이 이중 의미라 열거형이 더 단순했을 수 있다. 동작은 정확해 수정하지 않았다).
+  - `cargo test` 917 passed(단위 909 + 통합 8) · clippy 경고 0 · fmt --check 통과.
 
 ## Next Steps
 
