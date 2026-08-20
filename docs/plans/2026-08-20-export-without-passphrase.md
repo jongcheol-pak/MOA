@@ -265,7 +265,7 @@
     - (i) 제거 후 남는 분기가 예상보다 많아 보임 → 컴파일 오류가 전수를 알려 주므로 추측이 필요 없다
   - **Depends on**: T2
 
-- [ ] T4. PRD·README·AGENTS.md 문면을 새 동작에 맞춘다
+- [x] T4. PRD·README·AGENTS.md 문면을 새 동작에 맞춘다
   - **Type**: B (문서 3종 + 화면 문구 1건 — 순수 문서만이 아니라 `site_export_done`이 화면에 나가므로 A로 두지 않는다)
   - **Acceptance**:
     - `docs/prd.md` FR-59에서 「사용자가 정한 암호로 봉해 담고」·「암호를 비우면 비밀번호를 빼고 저장하되 그 사실을 한 번 더 묻는다」가 **앱 내장 키로 언제나 담는다**로 바뀐다. **그 파일을 얻은 사람이 MOA로 풀 수 있다는 성질**을 요구사항 본문에 적는다(보관 주의가 요구의 일부다)
@@ -330,10 +330,13 @@
 - **T3 완료** — `Exchange::ExportAsk`·`ExportConfirmEmpty`와 `show_export_ask`·`show_export_empty_confirm`·`request_export_file`이 사라졌다. `내보내기` 버튼이 곧바로 `FileRequest::Save`를 청한다. i18n 9건 제거·`site_export_passphrase` → `site_import_passphrase` 개명·`EXEMPT_LITERALS` 35→31. 시험 8곳 재작성.
   - 리뷰: spec-compliance·code-quality 둘 다 지적 0.
   - `cargo test --lib` 907 passed · clippy 경고 0 · fmt --check 통과.
+- **T4 완료** — PRD FR-59·FR-28 문면과 검증 방법 열, Out of Scope 취소선(해당 항목만), `## 결정 이력`의 번복 항목, README 사용자 문장, AGENTS.md의 「DPAPI급 보호가 아니다」 서술을 새 동작에 맞췄다. `site_export_done` 알림에 「비밀번호가 함께 담겼습니다」/「passwords included」를 두 언어로 얹고 조합 6가지를 고정하는 시험을 더했다.
+  - 리뷰: spec-compliance·code-quality 둘 다 지적 0.
+  - `cargo test` 916 passed(단위 908 + 통합 8) · clippy 경고 0 · fmt --check 통과 · `cargo build --release` 성공.
 
 ## Next Steps
 
-- 권장 다음 액션: T3(대화 둘 제거·i18n 정리)부터 계속
+- 권장 다음 액션: 사용자 수동 검증(Verification Strategy의 5항목) 후 master 병합·push 승인
 
 ## Open Questions
 
