@@ -91,7 +91,7 @@
 | `SiteStore` (공개 API 사용만) | `src/remote/sites.rs` | 변경 없음 — `add`·`get_mut`·`set_password`·`hide`·`unhide`·`sites`를 그대로 쓴다 |
 | `secret::zeroize` (비공개 → `pub(crate)`) | `src/remote/secret.rs:89` · 신규 `src/remote/envelope.rs` | 가시성 확대 1곳 |
 | `i18n` 카탈로그 신규 키 (약 21건(추정 — T4가 확정) · 내역: T3 필터·기본 이름 2건, T4 대화 문구 약 18건, T5 사유 문구 1건) | `src/i18n/mod.rs` (`strings!`·`dynamic`) | 추가만 — 기존 키 불변 |
-| `EXEMPT_LITERALS` (위젯 Id 3건 추가) | `src/i18n/mod.rs:1102` | 배열 길이 상수 28 → 31 |
+| `EXEMPT_LITERALS` (리터럴 7건 추가 — 대화 Id 4 + 입력칸 salt 3) | `src/i18n/mod.rs:1102` | 배열 길이 상수 28 → 35 |
 
 ### 4-B. 계약·직렬화 변경
 
@@ -342,7 +342,7 @@
     - 동반: `src/i18n/mod.rs`(문구 키 32건(실측) + `EXEMPT_LITERALS` 7건) · `src/ui/toast.rs`(범위 밖 1줄 — 아래 사유)
     - 테스트: `src/ui/site_manager/exchange.rs`의 `#[cfg(test)] mod tests`(교환 시험 10건) · `src/ui/site_manager.rs`의 기존 시험
   - **구현 중 판정 2건**:
-    - **파일 분할** — 이 흐름을 더하자 `site_manager.rs`가 2,699줄이 됐고 AGENTS 「파일」 네 질문에서 ①(변경 이유가 둘: 사이트 CRUD ↔ 파일로 주고받기)·③이 「예」, ④가 「아니오」로 나와 자식 모듈 `site_manager/exchange.rs`로 나눴다(1,916 + 832줄). `ui::app` ↔ `ui::app::transfer_conflict`와 같은 배치라 부모의 private 필드를 그대로 만진다.
+    - **파일 분할** — 이 흐름을 더하자 `site_manager.rs`가 2,699줄이 됐고 AGENTS 「파일」 네 질문에서 ①(변경 이유가 둘: 사이트 CRUD ↔ 파일로 주고받기)·③이 「예」, ④가 「아니오」로 나와 자식 모듈 `site_manager/exchange.rs`로 나눴다(1,915 + 837줄). `ui::app` ↔ `ui::app::transfer_conflict`와 같은 배치라 부모의 private 필드를 그대로 만진다.
     - **`src/ui/toast.rs` 1줄** — `문구는_인벤토리_원문_그대로다`가 언어를 잠그지 않아 병렬 실행에서 간헐 실패했다(2026-08-20 실측 3회 중 1회). 이 task가 만든 결함은 아니고 대장에 이미 있던 항목이지만, 남겨 두면 **이후 모든 task의 `cargo test` 판정이 흔들리므로** 그 자리에서 `LanguageGuard::lock`을 더해 해소했다(4회 연속 통과 확인).
   - **Edge Cases**:
     - 암호에 비ASCII·아주 긴 문자열 / 확인 칸만 채운 경우
@@ -453,6 +453,12 @@
   - **D13 실측**: 릴리즈 빌드 PBKDF2 1회 파생 **0.126초**(상한 1.0초) → 반복 유지.
   - **D16 신설**(구현 중 확정): 문서에 비밀번호가 없으면 기존 것을 지우지 않는다. plan D14가 「필드만 갈아 끼운다」까지만 정해 열려 있던 갈래이며, 지우는 쪽은 되돌릴 수 없는 손실이라 지키는 쪽을 택했다.
   - 리뷰: T1 spec/quality 각 MINOR 1(판정 유보) · T2 quality OK, spec MAJOR 1(`password_failed` 분기 미검증) → 재현 가능한 실패 갈래로 시험 추가해 해소.
+- T3-T4 완료: 파일 대화와 화면을 이었다.
+  - T3 `fs::file_dialog` — `IFileSaveDialog`/`IFileOpenDialog` 래퍼. 시험 비대상(실제 대화가 동작의 전부)이라 그 사유를 모듈 주석에 적었다.
+  - T4 사이트 관리자 — 좌측 아랫줄 버튼 둘 + 대화 넷(내보내기 암호 · 암호 없이 저장 확인 · 가져오기 암호 · 겹치는 사이트). 문구 32건·리터럴 예외 7건.
+  - **파일 분할**: `site_manager.rs`가 2,699줄이 되어 AGENTS 네 질문 판정으로 `site_manager/exchange.rs`를 갈랐다(1,915 + 837).
+  - **범위 밖 1줄**: `ui/toast.rs`의 간헐 실패(언어 미잠금)를 해소했다 — 대장에 있던 기존 항목이지만 이후 task의 `cargo test` 판정을 흔들어 그 자리에서 고쳤다(4회 연속 통과 확인).
+  - 리뷰: T3 spec MINOR 1(doc 주석 오귀속) → 수정 · T4 spec BLOCKER 1(상태 경로 미완주) → 시험 확장으로 해소, 재리뷰 통과.
 
 ## Next Steps
 
