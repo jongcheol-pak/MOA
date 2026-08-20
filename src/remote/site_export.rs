@@ -273,7 +273,9 @@ pub fn plan_import(
         Some(sealed) => {
             // 봉투가 스스로 밝힌 방식대로 연다 — 내장 키 봉투에는 `passphrase`가 쓰이지 않는다.
             // 둘 다 아닌 `kdf`(손댄 파일·더 새로운 앱이 만든 것)는 어느 쪽도 열지 못해
-            // `WrongPassphrase`로 떨어지며, 사용자에게는 「암호가 맞지 않는다」로 보인다
+            // `WrongPassphrase`로 떨어진다. **그것을 무슨 문구로 옮길지는 화면 계층이 정한다** —
+            // 암호를 물은 뒤라면 「암호가 맞지 않는다」이고, 묻지 않고 곧바로 열려던 길이었다면
+            // 「파일이 손상됐다」이다(`ui::site_manager::exchange`의 `begin_import`)
             let opened = if sealed.kdf == envelope::KDF_APP_KEY {
                 envelope::open_with_app_key(sealed)
             } else {

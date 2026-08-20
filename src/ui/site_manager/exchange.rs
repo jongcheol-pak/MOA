@@ -168,12 +168,19 @@ impl SiteManager {
             };
             return;
         }
-        self.settle_import(&document, "", store);
+        if !self.settle_import(&document, "", store) {
+            // 여기서의 `false`는 「암호가 틀렸다」가 아니다 — 이 경로는 암호를 물은 적이 없다.
+            // 앱 내장 키 봉투가 변조됐거나 둘 중 어느 열쇠도 아닌 `kdf`라는 뜻이라 손상으로 알린다.
+            // 알리지 않으면 사용자에게는 파일을 골랐는데 아무 일도 없는 것으로 보인다
+            self.error = Some(crate::i18n::site_import_broken().to_owned());
+        }
     }
 
     /// 문서로 계획을 세운다 — 겹치는 것이 있으면 묻고, 없으면 그대로 반영한다.
     ///
-    /// 암호가 틀리면 `false`를 돌려준다(호출부가 대화 안에 사유를 남긴다)
+    /// **봉투를 열지 못하면 `false`를 돌려주고 사유는 남기지 않는다** — 그 뜻이 호출부마다
+    /// 다르기 때문이다. 암호 대화 안에서는 「암호가 맞지 않는다」이고, 대화를 거치지 않은
+    /// 경로에서는 「파일이 손상됐다」이다
     fn settle_import(
         &mut self,
         document: &SiteExport,
@@ -573,6 +580,8 @@ mod tests {
         // 틀린 암호는 계획을 세우지 못한다 — 저장소도 그대로다
         assert!(!manager.settle_import(&document, "틀린 암호", &mut target));
         assert!(target.is_empty());
+        // 이 경로의 사유는 대화 안에 남는다 — 바닥에 「손상됐다」가 뜨면 안 된다 (Phase F M1)
+        assert_eq!(manager.error, None, "암호 대화 경로가 바닥에 사유를 남겼다");
 
         // 맞는 암호면 겹치는 것이 없으므로 곧바로 반영된다
         assert!(manager.settle_import(&document, "맞는 암호", &mut target));
@@ -583,6 +592,42 @@ mod tests {
         );
         assert!(manager.take_notice().is_some());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn 봉투를_열지_못하면_대화_없이_사유를_남긴다() {
+        // 앱 내장 키 봉투는 암호를 묻지 않고 곧바로 열려 하므로, 열지 못하면 그 자리에서
+        // 알려야 한다 — 알리지 않으면 파일을 골랐는데 아무 일도 없는 것으로 보인다 (Phase F M1)
+        let (mut manager, mut store) = manager_with_two_sites();
+
+        // ⓐ 봉인 바이트가 손상된 파일
+        let tampered = temp_path("import-tampered");
+        let mut document = site_export::build(&store).expect("내보내기").document;
+        if let Some(sealed) = document.secret.as_mut() {
+            sealed.ciphertext = "00".repeat(sealed.ciphertext.len() / 2);
+        }
+        site_export::write_file(&tampered, &document).expect("파일 쓰기");
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(tampered.clone()), &mut store);
+        assert_eq!(manager.exchange, Exchange::Idle);
+        assert_eq!(manager.take_notice(), None, "가져온 것이 없다");
+        assert!(manager.error.is_some(), "사유가 남지 않았다");
+        let _ = std::fs::remove_file(&tampered);
+
+        // ⓑ 둘 중 어느 열쇠도 아닌 `kdf` — 더 새로운 앱이 만든 파일이 여기 걸린다
+        let unknown = temp_path("import-unknown-kdf");
+        let mut document = site_export::build(&store).expect("내보내기").document;
+        if let Some(sealed) = document.secret.as_mut() {
+            sealed.kdf = "PBKDF2-HMAC-SHA512-미래".to_owned();
+        }
+        site_export::write_file(&unknown, &document).expect("파일 쓰기");
+        manager.error = None;
+        manager.apply_exchange_action(ExchangeAction::Import);
+        let _ = manager.take_file_request();
+        manager.supply_file(Some(unknown.clone()), &mut store);
+        assert!(manager.error.is_some(), "사유가 남지 않았다");
+        let _ = std::fs::remove_file(&unknown);
     }
 
     #[test]
