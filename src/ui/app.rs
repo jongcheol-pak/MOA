@@ -571,12 +571,12 @@ pub struct ExplorerApp {
     /// 확인 번호 발급기
     next_conflict: u64,
     /// 받는 곳의 존재 확인 결과가 오는 통로 — `(확인 번호, 겹친 이름들)`
+    conflict_tx: std::sync::mpsc::Sender<(u64, Vec<String>)>,
+    conflict_rx: std::sync::mpsc::Receiver<(u64, Vec<String>)>,
     /// 셸 복사의 결과를 받는 자리 (FR-60) — `pump_local_copy`가 프레임마다 거둔다.
     /// 워커가 여럿 돌 수 있어 채널 하나를 나눠 쓴다
     copy_tx: std::sync::mpsc::Sender<crate::fs::file_op::CopyOutcome>,
     copy_rx: std::sync::mpsc::Receiver<crate::fs::file_op::CopyOutcome>,
-    conflict_tx: std::sync::mpsc::Sender<(u64, Vec<String>)>,
-    conflict_rx: std::sync::mpsc::Receiver<(u64, Vec<String>)>,
     /// 올리기 확인이 서버에 물어 둔 것 — `조회 세대 → (물어본 연결, 올릴 최상위 이름들)`.
     ///
     /// 키가 확인 번호가 아니라 **보낸 조회 세대**다 — 답에는 세대만 실려 오므로 그것으로

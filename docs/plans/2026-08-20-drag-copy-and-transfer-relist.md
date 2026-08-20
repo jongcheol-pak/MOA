@@ -240,9 +240,9 @@
   - **Halt Forecast**: (ii-a) `windows` crate feature 확인이 필요할 수 있다 → `Win32_UI_Shell`·`Win32_System_Com`이 이미 있음을 확인했다(전제 8). 모자라면 `## 사전 승인 항목`의 feature 추가 위임에 든다
   - **Depends on**: -
 
-- [ ] T4. 탭 → 탭 드래그 복사 배선
+- [x] T4. 탭 → 탭 드래그 복사 배선
   - **Type**: C
-  - **Design**: ① 판정은 `src/ui/list_common.rs`에 `local_copy_target(drop: &DropOutcome) -> Option<&Path>`로 둔다 — 드래그 타입이 사는 자리이고, 항목이 전부 `DragItem::Local`이고 대상이 `DropTarget::Local`일 때만 대상 폴더를 돌려준다. ② 배선은 `src/ui/app.rs`의 드롭 소비 지점(:1935)에서 **`start_transfer`보다 먼저** 가른다 — 로컬 복사면 `fs::file_op::copy_into`, 아니면 종전대로 `start_transfer`. ③ **결과 수신도 이 task가 만든다** — `ExplorerApp`에 `copy_tx: Sender<CopyOutcome>` / `copy_rx: Receiver<CopyOutcome>`를 두고(충돌 확인의 `conflict_tx/rx`와 같은 방식), 프레임마다 `pump_local_copy`가 거둬 **기존 `self.notice` 한 줄 알림**으로 올린다(`remote.rs:493`·`:528`과 같은 자리). ④ **문구는 카탈로그를 거친다**(AGENTS 「화면 문구」) — `i18n::dynamic`에 손수 쓴 함수 둘을 더한다: `local_copy_failed(detail: &str)`(셸이 준 사유를 문장 틀에 끼운다)과 `local_copy_cancelled()`. **성공은 알리지 않는다** — 셸이 자기 진행률 대화로 이미 알렸고 대상 목록에 파일이 나타나는 것이 곧 확인이라, 여기서 또 띄우면 조작 하나에 알림이 둘이 된다. ⑤ 의존 방향 — `list_common`은 계속 아무것도 새로 참조하지 않고, `ui::app`만 `fs::file_op`을 안다. ⑥ 비추상화 선언 — 드롭 종류를 `enum DropKind`로 승격하지 않는다(갈래가 둘뿐이고 `Option`으로 충분하다)
+  - **Design**: ① 판정은 `src/ui/list_common.rs`에 `local_copy_target(drop: &DropOutcome) -> Option<&Path>`로 둔다 — 드래그 타입이 사는 자리이고, 항목이 전부 `DragItem::Local`이고 대상이 `DropTarget::Local`일 때만 대상 폴더를 돌려준다. ② 배선은 `src/ui/app.rs`의 드롭 소비 지점(:1935)에서 **`start_transfer`보다 먼저** 가른다 — 로컬 복사면 `fs::file_op::copy_into`, 아니면 종전대로 `start_transfer`. ③ **결과 수신도 이 task가 만든다** — `ExplorerApp`에 `copy_tx: Sender<CopyOutcome>` / `copy_rx: Receiver<CopyOutcome>`를 두고(충돌 확인의 `conflict_tx/rx`와 같은 방식), 프레임마다 `pump_local_copy`가 거둬 **기존 `self.notice` 한 줄 알림**으로 올린다(`remote.rs:493`·`:528`과 같은 자리). ④ **문구는 카탈로그를 거친다**(AGENTS 「화면 문구」) — `i18n::dynamic`에 손수 쓴 함수 둘을 더한다: `local_copy_failed(detail: &str)`(셸이 준 사유를 문장 틀에 끼운다)과 `local_copy_cancelled(count: usize)`(걸었던 항목 수를 적는다 — `CopyOutcome.requested`를 그대로 쓴다. **실제로 몇 개가 복사됐는지는 적지 않는다**: 그 값은 사용자가 셸 충돌 대화에서 무엇을 골랐는지에 달려 셸만 안다). **성공은 알리지 않는다** — 셸이 자기 진행률 대화로 이미 알렸고 대상 목록에 파일이 나타나는 것이 곧 확인이라, 여기서 또 띄우면 조작 하나에 알림이 둘이 된다. ⑤ 의존 방향 — `list_common`은 계속 아무것도 새로 참조하지 않고, `ui::app`만 `fs::file_op`을 안다. ⑥ 비추상화 선언 — 드롭 종류를 `enum DropKind`로 승격하지 않는다(갈래가 둘뿐이고 `Option`으로 충분하다)
   - **Acceptance**: Given 로컬 탭 A에서 파일·폴더를 고름, When 로컬 탭 B의 목록 위에 놓음, Then 셸 복사가 시작되고 끝나면 B의 목록에 나타난다(로컬 감시가 갱신한다). 셸이 오류를 주면 그 사유가 상태 줄 알림으로 뜨고, 사용자가 셸 대화에서 취소하면 취소 알림이 뜬다(성공은 알리지 않는다). 단위 시험으로 고정할 것: ⓐ 로컬 항목 + 로컬 대상이면 대상 폴더를 돌려준다 ⓑ 원격 항목이 하나라도 섞이면 `None` ⓒ 대상이 원격이면 `None` ⓓ 항목이 비면 `None` ⓔ `i18n` 카탈로그 시험(`화면_문구가_카탈로그를_거치지_않은_곳이_없다`)이 통과한다 ⓕ 새 `dynamic` 함수 둘이 한국어·영어 양쪽 값을 낸다(`LanguageGuard::lock`으로 언어를 잠그고 기대값은 원문 리터럴 — AGENTS 시험 규약). 화면 조작은 수동 검증
   - **Files**:
     - 주: `src/ui/list_common.rs`, `src/ui/app.rs`
@@ -331,8 +331,13 @@
 ## Retry Ledger
 
 - T3: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 B1(같은 폴더 순수 시험 누락)로 1회 되돌림.
+- T4: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 M1(필드 삽입으로 doc 주석 오귀속)로 1회 되돌림.
 
 ## Progress Log
+
+- T3-T4 완료 (커밋 `5982f75`, T4 완료 커밋): 로컬 복사를 셸 `IFileOperation`에 맡기는 `fs::file_op`을 만들고 탭↔탭 드롭을 그리로 배선했다. 판정은 `list_common::local_copy_target`이 하고 `start_transfer`보다 먼저 갈라진다.
+  - 결정: 셸 복사 실패·취소만 상태 줄로 알리고 **성공은 알리지 않는다** — 셸 진행률 대화가 이미 알렸고 대상 목록에 파일이 나타나는 것이 곧 확인이라, 또 띄우면 조작 하나에 알림이 둘이 된다.
+  - **같은 실수를 두 번 했다**: 함수·필드를 기존 항목 바로 위에 끼워 넣어 그 항목의 doc 주석을 가로챘다(T2 `pump_relist`, T4 `copy_tx`). 두 리뷰가 각각 잡았다 — 다음에 `impl` 블록이나 구조체에 항목을 더할 때는 **삽입 지점 바로 위의 `///`가 누구 것인지 먼저 본다**.
 
 - T1-T2 완료 (커밋 `b1092d5`, `4e125fc`): PRD에 FR-60·FR-61을 신설하고 FR-37에 전송 후 재조회를 명문화했다. 재조회는 `RelistPending`(순수 상태) + `pump_relist`로 붙였고 시험 7건이 acceptance ⓐ~ⓖ를 고정한다.
   - 결정: `take_ready`의 인자를 plan의 `site_pending_counts`(건수)에서 `busy: &HashSet<SiteId>`(멤버십)로 바꿨다 — `QueueFilter`에 `Pending` 갈래가 없어 `counts_by_site`로는 대기·진행만 셀 수 없고(세 번 호출해 빼야 한다), 판정에 필요한 것은 「남아 있는가」 하나뿐이다. plan Design ②를 그 사실에 맞게 정정했다.
