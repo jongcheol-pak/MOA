@@ -1,13 +1,17 @@
 //! 사이트 목록 내보내기·가져오기 문서 (FR-59).
 //!
 //! 등록된 사이트 전부를 파일 하나로 옮기기 위한 것이다. 담기는 것은 사이트의 설정과
-//! 비밀번호이며, **비밀번호는 `remote::envelope`가 사용자 암호로 봉한 덩어리 하나**로만 나간다
-//! (plan D1) — 사이트마다 흩어 두지 않는 이유는 봉인 한 번으로 끝나고 부분만 새 나갈 자리도
-//! 없기 때문이다.
+//! 비밀번호이며, **비밀번호는 `remote::envelope`가 봉한 덩어리 하나**로만 나간다 — 사이트마다
+//! 흩어 두지 않는 이유는 봉인 한 번으로 끝나고 부분만 새 나갈 자리도 없기 때문이다.
 //!
-//! **`password_sealed`(DPAPI 봉인 바이트)는 문서에 담지 않는다.** 담으면 같은 PC·같은 계정에서는
-//! 그것이 그대로 풀려, 「암호를 비워 비밀번호 없이 내보낸 파일」에서도 비밀번호가 되살아난다
-//! (plan D6이 무너진다).
+//! **봉인은 언제나 앱 내장 키로 한다** — 사용자가 암호를 적지 않아도 비밀번호가 담긴다. 그 대가는
+//! 「그 파일을 얻은 사람이 MOA로 풀 수 있다」는 것이며, 그 성질은 `envelope`의 모듈 주석에 적혀
+//! 있다. **읽을 때는 두 갈래를 모두 받는다** — 직전 버전이 사용자 암호로 만든 파일도 열 수 있어야
+//! 이미 만들어 둔 백업이 무용해지지 않는다.
+//!
+//! **`password_sealed`(DPAPI 봉인 바이트)는 문서에 담지 않는다.** 그것은 이 PC·이 계정에 묶여
+//! 있어 옮겨 봐야 풀리지 않는데, 담아 두면 같은 PC에서만 조용히 되살아나 어느 쪽이 실제로 쓰이는지
+//! 알 수 없게 된다. 비밀번호가 나가는 통로는 봉투 하나뿐이다.
 //!
 //! 화면을 모른다 — 실패는 열거형으로 올리고 문구는 화면 계층이 정한다 (AGENTS 계층 규약).
 use std::path::Path;
@@ -53,7 +57,8 @@ pub struct SiteExport {
     pub format: String,
     pub version: u32,
     pub sites: Vec<ExportedSite>,
-    /// 비밀번호 묶음 — 암호를 비우고 내보냈으면 `None`이다.
+    /// 비밀번호 묶음. **지금의 `build`는 언제나 채운다** — `None`은 직전 버전이 암호를 비우고
+    /// 내보낸 파일에서만 온다(그 파일도 그대로 읽는다).
     ///
     /// 푼 내용은 `Vec<String>`을 직렬화한 것이며 **`sites`와 같은 순서·같은 길이**다.
     /// 사이트에 식별자가 없으므로 순서가 둘을 잇는 유일한 끈이다
@@ -64,7 +69,7 @@ pub struct SiteExport {
 /// 내보내기가 실패한 까닭
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportError {
-    /// 암호로 봉하지 못했다 — 봉하지 못한 것을 평문으로 대신 담는 길은 두지 않는다
+    /// 비밀번호를 봉하지 못했다 — 봉하지 못한 것을 평문으로 대신 담는 길은 두지 않는다
     Seal,
     /// 문서를 만들지 못했다 (직렬화 실패)
     Serialize,
@@ -163,11 +168,11 @@ pub struct ImportSummary {
     pub password_failed: usize,
 }
 
-/// 등록된 사이트 전부를 문서로 만든다.
+/// 등록된 사이트 전부를 문서로 만든다 — **비밀번호는 언제나 담긴다**.
 ///
-/// `passphrase`가 비어 있으면 비밀번호를 **담지 않는다** (plan D6) — 그 판단은 화면이 이미
-/// 내렸고 여기서는 받은 대로 따른다
-pub fn build(store: &SiteStore, passphrase: &str) -> Result<ExportOutcome, ExportError> {
+/// 봉인은 앱 내장 키로 한다(모듈 주석) — 화면이 물을 것이 없어 내보내기가 클릭 두 번으로 끝난다.
+/// 비밀번호가 하나도 없는 목록이어도 봉투는 만들어진다(빈 문자열 배열을 봉한 것이다)
+pub fn build(store: &SiteStore) -> Result<ExportOutcome, ExportError> {
     let mut sites = Vec::with_capacity(store.sites().len());
     let mut passwords = Vec::with_capacity(store.sites().len());
     let mut password_unreadable = 0usize;
@@ -198,18 +203,14 @@ pub fn build(store: &SiteStore, passphrase: &str) -> Result<ExportOutcome, Expor
         }
     }
 
-    let secret = if passphrase.is_empty() {
-        None
-    } else {
-        let mut plain = serde_json::to_vec(&passwords).map_err(|_| ExportError::Serialize)?;
-        let sealed = envelope::seal_with_passphrase(&plain, passphrase);
-        // 모아 둔 평문 묶음은 여기서 지운다 — 봉인 결과와 나란히 메모리에 남기지 않는다.
-        // `passwords`(개별 `String`)는 지우지 않고 떨어뜨린다: `String`의 안쪽 버퍼를 0으로
-        // 채우려면 `as_bytes_mut`이 필요한데, 그 unsafe를 들일 만큼 얻는 것이 없다 —
-        // 같은 평문이 이미 `SiteStore::password`가 돌려준 `String`으로 이 함수 밖에도 있다
-        crate::remote::secret::zeroize(&mut plain);
-        Some(sealed.ok_or(ExportError::Seal)?)
-    };
+    let mut plain = serde_json::to_vec(&passwords).map_err(|_| ExportError::Serialize)?;
+    let sealed = envelope::seal_with_app_key(&plain);
+    // 모아 둔 평문 묶음은 여기서 지운다 — 봉인 결과와 나란히 메모리에 남기지 않는다.
+    // `passwords`(개별 `String`)는 지우지 않고 떨어뜨린다: `String`의 안쪽 버퍼를 0으로
+    // 채우려면 `as_bytes_mut`이 필요한데, 그 unsafe를 들일 만큼 얻는 것이 없다 —
+    // 같은 평문이 이미 `SiteStore::password`가 돌려준 `String`으로 이 함수 밖에도 있다
+    crate::remote::secret::zeroize(&mut plain);
+    let secret = Some(sealed.ok_or(ExportError::Seal)?);
 
     Ok(ExportOutcome {
         document: SiteExport {
@@ -246,9 +247,16 @@ pub fn parse(text: &str) -> Result<SiteExport, ImportError> {
     Ok(document)
 }
 
-/// 이 문서를 열려면 암호가 필요한가
+/// 이 문서를 열려면 **사용자에게 암호를 물어야 하는가**.
+///
+/// 갈래가 셋이다 — ⓐ 앱 내장 키 봉투(지금 만드는 것) ⓑ 사용자 암호 봉투(직전 버전이 만든 것)
+/// ⓒ 봉투 없음(직전 버전에서 암호를 비우고 내보낸 것). **묻는 것은 ⓑ뿐**이며 ⓐ·ⓒ는 그대로 읽는다.
+/// `secret.is_some()`으로 뭉뚱그리면 ⓐ에서도 암호를 물어 이번 변경의 뜻이 사라진다
 pub fn needs_passphrase(document: &SiteExport) -> bool {
-    document.secret.is_some()
+    document
+        .secret
+        .as_ref()
+        .is_some_and(|envelope| envelope.kdf == envelope::KDF_NAME)
 }
 
 /// 문서를 지금 목록과 견줘 계획을 세운다.
@@ -262,9 +270,16 @@ pub fn plan_import(
 ) -> Result<ImportPlan, ImportError> {
     let passwords = match &document.secret {
         None => vec![String::new(); document.sites.len()],
-        Some(envelope) => {
-            let plain = envelope::open_with_passphrase(envelope, passphrase)
-                .ok_or(ImportError::WrongPassphrase)?;
+        Some(sealed) => {
+            // 봉투가 스스로 밝힌 방식대로 연다 — 내장 키 봉투에는 `passphrase`가 쓰이지 않는다.
+            // 둘 다 아닌 `kdf`(손댄 파일·더 새로운 앱이 만든 것)는 어느 쪽도 열지 못해
+            // `WrongPassphrase`로 떨어지며, 사용자에게는 「암호가 맞지 않는다」로 보인다
+            let opened = if sealed.kdf == envelope::KDF_APP_KEY {
+                envelope::open_with_app_key(sealed)
+            } else {
+                envelope::open_with_passphrase(sealed, passphrase)
+            };
+            let plain = opened.ok_or(ImportError::WrongPassphrase)?;
             let list: Vec<String> =
                 serde_json::from_slice(&plain).map_err(|_| ImportError::Broken)?;
             if list.len() != document.sites.len() {
@@ -406,6 +421,26 @@ fn find_existing<'a>(store: &'a SiteStore, key: &ConflictKey) -> Option<&'a Site
     })
 }
 
+/// 직전 버전(사용자 암호 봉투) 문서를 손으로 조립한다 — **시험 전용**.
+///
+/// 지금의 `build`는 앱 내장 키로만 봉하므로 이 형태를 만들어 낼 길이 없는데, 「구버전 파일도
+/// 열린다」(plan D3)를 지키려면 그 파일이 시험에 있어야 한다. `mod tests` 안이 아니라 밖에
+/// 두는 이유는 `ui::site_manager::exchange`의 시험도 같은 픽스처를 쓰기 때문이다
+#[cfg(test)]
+pub(crate) fn legacy_document(
+    sites: &[ExportedSite],
+    passwords: &[String],
+    passphrase: &str,
+) -> SiteExport {
+    let plain = serde_json::to_vec(passwords).expect("비밀번호 묶음 직렬화");
+    SiteExport {
+        format: FORMAT.to_owned(),
+        version: VERSION,
+        sites: sites.to_vec(),
+        secret: Some(envelope::seal_with_passphrase(&plain, passphrase).expect("암호로 봉인")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,13 +475,13 @@ mod tests {
         assert!(source.set_password(second, "another"));
         source.hide(second);
 
-        let outcome = build(&source, "내보내기 암호").expect("내보내기");
+        let outcome = build(&source).expect("내보내기");
         assert_eq!(outcome.password_unreadable, 0);
         let text = serde_json::to_string_pretty(&outcome.document).expect("직렬화");
 
         let document = parse(&text).expect("해석");
         let mut target = SiteStore::new();
-        let plan = plan_import(&document, &target, "내보내기 암호").expect("계획");
+        let plan = plan_import(&document, &target, "").expect("계획");
         assert_eq!(plan.fresh.len(), 3);
         assert!(plan.conflicts.is_empty());
         let summary = apply_import(&mut target, &plan, true);
@@ -481,57 +516,74 @@ mod tests {
     }
 
     #[test]
-    fn 암호를_비우면_비밀번호가_담기지_않는다() {
+    fn 암호_없이도_비밀번호가_담긴다() {
+        // 이번 변경의 핵심 — 사용자가 아무것도 적지 않아도 봉투가 만들어지고, 읽을 때도 묻지 않는다
         let mut source = SiteStore::new();
         let id = add_site(&mut source, "배포 서버", "deploy.test", "deploy");
         assert!(source.set_password(id, "찾을수있는평문"));
 
-        let outcome = build(&source, "").expect("내보내기");
-        assert!(outcome.document.secret.is_none(), "봉투가 없어야 한다");
+        let outcome = build(&source).expect("내보내기");
+        let sealed = outcome
+            .document
+            .secret
+            .as_ref()
+            .expect("봉투가 있어야 한다");
+        assert_eq!(
+            sealed.kdf,
+            envelope::KDF_APP_KEY,
+            "앱 내장 키로 봉해야 한다"
+        );
         let text = serde_json::to_string(&outcome.document).expect("직렬화");
         assert!(!text.contains("찾을수있는평문"), "평문이 남았다");
-        assert!(
-            !text.contains("password_sealed"),
-            "DPAPI 봉인 바이트가 문서에 실렸다: {text}"
-        );
 
-        // 같은 PC에서 가져와도 비밀번호는 비어 있다
         let document = parse(&text).expect("해석");
-        assert!(!needs_passphrase(&document));
+        assert!(!needs_passphrase(&document), "물을 것이 없다");
         let mut target = SiteStore::new();
         let plan = plan_import(&document, &target, "").expect("계획");
         assert_eq!(plan.fresh.len(), 1);
-        assert_eq!(plan.fresh[0].password, None);
+        assert_eq!(plan.fresh[0].password.as_deref(), Some("찾을수있는평문"));
         apply_import(&mut target, &plan, true);
         let copied = target.sites().first().expect("사이트");
-        assert_eq!(target.password(copied.id), None);
+        assert_eq!(
+            target.password(copied.id).as_deref(),
+            Some("찾을수있는평문")
+        );
     }
 
     #[test]
-    fn 암호를_넣어도_문서에_봉인_바이트가_없다() {
+    fn 문서에_dpapi_봉인_바이트가_실리지_않는다() {
         let mut source = SiteStore::new();
         let id = add_site(&mut source, "배포 서버", "deploy.test", "deploy");
         assert!(source.set_password(id, "찾을수있는평문"));
 
-        let outcome = build(&source, "암호").expect("내보내기");
+        let outcome = build(&source).expect("내보내기");
         let text = serde_json::to_string(&outcome.document).expect("직렬화");
         assert!(!text.contains("찾을수있는평문"));
         assert!(!text.contains("password_sealed"), "봉인 바이트가 실렸다");
     }
 
     #[test]
-    fn 틀린_암호로는_계획을_세우지_못한다() {
+    fn 구버전_파일은_암호를_묻고_틀리면_거부한다() {
+        // 직전 버전이 사용자 암호로 만든 파일. 지금의 `build`는 이 형태를 만들지 않으므로
+        // 픽스처로 세운다 — 이미 만들어 둔 백업이 무용해지지 않는지 여기서 지킨다
         let mut source = SiteStore::new();
         let id = add_site(&mut source, "배포 서버", "deploy.test", "deploy");
         assert!(source.set_password(id, "비밀"));
-        let document = build(&source, "맞는 암호").expect("내보내기").document;
+        let sites = build(&source).expect("내보내기").document.sites;
+        let document = legacy_document(&sites, &["비밀".to_owned()], "맞는 암호");
 
+        assert!(needs_passphrase(&document), "암호를 물어야 하는 파일이다");
         let mut target = SiteStore::new();
         assert_eq!(
             plan_import(&document, &target, "틀린 암호"),
             Err(ImportError::WrongPassphrase)
         );
-        // 저장소는 그대로다
+        // 맞는 암호면 비밀번호까지 그대로 나온다
+        let plan = plan_import(&document, &target, "맞는 암호").expect("계획");
+        assert_eq!(plan.fresh.len(), 1);
+        assert_eq!(plan.fresh[0].password.as_deref(), Some("비밀"));
+
+        // 실패한 가져오기는 저장소를 건드리지 않는다
         assert!(target.is_empty());
         assert_eq!(
             apply_import(&mut target, &ImportPlan::default(), true),
@@ -543,7 +595,7 @@ mod tests {
     fn 같은_접속_대상만_겹침으로_본다() {
         let mut source = SiteStore::new();
         add_site(&mut source, "배포 서버", "Deploy.Test", "deploy");
-        let document = build(&source, "").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
 
         // 호스트 대소문자만 다른 같은 대상 → 겹침
         let mut target = SiteStore::new();
@@ -598,7 +650,7 @@ mod tests {
         let mut source = SiteStore::new();
         add_site(&mut source, "겹치는 서버", "same.test", "deploy");
         add_site(&mut source, "새 서버", "fresh.test", "deploy");
-        let document = build(&source, "").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
 
         let mut target = SiteStore::new();
         let existing = add_site(&mut target, "옛 이름", "same.test", "deploy");
@@ -646,7 +698,7 @@ mod tests {
         // `insert` 경로를 쓴다는 것이 이 단언으로 판정된다 (plan D14)
         let mut source = SiteStore::new();
         add_site(&mut source, "배포 서버", "same.test", "deploy");
-        let document = build(&source, "").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
 
         let mut target = SiteStore::new();
         // 같은 이름을 이미 다른 사이트가 쓰고 있다
@@ -665,7 +717,7 @@ mod tests {
         // plan D16 — 「비밀번호를 빼고 내보냈다」가 「비밀번호를 지우겠다」는 뜻은 아니다
         let mut source = SiteStore::new();
         add_site(&mut source, "배포 서버", "same.test", "deploy");
-        let document = build(&source, "").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
 
         let mut target = SiteStore::new();
         let existing = add_site(&mut target, "옛 이름", "same.test", "deploy");
@@ -685,7 +737,7 @@ mod tests {
         add_site(&mut source, "먼저", "same.test", "deploy");
         add_site(&mut source, "나중", "same.test", "deploy");
         // 저장소는 이름만 갈라 둘을 다 받는다 — 문서에도 둘이 실린다
-        let document = build(&source, "").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
         assert_eq!(document.sites.len(), 2);
 
         let target = SiteStore::new();
@@ -697,11 +749,11 @@ mod tests {
     #[test]
     fn 사이트가_없으면_빈_문서가_되고_가져와도_아무_일도_없다() {
         let source = SiteStore::new();
-        let outcome = build(&source, "암호").expect("내보내기");
+        let outcome = build(&source).expect("내보내기");
         assert!(outcome.document.sites.is_empty());
 
         let mut target = SiteStore::new();
-        let plan = plan_import(&outcome.document, &target, "암호").expect("계획");
+        let plan = plan_import(&outcome.document, &target, "").expect("계획");
         assert!(plan.is_empty());
         assert_eq!(
             apply_import(&mut target, &plan, true),
@@ -735,12 +787,12 @@ mod tests {
         let first = add_site(&mut source, "첫째", "one.test", "a");
         add_site(&mut source, "둘째", "two.test", "b");
         assert!(source.set_password(first, "비밀"));
-        let mut document = build(&source, "암호").expect("내보내기").document;
+        let mut document = build(&source).expect("내보내기").document;
         document.sites.pop();
 
         let target = SiteStore::new();
         assert_eq!(
-            plan_import(&document, &target, "암호"),
+            plan_import(&document, &target, ""),
             Err(ImportError::Broken)
         );
     }
@@ -753,19 +805,14 @@ mod tests {
         if let Some(record) = source.get_mut(id) {
             record.password_sealed = vec![0xde, 0xad, 0xbe, 0xef];
         }
-        let outcome = build(&source, "암호").expect("내보내기");
+        let outcome = build(&source).expect("내보내기");
         assert_eq!(outcome.password_unreadable, 1);
         assert_eq!(outcome.document.sites.len(), 1, "설정 자체는 담긴다");
 
         // 저장된 것이 애초에 없는 사이트는 세지 않는다
         let mut source = SiteStore::new();
         add_site(&mut source, "비밀번호 없음", "none.test", "deploy");
-        assert_eq!(
-            build(&source, "암호")
-                .expect("내보내기")
-                .password_unreadable,
-            0
-        );
+        assert_eq!(build(&source).expect("내보내기").password_unreadable, 0);
     }
 
     #[test]
@@ -816,7 +863,7 @@ mod tests {
         let long = "가".repeat(300);
         add_site(&mut source, &long, "long.test", "deploy");
         add_site(&mut source, "서버 🚀 emoji", "emoji.test", "deploy");
-        let document = build(&source, "").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
 
         let mut target = SiteStore::new();
         let plan = plan_import(&document, &target, "").expect("계획");
@@ -831,7 +878,7 @@ mod tests {
         let mut source = SiteStore::new();
         let id = add_site(&mut source, "배포 서버", "deploy.test", "deploy");
         assert!(source.set_password(id, "비밀!1234"));
-        let document = build(&source, "암호").expect("내보내기").document;
+        let document = build(&source).expect("내보내기").document;
 
         let dir = std::env::temp_dir().join("moa-site-export-test");
         std::fs::create_dir_all(&dir).expect("임시 폴더");

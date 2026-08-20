@@ -64,8 +64,10 @@ pub(super) enum Exchange {
     },
     /// 암호를 비운 채 저장하려 한다 — 한 번 더 묻는다 (plan D6)
     ExportConfirmEmpty,
-    /// 파일 저장 자리를 기다리는 중 — 암호를 들고 있다
-    ExportWaitFile { pass: String },
+    /// 파일 저장 자리를 기다리는 중.
+    ///
+    /// **들고 다닐 암호가 없다** — 봉인은 앱 내장 키로 하므로 사용자에게 받을 것이 없다
+    ExportWaitFile,
     /// 열 파일을 기다리는 중
     ImportWaitFile,
     /// 가져올 파일의 암호를 받는 중
@@ -97,7 +99,7 @@ impl SiteManager {
             return;
         };
         match stage {
-            Exchange::ExportWaitFile { pass } => self.finish_export(&path, &pass, store),
+            Exchange::ExportWaitFile => self.finish_export(&path, store),
             Exchange::ImportWaitFile => self.begin_import(&path, store),
             // 파일을 기다리던 중이 아니면 받을 것이 없다 — 상태만 되돌린다
             other => self.exchange = other,
@@ -134,8 +136,8 @@ impl SiteManager {
     }
 
     /// 고른 자리에 문서를 쓴다 (FR-59)
-    fn finish_export(&mut self, path: &std::path::Path, passphrase: &str, store: &SiteStore) {
-        let outcome = match site_export::build(store, passphrase) {
+    fn finish_export(&mut self, path: &std::path::Path, store: &SiteStore) {
+        let outcome = match site_export::build(store) {
             Ok(outcome) => outcome,
             Err(site_export::ExportError::Seal) => {
                 self.error = Some(crate::i18n::site_export_seal_failed().to_owned());
@@ -320,15 +322,15 @@ impl SiteManager {
             self.exchange = Exchange::ExportConfirmEmpty;
             return;
         }
-        self.request_export_file(pass);
+        self.request_export_file();
     }
 
-    /// 저장할 자리를 앱에 청하고 암호를 들고 기다린다
-    fn request_export_file(&mut self, pass: String) {
+    /// 저장할 자리를 앱에 청하고 기다린다
+    fn request_export_file(&mut self) {
         self.pending_file = Some(FileRequest::Save {
             suggested: crate::i18n::file_dialog_export_name().to_owned(),
         });
-        self.exchange = Exchange::ExportWaitFile { pass };
+        self.exchange = Exchange::ExportWaitFile;
     }
 
     /// 암호 없이 저장하기 직전의 되물음 (plan D6)
@@ -353,7 +355,7 @@ impl SiteManager {
             },
         );
         match shell.clicked {
-            Some(0) => self.request_export_file(String::new()),
+            Some(0) => self.request_export_file(),
             Some(_) => {}
             None => {
                 if !shell.should_close {
@@ -624,14 +626,9 @@ mod tests {
             "아직 파일을 청하지 않는다"
         );
 
-        // 암호가 맞으면 파일 자리를 청하고 그 암호를 들고 기다린다
-        manager.request_export_file("암호".to_owned());
-        assert_eq!(
-            manager.exchange,
-            Exchange::ExportWaitFile {
-                pass: "암호".to_owned()
-            }
-        );
+        // 파일 자리를 청하고 기다린다 — 들고 갈 암호는 없다
+        manager.request_export_file();
+        assert_eq!(manager.exchange, Exchange::ExportWaitFile);
         let request = manager.take_file_request().expect("파일 요청");
         assert!(matches!(request, FileRequest::Save { .. }));
         assert_eq!(manager.take_file_request(), None, "한 번만 꺼내 간다");
@@ -650,7 +647,7 @@ mod tests {
     #[test]
     fn 내보내기를_취소하면_아무_일도_없다() {
         let (mut manager, mut store) = manager_with_two_sites();
-        manager.request_export_file("암호".to_owned());
+        manager.request_export_file();
         let _ = manager.take_file_request();
         manager.supply_file(None, &mut store);
         assert_eq!(manager.exchange, Exchange::Idle);
@@ -663,7 +660,7 @@ mod tests {
         // 먼저 파일을 하나 만들어 둔다
         let (mut manager, mut store) = manager_with_two_sites();
         let path = temp_path("import-conflict");
-        manager.request_export_file(String::new());
+        manager.request_export_file();
         let _ = manager.take_file_request();
         manager.supply_file(Some(path.clone()), &mut store);
         let _ = manager.take_notice();
@@ -695,13 +692,19 @@ mod tests {
     }
 
     #[test]
-    fn 암호로_보호된_파일은_암호를_묻는다() {
-        let (mut manager, mut store) = manager_with_two_sites();
+    fn 구버전_암호_보호_파일은_암호를_묻는다() {
+        // 직전 버전이 사용자 암호로 만든 파일. 지금의 내보내기는 이 형태를 만들지 않으므로
+        // 픽스처로 세워 파일에 쓴다 — 그 파일을 아직 열 수 있는지가 이 시험의 명제다
+        let (mut manager, store) = manager_with_two_sites();
         let path = temp_path("import-passphrase");
-        manager.request_export_file("맞는 암호".to_owned());
-        let _ = manager.take_file_request();
-        manager.supply_file(Some(path.clone()), &mut store);
-        let _ = manager.take_notice();
+        let sites = site_export::build(&store).expect("내보내기").document.sites;
+        let legacy = site_export::legacy_document(
+            &sites,
+            // `sites`와 같은 순서 — 둘째 사이트는 비밀번호가 없다
+            &["비밀!1234".to_owned(), String::new()],
+            "맞는 암호",
+        );
+        site_export::write_file(&path, &legacy).expect("파일 쓰기");
 
         // 빈 목록으로 가져오면 겹치는 것이 없다
         let mut target = SiteStore::new();
@@ -751,7 +754,7 @@ mod tests {
         let mut manager = SiteManager::new();
         manager.open_new();
         let path = temp_path("empty");
-        manager.request_export_file(String::new());
+        manager.request_export_file();
         let _ = manager.take_file_request();
         manager.supply_file(Some(path.clone()), &mut store);
         let _ = manager.take_notice();
@@ -839,9 +842,7 @@ mod tests {
         }
 
         // 가져오기 쪽 둘은 문서·계획이 있어야 한다
-        let document = site_export::build(&store, "암호")
-            .expect("내보내기")
-            .document;
+        let document = site_export::build(&store).expect("내보내기").document;
         manager.exchange = Exchange::ImportAsk {
             document: Box::new(document.clone()),
             pass: String::new(),
