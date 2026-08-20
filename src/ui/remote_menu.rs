@@ -15,7 +15,6 @@ use eframe::egui;
 
 /// 메뉴 폭 — 일반 메뉴와 같은 값 (`FileExplorer-FTP.dc.html:355` 계열)
 const MENU_WIDTH: f32 = 180.0;
-const ROW_HEIGHT: f32 = 28.0;
 
 /// 확인 대화 제목 글꼴 크기
 const TITLE_FONT_PX: f32 = 16.0;
@@ -86,7 +85,7 @@ pub fn show_remote_menu(
         if row.separator_before {
             ui.separator();
         }
-        if menu_row(ui, row.label, row.enabled) {
+        if widgets::menu_row(ui, row.label, row.enabled) {
             chosen = Some(row.action);
         }
     }
@@ -196,39 +195,12 @@ pub fn menu_size() -> egui::Vec2 {
     let rows = menu_rows(0, false, TransferTargets::default()).len() as f32;
     egui::vec2(
         MENU_WIDTH + FRAME_PAD * 2.0,
-        rows * ROW_HEIGHT + FRAME_PAD * 4.0,
+        rows * theme::MENU_ITEM_HEIGHT + FRAME_PAD * 4.0,
     )
 }
 
 /// 메뉴 테두리와 안쪽 여백을 어림한 값
 const FRAME_PAD: f32 = 8.0;
-
-/// 메뉴 한 줄 — 비활성이면 눌리지 않고 글자가 흐려진다
-fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), ROW_HEIGHT),
-        if enabled {
-            egui::Sense::click()
-        } else {
-            egui::Sense::hover()
-        },
-    );
-    if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, theme::MENU_HOT);
-    }
-    ui.painter().text(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(13.0),
-        if enabled {
-            theme::TEXT
-        } else {
-            theme::TEXT_DIM
-        },
-    );
-    enabled && response.clicked()
-}
 
 /// 원격 이름으로 쓸 수 있는가 (plan Edge Case).
 ///

@@ -363,7 +363,7 @@ pub fn dropdown_field(
                 .show(ui, |ui| {
                     ui.set_width(width);
                     for (index, option) in options.iter().enumerate() {
-                        if menu_row(ui, option) {
+                        if menu_row(ui, option, true) {
                             chosen = Some(index);
                             ui.close();
                         }
@@ -712,23 +712,42 @@ pub fn progress_bar(
     rect
 }
 
-/// 드롭다운 팝업의 한 줄 — 눌렸으면 `true`
-fn menu_row(ui: &mut egui::Ui, label: &str) -> bool {
+/// 팝업 목록의 한 줄 — 눌렸으면 `true`.
+///
+/// **직접 그리는 메뉴는 모두 이 함수를 거친다** — 원격 목록 우클릭 메뉴·트리 즐겨찾기 메뉴·
+/// 드롭다운 목록이 같은 줄을 각자 그리던 것을 하나로 모았다(셋의 사본이 행 높이·여백·모서리를
+/// 조금씩 다르게 적고 있었다). 값은 `theme`의 메뉴 항목 토큰이 정한다.
+///
+/// 비활성이면 hover를 그리지 않고 글자가 흐려지며 누름을 돌려주지 않는다 — 눌러도 되지 않는
+/// 것이 눌리면 사용자는 눌러 보고 아무 일이 없어 고장으로 읽는다.
+///
+/// 글꼴은 egui가 버튼 라벨에 쓰는 것과 같은 것을 고른다(`TextStyle::Body`) — 버튼으로 그리는
+/// 메뉴와 직접 그리는 메뉴의 글자 크기가 갈리지 않게 한다
+pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), FORM_FIELD_HEIGHT),
-        egui::Sense::click(),
+        egui::vec2(ui.available_width(), theme::MENU_ITEM_HEIGHT),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
     );
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, theme::MENU_HOT);
+    if enabled && response.hovered() {
+        ui.painter()
+            .rect_filled(rect, theme::MENU_ITEM_CORNER_RADIUS, theme::MENU_HOT);
     }
     ui.painter().text(
-        egui::pos2(rect.left() + FORM_FIELD_PAD_X, rect.center().y),
+        egui::pos2(rect.left() + theme::MENU_ITEM_PAD_X, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(FORM_FONT_PX),
-        theme::TEXT,
+        egui::TextStyle::Body.resolve(ui.style()),
+        if enabled {
+            theme::TEXT
+        } else {
+            theme::TEXT_DIM
+        },
     );
-    response.clicked()
+    enabled && response.clicked()
 }
 
 /// 필드 웰 — 채움 + 1px 테두리. 테두리는 **안쪽**으로 그려 높이가 28px를 넘지 않게 한다

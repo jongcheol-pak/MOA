@@ -86,8 +86,29 @@ pub const WELL_BG: egui::Color32 = egui::Color32::from_rgb(0x15, 0x15, 0x15);
 /// 덧붙이거나 붙이지 않아, 같은 우클릭 메뉴인데 원격 목록은 각지고 설정 메뉴는 둥글었다
 /// (2026-08-19 사용자 보고). `apply_dark`가 이 값을 egui 스타일에 세우면
 /// `Frame::menu`가 그것을 읽으므로 각 메뉴는 아무것도 적지 않아도 같은 모양이 된다.
-/// 대화 팝업(`ui::dialog`)의 12px과는 별개다 — 그쪽은 버튼 줄을 낀 모달이라 부품이 다르다
+/// 대화 팝업(`ui::dialog`)의 12px과는 별개다 — 그쪽은 버튼 줄을 낀 모달이라 부품이 다르다.
+///
+/// **이것은 프레임(팝업 껍데기)의 모서리이고, 그 안의 한 줄은 아래 `MENU_ITEM_*`이 정한다**
+/// — 부품이 둘이라 값도 둘이다(껍데기 6px / 항목 4px)
 pub const MENU_CORNER_RADIUS: u8 = 6;
+
+// ── 메뉴 한 줄의 시각 토큰 (2026-08-20 사용자 요청) ──
+//
+// 종전에는 같은 뜻의 값이 파일마다 다시 정의돼 있어 메뉴마다 모습이 갈렸다 — 우클릭 메뉴는
+// hover가 각지고(0px), 설정·사이드바 메뉴는 문구가 하이라이트 끝에 붙고(좌우 2px), 행 높이도
+// 18·26·28로 흩어져 설정 메뉴만 작아 보였다. 값의 정본을 여기 하나로 모으고, 각 메뉴는
+// `menu_style`을 거치거나(egui 버튼 경로) `widgets::menu_row`를 쓴다(직접 그리는 경로).
+//
+// 글자 크기는 토큰으로 두지 않는다 — 이미 전 메뉴가 egui 기본 13px로 같고, 여기서 따로
+// 정하면 메뉴만 앱의 다른 화면과 다른 크기를 갖게 된다(`ui::dialog`가 버튼 글꼴을 정하지
+// 않는 것과 같은 이유)
+
+/// 메뉴 한 줄의 높이 — `menu_style`이 `interact_size.y`로 세우고, 직접 그리는 쪽은 이 값으로 자리를 잡는다
+pub const MENU_ITEM_HEIGHT: f32 = 28.0;
+/// 메뉴 한 줄의 좌우 여백 — 글자가 hover 하이라이트 끝에 붙지 않게 띄운다
+pub const MENU_ITEM_PAD_X: f32 = 12.0;
+/// 메뉴 한 줄의 hover 하이라이트 모서리 — 프레임(위 6px)보다 덜 둥글다
+pub const MENU_ITEM_CORNER_RADIUS: u8 = 4;
 
 /// 행 hover / 메뉴 hover
 pub const ROW_HOT: egui::Color32 = egui::Color32::from_rgb(0x2E, 0x2E, 0x2E);
@@ -145,6 +166,48 @@ pub fn apply_dark(ctx: &egui::Context) {
     // 우리 위젯 id는 패널 id·탭 인덱스로 고정돼 있어 이 경고가 겨냥하는 불안정이 아니다
     #[cfg(debug_assertions)]
     ctx.all_styles_mut(|style| style.debug.warn_if_rect_changes_id = false);
+}
+
+/// 팝업 안의 한 줄에 메뉴 항목 토큰을 세운다 — **그 `Ui`와 자식에만** 적용된다.
+///
+/// 팝업을 여는 쪽이 클로저 첫 줄에서 부른다. 하위 메뉴(`SubMenuButton`이 여는 것)는 부모의
+/// 스타일을 잇지 않는 별도 `Area`라 **거기서도 따로 불러야 한다**.
+///
+/// **전역(`apply_dark`)에 세우지 않는 이유**는 둘이다 — ① 앱 전체 버튼이 함께 커진다
+/// ② egui가 팝업마다 자기 메뉴 스타일을 새로 입히므로(`Popup::menu` → `containers::menu::menu_style`)
+/// 전역 값은 메뉴 안에서 덮여 **효과가 없다**. 그 위에 이 함수가 앱 값을 다시 덮는 순서다.
+pub fn menu_style(ui: &mut egui::Ui) {
+    let style = ui.style_mut();
+    // 세로 여백은 0이다 — 행 높이는 아래 `interact_size.y`가 잡으므로, 여기에 값을 주면
+    // 글자 높이에 더해져 28px를 넘는다
+    style.spacing.button_padding = egui::vec2(MENU_ITEM_PAD_X, 0.0);
+    style.spacing.interact_size.y = MENU_ITEM_HEIGHT;
+
+    let corner = egui::CornerRadius::same(MENU_ITEM_CORNER_RADIUS);
+    let widgets = &mut style.visuals.widgets;
+    for state in [
+        &mut widgets.noninteractive,
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+        &mut widgets.open,
+    ] {
+        state.corner_radius = corner;
+        // 눌리거나 얹혔을 때 항목이 커지지 않는다 — 커지면 좌우 여백이 그만큼 흔들린다.
+        // egui 기본값도 0이지만 값에 기대지 않고 명시한다
+        state.expansion = 0.0;
+    }
+
+    // 채움은 **얹힌·눌린·열린 세 상태만** 칠한다.
+    //
+    // `inactive`는 egui가 투명으로 세워 둔 것을 그대로 둔다 — 여기에 색을 주면 평상시에도
+    // 모든 줄에 배경이 생겨 메뉴가 버튼 목록처럼 보인다.
+    // `open`을 빠뜨리면 하위 메뉴가 열린 동안 그 부모 줄만 egui 기본색으로 남는다
+    for state in [&mut widgets.hovered, &mut widgets.active, &mut widgets.open] {
+        // egui는 버튼 프레임 채움으로 `weak_bg_fill`을 읽고 다른 위젯은 `bg_fill`을 읽는다
+        state.weak_bg_fill = MENU_HOT;
+        state.bg_fill = MENU_HOT;
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +308,243 @@ mod tests {
             발견.is_empty(),
             "메뉴 모서리를 따로 적은 곳(테마의 공통 값을 쓰도록 지운다): {발견:?}"
         );
+    }
+
+    /// 검사 대상이 되는 부분만 남긴 소스 — 주석 줄과 **시험 모듈**을 걷어낸다.
+    ///
+    /// `menu.rs`가 「`SubMenuButton`이 hover로 여는 팝업이다」를 주석에 적고 있어, 이것이
+    /// 없으면 그 파일의 팝업 수가 부풀어 거짓 실패한다.
+    ///
+    /// **시험 모듈을 빼는 이유**: 시험이 부르는 `menu_style`이 호출 수에 얹히면 그만큼
+    /// 여유가 생겨, 그 파일에 팝업을 하나 더 만들며 규약을 빠뜨려도 검사가 통과한다
+    /// (`titlebar.rs`가 실제로 생산 1 + 시험 1이었다)
+    fn code_only(source: &str) -> String {
+        let 본문 = source.split("#[cfg(test)]").next().unwrap_or(source);
+        본문
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 이 파일이 여는 팝업 목록의 수.
+    ///
+    /// `Frame::menu(`는 팝업을 여는 것이 아니라 **그 껍데기 모양을 적는 것**이라, 같은 파일에
+    /// 팝업을 여는 구문이 있으면 그 팝업의 프레임을 지정한 것으로 보고 따로 세지 않는다
+    /// (`widgets.rs`의 드롭다운이 그 형태다). **컨텍스트 메뉴도 함께 본다** — `Popup::menu(`만
+    /// 보면 우클릭 메뉴에 프레임을 지정한 파일이 이중으로 세어져 거짓 실패한다
+    fn menu_openers(source: &str) -> usize {
+        let code = code_only(source);
+        let popup = code.matches("Popup::menu(").count();
+        let context =
+            code.matches("Popup::context_menu(").count() + code.matches(".context_menu(").count();
+        // 하위 메뉴는 부모 스타일을 잇지 않는 별도 `Area`라 자체 호출이 필요하다
+        // egui의 `ui.menu_button(`도 함께 본다 — 지금 이 레포에 쓰는 곳은 없지만, 규약이
+        // 지키려는 것은 **앞으로 만들 메뉴**라 진입 API가 늘 때마다 사각이 생기면 뜻이 없다.
+        // 점을 붙여 좁히는 이유: 그냥 `menu_button(`으로 찾으면 이 레포의 함수 이름
+        // (`show_menu_button`)까지 잡혀 거짓 실패한다(실측)
+        let submenu = code.matches("SubMenuButton").count() + code.matches(".menu_button(").count();
+        let frame = if popup + context > 0 {
+            0
+        } else {
+            code.matches("Frame::menu(").count()
+        };
+        popup + context + submenu + frame
+    }
+
+    /// 이 파일이 공통 경로를 거친 횟수 — `theme::menu_style` 또는 `widgets::menu_row`.
+    ///
+    /// **자격 형태를 먼저 세고 그 자리를 지운 뒤 무자격을 센다** — `theme::menu_style(`는
+    /// `menu_style(`를 부분 문자열로 품고 있어, 따로 세면 한 호출이 둘로 세어져 검사가
+    /// 통과하지만 아무것도 보증하지 못한다
+    fn style_calls(source: &str) -> usize {
+        let code = code_only(source);
+        // egui 자신의 메뉴 스타일은 앱 토큰을 세우지 않는다 — 인정하지 않는다
+        let code = code.replace("egui::containers::menu::menu_style(", "");
+        let qualified =
+            code.matches("theme::menu_style(").count() + code.matches("widgets::menu_row(").count();
+        let rest = code
+            .replace("theme::menu_style(", "")
+            .replace("widgets::menu_row(", "")
+            // 정의는 호출이 아니다
+            .replace("fn menu_style(", "")
+            .replace("fn menu_row(", "");
+        let bare = rest.matches("menu_style(").count() + rest.matches("menu_row(").count();
+        qualified + bare
+    }
+
+    #[test]
+    fn 항목_규약_검사는_네_가지_오차를_피한다() {
+        // 검사기 자신을 시험한다 — 아래 넷 중 하나만 어긋나도 검사가 통과하면서
+        // 아무것도 보증하지 못하는 상태가 된다
+        // ⓐ 자격/무자격 이중계수: `theme::menu_style(` 하나는 **1**이어야 한다
+        assert_eq!(style_calls("theme::menu_style(ui);"), 1);
+        assert_eq!(style_calls("crate::ui::theme::menu_style(ui);"), 1);
+        // ⓑ 정의는 호출이 아니다
+        assert_eq!(
+            style_calls("pub(crate) fn menu_row(ui: &mut Ui) -> bool {}"),
+            0
+        );
+        // ⓒ 주석 줄은 세지 않는다
+        assert_eq!(
+            menu_openers("// `SubMenuButton`이 hover로 여는 팝업이다"),
+            0
+        );
+        // ⓓ 같은 자리의 팝업 + `Frame::menu(`는 하나로 센다 — 여는 구문이 `Popup::menu(`든
+        // 컨텍스트 메뉴든 마찬가지다(앞엣것만 보면 우클릭 메뉴 쪽이 이중으로 세어진다)
+        assert_eq!(
+            menu_openers("egui::Popup::menu(&r).frame(egui::Frame::menu(s)).show(|ui| {})"),
+            1
+        );
+        assert_eq!(
+            menu_openers("r.context_menu(|ui| { egui::Frame::menu(s).show(ui, |ui| {}) });"),
+            1
+        );
+
+        // 통과해야 할 형태 — 팝업 둘에 호출 둘
+        let 성한_파일 = "egui::Popup::menu(&a).show(|ui| { theme::menu_style(ui); });
+                         egui::Popup::menu(&b).show(|ui| { theme::menu_style(ui); });";
+        assert_eq!(menu_openers(성한_파일), 2);
+        assert_eq!(style_calls(성한_파일), 2);
+        // 실패해야 할 형태 — 팝업 둘에 호출 하나(한 곳만 고친 상태)
+        let 빠뜨린_파일 = "egui::Popup::menu(&a).show(|ui| { theme::menu_style(ui); });
+                           egui::Popup::menu(&b).show(|ui| { 항목(ui); });";
+        assert!(menu_openers(빠뜨린_파일) > style_calls(빠뜨린_파일));
+        // 실패해야 할 형태 — 하위 메뉴만 있고 호출이 없다
+        let 하위메뉴만 = "SubMenuButton::from_button(b).ui(ui, |ui| items(ui));";
+        assert!(menu_openers(하위메뉴만) > style_calls(하위메뉴만));
+        // 시험 모듈의 호출은 세지 않는다 — 세면 그만큼 여유가 생겨 규약이 헐거워진다
+        let 시험만_부르는_파일 = "egui::Popup::menu(&a).show(|ui| { 항목(ui); });
+\n                                   #[cfg(test)]
+\n                                   mod tests { fn t() { theme::menu_style(ui); } }";
+        assert_eq!(style_calls(시험만_부르는_파일), 0);
+        // 함수 이름은 진입 API가 아니다 — `menu_button(`으로 넓게 찾으면 여기 걸린다
+        assert_eq!(menu_openers("fn show_menu_button(ui: &mut Ui) {}"), 0);
+        assert_eq!(menu_openers("ui.menu_button(\"파일\", |ui| {});"), 1);
+        assert!(menu_openers(시험만_부르는_파일) > style_calls(시험만_부르는_파일));
+    }
+
+    #[test]
+    fn 팝업_메뉴는_항목_스타일을_거친다() {
+        // 규약: 팝업 목록을 여는 자리는 모두 `theme::menu_style`을 거치거나
+        // `widgets::menu_row`로 그린다. **개수를 견주는 이유**는 한 파일에 팝업이 여럿인 곳
+        // (`sidebar.rs` 셋·`tabs.rs` 둘)에서 하나만 고쳐도 「있는지」만 보는 검사는 통과하기 때문이다
+        let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut sources = Vec::new();
+        ui_sources(&ui_dir, &mut sources);
+        assert!(!sources.is_empty(), "ui 소스를 하나도 읽지 못했다");
+
+        // 예외는 **경로 전체로** 견준다 — 이름만 보면 하위 폴더의 동명 파일이 조용히 빠진다
+        let 예외 = [
+            // 이 파일은 규약을 설명하느라 그 문자열을 담고, 시험이 egui 쪽 `menu_style`을 부른다
+            ui_dir.join("theme.rs"),
+            // 프레임만 열고 한 줄은 `remote_menu`가 그린다 — 그 모듈이 `widgets::menu_row`를 거친다
+            ui_dir.join("panel.rs"),
+        ];
+        let mut 발견 = Vec::new();
+        for path in sources {
+            if 예외.contains(&path) {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");
+            let (열림, 호출) = (menu_openers(&source), style_calls(&source));
+            if 열림 > 호출 {
+                발견.push(format!(
+                    "{}(팝업 {열림} · 호출 {호출})",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+        }
+        assert!(
+            발견.is_empty(),
+            "팝업을 열면서 공통 항목 스타일을 거치지 않은 곳: {발견:?}"
+        );
+    }
+
+    #[test]
+    fn 메뉴_항목_토큰은_정해진_값이다() {
+        // 값이 바뀌면 화면의 모든 메뉴가 함께 바뀐다 — 정본이 여기 하나임을 이 시험이 못 박는다
+        assert_eq!(MENU_ITEM_HEIGHT, 28.0);
+        assert_eq!(MENU_ITEM_PAD_X, 12.0);
+        assert_eq!(MENU_ITEM_CORNER_RADIUS, 4);
+    }
+
+    #[test]
+    fn 메뉴_스타일은_egui_기본_위에_앱_값을_세운다() {
+        // **실제 팝업과 같은 순서를 흉내 낸다** — `Popup::menu`가 egui의 메뉴 스타일을 먼저
+        // 입히고(좌우 여백 2px·평상시 투명) 그 위에 우리 헬퍼가 온다. 이 순서를 빼고 재면
+        // egui가 덮는 값을 우리가 되돌려 세우는지 알 수 없다
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            egui::containers::menu::menu_style(ui.style_mut());
+            assert_eq!(
+                ui.style().visuals.widgets.inactive.weak_bg_fill,
+                egui::Color32::TRANSPARENT,
+                "egui 메뉴 스타일이 평상시 줄을 투명으로 둔다는 전제가 깨졌다"
+            );
+
+            menu_style(ui);
+
+            let style = ui.style();
+            assert_eq!(style.spacing.button_padding.x, MENU_ITEM_PAD_X);
+            // 세로 여백이 0이어야 행 높이를 `interact_size.y`가 단독으로 정한다
+            assert_eq!(style.spacing.button_padding.y, 0.0);
+            assert_eq!(style.spacing.interact_size.y, MENU_ITEM_HEIGHT);
+
+            let corner = egui::CornerRadius::same(MENU_ITEM_CORNER_RADIUS);
+            let widgets = &style.visuals.widgets;
+            for (이름, state) in [
+                ("noninteractive", &widgets.noninteractive),
+                ("inactive", &widgets.inactive),
+                ("hovered", &widgets.hovered),
+                ("active", &widgets.active),
+                ("open", &widgets.open),
+            ] {
+                assert_eq!(state.corner_radius, corner, "{이름} 상태의 모서리");
+                assert_eq!(state.expansion, 0.0, "{이름} 상태의 확대");
+            }
+
+            // 채움은 세 상태만 — `open`이 빠지면 하위 메뉴가 열린 동안 부모 줄만 색이 다르다
+            for (이름, state) in [
+                ("hovered", &widgets.hovered),
+                ("active", &widgets.active),
+                ("open", &widgets.open),
+            ] {
+                assert_eq!(state.weak_bg_fill, MENU_HOT, "{이름} 상태의 채움");
+                assert_eq!(state.bg_fill, MENU_HOT, "{이름} 상태의 배경");
+            }
+
+            // 평상시 줄은 투명을 지킨다 — 칠하면 메뉴가 버튼 목록처럼 보인다
+            assert_eq!(
+                widgets.inactive.weak_bg_fill,
+                egui::Color32::TRANSPARENT,
+                "평상시 줄에 배경이 생겼다"
+            );
+        });
+    }
+
+    #[test]
+    fn 메뉴_스타일은_바깥_ui를_오염시키지_않는다() {
+        // 전역이 아니라 국소로 덮는다는 것이 이 헬퍼의 전제다 — 새 나가면 앱 전체 버튼이 커진다
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let 원래_여백 = ui.style().spacing.button_padding;
+            let 원래_높이 = ui.style().spacing.interact_size.y;
+            ui.scope(|ui| {
+                menu_style(ui);
+                assert_eq!(ui.style().spacing.button_padding.x, MENU_ITEM_PAD_X);
+            });
+            assert_eq!(
+                ui.style().spacing.button_padding,
+                원래_여백,
+                "바깥 Ui의 여백이 함께 바뀌었다"
+            );
+            assert_eq!(
+                ui.style().spacing.interact_size.y,
+                원래_높이,
+                "바깥 Ui의 최소 높이가 함께 바뀌었다"
+            );
+        });
     }
 
     #[test]
