@@ -458,7 +458,9 @@ impl SiteManager {
         self.open = false;
         // 묻던 것도 함께 접는다 — 남겨 두면 다음에 열 때 확인 대화부터 뜬다
         self.pending_delete = None;
-        // 내보내기·가져오기도 접는다 — **적어 둔 암호가 여기서 함께 사라진다** (FR-59)
+        // 내보내기·가져오기도 접는다 — **적어 둔 암호가 여기서 함께 사라진다** (FR-59).
+        // 아직 띄우지 못한 파일 대화 요청도 함께 버린다: 대화를 닫았다는 것은 그 흐름을
+        // 그만두겠다는 뜻이라, 닫은 뒤에 파일 창이 뒤늦게 뜨는 편이 오히려 놀랍다
         self.exchange = Exchange::Idle;
         self.pending_file = None;
         self.renaming = None;

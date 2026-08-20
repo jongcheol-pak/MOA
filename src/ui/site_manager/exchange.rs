@@ -779,6 +779,23 @@ mod tests {
     }
 
     #[test]
+    fn 파일_창을_열지_못하면_사유를_남기고_흐름을_접는다() {
+        // 창 핸들이 없는 환경 — 앱이 `fail_file_request`로 알린다 (FR-59).
+        // 조용히 접으면 사용자는 버튼이 먹지 않는다고 읽는다
+        let (mut manager, _) = manager_with_two_sites();
+        manager.apply_exchange_action(ExchangeAction::Import);
+        assert_eq!(manager.exchange, Exchange::ImportWaitFile);
+
+        manager.fail_file_request("파일 창을 열지 못했습니다");
+        assert_eq!(manager.exchange, Exchange::Idle, "하던 흐름을 접는다");
+        assert_eq!(
+            manager.error.as_deref(),
+            Some("파일 창을 열지 못했습니다"),
+            "사유가 바닥에 남지 않았다"
+        );
+    }
+
+    #[test]
     fn 파일을_기다리던_중이_아니면_받을_것이_없다() {
         let (mut manager, mut store) = manager_with_two_sites();
         manager.exchange = Exchange::ExportConfirmEmpty;

@@ -366,8 +366,8 @@
     - `cargo build`·`cargo clippy --all-targets -- -D warnings` 통과
   - **Files**:
     - 주: `src/ui/app.rs`
-    - 동반: `src/i18n/mod.rs`(HWND 없음 사유 문구)
-    - 테스트: 없음 — `ExplorerApp`은 단위 시험에서 만들 수 없다(P6). **이 배선 줄은 리뷰가 지키는 자리**임을 코드 주석에 명시한다(위키 conventions [2026-08-17]의 처방)
+    - 동반: `src/i18n/mod.rs`(HWND 없음 사유 문구) · `src/ui/site_manager/exchange.rs`(`fail_file_request` 신설)
+    - 테스트: `src/ui/site_manager/exchange.rs`에 `fail_file_request` 시험 1건. **`app.rs` 배선 자체는 시험 대상이 아니다** — `ExplorerApp`은 단위 시험에서 만들 수 없다(P6). **이 배선 줄은 리뷰가 지키는 자리**임을 코드 주석에 명시한다(위키 conventions [2026-08-17]의 처방)
   - **Edge Cases**:
     - 같은 프레임에 셸 컨텍스트 메뉴 요청과 파일 요청이 함께 있는 경우 → 셸 메뉴를 먼저 처리하고 파일 대화는 그 다음 프레임으로 미룬다(두 모달을 겹쳐 띄우지 않는다)
     - 파일 대화가 뜬 동안 앱이 그리기를 멈추는 것은 셸 메뉴와 같은 성질이라 그대로 둔다
