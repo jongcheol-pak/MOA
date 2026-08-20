@@ -2,6 +2,7 @@
 pub mod create;
 pub mod drives;
 pub mod enumerate;
+pub mod file_dialog;
 pub mod icons;
 pub mod known_folders;
 pub mod shell_menu;

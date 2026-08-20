@@ -298,7 +298,7 @@
     - (i) `SiteStore`가 비공개 필드라 목록을 직접 만들 수 없음 → `add`·`get_mut`·`set_password`·`hide`/`unhide` 공개 API로 채우는 것이 이 task의 방식이다(Investigation Log에 확인 완료)
   - **Depends on**: T1
 
-- [ ] T3. 파일 저장·열기 대화(`fs::file_dialog`)를 만든다
+- [x] T3. 파일 저장·열기 대화(`fs::file_dialog`)를 만든다
   - **Type**: C
   - **Design**: ① 배치 — 신규 `src/fs/file_dialog.rs`, `fs/mod.rs`에 선언(셸 API를 감싸는 다른 모듈들과 같은 자리다). ② 신규 심볼 — `pick_save(hwnd: HWND, suggested_name: &str) -> Option<PathBuf>`, `pick_open(hwnd: HWND) -> Option<PathBuf>`. 둘 다 `IFileSaveDialog`/`IFileOpenDialog`를 `CoCreateInstance`로 만들고 `.moasites` 필터 하나와 기본 확장자를 세운 뒤 `Show(hwnd)`를 부른다. 사용자가 취소하면 `None`. ③ 의존 — `windows` crate와 `i18n`(필터 문구)만. `ui`를 모른다. ④ 비추상화 — 「대화 빌더」·「필터 목록 타입」을 두지 않는다(필터가 하나뿐이다).
   - **Acceptance**:
