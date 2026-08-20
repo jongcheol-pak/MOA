@@ -592,14 +592,14 @@ mod tests {
         let 실패 = queue.enqueue(
             site(1),
             TransferDirection::Upload,
-            PathBuf::from(r"C:"),
+            PathBuf::from(r"C:\a"),
             RemotePath::new("/a"),
             1,
         );
         let 완료 = queue.enqueue(
             site(1),
             TransferDirection::Upload,
-            PathBuf::from(r"C:"),
+            PathBuf::from(r"C:\b"),
             RemotePath::new("/b"),
             1,
         );

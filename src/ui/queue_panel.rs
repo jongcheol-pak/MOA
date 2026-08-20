@@ -1108,7 +1108,7 @@ mod tests {
         let 실패 = queue.enqueue(
             lg,
             TransferDirection::Upload,
-            PathBuf::from(r"C:"),
+            PathBuf::from(r"C:\a"),
             RemotePath::new("/a"),
             1,
         );

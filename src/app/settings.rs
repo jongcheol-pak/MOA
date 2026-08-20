@@ -908,7 +908,7 @@ mod tests {
         session.queue = vec![QueueSession {
             direction: "download".to_owned(),
             site: 1,
-            local: r"D:\받은 것pp.js".to_owned(),
+            local: r"D:\받은 것\app.js".to_owned(),
             remote: "/var/www/app.js".to_owned(),
             size: 1234,
             error: String::new(),

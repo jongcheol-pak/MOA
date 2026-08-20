@@ -725,8 +725,8 @@ mod tests {
 
     /// 전송 대상 판정용 탭 신원 — 실제 탭 없이 값만 만든다
     fn ids() -> (TabId, TabId, TabId) {
-        let a = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:"));
-        let b = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:"));
+        let a = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:\a"));
+        let b = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:\b"));
         let c = crate::panel::tabs::TabState::new(std::path::PathBuf::from(r"C:\c"));
         (a.id, b.id, c.id)
     }

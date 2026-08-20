@@ -29,7 +29,7 @@ use crate::remote::sites::SiteStore;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::list_common::{DragItem, DropOutcome, DropTarget};
-use crate::ui::panel::RemoteAction;
+use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use eframe::egui;
 use std::path::PathBuf;
@@ -545,10 +545,22 @@ impl ExplorerApp {
     /// 옮긴 쪽(트리·상위 이동)은 연결을 모르고 명령을 보낼 수단도 없다 — 깃발만 세워 두고
     /// 여기서 거둔다
     pub(super) fn list_moved_panels(&mut self) {
+        self.relist_panels(|panel| panel.take_remote_dirty());
+    }
+
+    /// 조건에 맞는 패널들이 목록을 다시 청한다 — 세 갈래가 함께 쓰는 순회.
+    ///
+    /// 뼈대(모든 워크스페이스 × 모든 패널 → 조건 → `request_remote_list`)가 같고 **조건만**
+    /// 다르다: 옮긴 패널(위)·그 연결을 쓰는 패널(`request_remote_list`)·전송 목적지를 보는
+    /// 패널(`pump_relist`). 조건을 클로저로 받으면 세 곳의 다른 점이 호출부에 그대로 남는다.
+    ///
+    /// **조건이 `&mut`를 받는 이유**: 옮김 판정(`take_remote_dirty`)이 깃발을 세워 둔 것을
+    /// **거두는** 조작이라 불변 참조로는 표현할 수 없다
+    fn relist_panels(&mut self, mut wants: impl FnMut(&mut PanelState) -> bool) {
         let ExplorerApp { views, manager, .. } = self;
         for view in views.values_mut() {
             for panel in view.panels.values_mut() {
-                if panel.take_remote_dirty() {
+                if wants(panel) {
                     panel.request_remote_list(manager);
                 }
             }
@@ -579,17 +591,10 @@ impl ExplorerApp {
         if ready.is_empty() {
             return;
         }
-        let ExplorerApp { views, manager, .. } = self;
         for (site, dir) in ready {
-            for view in views.values_mut() {
-                for panel in view.panels.values_mut() {
-                    if panel.active_site() == Some(site)
-                        && panel.remote_dir().as_ref() == Some(&dir)
-                    {
-                        panel.request_remote_list(manager);
-                    }
-                }
-            }
+            self.relist_panels(|panel| {
+                panel.active_site() == Some(site) && panel.remote_dir().as_ref() == Some(&dir)
+            });
         }
     }
 
@@ -599,14 +604,7 @@ impl ExplorerApp {
     /// (연결이 서거나 파일 작업이 끝났을 때처럼 그 연결의 상태 자체가 바뀐 경우),
     /// 그쪽은 사이트와 폴더가 모두 맞는 패널만이다(전송의 목적지 한 곳만 바뀐 경우)
     pub(super) fn request_remote_list(&mut self, conn: ConnectionId) {
-        let ExplorerApp { views, manager, .. } = self;
-        for view in views.values_mut() {
-            for panel in view.panels.values_mut() {
-                if panel.active_conn() == Some(conn) {
-                    panel.request_remote_list(manager);
-                }
-            }
-        }
+        self.relist_panels(|panel| panel.active_conn() == Some(conn));
     }
 
     /// 원격 단계 화면에서 고른 조치를 실행한다 (인벤토리 #18~21)
