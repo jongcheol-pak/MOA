@@ -22,6 +22,7 @@ use crate::remote::types::RemotePath;
 use crate::ui::icon_tex::IconTextures;
 use crate::ui::menu::clamp_menu_pos;
 use crate::ui::theme;
+use crate::ui::widgets;
 use eframe::egui;
 use eframe::egui::collapsing_header::CollapsingState;
 use std::collections::HashMap;
@@ -99,11 +100,9 @@ enum MenuTarget {
     Favorite(PathBuf),
 }
 
-/// 트리 메뉴 한 줄의 높이·폭 — 원격 목록 메뉴와 같은 값으로 맞춘다.
-///
-/// 그 모듈의 부품을 가져다 쓰지 않는 이유는 대상과 항목이 달라서다(plan 비추상화 선언) —
-/// 같은 값을 쓰되 각자 그린다. 지금 이 모양을 쓰는 곳은 둘이라 공통화 문턱(3회)에 못 미친다
-const MENU_ROW_HEIGHT: f32 = 28.0;
+/// 트리 메뉴 폭 — 원격 목록 메뉴와 같은 값으로 맞춘다.
+/// 한 줄의 높이·여백·모서리는 여기서 정하지 않는다(`theme::MENU_ITEM_*`) —
+/// 줄 그리기 자체를 `widgets::menu_row`가 맡는다
 const MENU_WIDTH: f32 = 180.0;
 /// 메뉴 테두리와 안쪽 여백을 어림한 값 — 화면 밖으로 나가지 않게 당길 때 쓴다
 const MENU_FRAME_PAD: f32 = 8.0;
@@ -286,7 +285,7 @@ impl FolderTreeView {
         };
         let size = egui::vec2(
             MENU_WIDTH + MENU_FRAME_PAD * 2.0,
-            MENU_ROW_HEIGHT + MENU_FRAME_PAD * 4.0,
+            theme::MENU_ITEM_HEIGHT + MENU_FRAME_PAD * 4.0,
         );
         let viewport = ui.ctx().input(|input| input.viewport_rect());
         let at = clamp_menu_pos(viewport, at, size);
@@ -307,12 +306,14 @@ impl FolderTreeView {
                                 // 이미 담긴 폴더면 비활성 — 눌러도 되지 않는 것을 눌리게 두면
                                 // 사용자는 눌렀다가 아무 일도 안 일어나는 것을 본다
                                 let enabled = !favorites.iter().any(|e| &e.path == path);
-                                if menu_row(ui, crate::i18n::tree_favorite_add(), enabled) {
+                                if widgets::menu_row(ui, crate::i18n::tree_favorite_add(), enabled)
+                                {
                                     chosen = Some(FavoriteAction::Add(path.clone()));
                                 }
                             }
                             MenuTarget::Favorite(path) => {
-                                if menu_row(ui, crate::i18n::tree_favorite_remove(), true) {
+                                if widgets::menu_row(ui, crate::i18n::tree_favorite_remove(), true)
+                                {
                                     chosen = Some(FavoriteAction::Remove(path.clone()));
                                 }
                             }
@@ -807,32 +808,6 @@ fn draw_offline_badge(painter: &egui::Painter, icon_rect: egui::Rect) {
         ],
         stroke,
     );
-}
-
-fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), MENU_ROW_HEIGHT),
-        if enabled {
-            egui::Sense::click()
-        } else {
-            egui::Sense::hover()
-        },
-    );
-    if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, theme::MENU_HOT);
-    }
-    ui.painter().text(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(13.0),
-        if enabled {
-            theme::TEXT
-        } else {
-            theme::TEXT_DIM
-        },
-    );
-    enabled && response.clicked()
 }
 
 /// 트리에 보일 이름 — 드라이브 루트는 이름이 없어 경로 자체(`C:\`)를 쓴다

@@ -52,19 +52,14 @@ const TAB_CORNER_RADIUS: u8 = 6;
 // ── 새 탭 메뉴 (FR-33) ──
 /// 메뉴 폭 — 사이트 이름과 프로토콜 라벨이 한 줄에 들어가는 크기
 const NEW_TAB_MENU_WIDTH: f32 = 250.0;
-/// 사이트 줄 높이·글자 크기
-const SITE_ROW_HEIGHT: f32 = 28.0;
+/// 사이트 줄 글자 크기 — 줄 높이·좌우 여백·hover 모서리는 `theme::MENU_ITEM_*`이 정한다
 const SITE_ROW_FONT_PX: f32 = 13.0;
 /// 줄 안 상태 점 지름 — 사이드바(7px)보다 한 단계 작다
 const SITE_ROW_DOT: f32 = 6.0;
 /// 프로토콜 글자 크기
 const SITE_PROTO_FONT_PX: f32 = 12.0;
-/// 줄 좌우 여백·요소 간격
-const SITE_ROW_PAD_X: f32 = 10.0;
+/// 줄 안 요소 사이 간격
 const SITE_ROW_GAP: f32 = 8.0;
-/// hover 채움 모서리 — 메뉴 프레임 모서리(`theme::MENU_CORNER_RADIUS`)보다 작게 두어
-/// 채움이 둥근 테두리 밖으로 새지 않게 한다
-const SITE_ROW_CORNER: u8 = 4;
 
 /// 분할 버튼 아이콘(사각형) 한 변 — 글리프가 아니라 직접 그린다 (split-4way plan D8)
 const SPLIT_ICON_SIZE: f32 = 12.0;
@@ -318,16 +313,16 @@ fn new_tab_menu_items(
 /// 하는데, 버튼 라벨 하나로는 그 배치를 만들 수 없다
 fn show_site_row(ui: &mut egui::Ui, name: &str, protocol: &str, connected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), SITE_ROW_HEIGHT),
+        egui::vec2(ui.available_width(), theme::MENU_ITEM_HEIGHT),
         egui::Sense::click(),
     );
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, SITE_ROW_CORNER, theme::MENU_HOT);
+            .rect_filled(rect, theme::MENU_ITEM_CORNER_RADIUS, theme::MENU_HOT);
     }
     let painter = ui.painter();
     let dot_center = egui::pos2(
-        rect.left() + SITE_ROW_PAD_X + SITE_ROW_DOT / 2.0,
+        rect.left() + theme::MENU_ITEM_PAD_X + SITE_ROW_DOT / 2.0,
         rect.center().y,
     );
     painter.circle_filled(
@@ -346,7 +341,7 @@ fn show_site_row(ui: &mut egui::Ui, name: &str, protocol: &str, connected: bool)
         egui::FontId::proportional(SITE_PROTO_FONT_PX),
         theme::TEXT_MUTED,
     );
-    let proto_left = rect.right() - SITE_ROW_PAD_X - proto.size().x;
+    let proto_left = rect.right() - theme::MENU_ITEM_PAD_X - proto.size().x;
     painter.galley(
         egui::pos2(proto_left, rect.center().y - proto.size().y / 2.0),
         proto,
