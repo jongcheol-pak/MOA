@@ -270,6 +270,33 @@ mod tests {
     use super::*;
     use crate::app::settings::{AppSettings, LanguageSetting};
 
+    /// JSON 어디에 있든 주어진 키를 지운다 — **그 필드가 없던 시절의 세션**을 흉내 낸다.
+    ///
+    /// 값 리터럴을 문자열로 지우던 종전 방식은 기본 열 폭·보기 모드가 바뀌면 걷어내지 못한 채
+    /// 통과할 수 있었다(값을 코드 두 곳에 적어 둔 셈이다). 키만 보면 값이 무엇이든 걸린다.
+    ///
+    /// **이름이 같은 다른 필드도 함께 지워진다** — `columns`는 패널 열 폭과 큐 표 열 폭
+    /// (`DockSession`) 둘이 같은 이름을 쓴다. 그쪽까지 지우는 편이 「더 옛날 세션」에 가깝고
+    /// 둘 다 `#[serde(default)]`라 복원되므로, 좁히는 대신 이 사실을 적어 둔다
+    fn strip_keys(value: &mut serde_json::Value, keys: &[&str]) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for key in keys {
+                    map.remove(*key);
+                }
+                for nested in map.values_mut() {
+                    strip_keys(nested, keys);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    strip_keys(item, keys);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// 원격 쪽이 비어 있는 저장 — 로컬만 다루는 시험이 쓴다
     fn empty_remote() -> RemoteSnapshot<'static> {
         // 빈 사이트 목록·빈 큐는 시험이 사는 동안만 있으면 되므로 흘려 둔다
@@ -371,7 +398,8 @@ mod tests {
         // 열 폭(T3)·보기 모드(T12)는 나중에 더한 필드다. 이것 때문에 스키마 버전을 올리면
         // `parse_session`이 통째로 폴백해 **기존 사용자의 워크스페이스·분할·탭이 전부
         // 초기화된다** (plan D5). 그래서 버전을 2로 둔 채 `#[serde(default)]`로 더했고,
-        // 이 테스트가 그 계약을 지킨다 — 앞으로 필드를 더할 때도 여기에 함께 추가한다
+        // 이 테스트가 그 계약을 지킨다 — 앞으로 필드를 더할 때는 아래 `strip_keys`에
+        // 그 키 이름을 더한다
         let session = to_session(
             window(),
             SidebarSession::default(),
@@ -379,13 +407,9 @@ mod tests {
             &sample(),
             empty_remote(),
         );
-        let json = serde_json::to_string(&session).unwrap();
-        let without_columns = json
-            .replace(",\"columns\":[200.0,60.0,120.0,90.0]", "")
-            .replace(",\"columns\":[]", "")
-            .replace(",\"view_mode\":\"tiles\"", "")
-            .replace(",\"view_mode\":\"large_icons\"", "")
-            .replace(",\"view_mode\":\"\"", "");
+        let mut value: serde_json::Value = serde_json::to_value(&session).unwrap();
+        strip_keys(&mut value, &["columns", "view_mode"]);
+        let without_columns = serde_json::to_string(&value).unwrap();
         assert!(
             !without_columns.contains("columns") && !without_columns.contains("view_mode"),
             "테스트가 새 필드를 실제로 걷어내지 못했다"

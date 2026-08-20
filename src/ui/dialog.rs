@@ -470,18 +470,34 @@ mod tests {
             .count()
     }
 
+    /// `src/ui` 아래의 `.rs`를 **하위 폴더까지** 모아 온다.
+    ///
+    /// 비재귀로 훑으면 `ui/app/`·`ui/panel/` 같은 하위가 통째로 빠져 규약이 조용히 샌다
+    /// (`ui::theme`의 같은 시험이 그 함정을 먼저 피했고, 2026-08-20에 이쪽도 맞췄다)
+    fn ui_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("ui 디렉터리") {
+            let path = entry.expect("항목").path();
+            if path.is_dir() {
+                ui_sources(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
     #[test]
     fn 대화는_모두_이_모듈을_거친다() {
         // 규약: 모달은 `ui::dialog`의 셸을 거친다. 문서로만 두면 다음 작업자가 `Modal`을
         // 곧바로 써도 아무것도 걸리지 않아, 팝업 모양이 다시 제각각이 된다
         let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        // 자기 자신은 견주지 않는다 — **파일 이름이 아니라 전체 경로로** 가른다.
+        // 이름만 보면 하위 폴더에 같은 이름이 생겼을 때 그 파일까지 조용히 빠진다
+        let 자기 = ui_dir.join("dialog.rs");
+        let mut 소스 = Vec::new();
+        ui_sources(&ui_dir, &mut 소스);
         let mut 발견 = Vec::new();
-        for entry in std::fs::read_dir(&ui_dir).expect("ui 디렉터리") {
-            let path = entry.expect("항목").path();
-            if path.extension().is_none_or(|ext| ext != "rs") {
-                continue;
-            }
-            if path.file_name().is_some_and(|name| name == "dialog.rs") {
+        for path in 소스 {
+            if path == 자기 {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("소스를 읽지 못했다");

@@ -60,6 +60,12 @@ pub const OK_TEXT: egui::Color32 = egui::Color32::from_rgb(0x7F, 0xD6, 0xA2);
 pub const OK_FILL: egui::Color32 = egui::Color32::from_rgb(0x16, 0x24, 0x1C);
 pub const OK_BORDER: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
 
+/// 끝난 전송의 진행 막대 채움 — 같은 성공 계열이지만 배지가 아니라 전송 큐가 쓴다.
+///
+/// `OK_BORDER`와 값이 같지만 합치지 않는다 — 한쪽은 상태 배지의 테두리이고 이쪽은 막대의
+/// 채움이라, 합치면 한쪽 색을 조정할 때 다른 쪽이 함께 끌려간다.
+pub const OK_BAR: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
+
 /// 연결 중(경고) 계열 — 점·글자가 같은 색이다
 pub const WARN: egui::Color32 = egui::Color32::from_rgb(0xE8, 0xB3, 0x4D);
 pub const WARN_FILL: egui::Color32 = egui::Color32::from_rgb(0x24, 0x1F, 0x14);
@@ -70,10 +76,6 @@ pub const ERROR: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x6B, 0x6B);
 pub const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(0xFF, 0x8A, 0x8A);
 pub const ERROR_FILL: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x1A, 0x1A);
 pub const ERROR_BORDER: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x26, 0x26);
-
-/// 끝난 전송을 나타내는 초록 — 사이트 관리자의 `연결` 버튼이 채움으로 쓰던 색이며,
-/// 그 버튼이 평면이 된 뒤로는 전송 큐의 진행 막대만 쓴다
-pub const PRIMARY_FILL: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6B, 0x4F);
 
 /// 입력·목록 웰 배경 — 사이트 관리자의 입력칸과 목록이 이 색 위에 앉는다
 pub const WELL_BG: egui::Color32 = egui::Color32::from_rgb(0x15, 0x15, 0x15);
@@ -151,8 +153,8 @@ mod tests {
 
     /// `src/ui` 아래의 `.rs`를 하위 폴더까지 모아 온다.
     ///
-    /// **비재귀로 훑으면 `ui/panel/` 같은 하위가 통째로 빠진다** — 모달 규약 시험이
-    /// 그렇게 짜여 있어 대기 목록에 올라 있다. 새로 쓰는 이 시험은 그 함정을 피한다
+    /// **비재귀로 훑으면 `ui/app/`·`ui/panel/` 같은 하위가 통째로 빠진다** — 이 시험이
+    /// 먼저 그 함정을 피했고, 모달·아이콘 규약 시험도 2026-08-20에 같은 방식으로 맞췄다
     fn ui_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("ui 디렉터리") {
             let path = entry.expect("항목").path();

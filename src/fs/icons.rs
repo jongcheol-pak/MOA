@@ -159,16 +159,18 @@ impl IconCache {
                 return idx;
             }
             let mut info = SHFILEINFOW::default();
-            let _guard = shell_guard();
-            // 안전성: 실제 파일 경로 조회 — 실패 시 iIcon 0(기본)이 그대로 쓰인다
-            unsafe {
-                SHGetFileInfoW(
-                    &HSTRING::from(path),
-                    Default::default(),
-                    Some(&mut info),
-                    size_of::<SHFILEINFOW>() as u32,
-                    SHGFI_SYSICONINDEX | SHGFI_SMALLICON,
-                );
+            {
+                let _guard = shell_guard();
+                // 안전성: 실제 파일 경로 조회 — 실패 시 iIcon 0(기본)이 그대로 쓰인다
+                unsafe {
+                    SHGetFileInfoW(
+                        &HSTRING::from(path),
+                        Default::default(),
+                        Some(&mut info),
+                        size_of::<SHFILEINFOW>() as u32,
+                        SHGFI_SYSICONINDEX | SHGFI_SMALLICON,
+                    );
+                }
             }
             self.icon_by_path.insert(path.to_string(), info.iIcon);
             return info.iIcon;
@@ -197,17 +199,19 @@ impl IconCache {
             return idx;
         }
         let mut info = SHFILEINFOW::default();
-        let _guard = shell_guard();
-        // 안전성: 실제 경로 조회 — 실패는 반환값 0으로 오고, 그때는 아래에서 `dir_icon`으로
-        // 갈아 끼우므로 `info`의 값을 읽지 않는다
-        let ok = unsafe {
-            SHGetFileInfoW(
-                &HSTRING::from(path),
-                Default::default(),
-                Some(&mut info),
-                size_of::<SHFILEINFOW>() as u32,
-                SHGFI_SYSICONINDEX | SHGFI_SMALLICON,
-            )
+        let ok = {
+            let _guard = shell_guard();
+            // 안전성: 실제 경로 조회 — 실패는 반환값 0으로 오고, 그때는 아래에서 `dir_icon`으로
+            // 갈아 끼우므로 `info`의 값을 읽지 않는다
+            unsafe {
+                SHGetFileInfoW(
+                    &HSTRING::from(path),
+                    Default::default(),
+                    Some(&mut info),
+                    size_of::<SHFILEINFOW>() as u32,
+                    SHGFI_SYSICONINDEX | SHGFI_SMALLICON,
+                )
+            }
         };
         #[cfg(test)]
         {
@@ -234,16 +238,18 @@ impl IconCache {
             return Some(name.clone());
         }
         let mut info = SHFILEINFOW::default();
-        let _guard = shell_guard();
-        // 안전성: 실제 경로 조회 — 실패하면 0을 돌려주고 `szDisplayName`은 비어 있다
-        let ok = unsafe {
-            SHGetFileInfoW(
-                &HSTRING::from(path),
-                Default::default(),
-                Some(&mut info),
-                size_of::<SHFILEINFOW>() as u32,
-                SHGFI_DISPLAYNAME,
-            )
+        let ok = {
+            let _guard = shell_guard();
+            // 안전성: 실제 경로 조회 — 실패하면 0을 돌려주고 `szDisplayName`은 비어 있다
+            unsafe {
+                SHGetFileInfoW(
+                    &HSTRING::from(path),
+                    Default::default(),
+                    Some(&mut info),
+                    size_of::<SHFILEINFOW>() as u32,
+                    SHGFI_DISPLAYNAME,
+                )
+            }
         };
         #[cfg(test)]
         {
@@ -352,7 +358,9 @@ pub(crate) struct ShellGuard {
     _inner: std::sync::MutexGuard<'static, ()>,
 }
 
-/// 실행 파일에서는 빈 구조체다 — UI 스레드 하나가 그리므로 겨룰 상대가 없어 잠글 이유도 없다
+/// 실행 파일에서는 빈 구조체다 — 위 `SHELL_LOCK`이 적은 대로 이 잠금은 **시험이 병렬로 도는
+/// 동안** 셸을 동시에 물어 `SHGetImageList`가 16px로 폴백하는 것을 막으려고 둔 것이고, 실행
+/// 파일에는 그렇게 몰아치는 동시 호출이 없다
 #[cfg(not(test))]
 pub(crate) struct ShellGuard;
 

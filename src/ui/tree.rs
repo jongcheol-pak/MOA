@@ -248,17 +248,12 @@ impl FolderTreeView {
                     self.menu_opened_this_frame = false;
                     // 원격은 서버 아이콘을 얻을 수 없다 — 모든 줄에 같은 폴더 아이콘을 쓴다
                     // (사용자 결정)
-                    let folder = icons.dir_icon();
-                    self.show_remote_node(
-                        ui,
+                    let remote = RemoteRowCtx {
                         conn,
-                        &root,
-                        0,
                         cache,
-                        &mut outcome,
-                        &mut row,
-                        folder,
-                    );
+                        folder: icons.dir_icon(),
+                    };
+                    self.show_remote_node(ui, &root, 0, &mut outcome, &mut row, &remote);
                 }
             });
         // 메뉴는 **스크롤 영역 밖**에 그린다 — 안에 그리면 스크롤에 딸려가고 잘린다
@@ -416,18 +411,20 @@ impl FolderTreeView {
     /// 하위 목록은 캐시에서만 읽는다 — 없으면 요청을 올려보내고 이번 프레임에는 `읽는 중…`을
     /// 보인다. 조회가 도는 동안에도 이 트리는 계속 그려지므로 목록·다른 패널이 멈추지 않는다
     /// (Acceptance ③)
-    #[allow(clippy::too_many_arguments)]
     fn show_remote_node(
         &mut self,
         ui: &mut egui::Ui,
-        conn: ConnectionId,
         path: &RemotePath,
         depth: usize,
-        cache: &TreeCache,
         outcome: &mut TreeOutcome,
         row: &mut RowCtx<'_>,
-        folder: i32,
+        remote: &RemoteRowCtx<'_>,
     ) {
+        let RemoteRowCtx {
+            conn,
+            cache,
+            folder,
+        } = *remote;
         let choice = TreeChoice::Remote(path.clone());
         let is_selected = self.selected.as_ref() == Some(&choice);
         let label = remote_display_name(path);
@@ -466,16 +463,7 @@ impl FolderTreeView {
                         .map(|entry| path.join(&entry.name))
                         .collect();
                     for child in paths {
-                        self.show_remote_node(
-                            ui,
-                            conn,
-                            &child,
-                            depth + 1,
-                            cache,
-                            outcome,
-                            row,
-                            folder,
-                        );
+                        self.show_remote_node(ui, &child, depth + 1, outcome, row, remote);
                     }
                 }
                 Some(TreeNode::Failed(detail)) => {
@@ -688,6 +676,18 @@ struct RowCtx<'a> {
     textures: &'a mut IconTextures,
     ctx: &'a egui::Context,
     himl: HIMAGELIST,
+}
+
+/// 원격 노드를 그리는 동안 **재귀 내내 바뀌지 않는 것들**.
+///
+/// `RowCtx`에 얹지 않는 이유는 그쪽을 로컬 경로도 쓰기 때문이다 — 원격 전용 필드를 더하면
+/// 로컬 호출마다 채울 것이 없는 자리가 생긴다
+#[derive(Clone, Copy)]
+struct RemoteRowCtx<'a> {
+    conn: ConnectionId,
+    cache: &'a TreeCache,
+    /// 원격은 서버 아이콘을 얻을 수 없어 모든 줄이 같은 폴더 아이콘을 쓴다
+    folder: i32,
 }
 
 /// 트리 줄 하나 — 아이콘과 라벨을 나란히 그리고 그 줄 전체의 반응을 돌려준다.
