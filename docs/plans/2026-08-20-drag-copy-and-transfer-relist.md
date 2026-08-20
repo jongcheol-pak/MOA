@@ -332,6 +332,10 @@
 
 ## Progress Log
 
+- T1-T2 완료 (커밋 `b1092d5`, `4e125fc`): PRD에 FR-60·FR-61을 신설하고 FR-37에 전송 후 재조회를 명문화했다. 재조회는 `RelistPending`(순수 상태) + `pump_relist`로 붙였고 시험 7건이 acceptance ⓐ~ⓖ를 고정한다.
+  - 결정: `take_ready`의 인자를 plan의 `site_pending_counts`(건수)에서 `busy: &HashSet<SiteId>`(멤버십)로 바꿨다 — `QueueFilter`에 `Pending` 갈래가 없어 `counts_by_site`로는 대기·진행만 셀 수 없고(세 번 호출해 빼야 한다), 판정에 필요한 것은 「남아 있는가」 하나뿐이다. plan Design ②를 그 사실에 맞게 정정했다.
+  - quality 리뷰가 잡은 doc 주석 오배치(`pump_relist`가 `request_remote_list`의 설명 줄을 뺏었다)를 고치고, 두 함수가 대상을 고르는 기준이 어떻게 다른지를 주석에 남겼다.
+
 ## Next Steps
 
 - 권장 다음 액션: 승인 후 `pjc:implement-task`로 T1부터 실행

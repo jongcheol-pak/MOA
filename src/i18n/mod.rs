@@ -270,6 +270,9 @@ strings! {
     /// 파일 쪽은 Windows 탐색기의 `새로 만들기 > 텍스트 문서`와 같은 이름이다 (사용자 확정)
     create_folder_base => "새 폴더" / "New folder";
     create_file_base => "새 텍스트 문서" / "New Text Document";
+    /// 끌어다 놓은 것을 하나도 복사에 걸지 못했을 때 (FR-60) — 원본이 그 사이 전부
+    /// 사라졌거나 셸이 그 경로를 다루지 못하는 경우다
+    copy_no_source => "복사할 파일을 찾지 못했습니다" / "Could not find the files to copy";
     /// 같은 이름이 이미 여럿이라 번호를 붙일 자리를 다 써 버렸을 때 —
     /// "무엇을 하다 실패했는지"가 없으면 사용자는 이 말을 알아들을 수 없다
     create_no_name
