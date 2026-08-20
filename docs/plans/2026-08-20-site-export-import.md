@@ -395,7 +395,7 @@
     - (i) 없음 — 개명 대상이 `grep -rn "sidebar_add_site" src/` 3 hits·`grep -rn "새 사이트 추가" src/` 7 hits로 전수 확정됐고, 카탈로그 매크로가 한·영 누락을 컴파일 오류로 잡는다
   - **Depends on**: -
 
-- [ ] T7. PRD·README·AGENTS.md를 갱신한다
+- [x] T7. PRD·README·AGENTS.md를 갱신한다
   - **Type**: A
   - **Acceptance**:
     - `docs/prd.md`에 **FR-59**(사이트 목록 내보내기·가져오기, Must)가 신설되고 검증 방법 열에 단위 시험 항목이 적힌다. FR-27 문면에 좌측 버튼 두 줄이, FR-28 문면에 "내보내기 파일만은 사용자 암호로 봉한다(PBKDF2+AES-GCM)"가 더해진다. 개정 이력에 2026-08-20 줄이 붙는다
