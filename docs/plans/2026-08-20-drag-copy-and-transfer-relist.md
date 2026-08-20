@@ -228,7 +228,7 @@
   - **Halt Forecast**: (i) 재조회 요청의 세대 번호가 다른 용도와 겹칠 위험 → 패널의 기존 `request_remote_list` 경로를 그대로 쓰므로 새 번호 공간이 필요 없다(위키 `feat-remote-transfer`의 세대 번호 규약 확인 완료)
   - **Depends on**: -
 
-- [ ] T3. 로컬 파일 복사 엔진 — 셸 `IFileOperation` 위임
+- [x] T3. 로컬 파일 복사 엔진 — 셸 `IFileOperation` 위임
   - **Type**: D
   - **Design**: ① 신규 모듈 `src/fs/file_op.rs`(`fs/mod.rs`에 등록). ② 신규 심볼 — `copy_into(dest: PathBuf, sources: Vec<PathBuf>, owner: HWND, done: Sender<CopyOutcome>, wake: Wake)`: 워커 스레드를 띄워 자체 STA에서 `IFileOperation`을 돌리고 결과만 채널로 보낸 뒤 다시 그리게 한다 / `CopyOutcome { requested: usize, cancelled: bool, error: Option<String> }`: UI가 알림에 쓸 최소 결과. **`error`는 대개 Win32가 준 사유이며 그때는 카탈로그를 거치지 않는다**(외부에서 온 문자열 — AGENTS 「화면 문구」의 명시된 예외이고, 전송 실패 사유를 서버 원문 그대로 보이는 기존 처리와 같다). **예외 하나 — 원본을 하나도 걸지 못한 경우**는 Win32가 준 사유가 아니라 이쪽 판정이므로 카탈로그를 거친다(`i18n::copy_no_source`). ③ 의존 방향 — `fs::file_op`은 `windows` crate·`std`·**`crate::i18n`**만 참조하고 `ui`를 모른다(AGENTS 계층 규약. `i18n`은 `ui` 하위가 아닌 독립 모듈이며 `src/fs/create.rs`가 같은 방식으로 `create_folder_base`를 쓴다). 부르는 쪽은 `ui::app`뿐이다. ④ **`HWND`는 `Send`가 아니므로 워커 클로저에 그대로 넘어가지 않는다** — `src/fs/enumerate.rs:100~105`의 `struct HwndSend(isize); unsafe impl Send for HwndSend {}` 패턴을 그대로 쓴다(같은 파일 `:119`가 사용 예다). ⑤ 비추상화 선언 — 「파일 작업」 트레이트도, 이동·삭제·이름 바꾸기 갈래도 만들지 않는다. 이번에 필요한 것은 복사 하나다
   - **Acceptance**: Given 원본 경로 목록과 대상 폴더, When `copy_into` 호출, Then 워커가 떠서 UI 스레드가 즉시 반환되고 복사가 끝나면 `CopyOutcome`이 채널로 온다. 빌드·clippy가 경고 0으로 통과하고, 순수 부분(빈 원본 목록이면 워커를 띄우지 않는다 · 대상과 원본이 같은 폴더면 그대로 셸에 넘긴다)이 단위 시험으로 고정된다. 실제 복사 동작은 수동 검증(Verification Strategy)

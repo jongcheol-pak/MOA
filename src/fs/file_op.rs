@@ -136,11 +136,9 @@ fn perform(dest: &Path, sources: &[PathBuf], owner: &HwndSend) -> Result<bool, S
                 // 그 사이 사라진 원본 — 나머지는 그대로 보낸다
                 continue;
             };
-            if op
-                .CopyItem(&item, &folder, PCWSTR::null(), None)
-                .map_err(|err| err.message())
-                .is_ok()
-            {
+            // 사유를 만들지 않는다 — 이 실패는 그 항목만 건너뛰는 것이라 아무도 읽지 않는다.
+            // 하나도 걸지 못한 경우의 사유는 아래에서 따로 만든다
+            if op.CopyItem(&item, &folder, PCWSTR::null(), None).is_ok() {
                 queued += 1;
             }
         }
