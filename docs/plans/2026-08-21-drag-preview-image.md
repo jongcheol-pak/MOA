@@ -199,7 +199,7 @@
     - (ii-a) 신규 모듈 추가(구조 변경) → `## 사전 승인 항목`
   - **Depends on**: -
 
-- [ ] T3. `fs::drag_source`가 끌기 전에 그림을 얹는다
+- [x] T3. `fs::drag_source`가 끌기 전에 그림을 얹는다
   - **Type**: C
   - **Design**: ① **배치·순서** — `src/fs/drag_source.rs`의 `start_copy_drag` 안, `DoDragDrop` 바로 앞. 순서는 **헬퍼 생성 → 문구 플래그 → 그림 만들기 → `InitializeFromBitmap`**이다(헬퍼를 먼저 얻어야, 그림을 만들어 놓고 헬퍼가 없어 버리는 갈래가 생기지 않는다 — D6). ② **신규 심볼** — 없다(기존 함수에 인자 하나와 얹는 절차가 는다). ③ **의존 방향** — `fs::drag_source` → `fs::drag_image`(같은 계층, 단방향). `ui::app`은 종전대로 `drag_source`만 안다. ④ **비추상화 선언** — 헬퍼를 감싸는 래퍼 타입·트레이트를 만들지 않는다(쓰는 곳이 한 곳이다).
   - **Acceptance**:
@@ -270,7 +270,12 @@
 
 ## Retry Ledger
 
+- T3: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 B1(모듈 doc 주석의 「직접 만드는 것은 `IDropSource` 하나」가 옛 문면 그대로)로 1회 되돌림. 수정이 주석 한 문단이라 증분 재리뷰 표 ①(실행 경로 무영향)에 해당해 재리뷰는 생략하고 `grep`으로 잔존 0건을 확인했다.
+
 ## Progress Log
+
+- T1-T2 완료 (커밋 9fb4a53, dc48bd6): PRD FR-61 ⓑ에 미리보기 그림 서술을 더하고, 셸 그림을 GDI 비트맵으로 만드는 `fs::drag_image`를 신설했다. 시험 5건 신규(픽셀 변환 2·경계 2·실제 셸 조회 1) — 실제 조회 시험이 `Some`을 강제하도록 고친 결과 **이 PC에서 셸 조회 경로가 실제로 돈다는 것이 확인**됐다(spec 리뷰 M1).
+- T3 완료 (커밋 후속): `start_copy_drag`에 `preview_px` 인자를 더하고 `DoDragDrop` 앞에서 헬퍼 → 문구 플래그 → 그림 → `InitializeFromBitmap` 순으로 얹는다. 호출부는 `ui::app::pump_export_drag` 한 곳이며 `96 × 배율`을 넘긴다. `AGENTS.md:98`의 UI 스레드 예외 열거도 함께 갱신했다.
 
 ## Next Steps
 
