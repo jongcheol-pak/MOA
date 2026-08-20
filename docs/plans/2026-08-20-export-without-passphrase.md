@@ -340,9 +340,14 @@
 
 ## Phase Ledger
 
+- **Phase F 통과** — plan-completion-reviewer가 MAJOR 1건(M1)·MINOR 2건을 잡았고 셋 모두 T5로 해소했다. 부모 모듈 주석의 버튼 수(직전 회차 누락)도 함께 바로잡았다.
+- **Phase G 통과** — PRD 기준 재검증에서 BLOCKER·MAJOR 0. FR-59 본문을 아홉 조각으로 갈라 코드와 대조했고 미구현 조각이 없다. MINOR 셋(가져오기 암호 대화가 본문에 없음·과거 이력 사유의 재서술 표식 없음·「설정 값」 제외 줄의 오독 여지)은 「이번 회차 범위 아님」 판정이었으나 **셋 다 이번 회차가 PRD를 고치며 생긴 문맥이라 그 자리에서 함께 정리했다**.
+
 ## Retry Ledger
 
 ## Progress Log
+
+> **회차 마무리**: 다섯 task + Phase F/G 전부 통과. 남은 것은 사용자의 수동 검증(Verification Strategy 5항목)과 master 병합·push 승인이다.
 
 - **T1 완료** (`4ddee68`) — `remote::envelope`에 앱 내장 키 봉인 경로를 더했다. 두 열쇠가 `kdf` 값(`KDF_APP_KEY` / `KDF_NAME`)으로 갈리고 서로의 봉투를 열지 못한다. 시험 6건 신규.
 - **T2 완료** — `site_export::build`가 인자를 잃고 언제나 내장 키로 봉한다. `needs_passphrase`는 사용자 암호 봉투에만 참이고, `plan_import`은 `kdf`로 갈라 연다(구버전 파일 호환). 연쇄로 `finish_export`의 `passphrase` 인자·`ExportWaitFile.pass` 필드·`request_export_file` 인자가 사라졌다. 시험 픽스처 `legacy_document` 신설.
