@@ -191,7 +191,7 @@
   - **Edge Cases**: ⓐ `inactive`에 채움을 주면 안 된다(P9) — 모서리와 여백만 세우고 `weak_bg_fill`은 egui가 세운 투명을 유지한다. ⓑ `expansion`은 dark 기본도 0.0이지만(m1 정정) **값에 기대지 않고 명시**한다 — 기본이 바뀌면 hover 때 항목이 커져 여백이 흔들린다. ⓒ `noninteractive`(비활성 항목)에도 모서리를 세운다 — 설정 메뉴의 `업데이트`·`릴리즈 노트`가 그 상태다.
   - **Halt Forecast**: 없음 — 새 심볼 추가뿐이고 기존 호출부가 없다.
   - **Files**: 주 — `src/ui/theme.rs`
-- [ ] **T2. egui `Button`으로 그리는 팝업 아홉 곳이 헬퍼를 거치게 한다** — Type D
+- [x] **T2. egui `Button`으로 그리는 팝업 아홉 곳이 헬퍼를 거치게 한다** — Type D
   - **Design**: ① 배치 — 각 팝업의 `show(|ui| …)` 클로저 **첫 줄**에서 `theme::menu_style(ui)`를 부른다(팝업을 여는 쪽이 부른다는 한 가지 규칙). ② 신규 심볼 — 없음(T1 헬퍼 사용). ③ 의존 방향 — `ui::{tabs,menu,sidebar,titlebar,queue_panel,list_details} → ui::theme` 단방향, 기존과 같다. ④ 비추상화 — 팝업을 여는 공통 래퍼 함수(`open_menu(...)`)는 만들지 않는다 — 아홉 자리가 각각 다른 응답·상태를 다뤄 클로저 시그니처가 통일되지 않고, 한 줄 호출로 끝나는 일에 간접층을 두면 실제 동작 추적이 늘어난다.
   - **Acceptance**:
     - 인벤토리 1~9번 아홉 자리가 모두 `theme::menu_style(ui)`를 거친다. **`SubMenuButton`이 여는 보기 하위 메뉴(2번)도 자기 클로저에서 부른다** — 하위 팝업은 부모 스타일을 잇지 않으므로(P6) 이것은 필수다.
