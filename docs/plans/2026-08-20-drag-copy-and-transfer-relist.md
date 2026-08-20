@@ -252,7 +252,7 @@
   - **Halt Forecast**: (i) 로컬 복사가 전송 큐에 잘못 들어갈 위험 → D4로 `drop_direction`을 건드리지 않아 원리상 막힌다
   - **Depends on**: T3
 
-- [ ] T5. 탐색기·바탕화면에서 끌어온 파일을 받는다
+- [x] T5. 탐색기·바탕화면에서 끌어온 파일을 받는다
   - **Type**: D
   - **Design**: ① 드롭 지점 → 패널 판정은 `src/ui/app.rs`에 자유 함수 `panel_at(pane_rects: &[(PanelId, egui::Rect)], pos: egui::Pos2) -> Option<PanelId>`로 둔다(순수 함수라 시험 가능). ② 커서 위치는 `src/ui/shell_host.rs`에 **`cursor_client_pos(&self, pixels_per_point: f32) -> Option<egui::Pos2>`**를 더해 얻는다 — `GetCursorPos` + `ScreenToClient`는 **물리 픽셀**을 주므로 **`pixels_per_point`로 나눠 논리 pt로 돌려준다**(`pane_rects`가 논리 pt다). 이 앱은 이미 반대 방향에서 같은 환산을 한다(`app.rs:1992~1993` — 셸 메뉴가 `menu.pos.x * scale`로 물리 픽셀을 만든다). 환산이 빠지면 배율 125%·150% 화면에서 대상 패널이 어긋난다. ③ 패널 사각형은 `splitter::LayoutOutcome`에 `pane_rects: Vec<(PanelId, egui::Rect)>`를 더해 `show_layout`이 `computed.panes`에서 채운다. ④ 소비는 `ui::app`의 프레임 말미 — `ctx.input(|i| i.raw.dropped_files.clone())`으로 경로를 거두고 대상 패널을 정한 뒤 **대상 종류가 처리를 가른다**: **로컬 탭이면 경로 목록을 그대로 `fs::file_op::copy_into`로 보낸다**(`IFileOperation`이 경로만 받으므로 `is_dir`을 잴 일이 없다). **원격 탭이면 경로 목록을 워커 스레드에 넘겨 거기서 `std::fs::metadata`로 `is_dir`을 재고**(`DragItem::Local`이 그 값을 요구한다) 채널로 받아 다음 프레임에 `DropOutcome`을 조립해 `start_transfer`로 보낸다 — `apply_drop`의 `expand_tx`와 같은 방식이며(`transfer_conflict.rs:184~218`), UI 스레드에서 수천 번 stat을 도는 것을 막는다(AGENTS DO NOT 「UI 스레드에서 파일시스템 블로킹 호출」). ⑤ 비추상화 선언 — 「외부 드롭」을 위한 별도 통로 타입을 만들지 않는다. 원격 쪽은 기존 `DropOutcome`을 그대로 조립해 기존 앞문을 지난다
   - **Acceptance**: Given 탐색기에서 파일·폴더 여럿을 끌어옴, When 로컬 탭 위에 놓음, Then 그 탭의 폴더로 셸 복사가 시작된다. When 원격 탭 위에 놓음, Then 그 탭의 폴더로 올리기가 큐에 들어간다(같은 이름이 있으면 FR-55 확인 대화를 거친다). 패널 밖(사이드바·도크·타이틀바)에 놓으면 아무 일도 일어나지 않는다. 단위 시험으로 고정할 것: ⓐ `panel_at`이 사각형 안의 점에 해당 패널을 돌려준다 ⓑ 어느 사각형에도 안 들면 `None` ⓒ 사각형이 겹치면 **나중 것**(위에 그려진 것)이 이긴다 ⓓ 물리 픽셀 → 논리 pt 환산이 `pixels_per_point`가 1.0이 아닐 때(1.25·1.5) 올바른 점을 낸다 — 그 환산을 `shell_host`의 Win32 호출과 **분리된 순수 함수**(`client_px_to_pt(px: (i32, i32), pixels_per_point: f32) -> egui::Pos2`)로 두어 시험한다. `show_layout` 자체는 시험하지 않는다(4-C의 근거 — 하네스 비용이 크고 대입 홉은 리뷰가 지킨다). 실제 드롭은 수동 검증
@@ -332,6 +332,7 @@
 
 - T3: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 B1(같은 폴더 순수 시험 누락)로 1회 되돌림.
 - T4: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — spec 리뷰 M1(필드 삽입으로 doc 주석 오귀속)로 1회 되돌림.
+- T5: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — quality 리뷰 M1(자유 항목 삽입으로 `NOTICE_SECS` doc 주석 오귀속)로 1회 되돌림. **세 회차 연속 같은 유형이다**(T2·T4·T5).
 
 ## Progress Log
 

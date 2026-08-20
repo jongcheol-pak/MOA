@@ -1807,15 +1807,16 @@ impl ExplorerApp {
         }
     }
 
-    /// 경로 목록을 그대로 셸 복사에 건다 (FR-61) — OS 드롭의 로컬 대상 경로.
+    /// 경로 목록을 셸 복사에 건다 — **복사를 거는 유일한 자리다**.
     ///
-    /// `start_local_copy`와 갈라 두는 이유: 그쪽은 `DropOutcome`(앱 안의 드래그)에서
-    /// 경로를 뽑고, 이쪽은 OS가 준 경로 목록을 이미 들고 있다
+    /// 앱 안의 드래그(FR-60)는 `start_local_copy`가 `DropOutcome`에서 경로를 뽑아
+    /// 여기로 넘기고, OS 드롭(FR-61)은 받은 목록을 그대로 넘긴다
     fn start_local_copy_paths(
         &mut self,
         dest: std::path::PathBuf,
         sources: Vec<std::path::PathBuf>,
     ) {
+        // 창을 얻지 못했으면 소유자 없이 건다 — 셸 대화가 앱 위에 서지 않을 뿐 복사는 된다
         let owner = self
             .shell
             .as_ref()
@@ -1844,19 +1845,7 @@ impl ExplorerApp {
                 list_common::DragItem::Remote { .. } => None,
             })
             .collect();
-        // 창을 얻지 못했으면 소유자 없이 건다 — 셸 대화가 앱 위에 서지 않을 뿐 복사는 된다
-        let owner = self
-            .shell
-            .as_ref()
-            .map(|shell| shell.hwnd())
-            .unwrap_or_default();
-        crate::fs::file_op::copy_into(
-            dest,
-            sources,
-            owner,
-            self.copy_tx.clone(),
-            self.repaint.clone(),
-        );
+        self.start_local_copy_paths(dest, sources);
     }
 
     /// 끝난 셸 복사의 결과를 알린다 (FR-60).
@@ -2203,7 +2192,6 @@ impl eframe::App for ExplorerApp {
     }
 }
 
-/// 파일 작업 실패 사유가 상태 줄에 머무는 시간(초) — 알림(FR-43)보다 조금 길게 둔다
 /// OS에서 끌어온 것이 놓인 자리 (FR-61) — 탭의 종류가 처리를 가른다
 enum OsDropTarget {
     Local(std::path::PathBuf),
@@ -2226,6 +2214,7 @@ fn panel_at(pane_rects: &[(PanelId, egui::Rect)], pos: egui::Pos2) -> Option<Pan
         .map(|(id, _)| *id)
 }
 
+/// 파일 작업 실패 사유가 상태 줄에 머무는 시간(초) — 알림(FR-43)보다 조금 길게 둔다
 const NOTICE_SECS: f64 = 6.0;
 
 /// 로컬 폴더를 펼친 결과 — 올릴 파일들과 **읽지 못해 건너뛴 폴더 수**.
