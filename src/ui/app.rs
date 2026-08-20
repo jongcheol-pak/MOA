@@ -1729,6 +1729,50 @@ impl ExplorerApp {
     /// 넘긴다), 원격 탭이면 올리기다. 올리기는 `DragItem::Local`이 폴더 여부를 요구하는데
     /// 그것을 재는 것은 파일시스템 호출이라 **워커에 맡긴다**(수천 개를 끌어다 놓을 수 있다 —
     /// AGENTS: UI 스레드에서 파일시스템 블로킹 호출 금지)
+    /// 끌던 로컬 항목이 창 밖으로 나갔으면 OS 드래그로 넘긴다 (FR-61 내보내기).
+    ///
+    /// **끌기 시작과 동시에 넘기지 않고 창을 벗어날 때까지 미룬다** — `DoDragDrop`이
+    /// 자기 메시지 루프를 돌려 그동안 앱이 다시 그려지지 않으므로, 앱 안에서 끝날 드래그
+    /// (탭↔탭 복사·원격 전송)까지 그 길로 보내면 드롭 대상 강조·목록 반응이 멎는다.
+    /// 창 안에서는 종전의 egui 경로가 그대로 처리한다.
+    ///
+    /// 넘길 때 egui의 페이로드를 거둔다 — 그러지 않으면 손을 놓는 순간 앱 안 드롭까지
+    /// 함께 성립해 같은 것을 두 번 처리한다
+    fn pump_export_drag(&mut self, ctx: &egui::Context) {
+        // 끌고 있는 것이 **전부 로컬 항목**일 때만 대상이다 — 원격 항목은 끌기 시작
+        // 시점에 로컬에 파일이 없어 셸에 넘길 것이 없다(지연 렌더링은 이번 범위 밖)
+        let Some(drag) = egui::DragAndDrop::payload::<list_common::FileDrag>(ctx) else {
+            return;
+        };
+        let Some(sources) = drag
+            .items
+            .iter()
+            .map(|item| match item {
+                list_common::DragItem::Local { path, .. } => Some(path.clone()),
+                list_common::DragItem::Remote { .. } => None,
+            })
+            .collect::<Option<Vec<std::path::PathBuf>>>()
+        else {
+            return;
+        };
+        if sources.is_empty() {
+            return;
+        }
+        // 포인터가 창 밖으로 나갔는가 — 나가기 전에는 앱 안 드래그다
+        let inside = ctx.input(|input| {
+            input
+                .pointer
+                .latest_pos()
+                .is_some_and(|pos| input.viewport_rect().contains(pos))
+        });
+        if inside {
+            return;
+        }
+        // 여기서부터는 OS가 드래그를 쥔다 — 앱 안 드롭이 겹치지 않게 페이로드를 거둔다
+        egui::DragAndDrop::clear_payload(ctx);
+        crate::fs::drag_source::start_copy_drag(&sources);
+    }
+
     fn pump_os_drop(&mut self, ctx: &egui::Context, pane_rects: &[(PanelId, egui::Rect)]) {
         let dropped: Vec<std::path::PathBuf> = ctx.input(|input| {
             input
@@ -2207,6 +2251,12 @@ impl eframe::App for ExplorerApp {
         // 다음 프레임에 뜬다
         if !shell_menu_pending {
             self.pump_site_file_dialog(&ctx);
+        }
+        // 창 밖으로 끌고 나간 로컬 항목을 OS 드래그로 넘긴다 (FR-61 내보내기).
+        // **셋 중 하나만 뜬다** — `DoDragDrop`도 자체 메시지 루프를 돌리므로 셸 메뉴·파일
+        // 대화와 겹치면 어느 쪽이 답을 기다리는지 알 수 없다
+        if !shell_menu_pending {
+            self.pump_export_drag(&ctx);
         }
     }
 }

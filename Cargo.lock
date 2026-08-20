@@ -1334,6 +1334,7 @@ dependencies = [
  "ssh2",
  "suppaftp",
  "windows",
+ "windows-core",
 ]
 
 [[package]]
