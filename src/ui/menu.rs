@@ -16,8 +16,6 @@ use eframe::egui;
 // ── 열 메뉴 시각 토큰 (원본 `FileExplorer-FTP.dc.html:337-342`) ──
 /// 메뉴 폭
 const COLUMN_MENU_WIDTH: f32 = 186.0;
-/// 항목 행 높이
-const COLUMN_MENU_ROW: f32 = 26.0;
 /// 캡션 글자 크기
 const COLUMN_MENU_CAPTION_PX: f32 = 12.0;
 /// 체크 글리프가 차지하는 폭 — 켜짐/꺼짐이 섞여도 라벨이 흔들리지 않게 자리를 고정한다
@@ -167,6 +165,8 @@ pub fn panel_menu_items(ui: &mut egui::Ui, state: PanelMenuState, out: &mut Opti
 ///
 /// 뒤집을 열을 값으로 돌려주고 상태는 호출부가 바꾼다 — 이 모듈은 상태를 갖지 않는다
 pub fn column_menu_items(ui: &mut egui::Ui, flags: ColumnFlags, out: &mut Option<ColumnKind>) {
+    // 스타일은 여기서 세우지 않는다 — 팝업을 여는 쪽(`list_details`)이 `theme::menu_style`을
+    // 부른다는 한 가지 규칙을 따른다. 두 곳에서 세우면 어느 값이 실제로 먹는지 흐려진다
     ui.set_width(COLUMN_MENU_WIDTH);
     ui.label(
         egui::RichText::new(crate::i18n::menu_columns())
@@ -174,8 +174,8 @@ pub fn column_menu_items(ui: &mut egui::Ui, flags: ColumnFlags, out: &mut Option
             .color(theme::TEXT_MUTED),
     );
     for kind in ALL_COLUMNS {
-        let button = egui::Button::new(column_menu_label(ui, kind, flags.shows(kind)))
-            .min_size(egui::vec2(0.0, COLUMN_MENU_ROW));
+        // 행 높이는 적지 않는다 — `menu_style`이 세운 공통 값(`theme::MENU_ITEM_HEIGHT`)을 따른다
+        let button = egui::Button::new(column_menu_label(ui, kind, flags.shows(kind)));
         // 고정 열도 그리기는 한다 — 클릭만 무시한다(원본과 같은 동작).
         // 커서도 손가락이 아니라 기본 화살표로 둔다(원본의 `cursor:default`) —
         // 누를 수 있는 것처럼 보이면 눌러 보고 아무 일이 없어 고장으로 읽힌다
@@ -231,6 +231,8 @@ fn column_menu_label(ui: &egui::Ui, kind: ColumnKind, checked: bool) -> egui::te
 /// 모드를 나타내는 아이콘은 넣지 않는다 — phosphor에 대응 글리프가 없어 두부가 될 위험이
 /// 있고(사이드바 `◧` 사례), 점만으로도 지금 모드가 드러난다
 fn view_items(ui: &mut egui::Ui, current: ViewMode, out: &mut Option<Command>) {
+    // 하위 메뉴는 부모 팝업의 스타일을 잇지 않는 **별도 `Area`**라 여기서 다시 세운다
+    theme::menu_style(ui);
     for mode in ViewMode::ALL {
         let mark = if mode == current {
             egui_phosphor::regular::DOT_OUTLINE
@@ -363,6 +365,7 @@ pub(crate) fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]

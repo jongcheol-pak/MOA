@@ -274,6 +274,7 @@ fn show_new_tab_menu(
     // 메뉴 첫 항목과 같은 글자를 쓰면 누르는 즉시 탭이 생기는 것처럼 읽힌다
     .on_hover_text(crate::i18n::tabs_new_menu());
     egui::Popup::menu(&response).show(|ui| {
+        theme::menu_style(ui);
         new_tab_menu_items(ui, remote, action, open_site);
     });
 }
@@ -586,6 +587,7 @@ fn show_menu_button(ui: &mut egui::Ui, state: PanelMenuState, command: &mut Opti
     .on_hover_text(crate::i18n::tabs_menu());
     draw_split_icon(ui.painter(), response.rect);
     egui::Popup::menu(&response).show(|ui| {
+        theme::menu_style(ui);
         menu::panel_menu_items(ui, state, command);
     });
 }
@@ -614,6 +616,7 @@ fn elide(title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     /// 탭 영역 하나 — 왼쪽 위 모서리를 원점에서 떼어 좌표 계산 실수를 드러낸다

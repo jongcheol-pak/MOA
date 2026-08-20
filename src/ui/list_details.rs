@@ -647,6 +647,7 @@ fn column_menu_popup(
         return;
     }
     egui::Popup::context_menu(response).show(|ui| {
+        crate::ui::theme::menu_style(ui);
         crate::ui::menu::column_menu_items(ui, flags, &mut outcome.column_toggle);
     });
 }

@@ -72,8 +72,8 @@ const SITE_PROTO_PX: f32 = 12.0;
 const CONNECT_MENU_WIDTH: f32 = 246.0;
 /// 사이트 우클릭 메뉴 폭 (인벤토리 #9, 원본 `:355`)
 const SITE_MENU_WIDTH: f32 = 180.0;
-/// 두 메뉴가 함께 쓰는 행 높이와 캡션 글자 크기 (원본 `:356`·`:368`·`:371`)
-const MENU_ROW_HEIGHT: f32 = 28.0;
+/// 두 메뉴가 함께 쓰는 캡션 글자 크기 (원본 `:368`·`:371`).
+/// 행 높이는 여기서 정하지 않는다 — `theme::menu_style`이 세운 공통 값(`MENU_ITEM_HEIGHT`)을 따른다
 const MENU_CAPTION_PX: f32 = 12.0;
 /// 사이트 컨텍스트 메뉴의 삭제 옆에 붙는 단축키 표기 (인벤토리 #10)
 const HIDE_SITE_SHORTCUT: &str = "Del";
@@ -276,6 +276,7 @@ impl WorkspaceSidebar {
             self.begin_edit(index, list);
         }
         resp.context_menu(|ui| {
+            crate::ui::theme::menu_style(ui);
             if ui.button(crate::i18n::rename()).clicked() {
                 self.begin_edit(index, list);
                 ui.close();
@@ -618,6 +619,7 @@ fn header_glyph(ui: &egui::Ui, rect: egui::Rect, glyph: &str, size: f32, hovered
 /// 감춘 의미가 없다
 fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec<SidebarAction>) {
     egui::Popup::menu(plus).show(|ui| {
+        theme::menu_style(ui);
         ui.set_width(CONNECT_MENU_WIDTH);
         ui.label(
             egui::RichText::new(crate::i18n::sidebar_saved_sites())
@@ -630,8 +632,7 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
                     egui::RichText::new(record.protocol.label())
                         .size(SITE_PROTO_PX)
                         .color(theme::TEXT_MUTED),
-                )
-                .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+                );
             if ui.add(button).clicked() {
                 actions.push(SidebarAction::ConnectSite(record.id));
                 ui.close();
@@ -640,8 +641,7 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
         ui.separator();
         let add = egui::Button::new(
             egui::RichText::new(crate::i18n::sidebar_add_site()).color(theme::TEXT),
-        )
-        .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        );
         if ui.add(add).clicked() {
             actions.push(SidebarAction::OpenSiteManager);
             ui.close();
@@ -658,6 +658,7 @@ fn show_site_context_menu(
     actions: &mut Vec<SidebarAction>,
 ) {
     egui::Popup::context_menu(row).show(|ui| {
+        theme::menu_style(ui);
         ui.set_width(SITE_MENU_WIDTH);
         ui.label(
             egui::RichText::new(&record.name)
@@ -672,8 +673,7 @@ fn show_site_context_menu(
             egui::RichText::new(HIDE_SITE_SHORTCUT)
                 .size(SITE_PROTO_PX)
                 .color(theme::TEXT_MUTED),
-        )
-        .min_size(egui::vec2(0.0, MENU_ROW_HEIGHT));
+        );
         // **파괴색을 쓰지 않는다** — 원본은 이 자리를 삭제로 보고 빨갛게 칠했지만(`:358`)
         // 실제로는 사이드바에서 감출 뿐 사이트는 남는다. 되돌릴 수 있는 일에 되돌릴 수 없는
         // 일의 색을 쓰면 그 색의 뜻이 닳는다 (2026-08-16 검토)
@@ -804,6 +804,7 @@ fn reorder_target(from: usize, insert_at: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     /// 사이드바를 한 프레임 그리고 화면에 나온 글자를 모은다
@@ -862,7 +863,7 @@ mod tests {
         assert_eq!(PLUS_ICON_PX, 12.0);
         assert_eq!(CONNECT_MENU_WIDTH, 246.0);
         assert_eq!(SITE_MENU_WIDTH, 180.0);
-        assert_eq!(MENU_ROW_HEIGHT, 28.0);
+        assert_eq!(theme::MENU_ITEM_HEIGHT, 28.0);
     }
 
     #[test]

@@ -667,6 +667,7 @@ fn show_row(
     // 항목을 다시 걸거나 지우는 길 — 디자인에 진입점이 없어 우클릭으로 둔다
     let mut action = None;
     response.context_menu(|ui| {
+        theme::menu_style(ui);
         for entry in row_menu_items(&item.state, has_error_in_view) {
             let (label, picked) = match entry {
                 RowMenuItem::Retry => (crate::i18n::queue_retry(), QueueAction::Retry(item.id)),

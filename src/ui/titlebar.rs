@@ -38,12 +38,20 @@ const SEPARATOR_THICKNESS: f32 = 1.0;
 /// 설정 메뉴 최소 폭 — 라벨이 짧아도 이보다 좁아지지 않는다.
 /// 좁은 메뉴는 눌러야 할 자리가 작아 보여 다른 메뉴들과 나란히 놓였을 때 어색하다
 const SETTINGS_MENU_MIN_WIDTH: f32 = 160.0;
-/// 라벨 좌우로 두는 여백.
+/// 라벨이 테두리에 닿아 보이지 않게 두는 숨 쉴 자리 — 라벨 폭을 딱 맞춰 주면
+/// 마지막 글자가 잘릴락 말락 하게 그려진다.
 ///
-/// 항목은 `ui.button`이라 좌우로 `button_padding.x`(egui 기본 4px)씩 8px을 먼저 쓴다.
-/// 나머지는 글자가 테두리에 닿아 보이지 않게 두는 숨 쉴 자리다 — 라벨 폭을 딱 맞춰
-/// 주면 마지막 글자가 잘릴락 말락 하게 그려진다
-const SETTINGS_MENU_PADDING: f32 = 24.0;
+/// 항목 여백(아래 `SETTINGS_MENU_PADDING`)과 **따로 세는 이유**: 여백이 커지면 라벨이
+/// 쓸 자리가 그만큼 줄어드는데, 합쳐 두면 그 사실이 가려져 여유가 0이 된 것을 아무도
+/// 모른다. 실제로 종전 값 24는 「메뉴 안 여백 2px×2 + 여유 20」이었고, 여백만 12px로
+/// 올리면서 합을 24로 두면 여유가 사라져 라벨이 두 줄로 접히던 상태(2026-08-19 보고)로
+/// 돌아간다
+const SETTINGS_MENU_BREATH: f32 = 20.0;
+/// 라벨 좌우로 두는 여백 — 항목 여백 두 번 + 숨 쉴 자리.
+///
+/// 항목은 `ui.button`이라 좌우로 `button_padding.x`씩 쓰는데, 그 값은 `theme::menu_style`이
+/// 세운 공통 토큰이다(메뉴 안에서는 egui 기본이 덮이므로 전역 기본값을 세면 틀린다)
+const SETTINGS_MENU_PADDING: f32 = theme::MENU_ITEM_PAD_X * 2.0 + SETTINGS_MENU_BREATH;
 
 /// 창 가장자리에서 크기 조절을 받는 폭. 좁게 잡는다 —
 /// 넓히면 목록 스크롤바·스플리터처럼 창 끝에 닿는 위젯을 자주 가로챈다
@@ -261,6 +269,7 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
     )
     .on_hover_text(crate::i18n::settings_title());
     egui::Popup::menu(&response).show(|ui| {
+        theme::menu_style(ui);
         ui.set_width(settings_menu_width(ui));
         if ui.button(crate::i18n::settings_title()).clicked() {
             *out = Some(Command::OpenAppSettings);
@@ -596,6 +605,11 @@ mod tests {
             let _guard = crate::i18n::LanguageGuard::lock(language);
             let mut folded: Vec<(String, usize)> = Vec::new();
             let _ = ctx.run_ui(Default::default(), |ui| {
+                // **실제 팝업과 같은 순서로 스타일을 세운다** — egui가 메뉴 스타일을 먼저
+                // 입히고 그 위에 앱 토큰이 온다. 이 순서를 빼고 재면 여백이 전역 기본값
+                // (4px)으로 잡혀, 실제로는 12px씩 떼는 화면과 다른 폭을 검사하게 된다
+                egui::containers::menu::menu_style(ui.style_mut());
+                theme::menu_style(ui);
                 let width = settings_menu_width(ui);
                 let font = egui::TextStyle::Button.resolve(ui.style());
                 // 항목은 버튼이라 좌우 여백을 먼저 떼고 남은 자리에 글자가 앉는다
