@@ -30,6 +30,7 @@
 
 - 내보내기 진행 표시(사이트가 아주 많을 때의 진행률) — 직전 회차에서 이월. 실측상 수십 건은 즉시 끝난다.
 - **내보내기 기본 파일 이름의 앱 이름 표기** — 한국어 화면에서도 `MOA 사이트.moasites`다. FR-53이 적용처를 창 제목·트레이 툴팁으로 한정해 파일 이름은 미정이다(직전 회차 F-7 m2 — 사용자 판단 사항).
+- **`src/ui/site_manager.rs`의 모듈 주석이 버튼 수를 옛 값으로 적고 있다** — 「좌측 400px(사이트 목록 + 버튼 3개)」인데 실제로는 윗줄 3개(`show_list_buttons`) + 아랫줄 2개(`show_exchange_buttons`)다. 직전 회차가 아랫줄을 더하면서 주석을 함께 고치지 않은 것으로, 이번 회차의 변경과는 인과가 없다(그 파일은 이 회차 어느 task의 Files에도 없다). Phase F의 참조 정합에서 함께 본다.
 - **간헐 실패 시험의 이름을 확보했다**: `remote::connection::tests::늦게_도착한_이전_세대의_목록은_버려진다`. 직전 회차에 「899 passed; 1 failed」로 한 번 나왔으나 이름을 못 잡았던 그것이며, T2 리뷰 중 다시 관찰돼 이번에 특정했다. `wait_events(&mut connection, 4, Duration::from_secs(2))`가 병렬 실행 부하에서 2초를 넘겨 이벤트 4개를 못 모으는 것으로 **추정**한다(격리 재실행은 통과). 이번 변경과 인과가 없어(`connection.rs`는 이 회차 어느 task의 Files에도 없다) 이연하며, **고칠 때는 타임아웃을 늘리기 전에 이벤트가 정말 4개 오는지부터 확인한다** — 상수만 키우면 원인을 덮는다.
 
 ## Investigation Log
@@ -238,7 +239,7 @@
     - (i) 없음 — 새 API·외부 의존이 없고, 갈림길이던 호환 분기와 판 번호는 D3·D5가 이미 확정했다. 시그니처 변경의 호출부도 1곳으로 실측됐다
   - **Depends on**: T1
 
-- [ ] T3. 내보내기 대화 둘을 들어내고 문구를 정리한다
+- [x] T3. 내보내기 대화 둘을 들어내고 문구를 정리한다
   - **Type**: D
   - **Design**: ① 배치 — `src/ui/site_manager/exchange.rs`·`src/i18n/mod.rs`. ② 신규 심볼 없음 — `Exchange::ExportAsk`·`ExportConfirmEmpty` variant와 `show_export_ask`·`show_export_empty_confirm`·`request_export_file`을 **제거**하고, `apply_exchange_action`의 `Export` 갈래가 곧바로 `pending_file = Save` + `Exchange::ExportWaitFile`을 세운다. ③ 의존 — 변화 없음. ④ 비추상화 — 제거만 하고 남는 셋(가져오기 암호·충돌 확인)을 공통 부품으로 묶지 않는다(본문 구성이 서로 다르다).
   - **Acceptance**:
@@ -326,6 +327,9 @@
 - **T2 완료** — `site_export::build`가 인자를 잃고 언제나 내장 키로 봉한다. `needs_passphrase`는 사용자 암호 봉투에만 참이고, `plan_import`은 `kdf`로 갈라 연다(구버전 파일 호환). 연쇄로 `finish_export`의 `passphrase` 인자·`ExportWaitFile.pass` 필드·`request_export_file` 인자가 사라졌다. 시험 픽스처 `legacy_document` 신설.
   - 리뷰: code-quality 지적 0. spec-compliance **MAJOR 1건**(`secret: None` 갈래를 통과시키는 시험 부재) → `봉투가_없는_구버전_파일은_설정만_들여온다`로 해소. 함께 Edge Cases 둘(구버전+빈 암호 / 모르는 `kdf`)의 단언도 더했다.
   - `cargo test --lib` 907 passed · `cargo clippy --all-targets -- -D warnings` 경고 0 · `cargo fmt --check` 통과.
+- **T3 완료** — `Exchange::ExportAsk`·`ExportConfirmEmpty`와 `show_export_ask`·`show_export_empty_confirm`·`request_export_file`이 사라졌다. `내보내기` 버튼이 곧바로 `FileRequest::Save`를 청한다. i18n 9건 제거·`site_export_passphrase` → `site_import_passphrase` 개명·`EXEMPT_LITERALS` 35→31. 시험 8곳 재작성.
+  - 리뷰: spec-compliance·code-quality 둘 다 지적 0.
+  - `cargo test --lib` 907 passed · clippy 경고 0 · fmt --check 통과.
 
 ## Next Steps
 
