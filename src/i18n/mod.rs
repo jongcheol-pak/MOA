@@ -1054,12 +1054,18 @@ pub mod dynamic {
         }
     }
 
-    /// 내보내기를 마친 뒤의 알림 (FR-59) — 비밀번호를 읽지 못한 것이 있으면 함께 알린다
+    /// 내보내기를 마친 뒤의 알림 (FR-59).
+    ///
+    /// **비밀번호가 함께 담겼다는 것을 여기서 알린다** — 내보내기에 대화가 없어져(plan D2)
+    /// 그 파일의 성질을 사용자에게 알릴 자리가 이 알림뿐이다. 비밀번호를 읽지 못한 것이
+    /// 있으면 그 사실도 뒤에 잇는다
     pub fn site_export_done(count: usize, unreadable: usize) -> String {
         let mut out = match current() {
-            Language::Korean => format!("사이트 {count}개를 저장했습니다"),
-            Language::English if count == 1 => "Saved 1 site".to_owned(),
-            Language::English => format!("Saved {count} sites"),
+            Language::Korean => {
+                format!("사이트 {count}개를 저장했습니다 · 비밀번호가 함께 담겼습니다")
+            }
+            Language::English if count == 1 => "Saved 1 site · passwords included".to_owned(),
+            Language::English => format!("Saved {count} sites · passwords included"),
         };
         if unreadable > 0 {
             match current() {
@@ -1601,6 +1607,36 @@ mod tests {
         assert_eq!(
             dynamic::remote_delete_count(3),
             "3 items will be deleted from the server."
+        );
+    }
+
+    #[test]
+    fn 내보내기_알림은_비밀번호가_담겼음을_두_언어로_알린다() {
+        // 내보내기에 대화가 없어져(FR-59) 이 알림이 파일의 성질을 알릴 유일한 자리다.
+        // 비밀번호를 읽지 못한 것이 겹칠 때 문장이 어떻게 이어지는지도 여기서 고정한다
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        assert_eq!(
+            dynamic::site_export_done(3, 0),
+            "사이트 3개를 저장했습니다 · 비밀번호가 함께 담겼습니다"
+        );
+        assert_eq!(
+            dynamic::site_export_done(3, 1),
+            "사이트 3개를 저장했습니다 · 비밀번호가 함께 담겼습니다 · 1개는 비밀번호를 읽지 못해 뺐습니다"
+        );
+        // 사이트가 없어도 문장이 성립한다
+        assert_eq!(
+            dynamic::site_export_done(0, 0),
+            "사이트 0개를 저장했습니다 · 비밀번호가 함께 담겼습니다"
+        );
+
+        set_language(LanguageSetting::English);
+        assert_eq!(
+            dynamic::site_export_done(1, 0),
+            "Saved 1 site · passwords included"
+        );
+        assert_eq!(
+            dynamic::site_export_done(3, 2),
+            "Saved 3 sites · passwords included · 2 of them lost their password (it could not be read)"
         );
     }
 
