@@ -287,7 +287,7 @@
   - **Halt Forecast**: (i) `DoDragDrop`의 중첩 메시지 루프가 eframe 이벤트 루프를 재진입시킨다 → 셸 메뉴가 같은 구조로 이미 출하돼 있고(전제 7) 같은 자리·같은 규칙을 쓴다. 수동 검증에서 창이 굳거나 패닉하면 **이 task만 되돌리고**(D7 덕에 T2~T6은 영향 없다) Deferred로 옮긴다 · (ii-a) `Cargo.toml` feature 추가 → `## 사전 승인 항목`
   - **Depends on**: T4, T5
 
-- [ ] T8. README 갱신
+- [x] T8. README 갱신
   - **Type**: A
   - **Acceptance**: Given 개정된 PRD와 구현된 동작, When README를 갱신, Then 드래그 관련 서술이 ⓐ 로컬↔원격 전송 ⓑ 로컬↔로컬 복사 ⓒ 탐색기에서 받기 ⓓ 탐색기로 내보내기(T7이 살아남은 경우만) ⓔ 전송 완료 후 원격 목록 자동 갱신을 모두 담고, **구현되지 않은 것이 하나도 적혀 있지 않다**(요청받지 않은 새 절(`##`)은 만들지 않는다) ⓕ `AGENTS.md`의 UI 스레드 블로킹 예외 목록이 세 건으로 갱신된다
   - **Files**: 주: `README.md`, `AGENTS.md`(「UI 스레드 블로킹 호출 예외는 지금 둘뿐이다」가 이번 회차로 사실이 아니게 된다 — `fs::drag_source`의 `SHParseDisplayName`이 세 번째다. T7 quality 리뷰 m1)
@@ -337,6 +337,10 @@
 - T7: 동일 BLOCKER/MAJOR 1/3, 수정 사이클 1/5, 복구 0/2 — quality 리뷰 M1(주석 오귀속)로 1회 되돌림. **다섯 번째이며, T5에서 이미 `persist_session`의 주석까지 가로챈 것이 이번에야 드러났다** — 그때 내 V-8 자기점검이 「주석 일치」를 통과로 적었는데 실제로는 깨져 있었다.
 
 ## Progress Log
+
+- T7-T8 완료: 앱→탐색기 끌어내기(`DoDragDrop`)를 붙이고 README·AGENTS.md를 갱신했다. 끌기는 **포인터가 창 밖으로 나갔을 때** 시작한다 — 그 함수가 자기 메시지 루프를 돌려 앱이 다시 그려지지 않으므로 앱 안에서 끝날 드래그까지 그 길로 보내면 강조·목록 반응이 멎는다.
+  - `Cargo.toml`에 feature 둘(`Win32_System_Ole`·`Win32_System_SystemServices`)과 `windows-core` 직접 의존성을 더했다. 라이선스 지문은 `Cargo.lock`의 `name`/`version` 줄만 해시하므로 자산 재생성은 불요였고 지문 시험 통과로 확인했다(전제 10 해소).
+  - AGENTS.md의 「UI 스레드 블로킹 예외는 둘뿐」이 세 건으로 갱신됐다 — `DoDragDrop`은 UI 스레드에서 마우스를 쥐어야 해 워커로 못 미룬다.
 
 - T5-T6 완료 (커밋 `73225df`, T6 완료 커밋): 탐색기에서 끌어온 파일을 받는 경로와 드롭 대상 강조를 붙였다. 놓인 자리는 Win32 커서로 재고 물리 픽셀을 논리 pt로 환산한다.
   - 결정: 강조는 **OS 드래그에만** 붙인다 — 앱 안 드래그는 egui가 끌고 있는 항목을 이미 커서에 붙여 보인다.
