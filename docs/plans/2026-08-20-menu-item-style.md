@@ -288,8 +288,8 @@
 
 | Phase | 상태 |
 |---|---|
-| 구현 (T1~T4) | 대기 |
-| Phase F (전체 검증) | 대기 |
+| 구현 (T1~T4) | 완료 |
+| Phase F (전체 검증) | **Phase F 통과 (HEAD 2b3fbe4 + F-7 지적 반영분)** |
 
 ## Progress Log
 
@@ -298,6 +298,13 @@
   - 결정: `menu::column_menu_items` 안에서는 스타일을 세우지 않는다 — 「팝업을 여는 쪽이 부른다」는 한 가지 규칙으로 통일(두 곳에서 세우면 어느 값이 먹는지 흐려진다).
   - 실측: 폭이 고정된 메뉴 4곳에서 여백 확대 후에도 라벨이 접히지 않는다(가장 빠듯한 한국어 `사이드바에서 숨기기`+`Del`이 여유 15.0px) → **폭 상수는 그대로 뒀다**.
   - 결정: `titlebar::SETTINGS_MENU_PADDING`을 「항목 여백 두 번 + `SETTINGS_MENU_BREATH`(20.0)」로 분해했다 — 합만 유지하면 라벨 여유가 0이 되어 2026-08-19의 접힘 회귀로 돌아간다.
-- T3 완료 (커밋 예정): 직접 그리던 메뉴 한 줄 사본 3개(`remote_menu`·`tree`·`widgets`)를 `widgets::menu_row` 하나로 모으고, `tabs::show_site_row`는 흡수하지 않고 토큰만 공유했다(D6). 861/861 통과.
+- T3 완료 (커밋 81af27b): 직접 그리던 메뉴 한 줄 사본 3개(`remote_menu`·`tree`·`widgets`)를 `widgets::menu_row` 하나로 모으고, `tabs::show_site_row`는 흡수하지 않고 토큰만 공유했다(D6). 861/861 통과.
   - 실측: 드롭다운 여백이 8 → 12px로 늘어 긴 항목이 잘리는지 확인했다 — 이 PC의 한글 글꼴 73개 중 최장 이름이 `Microsoft JhengHei UI Light`(165.2px)이고 가용 폭은 216px(`FONT_FIELD_WIDTH` 240 − 12×2)라 **여유 50.8px**. 그래서 `FONT_FIELD_WIDTH`를 늘리지 않았다.
   - 결정: 공통 `menu_row`의 글꼴은 `TextStyle::Body.resolve`로 고른다 — 종전 세 사본은 13.0을 하드코딩했는데, egui가 버튼 라벨에 쓰는 것이 `Body`라 버튼 경로와 크기가 갈리지 않는다(D4의 「글자 크기 토큰을 만들지 않는다」와 정합).
+- T4 완료 (커밋 2b3fbe4): 규약을 소스 훑기 시험(`팝업_메뉴는_항목_스타일을_거친다`)과 `AGENTS.md` Conventions에 못 박았다. 863/863 통과.
+  - 확인: 시험이 실제 위반을 잡는다 — `sidebar.rs`·`titlebar.rs`의 호출을 하나씩 지워 각각 `팝업 3 · 호출 2`·`팝업 1 · 호출 0`으로 실패시키고 되돌렸다.
+- Phase F: 릴리즈 빌드 OK · `cargo test` 전건(lib 863 + 통합 8) · clippy 0 · fmt OK. F-7이 MAJOR 1 · MINOR 3을 냈고 다음과 같이 처리했다.
+  - **MAJOR(기존 문제)**: `toast.rs`의 시험이 언어를 잠그지 않아 `cargo test`가 4회 중 1회 실패한다 — 이번 diff 밖이라 고치지 않고 Deferred 대장에 등재했다. **「전건 통과」 보고가 확률적이었다는 사실을 최종 보고에 적는다.**
+  - m1(자기 유발): 규약 검사기가 **시험 코드의 호출까지 세어** `titlebar.rs`에 여유가 생겼다 → `code_only`가 `#[cfg(test)]` 이후를 잘라내게 고쳤고, 그 결과 titlebar가 1:1로 빡빡해져 위반을 잡는 것을 실증했다.
+  - m2(자기 유발): opener 패턴에 egui의 `ui.menu_button(`을 더했다. **점을 붙여 좁혔다** — 그냥 `menu_button(`으로 찾으면 이 레포의 `show_menu_button` 함수 이름까지 잡혀 거짓 실패한다(실측으로 확인해 되돌렸다).
+  - m3(자기 유발): 이 Phase Ledger·Progress Log를 실제 상태로 맞췄다.

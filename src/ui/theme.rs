@@ -310,12 +310,17 @@ mod tests {
         );
     }
 
-    /// 주석 줄을 걷어낸 소스 — 규약을 설명하는 문장이 검사에 걸리지 않게 한다.
+    /// 검사 대상이 되는 부분만 남긴 소스 — 주석 줄과 **시험 모듈**을 걷어낸다.
     ///
     /// `menu.rs`가 「`SubMenuButton`이 hover로 여는 팝업이다」를 주석에 적고 있어, 이것이
-    /// 없으면 그 파일의 팝업 수가 부풀어 거짓 실패한다
+    /// 없으면 그 파일의 팝업 수가 부풀어 거짓 실패한다.
+    ///
+    /// **시험 모듈을 빼는 이유**: 시험이 부르는 `menu_style`이 호출 수에 얹히면 그만큼
+    /// 여유가 생겨, 그 파일에 팝업을 하나 더 만들며 규약을 빠뜨려도 검사가 통과한다
+    /// (`titlebar.rs`가 실제로 생산 1 + 시험 1이었다)
     fn code_only(source: &str) -> String {
-        source
+        let 본문 = source.split("#[cfg(test)]").next().unwrap_or(source);
+        본문
             .lines()
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
@@ -334,7 +339,11 @@ mod tests {
         let context =
             code.matches("Popup::context_menu(").count() + code.matches(".context_menu(").count();
         // 하위 메뉴는 부모 스타일을 잇지 않는 별도 `Area`라 자체 호출이 필요하다
-        let submenu = code.matches("SubMenuButton").count();
+        // egui의 `ui.menu_button(`도 함께 본다 — 지금 이 레포에 쓰는 곳은 없지만, 규약이
+        // 지키려는 것은 **앞으로 만들 메뉴**라 진입 API가 늘 때마다 사각이 생기면 뜻이 없다.
+        // 점을 붙여 좁히는 이유: 그냥 `menu_button(`으로 찾으면 이 레포의 함수 이름
+        // (`show_menu_button`)까지 잡혀 거짓 실패한다(실측)
+        let submenu = code.matches("SubMenuButton").count() + code.matches(".menu_button(").count();
         let frame = if popup + context > 0 {
             0
         } else {
@@ -404,6 +413,15 @@ mod tests {
         // 실패해야 할 형태 — 하위 메뉴만 있고 호출이 없다
         let 하위메뉴만 = "SubMenuButton::from_button(b).ui(ui, |ui| items(ui));";
         assert!(menu_openers(하위메뉴만) > style_calls(하위메뉴만));
+        // 시험 모듈의 호출은 세지 않는다 — 세면 그만큼 여유가 생겨 규약이 헐거워진다
+        let 시험만_부르는_파일 = "egui::Popup::menu(&a).show(|ui| { 항목(ui); });
+\n                                   #[cfg(test)]
+\n                                   mod tests { fn t() { theme::menu_style(ui); } }";
+        assert_eq!(style_calls(시험만_부르는_파일), 0);
+        // 함수 이름은 진입 API가 아니다 — `menu_button(`으로 넓게 찾으면 여기 걸린다
+        assert_eq!(menu_openers("fn show_menu_button(ui: &mut Ui) {}"), 0);
+        assert_eq!(menu_openers("ui.menu_button(\"파일\", |ui| {});"), 1);
+        assert!(menu_openers(시험만_부르는_파일) > style_calls(시험만_부르는_파일));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 # Deferred 대장
 
 ## 대기
+- [2026-08-20] **`ui/toast.rs`의 `문구는_인벤토리_원문_그대로다`가 언어를 잠그지 않아 간헐 실패한다** — `cargo test`를 4회 돌리면 1회쯤 `862 passed; 1 failed`가 난다(2026-08-20 실측). 이 시험만 `i18n::LanguageGuard::lock`을 들지 않아, 영어를 잠그는 다른 시험(`i18n`·`about_dialog`·`settings_dialog`·`titlebar`)과 병렬로 돌면 영어 문구를 만난다. AGENTS.md 「화면 문구」 규약이 요구하는 잠금이 빠진 것이며 **한 줄이면 고쳐진다**(`let _guard = crate::i18n::LanguageGuard::lock(LanguageSetting::Korean);`). 이번 회차의 Files 밖이라 손대지 않았다 — 그대로 두면 앞으로도 「전건 통과」 보고가 확률적으로 흔들린다 (출처: 2026-08-20-menu-item-style F-7 M1)
 - [2026-08-20] `ui/app.rs`의 시험(현 18건)을 `app/tests.rs`로 뺄지 — `panel/tests.rs` 선례가 있다. 이번 회차는 **옮긴 자유 함수의 시험만** 따라 보냈고(충돌 7건 → `app/transfer_conflict.rs`, 원격 6건 → `app/remote.rs`) 나머지는 `app.rs`에 남겼다 (출처: 2026-08-20-app-rs-split D7, F-7 M1이 대장 누락을 잡음)
 - [2026-08-20] **[SUGGEST] `ui_sources` 재귀 헬퍼가 세 곳에 중복**(`theme.rs`·`dialog.rs`·`widgets.rs`, 바이트 단위로 동일) — 공통화 문턱 3회를 정확히 채웠다. plan이 든 보류 사유(「`#[cfg(test)]` 가시성 배선」)를 **quality 리뷰가 「과장됐다」고 지적했다** — `#[cfg(test)] pub(crate) fn`을 공통 모듈에 두는 것은 표준 패턴이다. 다만 이 레포에 그런 test-support 모듈 관례가 없어 신규 모듈을 여는 비용은 실재한다. 제안 형태: `src/ui/mod.rs`에 `#[cfg(test)] pub(crate) mod test_support;`. **네 번째 시험이 같은 헬퍼를 쓰게 되면 그때는 공용화가 명백하다** (출처: 2026-08-20-app-rs-split T3 quality m1)
 - [2026-08-20] **[SUGGEST] `app/remote.rs`(1038줄)를 손자 모듈로 더 쪼개기** — 세 관심사가 한 `impl` 블록에 있다(①연결 수명주기 ②원격 메뉴 대화 ③이벤트 폴링·트리 조회). 네 질문의 ①③이 「예」에 가깝다. **`pub(super)`는 `ui::app`의 후손 전체에 보이므로 손자 모듈(`remote::menu`·`remote::poll` 등)로 쪼개도 가시성 근거가 유지된다.** 이번엔 순수 이동 범위를 지켜 하지 않았다 (출처: 2026-08-20-app-rs-split T2 quality m1)
