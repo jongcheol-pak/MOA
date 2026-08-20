@@ -458,7 +458,7 @@ mod tests {
     #[test]
     #[ignore = "실측 전용 — `cargo test --release -- --ignored --nocapture`로 돌린다"]
     fn 파생_1회_시간을_잰다() {
-        // plan D13의 상한 대조. 이 시험이 찍은 값을 `MEASURED_DERIVE_SECS`에 적는다
+        // plan D13의 상한 대조. 이 시험이 찍은 값을 `PBKDF2_ITERATIONS`의 주석에 적는다
         let salt = [0u8; SALT_LEN];
         let started = std::time::Instant::now();
         let key = derive_key("측정용 암호", &salt, PBKDF2_ITERATIONS).expect("파생");

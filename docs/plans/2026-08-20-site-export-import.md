@@ -32,6 +32,7 @@
 
 - 팝업 본문 폭이 대화마다 제각각이다(360·420·460·480·1080) — 이번에 대화가 셋 늘어 그 편차가 커진다. 대장 2026-08-15 항목이 그대로 유효하며, 신규 대화는 기존 값 중 하나를 골라 쓴다(새 폭을 만들지 않는다).
 - 내보내기 진행 표시(사이트가 아주 많을 때의 진행률) — 실측상 수십 건은 즉시 끝나 이번엔 두지 않는다.
+- **내보내기 기본 파일 이름의 앱 이름 표기** — 한국어 화면에서도 `MOA 사이트.moasites`다. FR-53은 한국어 앱 이름을 `모아`로 정하되 적용처를 창 제목·트레이 툴팁으로 한정하고 파일 이름은 다루지 않는다. 다른 PC로 옮기는 파일이라 `MOA`가 낫다고 보고 그대로 뒀으나, **정하려면 FR-53의 적용처에 파일 이름 포함 여부를 한 줄 더해야 한다** (2026-08-20 F-7 m2 — 사용자 판단 사항).
 
 ## Investigation Log
 
@@ -238,6 +239,12 @@
 - **Rationale**: 「비밀번호를 빼고 내보냈다」(D6)는 것은 「비밀번호를 지우겠다」는 뜻이 아니다. A를 택하면 암호 없이 내보낸 파일을 같은 PC에서 되가져오는 것만으로 저장된 로그인 정보가 통째로 사라지는데, 사용자는 그것을 예상하지 않고 되돌릴 수도 없다(절대 규칙 10이 막는 데이터 손실과 같은 성질). 구현은 `write_record`가 기존 `password_sealed`를 옮겨 담고 `apply_password`가 문서에 값이 있을 때만 덮는 형태다.
 - **Source**: 구현 중 확정(T2) — plan D14가 「필드만 갈아 끼운다」까지만 정해 이 갈래가 열려 있었다. `remote/sites.rs:125-137`(`set_password`)·시험 `문서에_없는_비밀번호는_있던_것을_지우지_않는다`
 
+### D17. `format`이 다른 파일을 어느 오류로 거부하는가
+- **Options**: A) `Unsupported`(판 번호와 같은 갈래) / B) `Broken`(우리 파일이 아님)
+- **Chosen**: B
+- **Rationale**: 두 오류가 화면에서 서로 다른 문구가 된다 — `Unsupported`는 **「더 새로운 버전에서 만든 파일이라 읽을 수 없습니다」**이고 `Broken`은 **「MOA 사이트 목록이 아니거나 손상되었습니다」**다. 다른 도구가 만든 JSON을 골랐을 때 「더 새로운 버전」이라고 알리면 사용자는 앱을 올리면 열린다고 읽는다. `format`이 다르다는 것은 **판이 앞선 것이 아니라 우리 파일이 아니라는 뜻**이므로 B가 맞다. 계획 단계의 acceptance 문면(둘 다 `Unsupported`)이 이 차이를 보지 못한 것이며, 구현·시험이 옳아 문면을 고쳤다.
+- **Source**: `remote/site_export.rs`의 `parse` · `ui/site_manager/exchange.rs`의 `import_error_text` · 시험 `우리_파일이_아니거나_모르는_판은_거부한다` (2026-08-20 F-7 M2)
+
 ## Tasks
 
 <!-- T1~T2 (순수 계층) → T3 (Win32) → T4~T5 (화면·배선) → T6~T7 (문구·문서) -->
@@ -279,7 +286,7 @@
     - Given 충돌 1건 + 신규 1건, When `apply_import(overwrite=false)`, Then `added=1 replaced=0 skipped=1`이고 기존 사이트의 값이 그대로다. `overwrite=true`면 `added=1 replaced=1 skipped=0`이고 **기존 `SiteId`가 유지된** 채 값만 바뀐다
     - Given 덮어쓸 사이트의 새 이름이 **다른 기존 사이트의 이름과 겹치면**, When `apply_import(overwrite=true)`, Then 그 이름에 `(2)`가 붙고 식별자는 그대로다(D14 — `insert` 경로를 쓴다는 것이 이 단언으로 판정된다)
     - Given 비밀번호를 풀 수 없는 사이트(다른 계정에서 온 봉인)가 든 저장소, When `build`, Then 그 사이트는 비밀번호 없이 담기고 그 건수가 반환값에 담긴다. Given `set_password`가 실패하는 상황, When `apply_import`, Then `password_failed`가 그만큼 세어지고 **나머지 사이트는 정상 반영된다**(D15)
-    - Given `format`이 다르거나 `version`이 1이 아닌 파일, When `read_file`, Then `ImportError::Unsupported`다. 깨진 JSON·빈 파일은 `ImportError::Broken`이다
+    - Given `version`이 1이 아닌 파일, When `read_file`, Then `ImportError::Unsupported`다. **`format`이 다른 파일·깨진 JSON·빈 파일은 `ImportError::Broken`**이다 (D17 — 갈래를 이렇게 가른 사유)
     - Given 사이트가 0개인 저장소, When `build`, Then 사이트 0건 문서가 만들어지고 그것을 가져오면 `added=0`이다
     - 저장한 `.moasites` 텍스트에 평문 비밀번호가 부분 문자열로 존재하지 않고, `password_sealed` 키도 존재하지 않는다(암호를 넣은 경우·비운 경우 둘 다)
   - **Files**:
@@ -443,6 +450,21 @@
 
 ## Phase Ledger
 
+- **Phase F 통과** (HEAD `f9cd00c` + F-7 지적 반영분) — 빌드 OK · `cargo test` 900 passed(lib) + 통합 8건 · clippy `-D warnings` 0 · fmt OK.
+- **Phase G 통과 (Must 100%)** — 아래 충족표.
+- F-8: **미적용** — 이 plan에는 `## 시각 요소 분해` 섹션이 없다(신규 버튼 추가라 대조할 기준 화면이 없음. plan-feature Step 2.5 ①-a/①-b 미충족).
+
+### G-1. PRD 충족표
+
+| PRD ID | 우선순위 | 대응 | 상태 |
+|---|---|---|---|
+| FR-59 (신설) | Must | T1~T5(구현)·T7(문면) | ✅ 충족 — 표의 4열이 성립하고 검증 방법 열에 단위 시험 항목이 적혔다. 문면과 구현 대조는 F-7이 수행 |
+| FR-27 (문면 개정 — 좌측 버튼 두 줄) | Must | T4·T7 | ✅ 충족 |
+| FR-28 (문면 개정 — 내보내기 파일만 암호 봉투) | Must | T1·T2·T7 | ✅ 충족 — 「평문은 어떤 파일·로그에도 남기지 않는다」가 유지된다(내보내기 파일도 봉투 안에만 담기며 평문 부재 시험이 있다) |
+| 그 밖의 active Must FR | Must | — | ✅ 깨진 것 없음 (F-7이 전수 대조) |
+| ⏳ HUMAN-VERIFY | — | Verification Strategy 7항목 | 사용자 확인 대기 — 기계로 판정할 수 없는 축이다 |
+
+Must 충족률 **100%** (기계 검증 가능한 범위). 재루프 0회.
 ## Retry Ledger
 
 ## Progress Log
@@ -466,7 +488,10 @@
 
 ## Next Steps
 
-- 권장 다음 액션: `pjc:implement-task`로 T1부터 실행
+- 권장 다음 액션: **사용자 수동 검증 7항목**(`## Verification Strategy`) — 특히 다른 PC/계정에서의 가져오기는 이 환경에서 확인할 수 없다.
+- 그 뒤 push·병합은 **별도 승인 대상**이다(자율 루프 권한 밖).
+- 위키 반영: `[DECISION]` 5건·`[PROJECT-FACT]` 4건을 vault 큐에 넣었다(커밋·push 완료). 본문 ingest는 별도 위키 세션.
+- Suggested skills: `pjc:llm-wiki`(절차 B ingest), 공식 `/code-review`
 
 ## Open Questions
 
