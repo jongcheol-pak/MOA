@@ -1,6 +1,7 @@
 # Deferred 대장
 
 ## 대기
+- [2026-08-20] `ui/app.rs`의 시험(현 18건)을 `app/tests.rs`로 뺄지 — `panel/tests.rs` 선례가 있다. 이번 회차는 **옮긴 자유 함수의 시험만** 따라 보냈고(충돌 7건 → `app/transfer_conflict.rs`, 원격 6건 → `app/remote.rs`) 나머지는 `app.rs`에 남겼다 (출처: 2026-08-20-app-rs-split D7, F-7 M1이 대장 누락을 잡음)
 - [2026-08-20] **[SUGGEST] `ui_sources` 재귀 헬퍼가 세 곳에 중복**(`theme.rs`·`dialog.rs`·`widgets.rs`, 바이트 단위로 동일) — 공통화 문턱 3회를 정확히 채웠다. plan이 든 보류 사유(「`#[cfg(test)]` 가시성 배선」)를 **quality 리뷰가 「과장됐다」고 지적했다** — `#[cfg(test)] pub(crate) fn`을 공통 모듈에 두는 것은 표준 패턴이다. 다만 이 레포에 그런 test-support 모듈 관례가 없어 신규 모듈을 여는 비용은 실재한다. 제안 형태: `src/ui/mod.rs`에 `#[cfg(test)] pub(crate) mod test_support;`. **네 번째 시험이 같은 헬퍼를 쓰게 되면 그때는 공용화가 명백하다** (출처: 2026-08-20-app-rs-split T3 quality m1)
 - [2026-08-20] **[SUGGEST] `app/remote.rs`(1038줄)를 손자 모듈로 더 쪼개기** — 세 관심사가 한 `impl` 블록에 있다(①연결 수명주기 ②원격 메뉴 대화 ③이벤트 폴링·트리 조회). 네 질문의 ①③이 「예」에 가깝다. **`pub(super)`는 `ui::app`의 후손 전체에 보이므로 손자 모듈(`remote::menu`·`remote::poll` 등)로 쪼개도 가시성 근거가 유지된다.** 이번엔 순수 이동 범위를 지켜 하지 않았다 (출처: 2026-08-20-app-rs-split T2 quality m1)
 - [2026-08-20] **[SUGGEST] 충돌 상태 6개 필드를 `ConflictState`로 묶기** — `pending_conflicts`·`conflict_tx/rx`·`conflict_lists`·`conflict_queue`·`conflict_dialog`·`next_conflict`를 모으면 `panel/workers.rs`의 `DirLoad`와 같은 캡슐화가 되고 자식 모듈에 노출되는 부모 필드가 6 → 1로 준다. 상태 필드 이동은 구조 변경이라 「순수 이동」 회차에서는 하지 않았다 (출처: 2026-08-20-app-rs-split T1 quality S1)
