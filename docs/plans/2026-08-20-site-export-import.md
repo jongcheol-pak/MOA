@@ -375,7 +375,7 @@
     - (i) 없음 — 부르는 자리와 순서가 이미 정해져 있다
   - **Depends on**: T4
 
-- [ ] T6. 연결 메뉴 문구를 `사이트 관리자`로 바꾼다
+- [x] T6. 연결 메뉴 문구를 `사이트 관리자`로 바꾼다
   - **Type**: C
   - **Design**: 신규 심볼 없음 — 카탈로그 키 개명(D11)과 그 값 변경, 호출부·단언·주석 갱신뿐이다. **동작은 바꾸지 않는다** — 이 항목은 종전대로 `SidebarAction::OpenSiteManager` → `SiteManager::open_new()`(빈 초안)로 연다(`src/ui/app.rs:890`). 문구가 `사이트 관리자`가 됐다고 `open(store, None)`(첫 사이트를 고른 채 열기)으로 바꾸지 않는다 — 그러면 `확인(O)`이 고른 사이트를 덮어써 새 사이트를 더할 길이 사라진다(`site_manager.rs:411-414`의 사유).
   - **Acceptance**:
@@ -459,6 +459,10 @@
   - **파일 분할**: `site_manager.rs`가 2,699줄이 되어 AGENTS 네 질문 판정으로 `site_manager/exchange.rs`를 갈랐다(1,915 + 837).
   - **범위 밖 1줄**: `ui/toast.rs`의 간헐 실패(언어 미잠금)를 해소했다 — 대장에 있던 기존 항목이지만 이후 task의 `cargo test` 판정을 흔들어 그 자리에서 고쳤다(4회 연속 통과 확인).
   - 리뷰: T3 spec MINOR 1(doc 주석 오귀속) → 수정 · T4 spec BLOCKER 1(상태 경로 미완주) → 시험 확장으로 해소, 재리뷰 통과.
+- T5-T6 완료: 배선과 문구.
+  - T5 `ui::app` — 파일 대화를 `update` 말미(셸 메뉴 자리 옆)에서 띄우고 결과를 되돌린다. 셸 메뉴가 뜬 프레임에는 미룬다. 결과 알림은 두 자리에서 비워 관리자를 닫은 뒤에도 유실되지 않는다. 창 핸들이 없으면 `fail_file_request`로 사유를 남긴다(공개 메서드 4번째 — plan Design 갱신).
+  - T6 문구 — `sidebar_add_site` → `sidebar_site_manager` 개명 + 값 변경. 옛 문구를 가리키던 주석 5곳과 시험 1곳을 함께 고쳤고, 소스에 옛 문구 잔존 0건.
+  - 리뷰: T5 spec MAJOR 1(신규 공개 메서드 시험 부재) → 시험 추가로 해소, quality MINOR 2(주석) 반영 · T6 spec/quality 둘 다 OK.
 
 ## Next Steps
 

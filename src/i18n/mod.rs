@@ -193,7 +193,12 @@ strings! {
     // ── 워크스페이스 사이드바 (FR-20) ──
     sidebar_workspaces => "워크스페이스" / "Workspaces";
     sidebar_saved_sites => "등록된 사이트" / "Saved sites";
-    sidebar_add_site => "새 사이트 추가…" / "Add site…";
+    /// 연결 메뉴의 마지막 항목 — 사이트 관리자를 연다.
+    ///
+    /// **원본 인벤토리 #8의 문구와 갈린다** — 그쪽은 「추가」만 가리켜 이 항목이 하는 일보다
+    /// 좁게 읽혔고, 사용자가 2026-08-20에 바꿔 달라고 했다(등록만이 아니라 관리자 전체를 연다).
+    /// 대화 제목(`site_title`)과 값이 같아졌지만 키는 따로 둔다 — 한쪽만 바꿀 때 다시 갈라야 한다
+    sidebar_site_manager => "사이트 관리자" / "Site Manager";
     sidebar_new_workspace => "새 워크스페이스" / "New workspace";
     sidebar_refresh_sites => "사이트 목록 새로 고침" / "Refresh site list";
     /// 사이트 우클릭 메뉴 (인벤토리 #10) — **`삭제`가 아니다.**

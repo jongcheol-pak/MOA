@@ -103,7 +103,7 @@ pub enum SidebarAction {
     /// 헤더 `+` (인벤토리 #3) — 연결 메뉴는 사이드바가 직접 띄우므로 이 조작은
     /// 메뉴가 열렸다는 사실만 알린다(호출부가 상태 줄 등에 쓸 수 있다)
     OpenConnectMenu,
-    /// `새 사이트 추가…` (인벤토리 #8) — 사이트 관리자를 연다
+    /// `사이트 관리자` (인벤토리 #8 — 문구는 2026-08-20에 원본과 갈렸다) — 관리자를 연다
     OpenSiteManager,
 }
 
@@ -640,7 +640,7 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
         }
         ui.separator();
         let add = egui::Button::new(
-            egui::RichText::new(crate::i18n::sidebar_add_site()).color(theme::TEXT),
+            egui::RichText::new(crate::i18n::sidebar_site_manager()).color(theme::TEXT),
         );
         if ui.add(add).clicked() {
             actions.push(SidebarAction::OpenSiteManager);
@@ -844,7 +844,8 @@ mod tests {
             crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         assert_eq!(crate::i18n::connect(), "연결");
         assert_eq!(crate::i18n::sidebar_saved_sites(), "등록된 사이트");
-        assert_eq!(crate::i18n::sidebar_add_site(), "새 사이트 추가…");
+        // 이 항목만 **원본과 갈린다** — 사용자 요청(2026-08-20)으로 문구를 바꿨다 (FR-59)
+        assert_eq!(crate::i18n::sidebar_site_manager(), "사이트 관리자");
         assert_eq!(crate::i18n::delete(), "삭제");
         assert_eq!(HIDE_SITE_SHORTCUT, "Del");
     }

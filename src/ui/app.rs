@@ -529,7 +529,7 @@ pub struct ExplorerApp {
     drive_scan: Option<std::sync::mpsc::Receiver<crate::fs::drives::DriveScan>>,
     /// SFTP 지문 확인 대화와 연결 워커를 잇는 통로 (D15)
     hostkey: HostKeyGate,
-    /// 사이트 관리자 대화 (FR-27) — 연결 메뉴의 `새 사이트 추가…`와 실패 화면의 `설정 열기`가 연다
+    /// 사이트 관리자 대화 (FR-27) — 연결 메뉴의 `사이트 관리자`와 실패 화면의 `설정 열기`가 연다
     site_manager: SiteManager,
     /// 짧게 떴다 사라지는 알림 (FR-43) — 창 전역이라 워크스페이스를 넘나든다
     toast: Toast,
@@ -886,7 +886,8 @@ impl ExplorerApp {
             SidebarAction::RefreshSites => {}
             // 연결 메뉴는 사이드바가 직접 띄운다 — 이 조작은 알림일 뿐이다
             SidebarAction::OpenConnectMenu => {}
-            // `새 사이트 추가…`라 빈 초안으로 연다 (인벤토리 #8)
+            // 연결 메뉴에서 온 길이라 **빈 초안**으로 연다 — 기존 사이트를 골라 두면
+            // `확인(O)`이 그것을 덮어써 새로 더할 길이 사라진다 (인벤토리 #8)
             SidebarAction::OpenSiteManager => self.site_manager.open_new(),
         }
     }
