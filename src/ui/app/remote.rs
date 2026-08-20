@@ -11,6 +11,10 @@
 //!
 //! 같은 이름 확인(`app::transfer_conflict`)과 서로 부른다 — `poll_remote`가 서버 조회
 //! 결과로 `settle_conflict`를 부르고, 그쪽 `start_transfer`는 `site_connection`을 쓴다.
+//!
+//! **전송을 거는 길은 셋이다** — 앱 안의 끌어다 놓기(FR-38)·원격 메뉴의 받기·올리기(FR-39)·
+//! OS에서 끌어온 것을 원격 탭에 놓는 것(FR-61). 셋 다 `start_transfer` 한 앞문을 지나며,
+//! 앞의 둘은 `ui::app`이 여기로 보내고 마지막은 `ui::app`의 `pump_os_drop`이 조립한다.
 
 use super::transfer_conflict::{conflict_id, conflict_names};
 use super::{ExplorerApp, NOTICE_SECS};

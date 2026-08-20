@@ -577,6 +577,18 @@ pub struct ExplorerApp {
     /// 워커가 여럿 돌 수 있어 채널 하나를 나눠 쓴다
     copy_tx: std::sync::mpsc::Sender<crate::fs::file_op::CopyOutcome>,
     copy_rx: std::sync::mpsc::Receiver<crate::fs::file_op::CopyOutcome>,
+    /// OS에서 끌어온 경로의 폴더 여부를 워커가 재 보낸 결과 (FR-61) —
+    /// `(사이트, 놓인 원격 폴더, 항목들)`. 로컬 대상은 재 볼 것이 없어 이 통로를 쓰지 않는다
+    os_drop_tx: std::sync::mpsc::Sender<(
+        crate::remote::types::SiteId,
+        crate::remote::types::RemotePath,
+        Vec<list_common::DragItem>,
+    )>,
+    os_drop_rx: std::sync::mpsc::Receiver<(
+        crate::remote::types::SiteId,
+        crate::remote::types::RemotePath,
+        Vec<list_common::DragItem>,
+    )>,
     /// 올리기 확인이 서버에 물어 둔 것 — `조회 세대 → (물어본 연결, 올릴 최상위 이름들)`.
     ///
     /// 키가 확인 번호가 아니라 **보낸 조회 세대**다 — 답에는 세대만 실려 오므로 그것으로
@@ -630,6 +642,7 @@ impl ExplorerApp {
         let (expand_tx, expand_rx) = std::sync::mpsc::channel();
         let (conflict_tx, conflict_rx) = std::sync::mpsc::channel();
         let (copy_tx, copy_rx) = std::sync::mpsc::channel();
+        let (os_drop_tx, os_drop_rx) = std::sync::mpsc::channel();
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = cc.egui_ctx.clone();
             Arc::new(move || ctx.request_repaint())
@@ -705,6 +718,8 @@ impl ExplorerApp {
             next_conflict: 0,
             copy_tx,
             copy_rx,
+            os_drop_tx,
+            os_drop_rx,
             conflict_tx,
             conflict_rx,
             conflict_lists: HashMap::new(),
@@ -1704,6 +1719,117 @@ impl ExplorerApp {
     /// **사이트 목록이 바뀌면 그 자리에서 적는다** — 종료 때만 적으면 그 사이에 앱이
     /// 비정상 종료됐을 때(패닉·강제 종료·전원 차단) 등록한 사이트가 통째로 사라진다.
     /// 파일이 작고 사이트 등록은 드문 일이라 그때마다 적어도 부담이 없다
+    /// OS(탐색기·바탕화면)에서 끌어온 파일을 받는다 (FR-61).
+    ///
+    /// **놓인 자리는 Win32 커서로 잰다** — 파일 드롭 이벤트에 좌표가 실려 있지 않고
+    /// (`egui::DroppedFile`은 경로만 채운다) OS 드래그 중에는 `WM_MOUSEMOVE`가 오지 않아
+    /// egui가 아는 포인터 자리도 낡아 있다.
+    ///
+    /// 대상 패널의 종류가 처리를 가른다 — 로컬 탭이면 셸 복사(경로만 있으면 되므로 그대로
+    /// 넘긴다), 원격 탭이면 올리기다. 올리기는 `DragItem::Local`이 폴더 여부를 요구하는데
+    /// 그것을 재는 것은 파일시스템 호출이라 **워커에 맡긴다**(수천 개를 끌어다 놓을 수 있다 —
+    /// AGENTS: UI 스레드에서 파일시스템 블로킹 호출 금지)
+    fn pump_os_drop(&mut self, ctx: &egui::Context, pane_rects: &[(PanelId, egui::Rect)]) {
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        if dropped.is_empty() {
+            return;
+        }
+        // 커서를 읽지 못하면 어디에 놓았는지 알 수 없다 — 아무 일도 하지 않는다
+        let Some(shell) = self.shell.as_ref() else {
+            return;
+        };
+        let Some(cursor) = shell.cursor_client_pos(ctx.pixels_per_point()) else {
+            return;
+        };
+        let Some(target) = panel_at(pane_rects, cursor) else {
+            // 사이드바·전송 큐·제목 표시줄 위에 놓았다 (FR-61)
+            return;
+        };
+        // 놓인 자리를 값으로 뽑아 뷰 빌림을 끝낸다 — 아래 두 갈래가 모두 `self`를 쓴다
+        let landed = self
+            .views
+            .get(&self.workspaces.active().id)
+            .and_then(|view| view.panels.get(&target))
+            .map(|panel| match (panel.active_site(), panel.remote_dir()) {
+                (Some(site), Some(dir)) => OsDropTarget::Remote { site, dir },
+                _ => OsDropTarget::Local(panel.dir().to_path_buf()),
+            });
+        match landed {
+            // 원격 탭 — 폴더 여부를 워커가 재고 그 결과로 전송을 건다
+            Some(OsDropTarget::Remote { site, dir }) => self.spawn_os_drop_scan(site, dir, dropped),
+            // 로컬 탭 — `IFileOperation`은 경로만 받으므로 재 볼 것이 없다
+            Some(OsDropTarget::Local(dest)) => self.start_local_copy_paths(dest, dropped),
+            None => {}
+        }
+    }
+
+    /// OS에서 끌어온 경로들의 폴더 여부를 워커에서 재 전송으로 잇는다 (FR-61).
+    ///
+    /// 결과를 채널로 받아 다음 프레임에 `start_transfer`로 보낸다 — 펼치기(`expand_rx`)와
+    /// 같은 방식이며, 그래야 수천 개를 끌어다 놓아도 프레임이 멈추지 않는다
+    fn spawn_os_drop_scan(
+        &mut self,
+        site: crate::remote::types::SiteId,
+        dir: crate::remote::types::RemotePath,
+        paths: Vec<std::path::PathBuf>,
+    ) {
+        let tx = self.os_drop_tx.clone();
+        let wake = self.repaint.clone();
+        std::thread::spawn(move || {
+            let items = paths
+                .into_iter()
+                .map(|path| {
+                    let is_dir = path.is_dir();
+                    list_common::DragItem::Local { path, is_dir }
+                })
+                .collect();
+            if tx.send((site, dir, items)).is_ok() {
+                wake();
+            }
+        });
+    }
+
+    /// 폴더 여부를 다 잰 OS 드롭을 전송으로 보낸다 (FR-61)
+    fn pump_os_drop_scan(&mut self) {
+        while let Ok((site, dir, items)) = self.os_drop_rx.try_recv() {
+            self.start_transfer(list_common::DropOutcome {
+                items,
+                source_site: None,
+                target: list_common::DropTarget::Remote { site, dir },
+            });
+        }
+    }
+
+    /// 경로 목록을 그대로 셸 복사에 건다 (FR-61) — OS 드롭의 로컬 대상 경로.
+    ///
+    /// `start_local_copy`와 갈라 두는 이유: 그쪽은 `DropOutcome`(앱 안의 드래그)에서
+    /// 경로를 뽑고, 이쪽은 OS가 준 경로 목록을 이미 들고 있다
+    fn start_local_copy_paths(
+        &mut self,
+        dest: std::path::PathBuf,
+        sources: Vec<std::path::PathBuf>,
+    ) {
+        let owner = self
+            .shell
+            .as_ref()
+            .map(|shell| shell.hwnd())
+            .unwrap_or_default();
+        crate::fs::file_op::copy_into(
+            dest,
+            sources,
+            owner,
+            self.copy_tx.clone(),
+            self.repaint.clone(),
+        );
+    }
+
     /// 로컬끼리의 복사를 셸에 건다 (FR-60).
     ///
     /// **FR-55의 같은 이름 확인을 거치지 않는다** — `IFileOperation`이 자기 충돌 대화를
@@ -1809,6 +1935,8 @@ impl eframe::App for ExplorerApp {
         self.drain_conflict_checks();
         // 셸 복사가 끝났으면 그 사실을 알린다 (FR-60)
         self.pump_local_copy(now);
+        // 폴더 여부를 다 잰 OS 드롭을 전송으로 보낸다 (FR-61)
+        self.pump_os_drop_scan();
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
         self.runner
             .start_ready(&mut self.queue, &self.manager, &self.sites, now);
@@ -1836,6 +1964,8 @@ impl eframe::App for ExplorerApp {
         let mut closed_conns = Vec::new();
         // 목록에 끌어다 놓은 것 (FR-38) — 큐에 넣는 것은 그리기가 끝난 뒤다
         let mut dropped = None;
+        // 이번 프레임의 패널 자리 (FR-61) — OS 드롭이 놓인 패널을 고르는 데 쓴다
+        let mut pane_rects: Vec<(PanelId, egui::Rect)> = Vec::new();
         // 원격 목록에서 고른 메뉴 항목 (FR-39)
         let mut remote_menu = None;
         // 원격 트리가 청한 하위 조회 (T24)
@@ -1962,6 +2092,7 @@ impl eframe::App for ExplorerApp {
                     remote_url = outcome.remote_url;
                     closed_conns = outcome.closed_conns;
                     dropped = outcome.drop;
+                    pane_rects = outcome.pane_rects;
                     remote_menu = outcome.remote_menu;
                     tree_requests = outcome.tree_requests;
                     favorite = outcome.favorite;
@@ -2001,6 +2132,9 @@ impl eframe::App for ExplorerApp {
                         None => self.start_transfer(drop),
                     }
                 }
+                // OS(탐색기·바탕화면)에서 끌어온 것 (FR-61) — 앱 안의 드래그와 통로가
+                // 다르다. 그리기가 끝난 뒤라야 이번 프레임의 패널 자리를 쓸 수 있다
+                self.pump_os_drop(&ctx, &pane_rects);
                 // 원격 메뉴가 고른 것 — 대화가 필요한 것은 여기서 열리기만 한다
                 if let Some((target, (action, targets))) = remote_menu.take() {
                     self.apply_remote_menu(target, action, targets);
@@ -2070,6 +2204,28 @@ impl eframe::App for ExplorerApp {
 }
 
 /// 파일 작업 실패 사유가 상태 줄에 머무는 시간(초) — 알림(FR-43)보다 조금 길게 둔다
+/// OS에서 끌어온 것이 놓인 자리 (FR-61) — 탭의 종류가 처리를 가른다
+enum OsDropTarget {
+    Local(std::path::PathBuf),
+    Remote {
+        site: crate::remote::types::SiteId,
+        dir: crate::remote::types::RemotePath,
+    },
+}
+
+/// 그 자리에 있는 패널 — 어느 사각형에도 들지 않으면 `None` (FR-61).
+///
+/// **뒤에서부터 찾는다** — `pane_rects`는 그리기 순서대로라 겹치면 나중에 그린 것이 위다.
+/// 겹치는 일은 드물지만(분할 트리는 자리를 나눈다) 경계에서 두 사각형이 한 점을 함께
+/// 담을 수 있어, 그때 위에 보이는 쪽을 고른다
+fn panel_at(pane_rects: &[(PanelId, egui::Rect)], pos: egui::Pos2) -> Option<PanelId> {
+    pane_rects
+        .iter()
+        .rev()
+        .find(|(_, rect)| rect.contains(pos))
+        .map(|(id, _)| *id)
+}
+
 const NOTICE_SECS: f64 = 6.0;
 
 /// 로컬 폴더를 펼친 결과 — 올릴 파일들과 **읽지 못해 건너뛴 폴더 수**.
@@ -2103,6 +2259,42 @@ pub(crate) fn start_dir() -> PathBuf {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn 놓은_자리에_있는_패널을_고른다() {
+        // Acceptance ⓐⓑ (FR-61)
+        let rects = vec![
+            (
+                PanelId(1),
+                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)),
+            ),
+            (
+                PanelId(2),
+                egui::Rect::from_min_size(egui::pos2(100.0, 0.0), egui::vec2(100.0, 100.0)),
+            ),
+        ];
+        assert_eq!(panel_at(&rects, egui::pos2(50.0, 50.0)), Some(PanelId(1)));
+        assert_eq!(panel_at(&rects, egui::pos2(150.0, 50.0)), Some(PanelId(2)));
+        // 사이드바·전송 큐 위에 놓은 경우 — 어느 패널도 아니다
+        assert_eq!(panel_at(&rects, egui::pos2(50.0, 500.0)), None);
+        assert_eq!(panel_at(&[], egui::pos2(50.0, 50.0)), None);
+    }
+
+    #[test]
+    fn 사각형이_겹치면_나중에_그린_것이_이긴다() {
+        // Acceptance ⓒ — `pane_rects`는 그리기 순서라 뒤엣것이 위에 보인다
+        let 겹침 = vec![
+            (
+                PanelId(1),
+                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)),
+            ),
+            (
+                PanelId(2),
+                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 100.0)),
+            ),
+        ];
+        assert_eq!(panel_at(&겹침, egui::pos2(50.0, 50.0)), Some(PanelId(2)));
+    }
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> LayoutRect {
         LayoutRect { x, y, w, h }

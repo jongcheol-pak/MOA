@@ -88,6 +88,13 @@ pub struct LayoutOutcome {
     /// 팝업에 가린 클릭까지 대상으로 세면 사용자가 누른 적 없는 폴더로 파일이 간다.
     /// 그래서 여기서는 **레이어 가림을 존중하는** `rect_contains_pointer`로 따로 판정한다
     pub pressed_panel: Option<PanelId>,
+    /// 이번 프레임에 패널들이 차지한 자리 (FR-61) — OS에서 끌어온 파일이 **어느 패널에**
+    /// 놓였는지 판정하는 데 쓴다.
+    ///
+    /// **egui의 포인터로는 판정할 수 없어 좌표를 위로 올린다** — OS 드래그 중에는
+    /// `WM_MOUSEMOVE`가 오지 않아 egui가 아는 포인터 자리가 낡아 있고, 파일 드롭
+    /// 이벤트에는 좌표가 실려 있지 않다. 앱이 Win32로 잰 커서 자리를 이 목록과 대조한다
+    pub pane_rects: Vec<(PanelId, egui::Rect)>,
 }
 
 /// 패널이 낸 결과를 위로 올린다 — **필드를 골라 담지 않고 통째로** 받는다.
@@ -188,6 +195,12 @@ pub fn show_layout(
     // 패널은 서로를 모르므로(모듈 주석) 닫기 가능 여부는 트리를 아는 이곳에서 정해 내려준다 (plan D15).
     // 보기 모드는 패널마다 다르므로 아래 루프에서 각자의 것을 싣는다
     let pane_count = computed.panes.len();
+    // 패널 자리를 그대로 위로 올린다 (FR-61) — 그리기 순서와 같아 겹치면 뒤엣것이 위다
+    outcome.pane_rects = computed
+        .panes
+        .iter()
+        .map(|(id, rect)| (*id, to_egui_rect(*rect)))
+        .collect();
 
     // 클릭이 일어난 패널을 활성으로 삼는다.
     // 패널 rect에 `interact`를 걸면 그 위젯이 목록·버튼 클릭을 가로채므로
