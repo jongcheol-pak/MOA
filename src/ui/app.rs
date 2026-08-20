@@ -2253,8 +2253,9 @@ impl eframe::App for ExplorerApp {
             self.pump_site_file_dialog(&ctx);
         }
         // 창 밖으로 끌고 나간 로컬 항목을 OS 드래그로 넘긴다 (FR-61 내보내기).
-        // **셋 중 하나만 뜬다** — `DoDragDrop`도 자체 메시지 루프를 돌리므로 셸 메뉴·파일
-        // 대화와 겹치면 어느 쪽이 답을 기다리는지 알 수 없다
+        // **셸 메뉴가 뜬 프레임에는 미룬다** — `DoDragDrop`도 자체 메시지 루프를 돌려
+        // 겹치면 어느 쪽이 답을 기다리는지 알 수 없다. 바로 위 파일 대화와는 같은 프레임에
+        // 이어 불릴 수 있지만, 그쪽이 답을 받고 돌아온 뒤라 실제로 겹치지는 않는다
         if !shell_menu_pending {
             self.pump_export_drag(&ctx);
         }

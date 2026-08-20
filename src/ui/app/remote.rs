@@ -1043,7 +1043,7 @@ mod tests {
             id: crate::remote::connection::TransferId(1),
             site: SiteId(site),
             direction: TransferDirection::Upload,
-            local: PathBuf::from(r"C:\workpp.js"),
+            local: PathBuf::from(r"C:\work\app.js"),
             remote: RemotePath::new(remote),
             size: 10,
             state,

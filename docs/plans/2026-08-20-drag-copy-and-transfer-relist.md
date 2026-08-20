@@ -34,6 +34,7 @@
 
 - **원격 항목을 탐색기로 끌어내기** — T7은 로컬 항목만 OLE 드래그로 내보낸다. 원격 항목은 「끌기 시작 시점에는 아직 로컬에 파일이 없다」라 지연 렌더링(`CFSTR_FILEDESCRIPTOR`/`CFSTR_FILECONTENTS`)을 구현해야 하며, 이번 범위의 몇 배다.
 - **드래그 중 미리보기 그림**(끌고 있는 항목의 반투명 썸네일). `IDragSourceHelper`가 필요하다.
+- **기존 소스 세 곳에 BEL(0x07) 문자가 박혀 있다** — `src/app/settings.rs`·`src/remote/queue.rs`·`src/ui/tabs.rs`(그리고 `src/ui/queue_panel.rs`)의 시험 픽스처 경로에서 `r"C:"`가 실제 BEL 바이트로 들어가 있다. **master에도 있어 이번 변경과 인과가 없다**(이번 회차가 만든 같은 오류는 `app/remote.rs`에서 고쳤다). 시험 결과에는 영향이 없으나 소스에 제어 문자가 남아 있는 것은 정리 대상이다.
 - **`ExplorerApp`의 채널·상태 필드가 이번 회차에 더 늘었다** — `relist`(T2)·`copy_tx`/`copy_rx`(T4)·외부 드롭의 `is_dir` 측정 채널(T5). 대장의 `[SUGGEST] 충돌 상태 6개 필드를 ConflictState로 묶기`(2026-08-20)와 대상이 겹치지는 않지만(그 항목은 `conflict_*` 한정) **같은 범주가 커졌다**는 것을 다음 회차가 알아야 한다. 캡슐화를 다룰 때 이번에 는 것까지 함께 본다.
 - **[SUGGEST] `views → panels` 이중 순회가 세 곳에 반복**(`src/ui/app/remote.rs`의 `list_moved_panels`·`request_remote_list`·`pump_relist`) — 공통화 문턱 3회에 닿았다. 조건만 받는 순회 헬퍼로 묶을 수 있다(T2 quality 리뷰 S1).
 - 직전 회차에서 이월된 항목 셋(다음 회차 대상): 내보내기 진행 표시 · 내보내기 기본 파일 이름의 앱 이름 표기 · `remote::connection::tests::늦게_도착한_이전_세대의_목록은_버려진다`의 간헐 실패.
@@ -300,7 +301,8 @@
 - T3·T5 — 신규 모듈 추가(`src/fs/file_op.rs`, `src/ui/shell_host.rs`에 함수 1개)와 `src/fs/mod.rs` 등록. 구조 변경이나 파일 삭제·이동은 없다
 - T5 — `splitter::LayoutOutcome`에 `pane_rects` 필드 추가. crate 내부 계약이며 `Default` 파생이라 기존 생성부 10곳이 그대로 컴파일된다(`show_layout`의 인자는 늘지 않는다 — T6 Design ③)
 - T4 — `i18n` 카탈로그(`src/i18n/mod.rs`의 `dynamic`)에 화면 문구 함수 2개 추가
-- T7 — `Cargo.toml`의 `windows` crate에 `Win32_System_Ole` feature 추가. **신규 crate가 아니라 이미 있는 의존성의 feature**이며 `Cargo.lock`을 바꾸지 않는다. `src/fs/drag_source.rs` 신규 모듈
+- T7 — `Cargo.toml`의 `windows` crate에 feature 둘(`Win32_System_Ole`·`Win32_System_SystemServices`) 추가와 **`windows-core` 직접 의존성 명시**. **신규 crate가 아니다** — `windows`가 이미 같은 버전을 링크하던 전이 의존성을 올린 것이라 패키지 집합과 라이선스 지문이 그대로다(`Cargo.lock`은 앱의 `dependencies` 배열에 한 줄이 늘 뿐 `name`/`version` 줄은 불변 — 지문 시험 통과로 확인). `src/fs/drag_source.rs` 신규 모듈
+  - **구현 중 확정**: `IDropSource`의 vtable 생성이 `MODIFIERKEYS_FLAGS`를 요구해 `SystemServices` feature가, `#[implement]` 매크로가 만들어 내는 코드가 crate 루트의 `windows_core` 이름을 요구해 직접 의존성이 각각 필요했다(둘 다 없으면 컴파일되지 않는다).
 - T1·T8 — `docs/prd.md`·`README.md` 개정(요구 정본 변경 — 이 plan 승인이 곧 그 개정의 승인이다)
 - 로컬 작업 브랜치에 대한 task별 commit
 
@@ -327,6 +329,9 @@
   7. 6에서 끌던 것을 다시 MOA 창 안의 다른 탭에 놓아도 복사되는지 본다(T7 ↔ T5 상호작용)
 
 ## Phase Ledger
+
+- **Phase F 통과** — `plan-completion-reviewer`가 BLOCKER 0·MAJOR 0·MINOR 5를 냈고 다섯 건 모두 이번 변경이 유발한 문서·주석 어긋남이라 그 자리에서 해소했다(상호 배제 주석의 과잉 주장 · `fs/mod.rs` 모듈 주석 · 시험 픽스처의 BEL 문자 · 사전 승인 항목 문면 · PRD FR-55의 경로 열거). 다섯 번 반복됐던 doc 주석 오귀속은 **남아 있지 않음**을 리뷰어가 삽입 지점 전수(19곳)로 확인했다.
+- **Phase G 통과 (Must 100%)** — 이번 회차의 Must는 FR-37(문면 개정) 하나이며 충족. Should 신설 둘(FR-60·FR-61)도 충족. PRD의 다른 부분과의 모순 없음(라인 114의 「자체 파일 작업 UI 제외」는 셸 위임이라 오히려 그 원칙을 따른다).
 
 ## Retry Ledger
 
