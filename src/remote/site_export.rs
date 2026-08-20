@@ -358,7 +358,12 @@ fn write_record(store: &mut SiteStore, id: SiteId, site: &ExportedSite) {
 /// 비밀번호를 담는다 — **문서에 없으면 있던 것을 지우지 않는다** (plan D16).
 ///
 /// 「비밀번호를 빼고 내보냈다」는 것은 「비밀번호를 지우겠다」는 뜻이 아니다. 없는 것으로 있는 것을
-/// 덮으면 사용자가 기대하지 않은 자리에서 로그인 정보가 사라진다
+/// 덮으면 사용자가 기대하지 않은 자리에서 로그인 정보가 사라진다.
+///
+/// 담지 못하면 그 사실을 셈에 남긴다 (plan D15) — 나머지 사이트는 그대로 반영하고, 화면이
+/// 「N개는 비밀번호를 저장하지 못했습니다」로 알린다. **DPAPI 봉인 실패 자체는 시험에서
+/// 만들어 낼 수 없으므로**(`CryptProtectData`를 실패시킬 길이 없다) 이 분기는 `set_password`가
+/// 거짓을 주는 **다른 갈래**(대상 사이트가 없을 때 — `sites.rs`의 `get_mut`이 `None`)로 덮는다
 fn apply_password(
     store: &mut SiteStore,
     id: SiteId,
@@ -761,6 +766,48 @@ mod tests {
                 .password_unreadable,
             0
         );
+    }
+
+    #[test]
+    fn 비밀번호를_담지_못하면_셈에_남고_나머지는_그대로_반영된다() {
+        // plan D15의 가져오기 쪽 절반. `set_password`가 거짓을 주는 갈래로 분기를 덮는다 —
+        // 대상 사이트가 없으면 봉인에 성공해도 담을 곳이 없어 거짓이다(`sites.rs`의 `get_mut`)
+        let mut store = SiteStore::new();
+        let mut summary = ImportSummary::default();
+        let prepared = PreparedSite {
+            site: ExportedSite {
+                name: "없는 사이트".to_owned(),
+                protocol: Protocol::Ftp,
+                host: "gone.test".to_owned(),
+                port: 21,
+                encryption: Encryption::default(),
+                logon: LogonType::Normal,
+                user: "user".to_owned(),
+                transfer_mode: TransferMode::default(),
+                connection_limit: None,
+                charset: Charset::Utf8,
+                hidden: false,
+            },
+            password: Some("담기지 못할 비밀번호".to_owned()),
+        };
+        apply_password(&mut store, SiteId(999), &prepared, &mut summary);
+        assert_eq!(summary.password_failed, 1, "담지 못한 것을 세어야 한다");
+
+        // 담을 곳이 있으면 세지 않는다
+        let id = add_site(&mut store, "정상 사이트", "ok.test", "user");
+        let mut summary = ImportSummary::default();
+        apply_password(&mut store, id, &prepared, &mut summary);
+        assert_eq!(summary.password_failed, 0);
+        assert_eq!(store.password(id).as_deref(), Some("담기지 못할 비밀번호"));
+
+        // 문서에 비밀번호가 없으면 셈에도 손대지 않는다 (D16 — 지우지 않으므로 실패도 아니다)
+        let mut summary = ImportSummary::default();
+        let without = PreparedSite {
+            password: None,
+            ..prepared.clone()
+        };
+        apply_password(&mut store, SiteId(999), &without, &mut summary);
+        assert_eq!(summary.password_failed, 0);
     }
 
     #[test]
