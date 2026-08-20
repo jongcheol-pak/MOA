@@ -444,6 +444,13 @@
 
 ## Progress Log
 
+- T1-T2 완료 (커밋 7a86a66, dd6caa7 이후 완료 커밋): 순수 계층 둘을 세웠다.
+  - T1 `remote::envelope` — CNG PBKDF2-SHA256(600,000회) + AES-256-GCM 봉투, hex 직접 구현. 신규 크레이트 0.
+  - T2 `remote::site_export` — 문서 모델·충돌 판정·병합. `password_sealed`는 문서에 담지 않는다(D6 보호).
+  - **D13 실측**: 릴리즈 빌드 PBKDF2 1회 파생 **0.126초**(상한 1.0초) → 반복 유지.
+  - **D16 신설**(구현 중 확정): 문서에 비밀번호가 없으면 기존 것을 지우지 않는다. plan D14가 「필드만 갈아 끼운다」까지만 정해 열려 있던 갈래이며, 지우는 쪽은 되돌릴 수 없는 손실이라 지키는 쪽을 택했다.
+  - 리뷰: T1 spec/quality 각 MINOR 1(판정 유보) · T2 quality OK, spec MAJOR 1(`password_failed` 분기 미검증) → 재현 가능한 실패 갈래로 시험 추가해 해소.
+
 ## Next Steps
 
 - 권장 다음 액션: `pjc:implement-task`로 T1부터 실행
