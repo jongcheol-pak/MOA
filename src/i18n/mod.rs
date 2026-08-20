@@ -480,6 +480,8 @@ strings! {
     queue_empty => "아직 전송한 파일이 없습니다" / "No transfers yet";
 
     /// 새로 만드는 사이트의 기본 이름 (FR-27)
+    site_default_name => "새 사이트" / "New site";
+
     // ── 사이트 목록 내보내기·가져오기 (FR-59) ──
     /// 파일 대화의 형식 필터 — 괄호 안은 실제 확장자다
     file_dialog_filter
@@ -487,7 +489,6 @@ strings! {
         / "MOA site list (*.moasites)";
     /// 내보내기 대화에 미리 채워 두는 파일 이름
     file_dialog_export_name => "MOA 사이트.moasites" / "MOA sites.moasites";
-    site_default_name => "새 사이트" / "New site";
 
     // ── 원격 계층: 작업 이름 (오류 문구 앞에 붙는 동사 조각) ──
     /// `RemoteOp`가 이 함수들로 풀린다 — 조각과 문장 틀을 함께 옮겨야 뜻이 통한다
