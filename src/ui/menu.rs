@@ -365,7 +365,6 @@ pub(crate) fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]

@@ -276,7 +276,7 @@ impl WorkspaceSidebar {
             self.begin_edit(index, list);
         }
         resp.context_menu(|ui| {
-            crate::ui::theme::menu_style(ui);
+            theme::menu_style(ui);
             if ui.button(crate::i18n::rename()).clicked() {
                 self.begin_edit(index, list);
                 ui.close();
@@ -804,7 +804,6 @@ fn reorder_target(from: usize, insert_at: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     /// 사이드바를 한 프레임 그리고 화면에 나온 글자를 모은다

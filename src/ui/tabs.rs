@@ -616,7 +616,6 @@ fn elide(title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     /// 탭 영역 하나 — 왼쪽 위 모서리를 원점에서 떼어 좌표 계산 실수를 드러낸다
