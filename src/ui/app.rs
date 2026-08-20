@@ -1755,7 +1755,10 @@ impl ExplorerApp {
         }
         // 여기서부터는 OS가 드래그를 쥔다 — 앱 안 드롭이 겹치지 않게 페이로드를 거둔다
         egui::DragAndDrop::clear_payload(ctx);
-        crate::fs::drag_source::start_copy_drag(&sources);
+        // 그림 크기는 여기서 정해 내려보낸다 — `fs`는 화면 배율을 모른다.
+        // 96 논리 픽셀은 탐색기가 그리는 드래그 그림과 비슷한 크기다
+        let preview_px = (96.0 * ctx.pixels_per_point()).round() as i32;
+        crate::fs::drag_source::start_copy_drag(&sources, preview_px);
     }
 
     /// OS(탐색기·바탕화면)에서 끌어온 파일을 받는다 (FR-61).
