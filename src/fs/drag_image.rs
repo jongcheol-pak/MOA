@@ -228,15 +228,12 @@ mod tests {
         let 초기화됨 = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
         let 경로 = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         let 그림 = build(&경로, 96);
-        if let Some(그림) = 그림 {
-            assert!(그림.width >= 1 && 그림.width <= 96, "청한 크기 안에 들어온다");
-            assert!(그림.height >= 1 && 그림.height <= 96);
-            그림.delete();
-        } else {
-            // 셸이 아이콘조차 주지 못하는 환경(원격 세션 등)이 있다 — 그때도 앱은 그림 없이
-            // 끌면 되므로 실패로 보지 않는다
-            assert!(경로.exists(), "시험 대상 파일 자체는 있어야 한다");
-        }
+        // `None`을 허용하지 않는다 — 실재하는 평범한 파일이면 썸네일이 없어도 형식 아이콘은
+        // 나와야 하므로, 여기서 물러서면 두 갈래가 모두 끊긴 회귀를 잡지 못한다
+        let 그림 = 그림.expect("실재하는 파일이면 적어도 형식 아이콘은 얻어야 한다");
+        assert!(그림.width >= 1 && 그림.width <= 96, "청한 크기 안에 들어온다");
+        assert!(그림.height >= 1 && 그림.height <= 96);
+        그림.delete();
         if 초기화됨 {
             // 안전성: 위에서 성공한 초기화와 같은 스레드에서 1회 호출
             unsafe {
