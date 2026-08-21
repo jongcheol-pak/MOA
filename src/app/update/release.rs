@@ -220,6 +220,23 @@ mod tests {
     }
 
     #[test]
+    fn 여럿이_함께_있어도_설치_파일만_고른다() {
+        // 실제 릴리즈에는 체크섬 파일·소스 묶음이 함께 달린다 — 하나씩만 주는 시험으로는
+        // 「고르고 거른다」가 확인되지 않는다
+        let assets = [
+            자산("MOA-Setup-0.2.0.exe.sha256"),
+            자산("Source code (zip)"),
+            자산("MOA-Setup-0.2.0.exe"),
+        ]
+        .join(",");
+        let json = 응답("v0.2.0", &실제_형식_본문(), &assets);
+        let info = parse_release(&json, "0.1.0")
+            .expect("읽어야 한다")
+            .expect("새 판이다");
+        assert_eq!(info.asset_name, "MOA-Setup-0.2.0.exe");
+    }
+
+    #[test]
     fn 설치_파일이_없으면_그렇게_알린다() {
         let json = 응답(
             "v0.2.0",
