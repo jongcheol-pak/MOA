@@ -8,6 +8,7 @@ pub mod app;
 pub mod app_icon;
 pub mod dialog;
 pub mod dock;
+pub mod drag_preview;
 pub mod file_list;
 pub mod font_scan;
 pub mod icon_tex;

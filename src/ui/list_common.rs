@@ -130,7 +130,15 @@ pub fn drop_direction(
 /// 항목이 전부 로컬이고 놓인 자리도 로컬일 때만 성립한다. 원격이 하나라도 섞이면
 /// `None`이며 그 드롭은 종전대로 전송 경로(`drop_direction`)로 간다.
 ///
-/// **같은 폴더에 놓은 것을 걸러내지 않는다** — 사본을 만들지 거부할지는 셸이 정한다(D9).
+/// **끌어온 자리에 그대로 놓으면 `None`이다** — 항목들이 있던 폴더가 놓인 폴더와 같으면
+/// 복사를 걸지 않는다(2026-08-21 사용자 요청). 종전에는 셸에 넘겨 `- 복사본`이 생겼는데
+/// 사본을 만들려던 조작이 아니었다. **탭이 아니라 폴더로 견주므로** 다른 탭이 우연히 같은
+/// 폴더를 보고 있을 때도 취소된다.
+///
+/// `None`이 곧 "아무 일도 없음"인 이유: 호출부(`ui::app`)는 `None`을 전송 경로로 보내는데
+/// 로컬↔로컬은 `drop_direction`이 전부 `None`이라 보낼 것이 하나도 남지 않아 큐 등록도
+/// 확인 대화도 열리지 않는다.
+///
 /// 빈 항목도 `None`이다: 복사를 걸 것이 없으면 아무 일도 일어나지 않아야 한다
 pub fn local_copy_target(drop: &DropOutcome) -> Option<&std::path::Path> {
     let DropTarget::Local(dir) = &drop.target else {
@@ -144,7 +152,44 @@ pub fn local_copy_target(drop: &DropOutcome) -> Option<&std::path::Path> {
     {
         return None;
     }
+    let from_same_dir = drop.items.iter().all(|item| match item {
+        DragItem::Local { path, .. } => path.parent().is_some_and(|from| same_dir(from, dir)),
+        // 위 `all`이 이미 걸렀으므로 닿지 않는다. 닿는다면 로컬 복사가 아니므로 제자리도 아니다
+        DragItem::Remote { .. } => false,
+    });
+    if from_same_dir {
+        return None;
+    }
     Some(dir.as_path())
+}
+
+/// 두 경로가 같은 폴더를 가리키는가 — **ASCII 대소문자를 접어서** 견준다.
+///
+/// `Path`의 기본 비교는 구성요소 단위라 끝 구분자 차이(`C:\a\b\` vs `C:\a\b`)는 이미
+/// 흡수하지만 대소문자는 흡수하지 않는다. Windows 파일시스템은 대소문자를 가리지 않으므로
+/// 주소창으로 `C:\Work`를 연 탭과 `C:\work`를 연 탭은 같은 폴더다.
+///
+/// **파일시스템을 두드리지 않는다**(`canonicalize` 등) — 드롭마다 부르는 자리라
+/// 블로킹 호출을 넣을 수 없다(AGENTS: UI 스레드 파일시스템 블로킹 금지). ASCII만 접는 것은
+/// 한글·한자에는 대소문자가 없어 이 근사로 충분하기 때문이다
+fn same_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let mut left = a.components();
+    let mut right = b.components();
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return true,
+            (Some(x), Some(y)) => {
+                if !x
+                    .as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&y.as_os_str().to_string_lossy())
+                {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// 숨김·시스템 항목을 그릴 때 글자·아이콘에 곱하는 불투명도 (FR-13).
@@ -307,6 +352,55 @@ mod tests {
             target: local_target(),
         };
         assert_eq!(local_copy_target(&빈_드롭), None);
+    }
+
+    #[test]
+    fn 같은_폴더에_놓으면_복사하지_않는다() {
+        // 2026-08-21 사용자 요청 — 끌어온 자리에 그대로 놓으면 사본을 만들지 않는다
+        let 제자리 = DropOutcome {
+            items: vec![local_item()],
+            source_site: None,
+            target: DropTarget::Local(std::path::PathBuf::from(r"C:\work")),
+        };
+        assert_eq!(local_copy_target(&제자리), None);
+    }
+
+    #[test]
+    fn 대소문자만_다른_같은_폴더도_취소다() {
+        // Windows 파일시스템은 대소문자를 가리지 않는다 — 주소창으로 연 탭이 다른
+        // 대소문자를 들고 있어도 같은 폴더다
+        let 대소문자_다름 = DropOutcome {
+            items: vec![DragItem::Local {
+                path: std::path::PathBuf::from(r"C:\Work\app.js"),
+                is_dir: false,
+            }],
+            source_site: None,
+            target: DropTarget::Local(std::path::PathBuf::from(r"C:\work")),
+        };
+        assert_eq!(local_copy_target(&대소문자_다름), None);
+    }
+
+    #[test]
+    fn 여러_항목_중_하나라도_다른_폴더에서_왔으면_복사다() {
+        // 전부 제자리일 때만 취소다 — 하나라도 밖에서 왔으면 복사할 것이 있다
+        let 섞인_출처 = DropOutcome {
+            items: vec![
+                DragItem::Local {
+                    path: std::path::PathBuf::from(r"C:\work\a.txt"),
+                    is_dir: false,
+                },
+                DragItem::Local {
+                    path: std::path::PathBuf::from(r"C:\other\b.txt"),
+                    is_dir: false,
+                },
+            ],
+            source_site: None,
+            target: DropTarget::Local(std::path::PathBuf::from(r"C:\work")),
+        };
+        assert_eq!(
+            local_copy_target(&섞인_출처),
+            Some(std::path::Path::new(r"C:\work"))
+        );
     }
 
     #[test]

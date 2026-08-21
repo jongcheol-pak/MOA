@@ -21,6 +21,7 @@ use crate::remote::manager::ConnectionManager;
 use crate::remote::types::{RemoteEntry, RemotePath, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::address_bar::{AddressBar, NavAction};
+use crate::ui::drag_preview;
 use crate::ui::file_list::{FileListAction, FileListView};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
 use crate::ui::list_common::{DropOutcome, DropTarget, FileDrag};
@@ -252,6 +253,11 @@ pub struct PanelState {
     /// 원격 목록 요청의 세대 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
     /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다
     remote_generation: u64,
+    /// 끄는 동안 커서를 따라오는 그림의 대상 — 이 패널에서 시작한 끌기의 **첫 항목** (FR-38).
+    ///
+    /// 그림을 이 패널이 그리는 이유는 썸네일 텍스처(`thumb_textures`)를 패널이 쥐기 때문이다 —
+    /// 앱에는 썸네일 캐시가 없어 첫 항목의 썸네일에 닿을 길이 없다 (plan D5)
+    drag_preview: Option<crate::ui::list_common::DragItem>,
     /// 썸네일 픽셀 캐시 (FR-24) — 상한이 패널당이라 패널이 소유한다 (NFR-9)
     thumbs: ThumbnailCache,
     /// 올라간 썸네일 텍스처 — 픽셀 캐시와 함께 비워진다
@@ -303,6 +309,7 @@ impl PanelState {
             revert_at: None,
             remote_dirty: false,
             remote_generation: 0,
+            drag_preview: None,
             thumbs: ThumbnailCache::new(),
             thumb_textures: ThumbnailTextures::new(),
         }
@@ -1494,17 +1501,33 @@ impl PanelState {
         }
 
         // 끌기 시작 — 무엇을 싣는지는 지금 보고 있는 곳이 정한다
-        if let Some(index) = interaction.drag_started {
+        let started = interaction.drag_started.map(|index| {
             let source = &self.tabs.active().source;
             let remote_dir = source.remote_path().cloned();
             let source_site = match source {
                 TabSource::Remote { site, .. } => Some(*site),
                 TabSource::Local(_) => None,
             };
-            let items = self.list.drag_items(index, remote_dir.as_ref());
-            if !items.is_empty() {
-                egui::DragAndDrop::set_payload(ui.ctx(), FileDrag { items, source_site });
-            }
+            (
+                self.list.drag_items(index, remote_dir.as_ref()),
+                source_site,
+            )
+        });
+        // 커서를 따라오는 그림의 수명은 `drag_preview::next_item`이 쥔다 (FR-38 — plan D10).
+        // **페이로드를 세우기 전에** 부르므로 시작 프레임의 `has_payload`는 거짓인데,
+        // 그 함수가 시작 신호를 먼저 보므로 이번 프레임의 그림이 버려지지 않는다
+        self.drag_preview = drag_preview::next_item(
+            self.drag_preview.take(),
+            started.as_ref().map(|(items, _)| items.as_slice()),
+            egui::DragAndDrop::has_payload_of_type::<FileDrag>(ui.ctx()),
+        );
+        if let Some((items, source_site)) = started
+            && !items.is_empty()
+        {
+            egui::DragAndDrop::set_payload(ui.ctx(), FileDrag { items, source_site });
+        }
+        if let Some(item) = &self.drag_preview {
+            drag_preview::show(ui.ctx(), icons, textures, &self.thumb_textures, item);
         }
 
         // 드롭 — 이 목록 위에서 손을 놓았는가

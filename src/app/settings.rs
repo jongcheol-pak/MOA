@@ -237,9 +237,10 @@ pub struct QueueSession {
 /// 하단 도크의 상태 (FR-36·FR-40)
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DockSession {
-    /// `queue`/`log`, 빈 문자열이면 닫혀 있었다
-    #[serde(default)]
-    pub panel: String,
+    // **열려 있었는지는 담지 않는다** — 앱은 언제나 도크가 닫힌 채로 시작하므로
+    // 되살릴 값이 없다(2026-08-21 사용자 요청 — FR-44). 종전에는 `panel: String`이
+    // 여기 있었고, 옛 설정 파일에 남은 그 키는 serde가 무시한다(`deny_unknown_fields`를
+    // 쓰지 않는다). 그래서 스키마 버전(v3)도 올리지 않는다
     /// 큐 화면의 거르개 키
     #[serde(default)]
     pub filter: String,
@@ -845,7 +846,6 @@ mod tests {
             error: String::new(),
         }];
         session.dock = DockSession {
-            panel: "log".to_owned(),
             filter: "error".to_owned(),
             columns: vec![34.0, 300.0, 300.0, 120.0, 84.0, 118.0, 150.0],
         };
@@ -858,6 +858,29 @@ mod tests {
             .expect("원격 탭");
         assert_eq!(remote_tab.site, 7);
         assert_eq!(remote_tab.path, "/var/www");
+    }
+
+    #[test]
+    fn 옛_파일에_남은_도크_열림_키는_무시한다() {
+        // `DockSession.panel`을 걷어냈다(2026-08-21 — FR-44). 그 키가 남은 설정 파일이
+        // 통째로 폴백하면 사용자의 워크스페이스·분할·탭까지 초기화되므로,
+        // **모르는 키를 무시하고 나머지를 읽는다**는 계약을 여기서 못 박는다
+        let mut session = sample();
+        session.dock = DockSession {
+            filter: "error".to_owned(),
+            columns: vec![34.0, 300.0, 300.0, 120.0, 84.0, 118.0, 150.0],
+        };
+        let text = serde_json::to_string(&session).expect("직렬화");
+        // 걷어낸 키를 손으로 다시 끼워 넣는다 — 옛 버전이 적어 둔 파일과 같은 모양이다
+        let 옛_파일 = text.replace(r#""dock":{"#, r#""dock":{"panel":"queue","#);
+        assert!(
+            옛_파일.contains(r#""panel":"queue""#),
+            "옛 키를 끼워 넣지 못했다 — 이 시험이 아무것도 보지 않는다"
+        );
+        let back = parse_session(&옛_파일).expect("옛 키 하나 때문에 세션을 통째로 잃었다");
+        assert_eq!(back.dock.filter, "error", "나머지 값은 그대로 읽힌다");
+        assert_eq!(back.dock.columns[1], 300.0);
+        assert_eq!(back.workspaces.len(), session.workspaces.len());
     }
 
     #[test]

@@ -73,8 +73,6 @@ const TAB_DIVIDER_GAP: f32 = 13.0;
 /// 그 선이 스트립 위아래에서 물러서는 거리 — 끝까지 그으면 탭 경계처럼 보인다
 const TAB_DIVIDER_INSET: f32 = 7.0;
 
-const PANEL_QUEUE: &str = "queue";
-const PANEL_LOG: &str = "log";
 const FILTER_ALL: &str = "all";
 const FILTER_DONE: &str = "done";
 const FILTER_ERROR: &str = "error";
@@ -91,15 +89,16 @@ impl Default for DockState {
 }
 
 impl DockState {
-    /// 세션에 담을 형태로 (FR-44) — **사이트 고르기는 담지 않는다**.
-    /// 연결이 없는 채로 시작하므로 되살려도 가리킬 곳이 없다
+    /// 세션에 담을 형태로 (FR-44) — **담지 않는 것이 둘이다**.
+    ///
+    /// **사이트 고르기**: 연결이 없는 채로 시작하므로 되살려도 가리킬 곳이 없다.
+    ///
+    /// **열려 있었는가**: 앱은 언제나 도크가 닫힌 채로 시작한다(2026-08-21 사용자 요청) —
+    /// 전송이 도는 중이 아닌데 재시작마다 화면 아래가 268px 먹힌 채 뜨는 것을 막는다.
+    /// 트레이로 숨겼다 되부르는 것은 같은 실행이라 보고 있던 그대로다(세션을 다시 읽지 않는다).
+    /// 필터·열 폭은 종전대로 담는다 — 다시 열었을 때 보던 조건이 남아야 한다
     pub fn to_session(&self) -> crate::app::settings::DockSession {
         crate::app::settings::DockSession {
-            panel: match self.panel {
-                Some(DockPanel::Queue) => PANEL_QUEUE.to_owned(),
-                Some(DockPanel::Log) => PANEL_LOG.to_owned(),
-                None => String::new(),
-            },
             filter: match self.filter {
                 QueueFilter::All => FILTER_ALL,
                 QueueFilter::Done => FILTER_DONE,
@@ -110,14 +109,13 @@ impl DockState {
         }
     }
 
-    /// 저장된 것에서 되살린다 — 모르는 키는 기본값(닫힘·전체)이다
+    /// 저장된 것에서 되살린다 — 모르는 키는 기본값(전체)이다.
+    ///
+    /// **`panel`은 언제나 `None`이다** — 열려 있었는지를 담지 않으므로 되살릴 것도 없다
+    /// (위 `to_session` 참조). 옛 설정 파일에 남은 `"panel"` 키는 serde가 무시한다
     pub fn from_session(saved: &crate::app::settings::DockSession) -> DockState {
         DockState {
-            panel: match saved.panel.as_str() {
-                PANEL_QUEUE => Some(DockPanel::Queue),
-                PANEL_LOG => Some(DockPanel::Log),
-                _ => None,
-            },
+            panel: None,
             filter: match saved.filter.as_str() {
                 FILTER_DONE => QueueFilter::Done,
                 FILTER_ERROR => QueueFilter::Error,
