@@ -1,7 +1,8 @@
 //! 정보 대화 (FR-58).
 //!
-//! 타이틀바 설정 메뉴의 `정보`가 연다. 가운데에 앱 아이콘, 그 아래 이름과 버전 한 줄뿐이라
-//! 높이를 본문이 정한다 — 그래서 `dialog::show_fixed`가 아니라 `dialog::show`를 쓴다.
+//! 타이틀바 설정 메뉴의 `정보`가 연다. 가운데에 앱 아이콘, 그 아래로 이름·버전 한 줄과
+//! 저작권·라이선스·저장소 세 줄이 선다. 담는 것이 이것뿐이라 높이를 본문이 정한다 —
+//! 그래서 `dialog::show_fixed`가 아니라 `dialog::show`를 쓴다.
 //!
 //! **아이콘은 표시할 물리 픽셀 크기로 CPU에서 줄여 올린다.** 256px 자산을 그대로 텍스처로
 //! 올리고 96px 자리에 그리면 축소를 GPU가 하는데, 선형 필터는 인접 네 텍셀만 보므로 크게
@@ -22,6 +23,10 @@ const ICON_TEXT_GAP: f32 = 16.0;
 /// 이름·버전 줄의 글자 크기 (D12) — 설정·라이선스 대화의 제목과 같은 값이라
 /// 이 앱에 새 치수를 만들지 않는다
 const NAME_FONT_PX: f32 = 16.0;
+/// 이름·버전 줄과 그 아래 세 줄 사이
+const META_GAP: f32 = 8.0;
+/// 저작권·라이선스·저장소 줄의 글자 크기 — 이름·버전보다 작게 두어 그쪽이 먼저 읽힌다
+const META_FONT_PX: f32 = 12.0;
 /// 본문 폭 (D5) — 96px 아이콘 좌우로 여백이 남는다. 프레임 폭은 여기에 셸의 여백이 더해진다
 const BODY_WIDTH: f32 = 248.0;
 
@@ -124,6 +129,31 @@ fn show_body(ui: &mut egui::Ui, icon: Option<egui::TextureId>, pixels_per_point:
         line,
         theme::TEXT,
     );
+    show_meta_lines(ui);
+}
+
+/// 이름·버전 아래의 저작권·라이선스·저장소 세 줄 (FR-58).
+///
+/// 위의 둘과 달리 위젯으로 그린다 — 저장소 줄이 누를 수 있는 링크라 클릭을 받아야 하고,
+/// 그것만 위젯으로 두면 나머지 두 줄과 줄 간격이 어긋난다.
+///
+/// 링크 색·밑줄은 egui 기본값을 그대로 쓴다 — 링크 하나를 위해 팔레트(`ui::theme`)에
+/// 새 색을 만들지 않는다
+fn show_meta_lines(ui: &mut egui::Ui) {
+    ui.add_space(META_GAP);
+    ui.vertical_centered(|ui| {
+        for text in [i18n::about_copyright(), i18n::about_license()] {
+            ui.label(
+                egui::RichText::new(text)
+                    .size(META_FONT_PX)
+                    .color(theme::TEXT_MUTED),
+            );
+        }
+        let url = i18n::about_repository_url();
+        // 스킴은 떼고 보인다 — 좁은 팝업에서 `https://`가 차지하는 자리가 아깝다
+        let label = url.strip_prefix("https://").unwrap_or(url);
+        ui.hyperlink_to(egui::RichText::new(label).size(META_FONT_PX), url);
+    });
 }
 
 /// 들고 있는 텍스처를 그대로 쓸 수 있는가 — 만든 물리 크기가 요청과 같을 때만이다
@@ -242,6 +272,68 @@ mod tests {
             line.ends_with(env!("CARGO_PKG_VERSION")),
             "버전이 뒤에 붙는다: {line}"
         );
+    }
+
+    /// 세 줄이 카탈로그를 거치는가 — **소스 훑기 시험은 이것을 잡지 못한다**.
+    ///
+    /// `i18n`의 `화면_문구가_카탈로그를_거치지_않은_곳이_없다`는 한글이 든 리터럴만 보는데
+    /// 이 셋은 전부 ASCII라, 이 파일에 그대로 박아도 그 시험은 통과한다. 그래서 값 자체를
+    /// 두 언어에서 단언한다(둘이 같은 값인 것도 함께 지킨다)
+    #[test]
+    fn 저작권_라이선스_저장소_줄이_카탈로그에_있다() {
+        for language in [LanguageSetting::Korean, LanguageSetting::English] {
+            let _guard = LanguageGuard::lock(language);
+            assert_eq!(i18n::about_copyright(), "Copyright (c) 2026 jongcheol-pak");
+            assert_eq!(i18n::about_license(), "MIT License");
+            assert_eq!(
+                i18n::about_repository_url(),
+                "https://github.com/jongcheol-pak/MOA"
+            );
+        }
+    }
+
+    /// 열린 대화에 네 줄이 모두 그려지는가.
+    ///
+    /// 셰이프 **개수**가 아니라 그려진 **글자**를 본다 — 개수만 세면 무엇이 빠졌는지 모른다
+    #[test]
+    fn 열면_이름_저작권_라이선스_저장소가_모두_그려진다() {
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        let ctx = egui::Context::default();
+        let mut dialog = AboutDialog::new();
+        dialog.open();
+        // 떠 있는 영역은 첫 프레임에 크기를 재고 다음 프레임에 그린다
+        let _first = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+
+        let mut drawn = String::new();
+        for shape in &output.shapes {
+            collect_text(&shape.shape, &mut drawn);
+        }
+        let url = i18n::about_repository_url();
+        let link_label = url
+            .strip_prefix("https://")
+            .expect("주소는 https로 시작한다");
+        for expected in [
+            i18n::dynamic::about_version_line().as_str(),
+            i18n::about_copyright(),
+            i18n::about_license(),
+            link_label,
+        ] {
+            assert!(drawn.contains(expected), "{expected:?}가 그려지지 않았다");
+        }
+    }
+
+    /// 그려진 셰이프에서 글자만 모은다 — 중첩된 `Shape::Vec`도 훑는다
+    fn collect_text(shape: &egui::epaint::Shape, out: &mut String) {
+        match shape {
+            egui::epaint::Shape::Text(text) => out.push_str(text.galley.text()),
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect_text(shape, out);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[test]
