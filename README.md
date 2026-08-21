@@ -71,7 +71,7 @@ cargo build --release
 cargo run --example gen_installer # → target/installer/MOA-Setup-<버전>.exe
 ```
 
-NSIS가 없으면 그 안내와 함께 실패로 끝납니다(빈 결과를 성공으로 알리지 않습니다).
+NSIS가 없으면 그 안내와 함께 실패로 끝납니다(빈 결과를 성공으로 알리지 않습니다). `cargo build --release`를 건너뛰어 `target/release/moa.exe`가 소스보다 낡았을 때도 같은 방식으로 멈춥니다.
 
 ### 설치 파일로 설치할 때
 

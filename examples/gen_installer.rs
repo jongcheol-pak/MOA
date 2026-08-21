@@ -12,11 +12,23 @@
 //! 창이 없는 exe를 겨냥한 것이고, 개발용 CLI에는 오류를 알릴 수단이 필요하다).
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 /// 설치 스크립트가 있는 폴더 — **makensis의 작업 디렉터리로 지정한다**.
 /// `.nsi`의 경로가 전부 이 폴더 기준이라, makensis가 스크립트 폴더로 옮기든 아니든 같은 자리를 가리킨다
 const SCRIPT_DIR: &str = "installer";
 const SCRIPT_NAME: &str = "moa.nsi";
+
+/// 실행 파일에 담기는 것들 — 이 중 하나라도 `moa.exe`보다 새로우면 그 exe는 낡았다.
+/// `assets/`를 넣는 이유는 라이선스 고지·아이콘이 `include_bytes!`로 실행 파일에 박히기 때문이다
+const SOURCES: [&str; 6] = [
+    "src",
+    "assets",
+    "Cargo.toml",
+    "Cargo.lock",
+    "build.rs",
+    "app.manifest",
+];
 
 fn main() -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -25,6 +37,14 @@ fn main() -> Result<(), String> {
         return Err(format!(
             "{}: 없다 — `cargo build --release`를 먼저 돌린다",
             exe.display()
+        ));
+    }
+
+    if let Some(newer) = stale_source(&root, &exe) {
+        return Err(format!(
+            "{}: 소스보다 낡았다 — `cargo build --release`를 먼저 돌린다 (더 새로운 파일: {})",
+            exe.display(),
+            newer.display()
         ));
     }
 
@@ -53,6 +73,42 @@ fn main() -> Result<(), String> {
         .len();
     println!("{} {written}B", out.display());
     Ok(())
+}
+
+/// 담을 실행 파일이 소스보다 낡았으면 **그 소스의 경로**를 돌려준다.
+///
+/// **이 검사가 없으면 낡은 exe가 조용히 배포본에 실린다** — 2026-08-21에 설정 파일 자리를
+/// 실행 파일 옆으로 옮긴 뒤 `cargo build --release`를 다시 돌리지 않아, 옛 자리
+/// (`%APPDATA%\MOA`)에 설정을 쓰는 exe가 담긴 설치 파일이 그대로 나갔다. makensis는 그것을
+/// 알 길이 없고(스크립트 문법만 본다), 설치해서 앱을 띄워 보기 전에는 드러나지도 않는다
+fn stale_source(root: &Path, exe: &Path) -> Option<PathBuf> {
+    let built = std::fs::metadata(exe).ok()?.modified().ok()?;
+    SOURCES
+        .iter()
+        .filter_map(|name| newest(&root.join(name)))
+        .find(|(_, when)| *when > built)
+        .map(|(path, _)| path)
+}
+
+/// `path` 아래에서 가장 최근에 바뀐 **파일**과 그 시각. 파일이면 그 자신이다.
+///
+/// 디렉터리 자체의 시각은 세지 않는다 — 파일을 하나 지우기만 해도 그 시각이 새로 찍혀,
+/// 실제로는 아무것도 바뀌지 않았는데 낡았다고 판정하게 된다
+fn newest(path: &Path) -> Option<(PathBuf, SystemTime)> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.is_file() {
+        return Some((path.to_owned(), meta.modified().ok()?));
+    }
+    let mut best: Option<(PathBuf, SystemTime)> = None;
+    for entry in std::fs::read_dir(path).ok()?.flatten() {
+        let Some(found) = newest(&entry.path()) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(_, when)| found.1 > *when) {
+            best = Some(found);
+        }
+    }
+    best
 }
 
 /// `makensis` 실행 파일을 찾는다 — PATH → `%ProgramFiles%` → `%ProgramFiles(x86)%` 순서.

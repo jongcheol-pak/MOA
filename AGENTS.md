@@ -19,7 +19,7 @@
 - **Format**: `cargo fmt`
 - **라이선스 고지 재생성**: `cargo run --example gen_licenses` — 의존성을 더하거나 버전을 올린 뒤 반드시 돌린다. **산출물이 둘이다**: 앱이 읽는 `assets/licenses.json`과 저장소에서 보는 `THIRD-PARTY-NOTICES.md`(레포 루트). 앞의 것이 낡으면 `Cargo.lock` 지문 대조 시험이 실패한다
 - **아이콘 자산 재생성**: `cargo run --example gen_app_icon` — `docs/AppIcon.png`를 바꾼 뒤에만 돌린다. `assets/app_icon_256.png`를 덮어쓰며, 그 자산은 정보 화면(FR-58)이 읽는다
-- **설치 파일 생성**: `cargo build --release` → `cargo run --example gen_installer` — `installer/moa.nsi`를 makensis에 넘겨 `target/installer/MOA-Setup-<버전>.exe`를 만든다. **NSIS가 선행 설치돼 있어야 한다**(`winget install NSIS.NSIS`) — 없으면 그 안내와 함께 실패로 끝난다(아무것도 만들지 않고 성공으로 끝나지 않는다)
+- **설치 파일 생성**: `cargo build --release` → `cargo run --example gen_installer` — `installer/moa.nsi`를 makensis에 넘겨 `target/installer/MOA-Setup-<버전>.exe`를 만든다. **NSIS가 선행 설치돼 있어야 한다**(`winget install NSIS.NSIS`) — 없으면 그 안내와 함께 실패로 끝난다(아무것도 만들지 않고 성공으로 끝나지 않는다). **릴리즈 빌드를 건너뛰어도 같은 방식으로 멈춘다** — `target/release/moa.exe`가 `src`·`assets`·`Cargo.toml`·`Cargo.lock`·`build.rs`·`app.manifest`보다 낡으면 안내와 함께 실패한다(2026-08-21에 낡은 exe가 담긴 설치 파일이 나가 설정이 옛 자리에 생긴 적이 있다)
 
 ## 데이터 접근
 - **DB/스토어**: 없음 (**실행 파일과 같은 폴더의** `settings.json` 하나에 **세션 + 앱 설정**을 함께 담는다 — 설치본이면 `%LOCALAPPDATA%\Programs\MOA\settings.json`, 개발 실행이면 `target/debug\settings.json`이다. 2026-08-21 결정으로 `%APPDATA%\MOA`에서 옮겼고 **옛 파일은 읽지 않는다**(마이그레이션 없음) — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
