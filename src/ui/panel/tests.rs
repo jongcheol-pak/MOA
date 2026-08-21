@@ -1077,6 +1077,64 @@ fn 마지막_탭을_닫으면_패널_닫기를_청한다() {
 }
 
 #[test]
+fn 사이트를_지우면_그_사이트_탭만_닫힌다() {
+    // 사이드바에서 사이트를 지울 때의 길 (FR-29) — 다른 사이트·로컬 탭은 그대로 둔다
+    let ctx = egui::Context::default();
+    let mut panel = PanelState::new(PathBuf::from(r"C:\"));
+    panel.open_remote_tab(SiteId(1), RemotePath::new("/a"));
+    panel.attach_conn(ConnectionId(7));
+    panel.open_remote_tab(SiteId(2), RemotePath::new("/b"));
+    panel.attach_conn(ConnectionId(8));
+    panel.open_remote_tab(SiteId(1), RemotePath::new("/c"));
+    panel.attach_conn(ConnectionId(7));
+    assert_eq!(panel.tabs.len(), 4);
+
+    assert!(
+        !panel.close_site_tabs(SiteId(1), &ctx),
+        "다른 탭이 남았는데 마지막 탭이라고 알렸다"
+    );
+    assert_eq!(panel.tabs.len(), 2, "사이트 1의 탭 둘이 닫히지 않았다");
+    assert_eq!(
+        panel.conns(),
+        vec![ConnectionId(8)],
+        "지운 사이트의 연결이 탭에 남았다"
+    );
+    assert!(!panel.close_requested, "패널 닫기를 앱 대신 청했다");
+    // 없는 사이트를 지우면 아무 일도 없다
+    assert!(!panel.close_site_tabs(SiteId(9), &ctx));
+    assert_eq!(panel.tabs.len(), 2);
+}
+
+#[test]
+fn 그_사이트_탭뿐인_패널은_마지막_하나를_남긴다() {
+    // 탭 목록은 비울 수 없다 — 패널을 닫을지 로컬 탭으로 되돌릴지는 앱이 정한다(FR-2)
+    let ctx = egui::Context::default();
+    let mut panel = PanelState::new(PathBuf::from(r"C:\"));
+    panel.open_remote_tab_only(SiteId(1), RemotePath::new("/a"));
+    panel.open_remote_tab(SiteId(1), RemotePath::new("/b"));
+    assert_eq!(panel.tabs.len(), 2);
+
+    assert!(
+        panel.close_site_tabs(SiteId(1), &ctx),
+        "마지막 하나가 남았다는 것을 알리지 않았다"
+    );
+    assert_eq!(panel.tabs.len(), 1, "탭 목록을 비웠다");
+    assert!(
+        matches!(panel.tabs.active().source, TabSource::Remote { site, .. } if site == SiteId(1)),
+        "남은 탭이 그 사이트의 것이 아니다"
+    );
+
+    // 앱이 로컬 탭을 열어 주면 그 뒤에는 마저 닫힌다 (T4의 마지막 패널 폴백)
+    panel.new_tab(&ctx);
+    assert!(!panel.close_site_tabs(SiteId(1), &ctx));
+    assert_eq!(panel.tabs.len(), 1);
+    assert!(
+        matches!(panel.tabs.active().source, TabSource::Local(_)),
+        "로컬 탭이 남지 않았다"
+    );
+}
+
+#[test]
 fn 패널이_쓰는_연결은_중복_없이_모인다() {
     // 패널을 닫을 때 회수 대상을 고르는 근거다 (FR-32)
     let mut panel = PanelState::new(PathBuf::from(r"C:\"));
