@@ -396,6 +396,15 @@ impl ExplorerApp {
             }
         }
 
+        // 2-1. 아직 한 번도 열지 않은 워크스페이스는 뷰가 없다 (D1 지연 생성) — 저장된
+        //      상태에서 직접 걷어낸다. 그러지 않으면 그 탭이 그대로 다시 저장돼
+        //      (`collect_session`) 다음에 그 워크스페이스를 열 때 지운 사이트가 되살아난다.
+        //      **빼지 않고 로컬 시작 폴더로 바꾼다** — 탭 목록이 비면 그 패널을 되살릴 수
+        //      없고(`PanelState::from_tabs`가 `None`), 활성 탭 번호도 어긋난다
+        for state in self.restored.values_mut() {
+            crate::ui::session::detach_site_from_state(state, site, &crate::ui::app::start_dir());
+        }
+
         // 3. 연결이 살아 있는 동안 전송을 그만두고 큐에서 뺀다
         let ids: Vec<TransferId> = self
             .queue

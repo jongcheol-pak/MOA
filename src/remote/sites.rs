@@ -258,7 +258,8 @@ mod tests {
 
     #[test]
     fn 숨기기는_목록에서_지우지_않는다() {
-        // README §1 — 사이드바 컨텍스트 메뉴의 `삭제`는 바로가기만 없앤다
+        // `hide`는 표시만 세운다 — 저장소에서 지우는 것은 `remove`뿐이다.
+        // (사이드바 `삭제`가 함께 걷어내는 연결·탭·큐는 이 저장소 밖의 일이다)
         let mut store = SiteStore::new();
         let kept = store.add("보이는 사이트");
         let hidden = store.add("숨긴 사이트");

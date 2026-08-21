@@ -337,6 +337,10 @@
 
 ## Progress Log
 
+- T6-T7 완료 (커밋 cd9dbad, 2fca8bf): PRD FR-29 문면 개정 + 결정 이력 · README 원격 연결 절 갱신.
+- Phase F 마무리 (F-7 지적 반영): **M1 — 아직 한 번도 열지 않은 워크스페이스**(`ExplorerApp::restored`)의 저장 상태에는 지운 사이트의 원격 탭이 그대로 남아 다음에 그 워크스페이스를 열 때 되살아났다. `session::detach_site_from_state`(순수 함수 + 시험 1건)를 만들어 `detach_site` 2-1단계에서 부른다 — 탭을 빼지 않고 로컬 시작 폴더로 바꾼다(목록이 비면 패널을 되살릴 수 없다).
+  - M2·m1: 이번 변경이 거짓으로 만든 주석 두 자리(`remote/sites.rs`의 숨기기 시험 주석 · `ui/sidebar.rs`의 연결 섹션 절 주석)를 고쳤다. 자기 유발이라 이연하지 않았다.
+
 - T5 완료 (커밋 50a7444): 메뉴 문구 `삭제` + 파괴색 hover(`theme::MENU_HOT_DANGER`) 복원, `sidebar_hide_site` 카탈로그 제거, stale 주석 세 자리 정리. quality SUGGEST(스타일 변경을 `ui.scope`로 가두기)는 같은 파일 범위라 그 자리에서 반영했다.
   - 검증 중 `fs::thumbnail`의 실측 시험 1건이 한 번 실패했다가 단독 재실행에서 통과했다 — 셸 썸네일 서비스 타이밍에 걸린 것이고 이번 변경과 무관하다.
 

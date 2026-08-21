@@ -229,6 +229,25 @@ fn to_queue_session(queue: &TransferQueue) -> Vec<QueueSession> {
 /// 저장된 큐를 되살린다 — **스스로 시작하지 않는다**(FR-44).
 ///
 /// 사이트가 사라진 항목은 버린다(plan Edge Case) — 어디로 보낼지 알 수 없다
+/// 저장된 워크스페이스 상태에서 그 사이트의 원격 탭을 **로컬 폴더로 되돌린다** (FR-29).
+///
+/// 사이드바에서 사이트를 지울 때 아직 한 번도 열지 않은 워크스페이스를 위해 쓴다 —
+/// 그쪽은 뷰가 없어(`ui::app`의 지연 생성) 탭을 닫을 수 없고, 손대지 않으면 저장된 상태가
+/// 그대로 다시 저장돼 다음에 그 워크스페이스를 열 때 지운 사이트가 되살아난다.
+///
+/// **탭을 빼지 않고 바꾼다** — 목록이 비면 그 패널을 되살릴 수 없고(`PanelState::from_tabs`)
+/// 활성 탭 번호도 어긋난다. 사이트를 잃은 원격 탭을 로컬로 되돌리는 것은
+/// 복원 경로(`from_tab_session`)가 이미 하는 처리와 같다
+pub fn detach_site_from_state(state: &mut WorkspaceState, site: SiteId, local: &std::path::Path) {
+    for panel in &mut state.panels {
+        for tab in &mut panel.tabs {
+            if matches!(tab, TabSpec::Remote { site: at, .. } if *at == site) {
+                *tab = TabSpec::Local(local.to_path_buf());
+            }
+        }
+    }
+}
+
 pub fn restore_queue(session: &Session) -> TransferQueue {
     let mut queue = TransferQueue::new();
     for saved in &session.queue {
@@ -557,6 +576,37 @@ mod tests {
             matches!(restored[0].panels[0].tabs[1], TabSpec::Local(_)),
             "사이트가 사라졌는데 원격 탭으로 남았다"
         );
+    }
+
+    #[test]
+    fn 열지_않은_워크스페이스에서도_지운_사이트_탭이_로컬로_바뀐다() {
+        // FR-29 — 그 워크스페이스는 뷰가 없어 탭을 닫을 수 없다. 손대지 않으면 저장된 상태가
+        // 그대로 다시 저장돼 다음에 열 때 지운 사이트가 되살아난다 (F-7 M1)
+        let (session, site) = session_with_site();
+        let mut state = restore(&session).remove(0);
+        let 탭_수 = state.panels[0].tabs.len();
+        assert!(
+            matches!(state.panels[0].tabs[1], TabSpec::Remote { .. }),
+            "원격 탭이 있는 상태로 시작해야 한다"
+        );
+
+        detach_site_from_state(&mut state, site, std::path::Path::new(r"C:\시작"));
+
+        assert!(
+            matches!(&state.panels[0].tabs[1], TabSpec::Local(path) if path == std::path::Path::new(r"C:\시작")),
+            "지운 사이트의 탭이 로컬로 바뀌지 않았다"
+        );
+        // 탭을 빼지 않는다 — 목록이 비면 패널을 되살릴 수 없고 활성 탭 번호도 어긋난다
+        assert_eq!(state.panels[0].tabs.len(), 탭_수);
+
+        // 다른 사이트의 탭은 건드리지 않는다
+        let mut 남는다 = restore(&session).remove(0);
+        detach_site_from_state(
+            &mut 남는다,
+            SiteId(site.0 + 1),
+            std::path::Path::new(r"C:\시작"),
+        );
+        assert!(matches!(남는다.panels[0].tabs[1], TabSpec::Remote { .. }));
     }
 
     #[test]
