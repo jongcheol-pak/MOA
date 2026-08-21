@@ -2019,7 +2019,7 @@ impl eframe::App for ExplorerApp {
         theme::WINDOW_BG.to_normalized_gamma_f32()
     }
 
-    /// 종료 직전 — 지금 상태를 `%APPDATA%\FileExplorer\settings.json`에 저장한다 (FR-11·NFR-7).
+    /// 종료 직전 — 지금 상태를 **실행 파일 옆의 `settings.json`**에 저장한다 (FR-11·NFR-7).
     /// 저장 실패(디스크 풀·권한)는 조용히 넘어간다 — 종료를 막을 이유가 없다
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // 진행 중이던 전송을 대기로 되돌린다 — 저장된 큐가 "전송 중"이라 주장하면
