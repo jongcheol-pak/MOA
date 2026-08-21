@@ -235,7 +235,7 @@
     - (i) 시험이 `%APPDATA%`를 전제로 쓰였을 가능성 → 실측으로 그 전제를 쓰는 시험이 없음을 확인했다(경로 함수는 비공개이고 시험은 직렬화만 다룬다). 그래도 어긋나면 그 시험을 함께 고친다(Files의 「동반」)
   - **Depends on**: -
 
-- [ ] T2. `installer/moa.nsi` — 사용자 단위 설치 스크립트
+- [x] T2. `installer/moa.nsi` — 사용자 단위 설치 스크립트
   - **Type**: C
   - **Design**: ① 새 폴더 `installer/`에 `moa.nsi` 하나 ② **설치 구역**: `!ifndef VERSION` 기본값(`0.0.0-dev`) · `RequestExecutionLevel user` · `InstallDir $LOCALAPPDATA\Programs\MOA` · MUI2(한국어 + 영어) · `MUI_ICON ..\docs\AppIcon.ico` · 담는 파일 `..\target\release\moa.exe`·`..\LICENSE`·`..\THIRD-PARTY-NOTICES.md`(경로 기준은 D8) · `OutFile ..\target\installer\MOA-Setup-${VERSION}.exe` · 시작 메뉴 바로가기 · 바탕화면 바로가기(마지막 페이지 체크박스) — **이름은 설치 언어를 따른다**: 한국어 `모아`, 영어 `MOA`(`LangString SHORTCUT_NAME`으로 두고 두 언어에 값을 준다). **제거 구역은 두 이름을 모두 지운다** — 언인스톨러는 자기 언어를 새로 정하므로 설치 때와 갈릴 수 있고, `Delete`는 없는 파일에 관대해 두 번 지워도 해가 없다(설치 언어를 레지스트리에 남겨 되읽는 길보다 단순하다) · 언인스톨러 생성과 `HKCU\...\CurrentVersion\Uninstall\MOA` 등록(DisplayName·DisplayVersion·DisplayIcon·UninstallString·NoModify·NoRepair) ③ **제거 구역**: 바로가기 둘 삭제(두 이름 모두) + 시작 메뉴 폴더 `RMDir` · `$INSTDIR`의 파일을 **이름으로 다섯 개 열거해 삭제**(`moa.exe`·`LICENSE`·`THIRD-PARTY-NOTICES.md`·`uninstall.exe`·런타임 생성물 `settings.json`·`known_hosts.json`) 후 `RMDir $INSTDIR` · `DeleteRegKey HKCU ...\Uninstall\MOA` · 자동 실행 값은 **이 설치본을 가리킬 때만** 삭제(D9 — `StrCmp $0 '\"$INSTDIR\moa.exe\" --tray'` 형태로 **작은따옴표로 감싸** 큰따옴표를 리터럴로 넣는다) · **설정은 묻지 않는다** — 설정·지문 파일이 `$INSTDIR` 안에 있으므로(T1) 폴더를 지우면 함께 사라진다(2026-08-21 사용자 결정 — 직전 계획의 「삭제 여부를 묻는 대화」는 없앤다). `$INSTDIR`의 파일 삭제 목록에 `settings.json`·`known_hosts.json`을 **명시**한다(우리가 놓지 않은 파일까지 지우지 않으면서 그 둘은 확실히 지운다) ④ `gen_installer`가 `/DVERSION`만 주며 부른다 · 다국어 문구를 별도 `.nsh`로 쪼개지 않는다(문구가 열 줄 안팎이다)
   - **Acceptance**: **T4가 기계로 단언하는 일곱 가지와 같다** — ⓐ `RequestExecutionLevel user`·`$LOCALAPPDATA\Programs\MOA` ⓑ 시작 메뉴·바탕화면 바로가기의 **생성과 제거 양쪽** ⓒ 자동 실행 값 삭제(`$INSTDIR\moa.exe` 비교 포함) ⓓ 제거 구역이 `$INSTDIR\settings.json`·`$INSTDIR\known_hosts.json`을 지우고 **설정 삭제를 묻는 대화가 없다** ⓔ `!ifndef VERSION` 기본값 ⓕ `Uninstall\MOA` 키 삭제와 `RMDir $INSTDIR`·**시작 메뉴 폴더 `RMDir`** ⓖ **D8이 정한 경로 다섯**(`..\target\release\moa.exe`·`..\LICENSE`·`..\THIRD-PARTY-NOTICES.md`·`..\docs\AppIcon.ico`·`OutFile ..\target\installer\MOA-Setup-${VERSION}.exe`) ⓗ 바로가기 이름이 `LangString`으로 한국어 `모아`·영어 `MOA` 두 값을 갖는다. 이 여덟이 `cargo test`로 확인된다(하나를 지우면 T4가 실패한다)
@@ -257,7 +257,7 @@
 
 - [ ] T3. `examples/gen_installer.rs` — 릴리즈 exe 확인·`makensis` 탐색·호출
   - **Type**: C
-  - **Design**: ① `examples/gen_installer.rs` 하나 ② 신규 심볼: `main`(절차) · `find_makensis() -> Option<PathBuf>`(PATH → `%ProgramFiles%\NSIS` → `%ProgramFiles(x86)%\NSIS` 순서) · `run(makensis, args) -> Result<(), String>` ③ 표준 라이브러리만 쓴다(`std::process::Command`·`std::env`·`std::path`) — 새 의존성 0. 넘기는 것은 `/DVERSION=<CARGO_PKG_VERSION>` **하나**이고, 작업 디렉터리를 `installer/`로 지정하며(D8), 산출 폴더(`target/installer/`)는 부르기 전에 만든다 ④ 「빌드 파이프라인」 추상화를 만들지 않는다: 이 예제 하나가 전부다
+  - **Design**: ① `examples/gen_installer.rs` 하나 ② 신규 심볼: `main`(절차) · `find_makensis() -> Option<PathBuf>`(PATH → `%ProgramFiles%\NSIS` → `%ProgramFiles(x86)%\NSIS` 순서) · `run(makensis, args) -> Result<(), String>` ③ 표준 라이브러리만 쓴다(`std::process::Command`·`std::env`·`std::path`) — 새 의존성 0. 넘기는 것은 `/DVERSION=<CARGO_PKG_VERSION>`과 `/INPUTCHARSET UTF8` 둘이다(뒤엣것은 값 정의가 아니라 **소스 인코딩 지정** — 이 레포는 BOM 없는 UTF-8이고 makensis는 BOM이 없으면 시스템 코드페이지로 읽어 `.nsi`의 한글 문구가 깨진다. T2 quality 리뷰 m1)이고, 작업 디렉터리를 `installer/`로 지정하며(D8), 산출 폴더(`target/installer/`)는 부르기 전에 만든다 ④ 「빌드 파이프라인」 추상화를 만들지 않는다: 이 예제 하나가 전부다
   - **Acceptance**: 두 실패 경로를 **이번 회차에 실제로 실행해** 확인한다. ① Given `target/release/moa.exe`를 같은 폴더에서 `moa.exe.bak`으로 **임시 rename**한 상태(삭제 금지 — `lto=true` 릴리즈 재빌드가 필요해진다), When `cargo run --example gen_installer`, Then exe가 없다는 것과 `cargo build --release`를 먼저 돌리라는 안내가 나오고 **종료 코드가 0이 아니다**. 확인 후 원래 이름으로 되돌리고 **`target/release/moa.exe`가 있고 `moa.exe.bak`이 남아 있지 않음을 확인한다**. ② Given exe는 있고 `makensis`가 없는 상태(이 PC 그대로), When 같은 명령, Then `winget install NSIS.NSIS` 안내와 함께 실패로 끝난다. 성공 경로(설치 파일 생성)는 makensis가 없어 이번 회차에서 확인할 수 없다 — HUMAN-VERIFY 1로 분리한다
   - **Files**:
     - 주: `examples/gen_installer.rs` (신규)
@@ -326,6 +326,10 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T1 완료 (커밋 e132ba3): 설정·지문 파일을 exe 옆으로, 마이그레이션·상수 제거, 경로 단언 시험 2건.
+  - spec MAJOR 1(plan이 필수로 지목한 `ui/app.rs:2022` stale 주석 누락)은 자기 유발이라 그 자리에서 고쳤다.
+- T2 진행 중 결정: makensis에 `/INPUTCHARSET UTF8`을 함께 넘긴다 — `.nsi`를 BOM 없는 UTF-8로 두면서 한글 문구가 깨지지 않게 하는 길이다(D8의 「/D는 VERSION 하나」는 **값 정의**에 대한 것이고 이 인자는 인코딩 지정이라 그 규정과 충돌하지 않는다).
 
 ## Next Steps
 
