@@ -4,7 +4,8 @@
 //! 「시작 메뉴 바로가기를 만든다」 같은 요구가 통째로 빠져도 설치 파일은 멀쩡히 만들어진다 —
 //! 그 공백이 이 검사의 자리다. `makensis`가 깔리지 않은 PC에서도 돌아야 해서 문자열만 본다.
 //!
-//! 단언 목록은 plan(`docs/plans/2026-08-21-nsis-installer.md`)의 T2 Acceptance ⓐ~ⓗ와 1:1로 짝을 이룬다.
+//! 단언 목록은 plan(`docs/plans/2026-08-21-nsis-installer.md`)의 T2 Acceptance ⓐ~ⓗ와 1:1로 짝을 이루고,
+//! 2026-08-21 설치 화면 개편(폴더 고정·팝업 제거·실행 중 자동 종료·이름 이중화)이 뒤에 더해져 있다.
 use std::path::PathBuf;
 
 /// 검사 대상 — 레포 안의 스크립트를 그대로 읽는다
@@ -160,4 +161,103 @@ fn 제거는_자동_실행과_설정_처리를_모두_담는다() {
     assert_has(제거, "ReadRegStr $0 HKCU", "자동 실행 값 읽기");
     assert_has(제거, r#"--tray'"#, "자동 실행 값 비교");
     assert_has(제거, "DeleteRegValue HKCU", "자동 실행 값 삭제");
+
+    // 제거는 언어를 묻지 않는다 — 고를 것이 없고, 바로가기는 두 이름을 모두 지운다.
+    // **호출만 본다** — 그 매크로 이름은 왜 뺐는지 적어 둔 주석에도 나오기 때문이다
+    assert!(
+        !text.contains("!insertmacro MUI_UNGETLANGUAGE"),
+        "제거가 언어 선택 대화를 띄운다 — 제거에는 고를 것이 없다"
+    );
+}
+
+#[test]
+fn 설치는_폴더를_고르게_하지도_팝업을_띄우지도_않는다() {
+    let text = script();
+    let 설치 = section(&text, "Install");
+
+    // 설치 위치는 `InstallDir` 하나로 고정이다 — 페이지는 종전대로 보여 주되,
+    // 입력란과 「찾아보기」가 잠겨 있어야 한다. 잠금만 빠지면 화면이 그대로라 눈으로는 모른다
+    assert_has(&text, "!insertmacro MUI_PAGE_DIRECTORY", "설치 위치 페이지");
+    assert_has(
+        &text,
+        "MUI_PAGE_CUSTOMFUNCTION_SHOW LockDirectoryPage",
+        "폴더 페이지에 잠금 연결",
+    );
+    assert_has(
+        &text,
+        "SendMessage $mui.DirectoryPage.Directory ${EM_SETREADONLY} 1 0",
+        "경로 입력란 읽기 전용",
+    );
+    assert_has(
+        &text,
+        "EnableWindow $mui.DirectoryPage.BrowseButton 0",
+        "「찾아보기」 잠금",
+    );
+
+    // 설치하는 동안 대화 상자를 하나도 띄우지 않는다 — 알릴 것은 환영 화면 본문에 모았다
+    assert!(
+        !text.contains("MessageBox"),
+        "설치 중 팝업이 남아 있다 — 알릴 것은 환영 화면 본문에 둔다"
+    );
+
+    // 알릴 것 셋 — 제거 고지는 환영 화면에, 폴더 고정과 실행 중 종료는 폴더 페이지에 있다.
+    // 문구가 통째로 빠지면 팝업도 없고 안내도 없는 상태가 되므로, 부재 단언만으로는 모자란다
+    for (needle, 요구) in [
+        (
+            r#"MUI_WELCOMEPAGE_TEXT "$(WELCOME_TEXT)""#,
+            "환영 화면 본문 교체",
+        ),
+        ("설치 폴더는 바꿀 수 없습니다", "설치 폴더 고정 안내"),
+        ("실행 중인 모아가 자동으로 종료됩니다", "실행 중 종료 안내"),
+        ("제거하면 사이트 목록", "제거 시 삭제 안내"),
+    ] {
+        assert_has(&text, needle, 요구);
+    }
+
+    // 실행 중인 앱은 **설치 구역이** 닫는다 — 정상 종료를 먼저 청하고 강제 종료로 마무리한다.
+    // 둘 중 하나만 남아도 실패다: 앞의 것이 빠지면 설정을 저장할 틈이 없고,
+    // 뒤의 것이 빠지면 트레이 상주 중일 때 파일을 덮어쓰지 못한다
+    assert_has(설치, r#"taskkill.exe" /IM "${EXE_NAME}""#, "정상 종료 요청");
+    assert_has(
+        설치,
+        r#"taskkill.exe" /F /IM "${EXE_NAME}""#,
+        "강제 종료 확인",
+    );
+}
+
+#[test]
+fn 창_이름과_언어_대화_문구는_언어를_따른다() {
+    let text = script();
+
+    // 창 제목의 앱 이름 — 한국어 설치면 「모아」다
+    assert_has(
+        &text,
+        r#"LangString APP_TITLE ${LANG_KOREAN} "모아 ${VERSION}""#,
+        "한국어 창 이름",
+    );
+    assert_has(
+        &text,
+        r#"LangString APP_TITLE ${LANG_ENGLISH} "MOA ${VERSION}""#,
+        "영어 창 이름",
+    );
+    // `Name`이라야 `^NameDA`까지 채워져 환영 화면 머리글이 함께 바뀐다.
+    // **`Name /LANG=`는 없는 문법이다** — 그렇게 적으면 「/LANG=1033」이 제품명이 된다
+    assert_has(
+        &text,
+        r#"Name "$(APP_TITLE)""#,
+        "창 이름을 언어 문자열로 넘기기",
+    );
+
+    // 언어 선택 대화 — MUI 기본값은 영문 고정 define이라, `$(...)` 참조로 바꿔 두지 않으면
+    // 한국어 Windows에서도 영문으로 뜬다
+    assert_has(
+        &text,
+        r#"MUI_LANGDLL_WINDOWTITLE "$(LANGDLL_TITLE)""#,
+        "언어 대화 제목의 언어 문자열화",
+    );
+    assert_has(
+        &text,
+        r#"MUI_LANGDLL_INFO "$(LANGDLL_INFO)""#,
+        "언어 대화 안내의 언어 문자열화",
+    );
 }

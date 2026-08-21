@@ -3,6 +3,9 @@
 ; **사용자 단위 설치**다: `%LOCALAPPDATA%\Programs\MOA`에 놓아 UAC를 띄우지 않는다.
 ; 이 앱은 설정을 실행 파일 옆에, 자동 실행을 HKCU에 쓰므로 권한 모델이 사용자 단위와 맞는다.
 ;
+; **설치 폴더는 고정이고 대화 상자는 띄우지 않는다**(2026-08-21 사용자 요청) — 폴더 선택
+; 페이지는 종전처럼 보이되 **경로 입력란과 「찾아보기」를 잠가** 바꿀 수 없게 한다.
+;
 ; **경로는 모두 이 파일이 있는 폴더 기준**이다 — `gen_installer`가 makensis의 작업 디렉터리를
 ; `installer\`로 지정하고 부르므로, makensis가 스크립트 폴더로 옮기든 아니든 같은 자리를 가리킨다.
 
@@ -25,7 +28,6 @@ Unicode true
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\MOA"
 !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 
-Name "${APP_NAME} ${VERSION}"
 OutFile "..\target\installer\MOA-Setup-${VERSION}.exe"
 InstallDir "$LOCALAPPDATA\Programs\MOA"
 ; 관리자 권한을 청하지 않는다 — 사용자 폴더에만 쓴다
@@ -38,10 +40,40 @@ SetCompressor /SOLID lzma
 !define MUI_UNICON "..\docs\AppIcon.ico"
 !define MUI_ABORTWARNING
 
+; 언어 선택 대화의 문구 — MUI 기본값은 영문 **고정 define**이라 그대로 두면 한국어 Windows에서도
+; 영문으로 뜬다. `$(...)` 참조를 넣으면 컴파일 때 언어 문자열로 박혀, 그 대화가 뜨는 시점의
+; `$LANGUAGE`(= 시스템 표시 언어)를 따른다. **콤보에서 고른 언어로 그 대화를 다시 그리는 것은
+; 할 수 없다** — LangDLL 플러그인은 고를 때마다 자기 문구를 다시 칠하지 않는다
+!define MUI_LANGDLL_WINDOWTITLE "$(LANGDLL_TITLE)"
+!define MUI_LANGDLL_INFO "$(LANGDLL_INFO)"
+
 ; 설치 페이지 — 라이선스는 레포의 MIT 원문을 그대로 보인다
+!define MUI_WELCOMEPAGE_TEXT "$(WELCOME_TEXT)"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
+
+; 설치 위치를 보여 주는 페이지 — 고를 수는 없다. 페이지를 통째로 빼면 어디에 깔리는지
+; 알 길이 없어져, 종전 화면을 그대로 두고 입력란과 「찾아보기」만 잠근다
+!define MUI_PAGE_HEADER_TEXT "$(DIR_PAGE_HEADER)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(DIR_PAGE_SUBHEADER)"
+!define MUI_DIRECTORYPAGE_TEXT_TOP "$(DIR_PAGE_TOP)"
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW LockDirectoryPage
 !insertmacro MUI_PAGE_DIRECTORY
+
+; 그 잠금. **MUI2가 SHOW 콜백 직전에 컨트롤 핸들을 이 변수들에 담아 두므로**
+; 대화 상자 컨트롤 ID(1019·1001)를 이 스크립트가 알 필요가 없다 — 그래서
+; 페이지 매크로 **뒤에** 둔다(그 변수들이 거기서 선언된다)
+Function LockDirectoryPage
+  ; 경로 입력란은 **읽기 전용**으로 둔다 — 비활성화하면 경로 글자까지 흐려져 읽기 어렵다.
+  ; 「찾아보기」는 눌러도 소용이 없으니 그쪽은 비활성화한다
+  SendMessage $mui.DirectoryPage.Directory ${EM_SETREADONLY} 1 0
+  EnableWindow $mui.DirectoryPage.BrowseButton 0
+  ; 포커스를 「설치」 버튼으로 옮긴다 — 그러지 않으면 이 페이지에 들어설 때 읽기 전용
+  ; 입력란이 포커스를 받아 경로가 통째로 선택된 것처럼 파랗게 보인다
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $HWNDPARENT ${WM_NEXTDLGCTL} $0 1
+FunctionEnd
+
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${EXE_NAME}"
 Function CreateDesktopShortcut
@@ -68,26 +100,65 @@ FunctionEnd
 ; 아카이브 전체를 풀어야 해 시작이 그만큼 늦다
 !insertmacro MUI_RESERVEFILE_LANGDLL
 
+; 창 제목에 쓰는 앱 이름도 설치 언어를 따른다 — 한국어면 「모아 0.1.0 설치」가 된다
+; (2026-08-21 사용자 요청). **`Name`에는 `/LANG=` 스위치가 없다** — 그렇게 적으면
+; 「/LANG=1033」이 통째로 제품명이 되므로, 언어 문자열을 만들어 그 참조를 넘긴다.
+; `Name`이라야 하는 이유: 이 명령이 `^Name`과 `^NameDA`를 함께 채우고,
+; 환영 화면 머리글(「… 설치를 시작합니다」)이 뒤엣것을 읽는다.
+; 레지스트리에 쓰는 `DisplayName`은 `${APP_NAME}` 그대로 둔다 — 그것은 데이터가 걸린 이름이다
+LangString APP_TITLE ${LANG_KOREAN} "모아 ${VERSION}"
+LangString APP_TITLE ${LANG_ENGLISH} "MOA ${VERSION}"
+Name "$(APP_TITLE)"
+
 ; 바로가기 이름 — 설치 언어를 따른다 (2026-08-21 사용자 요청)
 LangString SHORTCUT_NAME ${LANG_KOREAN} "모아"
 LangString SHORTCUT_NAME ${LANG_ENGLISH} "MOA"
-; 제거하면 설정까지 사라진다는 것을 **미리** 알린다 — 묻지 않고 지우기 때문이다(D11)
-LangString REMOVE_NOTICE ${LANG_KOREAN} "제거하면 사이트 목록·저장한 비밀번호·서버 지문이 함께 지워집니다."
-LangString REMOVE_NOTICE ${LANG_ENGLISH} "Uninstalling also deletes your site list, saved passwords, and server fingerprints."
 LangString DESKTOP_SHORTCUT_TEXT ${LANG_KOREAN} "바탕화면에 바로가기 만들기"
 LangString DESKTOP_SHORTCUT_TEXT ${LANG_ENGLISH} "Create a desktop shortcut"
-; 실행 중이면 파일을 바꿀 수 없다 — 플러그인 없이 안내만 한다(D5)
-LangString CLOSE_APP_NOTICE ${LANG_KOREAN} "MOA가 실행 중이면 먼저 닫아 주세요."
-LangString CLOSE_APP_NOTICE ${LANG_ENGLISH} "Please close MOA before continuing."
 
+; 언어 선택 대화 문구
+LangString LANGDLL_TITLE ${LANG_KOREAN} "설치 언어"
+LangString LANGDLL_TITLE ${LANG_ENGLISH} "Installer Language"
+LangString LANGDLL_INFO ${LANG_KOREAN} "설치에 사용할 언어를 선택해 주세요."
+LangString LANGDLL_INFO ${LANG_ENGLISH} "Please select a language."
 
+; 환영 화면 본문 — 팝업으로 알리던 「제거하면 설정까지 사라진다」(D11)가 여기로 왔다.
+; 설치 위치와 실행 중 자동 종료는 그 다음 폴더 페이지에서 알린다
+LangString WELCOME_TEXT ${LANG_KOREAN} "모아를 이 컴퓨터에 설치합니다.$\r$\n$\r$\n제거하면 사이트 목록·저장한 비밀번호·서버 지문이 함께 지워집니다."
+LangString WELCOME_TEXT ${LANG_ENGLISH} "MOA will be installed on this computer.$\r$\n$\r$\nUninstalling also deletes your site list, saved passwords, and server fingerprints."
+
+; 폴더 페이지 문구 — 기본 문구는 「다른 폴더에 설치하고 싶으시면 찾아보기를 누르라」고
+; 안내하는데 그 버튼을 잠갔으니 그대로 두면 틀린 말이 된다. 머리글에서도 「선택」을 뺀다
+LangString DIR_PAGE_HEADER ${LANG_KOREAN} "설치 위치"
+LangString DIR_PAGE_HEADER ${LANG_ENGLISH} "Install Location"
+LangString DIR_PAGE_SUBHEADER ${LANG_KOREAN} "모아를 설치할 폴더입니다."
+LangString DIR_PAGE_SUBHEADER ${LANG_ENGLISH} "The folder where MOA will be installed."
+LangString DIR_PAGE_TOP ${LANG_KOREAN} "모아를 다음 폴더에 설치합니다. 설치 폴더는 바꿀 수 없습니다.$\r$\n$\r$\n설치를 시작하면 실행 중인 모아가 자동으로 종료됩니다."
+LangString DIR_PAGE_TOP ${LANG_ENGLISH} "MOA will be installed in the following folder. The install folder cannot be changed.$\r$\n$\r$\nIf MOA is running, it will be closed automatically when the installation starts."
+
+; 설치 진행 기록에 남기는 줄 — 무엇 때문에 앱이 닫혔는지 알 수 있게 한다
+LangString CLOSING_APP ${LANG_KOREAN} "실행 중인 모아를 닫습니다..."
+LangString CLOSING_APP ${LANG_ENGLISH} "Closing MOA if it is running..."
 
 Function .onInit
   !insertmacro MUI_LANGDLL_DISPLAY
-  MessageBox MB_OK "$(CLOSE_APP_NOTICE)"
 FunctionEnd
 
 Section "Install"
+  ; 실행 중이면 파일을 덮어쓸 수 없다 — 「먼저 닫아 주세요」라고 청하는 대신 우리가 닫는다
+  ; (2026-08-21 사용자 요청). `nsExec`는 NSIS에 딸린 플러그인이라 따로 받을 것이 없고
+  ; 콘솔 창도 띄우지 않는다. 먼저 정상 종료를 청해 앱이 설정을 저장할 틈을 준다
+  DetailPrint "$(CLOSING_APP)"
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "${EXE_NAME}"'
+  Pop $0
+  Sleep 2000
+  ; 트레이에 상주 중이면 창 닫기만으로는 끝나지 않아 강제 종료로 한 번 더 확인한다.
+  ; 이미 끝났으면 taskkill이 「해당 프로세스 없음」으로 물러날 뿐이라 해가 없다
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM "${EXE_NAME}"'
+  Pop $0
+  ; 프로세스가 사라진 뒤에도 파일 잠금이 풀리기까지 잠깐 걸린다
+  Sleep 500
+
   SetOutPath "$INSTDIR"
   File "..\target\release\moa.exe"
   File "..\LICENSE"
@@ -107,13 +178,11 @@ Section "Install"
   WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
-
-  MessageBox MB_OK "$(REMOVE_NOTICE)"
 SectionEnd
 
-Function un.onInit
-  !insertmacro MUI_UNGETLANGUAGE
-FunctionEnd
+; `un.onInit`을 두지 않는다 — `MUI_UNGETLANGUAGE`가 거기서 언어 선택 대화를 띄우는데,
+; 제거에는 고를 것이 없다(2026-08-21 사용자 요청). 그것을 빼면 제거 화면은 Windows
+; 표시 언어를 따르고, 바로가기는 어차피 두 이름을 모두 지우므로 언어가 갈려도 남지 않는다
 
 Section "Uninstall"
   ; 바로가기는 **두 이름을 모두** 지운다 — 언인스톨러는 자기 언어를 새로 정하므로
