@@ -6,5 +6,6 @@
 //!
 //! `ui`를 모른다 — 화면은 여기가 내놓는 상태를 읽어 그릴 뿐이다(계층 단방향).
 pub mod http;
+pub mod install;
 pub mod release;
 pub mod sha256;
