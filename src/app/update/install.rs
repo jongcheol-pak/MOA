@@ -66,8 +66,29 @@ pub fn update_dir() -> Option<PathBuf> {
 /// 몫이다** — `moa.nsi`의 `RMDir "$INSTDIR"`은 재귀가 아니라 빈 폴더만 지운다
 pub fn clear_update_dir() {
     if let Some(dir) = update_dir() {
-        let _ = std::fs::remove_dir_all(dir);
+        clear_update_dir_at(&dir);
     }
+}
+
+/// 치우는 알맹이만 뗀 것 — 폴더를 인자로 받아 시험할 수 있다.
+///
+/// `is_installed_at`과 같은 이유로 가른다: 공개 함수는 `current_exe()`에 묶여 있어
+/// **시험이 실제로 지우는 것을 볼 수 없고**, 그러면 파일을 지우는 이 경로에 자동 검증이
+/// 하나도 없게 된다
+fn clear_update_dir_at(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 릴리즈가 준 자산 이름을 파일 이름으로 써도 되는가 — **경로가 섞여 있으면 안 된다**.
+///
+/// 이름은 서버에서 온 값이라 `..\`나 절대 경로가 들어 있으면 `update\` 바깥에 쓰거나
+/// 지우게 된다(`PathBuf::join`은 `..`를 풀어 주지 않는다). 마디가 **평범한 이름 하나**일
+/// 때만 받는다 — 릴리즈를 낼 권한이 있어야 성립하는 공격이지만, 서버가 준 값을 그대로
+/// 경로에 붙이지 않는 것이 이쪽의 몫이다
+fn is_safe_file_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
 }
 
 /// 받은 파일이 기대 체크섬과 같은가 — **어긋나면 그 파일을 지운다**.
@@ -87,6 +108,9 @@ pub fn verify_downloaded(path: &Path, expected: &str) -> Result<(), UpdateError>
 ///
 /// 받기 전에 `update\`를 비운다 — 지난번에 받다 만 것이 남아 있을 수 있다
 pub fn download_and_verify(info: &ReleaseInfo) -> Result<PathBuf, UpdateError> {
+    if !is_safe_file_name(&info.asset_name) {
+        return Err(UpdateError::BadResponse);
+    }
     clear_update_dir();
     let dir = update_dir().ok_or(UpdateError::Download)?;
     let dest = dir.join(&info.asset_name);
@@ -144,14 +168,51 @@ mod tests {
     }
 
     #[test]
+    fn 파일이_든_폴더를_통째로_치운다() {
+        let dir = temp_dir("청소");
+        std::fs::write(dir.join("받다만.exe"), b"x").expect("파일 만들기");
+        std::fs::create_dir_all(dir.join("하위")).expect("하위 폴더");
+        std::fs::write(dir.join("하위").join("것.bin"), b"y").expect("하위 파일");
+
+        clear_update_dir_at(&dir);
+
+        assert!(!dir.exists(), "폴더째 사라져야 한다");
+    }
+
+    #[test]
     fn 폴더가_없어도_치우기는_조용히_끝난다() {
         // 앱이 뜰 때마다 부르므로 「없음」이 정상 상태다
-        let dir = temp_dir("청소");
-        std::fs::write(dir.join("남은.exe"), b"x").expect("파일 만들기");
-        std::fs::remove_dir_all(&dir).expect("치우기");
+        let dir = temp_dir("청소없음");
+        std::fs::remove_dir_all(&dir).expect("먼저 비운다");
         assert!(!dir.exists());
-        // 같은 자리를 한 번 더 치워도 패닉하지 않는다
-        let _ = std::fs::remove_dir_all(&dir);
+
+        clear_update_dir_at(&dir); // 없는 자리를 치워도 패닉하지 않는다
+
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn 경로가_섞인_자산_이름은_받지_않는다() {
+        // 이름은 서버에서 온 값이다 — `update\` 밖에 쓰거나 지우게 두지 않는다
+        assert!(is_safe_file_name("MOA-Setup-0.2.0.exe"));
+        assert!(!is_safe_file_name("..\\..\\Windows\\System32\\evil.exe"));
+        assert!(!is_safe_file_name("../../evil.exe"));
+        assert!(!is_safe_file_name("sub\\dir\\setup.exe"));
+        assert!(!is_safe_file_name("C:\\Windows\\evil.exe"));
+        assert!(!is_safe_file_name(".."));
+        assert!(!is_safe_file_name(""));
+    }
+
+    #[test]
+    fn 경로가_섞인_자산은_받으러_가지도_않는다() {
+        let info = ReleaseInfo {
+            version: "9.9.9".to_owned(),
+            asset_name: "..\\evil.exe".to_owned(),
+            asset_url: "https://example.invalid/x".to_owned(),
+            sha256: "0".repeat(64),
+        };
+        // 네트워크에 닿기 전에 걸러야 한다 — 이 시험이 도는 동안 어떤 연결도 열리지 않는다
+        assert_eq!(download_and_verify(&info), Err(UpdateError::BadResponse));
     }
 
     #[test]

@@ -447,6 +447,15 @@ MOA-Setup-0.1.0.exe
 
 ## Progress Log
 
+- T1~T3 완료 (커밋 c5e57f3·063f5e2·9f7c8a4): PRD에 FR-62·FR-63 신설 → WinHTTP GET 둘 → CNG SHA256. 신규 크레이트 0건(feature 하나만 추가), `Cargo.lock` 불변이라 라이선스 자산 재생성도 불요(전제 4 실측 확인).
+  - T2 리뷰: spec OK·quality OK. 주석 표기를 레포 관례(`// 안전성:`)로 통일하고 plan의 Design 문구를 실제 심볼명에 맞췄다.
+  - T3 리뷰 spec MAJOR 1(`matches`가 계획에 없고 호출자 0) → **같은 회차 T5가 실제로 부르게 되어 해소**. 리뷰어가 제시한 첫 해법대로 T3·T5 Design에 재사용 관계를 명시.
+- T4~T6 구현 (커밋 36d5388·804dda0·045d41b): 릴리즈 조회·판정 → 설치본 판정·내려받기·대조·설치 실행 → 상태 기계와 워커.
+  - **T4 spec BLOCKER 1 → 구현 유지 + plan 개정으로 해소**(리뷰어가 판단을 메인에 위임). `parse_release`가 `Option`이 아니라 `Result`인 근거 셋을 Design에 적었다 — 실패 사유 구분(FR-62의 「결과를 알린다」)·`sha256: String`으로 D3을 타입 강제·`current` 인자는 시험 seam.
+  - T5 리뷰 spec OK. T4 quality OK.
+  - **결정(T6)**: 상태 기계를 `mod.rs`가 아니라 `service.rs`에 뒀다 — 모듈 구성과 상태 흐름은 변경 이유가 달라 한 파일에 섞으면 하위 모듈을 더할 때마다 300줄을 지나야 한다(AGENTS 분할 판정 ①②). `mod.rs`에서 재수출해 **밖에서 보는 이름은 `app::update::UpdateService` 그대로**다.
+  - **결정(T6)**: 게이트(`enabled`)뿐 아니라 **작업 자체도 주입**한다(`start_check_with`·`start_download_with`). 게이트만 주입하면 `new(true)`로 부른 시험이 진짜 `api.github.com`을 두드려 4-C의 「네트워크 경로는 시험 대상이 아니다」와 어긋난다. 개발용 가짜 릴리즈(D14)도 같은 자리를 재사용해 길을 둘 만들지 않았다.
+
 ## Next Steps
 
 ## Open Questions
