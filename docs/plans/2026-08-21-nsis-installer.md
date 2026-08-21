@@ -272,9 +272,9 @@
     - (i) `makensis` 부재로 성공 경로를 못 밟는다 → 실패 경로 두 갈래는 실제로 실행해 검증하고, 성공 경로는 HUMAN-VERIFY로 분리(Acceptance가 그렇게 쓰여 있다)
   - **Depends on**: T2
 
-- [ ] T4. `tests/installer.rs` — `.nsi`가 요구 항목을 담고 있는지 훑는 시험
+- [x] T4. `tests/installer.rs` — `.nsi`가 요구 항목을 담고 있는지 훑는 시험
   - **Type**: C
-  - **Design**: ① `tests/installer.rs`(통합 시험 관례 — 기존 4개와 같은 자리) ② 신규 심볼: 시험 함수 2개(`설치_스크립트는_사용자_단위로_설치한다`·`제거는_자동_실행과_설정_처리를_모두_담는다`) ③ `CARGO_MANIFEST_DIR`로 `installer/moa.nsi`를 읽어 문자열을 단언한다 — 앱 코드를 참조하지 않는다. 단언 목록은 T2 Acceptance ⓐ~ⓖ와 **1:1로 대응**한다(그 표가 정본이고 여기가 그 기계 판정이다) ④ NSIS 파서를 만들지 않는다(문자열 포함 검사로 충분하다 — 문법 검증은 `makensis`의 몫이다)
+  - **Design**: ① `tests/installer.rs`(통합 시험 관례 — 기존 4개와 같은 자리) ② 신규 심볼: 시험 함수 2개(`설치_스크립트는_사용자_단위로_설치한다`·`제거는_자동_실행과_설정_처리를_모두_담는다`) ③ `CARGO_MANIFEST_DIR`로 `installer/moa.nsi`를 읽어 문자열을 단언한다 — 앱 코드를 참조하지 않는다. 단언 목록은 T2 Acceptance ⓐ~ⓗ와 **1:1로 대응**한다(그 표가 정본이고 여기가 그 기계 판정이다) ④ NSIS 파서를 만들지 않는다(문자열 포함 검사로 충분하다 — 문법 검증은 `makensis`의 몫이다)
   - **Acceptance**: Given `installer/moa.nsi`, When `cargo test`, Then 두 시험이 통과한다 — ⓐ(설치) `RequestExecutionLevel user`·`$LOCALAPPDATA\Programs\MOA`·시작 메뉴/바탕화면 바로가기 생성·`!ifndef VERSION` 기본값·**D8 경로 다섯**(`..\target\release\moa.exe`·`..\LICENSE`·`..\THIRD-PARTY-NOTICES.md`·`..\docs\AppIcon.ico`·`OutFile ..\target\installer\MOA-Setup-${VERSION}.exe`) ⓑ(제거) 바로가기 삭제가 **두 이름(`모아`·`MOA`) 모두**·시작 메뉴 폴더 `RMDir`·삭제 목록에 다섯 파일(`moa.exe`·`LICENSE`·`THIRD-PARTY-NOTICES.md`·`uninstall.exe`)과 런타임 생성물 둘(`settings.json`·`known_hosts.json`)·`RMDir $INSTDIR`·`Uninstall\MOA` 키 삭제·자동 실행 값 삭제와 비교 문자열(`'\"$INSTDIR\moa.exe\" --tray'`)·**설정 삭제를 묻는 `MessageBox`가 없음**·`LangString`의 `모아`와 `MOA`. `.nsi`에서 그중 하나를 지우면 시험이 **실패한다**(임시로 지웠다 되돌려 회귀 검출을 실제로 확인한다)
   - **Files**:
     - 주: `tests/installer.rs` (신규)
@@ -330,6 +330,11 @@
 - T1 완료 (커밋 e132ba3): 설정·지문 파일을 exe 옆으로, 마이그레이션·상수 제거, 경로 단언 시험 2건.
   - spec MAJOR 1(plan이 필수로 지목한 `ui/app.rs:2022` stale 주석 누락)은 자기 유발이라 그 자리에서 고쳤다.
 - T2 진행 중 결정: makensis에 `/INPUTCHARSET UTF8`을 함께 넘긴다 — `.nsi`를 BOM 없는 UTF-8로 두면서 한글 문구가 깨지지 않게 하는 길이다(D8의 「/D는 VERSION 하나」는 **값 정의**에 대한 것이고 이 인자는 인코딩 지정이라 그 규정과 충돌하지 않는다).
+- T4 완료: `.nsi`의 요구 항목 18개를 훑는 통합 시험 2개. 리뷰 지적 둘을 함께 반영했다 —
+  ⓐ 설치·제거가 같은 토큰을 쓰므로 `section()`으로 구역을 잘라 단언한다(파일 전체에서 찾으면
+  설치 코드가 사라져도 제거 쪽 문자열이 통과시킨다) ⓑ 삭제 목록은 `Delete "..."` 전체를 needle로
+  삼는다(경로만 찾으면 같은 구역의 자동 실행 비교 문자열에 걸린다). 18개 축 전부를 `.nsi`에서
+  한 줄씩 지워 시험이 실패하는 것을 실제로 확인했다.
 
 ## Next Steps
 
