@@ -215,10 +215,6 @@ strings! {
     sidebar_site_manager => "사이트 관리자" / "Site Manager";
     sidebar_new_workspace => "새 워크스페이스" / "New workspace";
     sidebar_refresh_sites => "사이트 목록 새로 고침" / "Refresh site list";
-    /// 사이트 우클릭 메뉴 (인벤토리 #10) — **`삭제`가 아니다.**
-    /// 이 조작은 사이드바에서 감출 뿐이고 사이트는 사이트 관리자에 남는다.
-    /// 종전 라벨(`삭제`)은 등록이 지워진 줄로 읽히게 했다 (2026-08-16 검토)
-    sidebar_hide_site => "사이드바에서 숨기기" / "Hide from sidebar";
     /// `+` 버튼 툴팁 — 누르면 일어나는 일을 그대로 적는다(`연결`은 무엇이 열리는지 알 수 없다)
     sidebar_connect_menu => "사이트 연결 메뉴" / "Connect to a site";
     /// 사이트가 하나도 없을 때의 안내 — 첫 화면에서 다음에 무엇을 할지 알려 준다
@@ -1083,9 +1079,7 @@ pub mod dynamic {
     pub fn site_removed(name: &str) -> String {
         match current() {
             Language::Korean => {
-                format!(
-                    "'{name}' 사이트를 목록에서 지웠습니다 · 사이트 관리자에 그대로 있습니다"
-                )
+                format!("'{name}' 사이트를 목록에서 지웠습니다 · 사이트 관리자에 그대로 있습니다")
             }
             Language::English => {
                 format!("Removed '{name}' from the list · it remains in Site Manager")

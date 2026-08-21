@@ -608,9 +608,9 @@ impl PanelState {
     pub fn close_site_tabs(&mut self, site: SiteId, ctx: &egui::Context) -> bool {
         // 닫을 때마다 뒤 탭의 자리가 당겨진다 — **매번 처음부터 다시 찾는다**
         loop {
-            let found = self.tabs.sources().iter().position(|source| {
-                matches!(source, TabSource::Remote { site: at, .. } if *at == site)
-            });
+            let found = self.tabs.sources().iter().position(
+                |source| matches!(source, TabSource::Remote { site: at, .. } if *at == site),
+            );
             let Some(index) = found else {
                 return false;
             };

@@ -76,7 +76,7 @@ const SITE_MENU_WIDTH: f32 = 180.0;
 /// 행 높이는 여기서 정하지 않는다 — `theme::menu_style`이 세운 공통 값(`MENU_ITEM_HEIGHT`)을 따른다
 const MENU_CAPTION_PX: f32 = 12.0;
 /// 사이트 컨텍스트 메뉴의 삭제 옆에 붙는 단축키 표기 (인벤토리 #10)
-const HIDE_SITE_SHORTCUT: &str = "Del";
+const DELETE_SITE_SHORTCUT: &str = "Del";
 
 /// 사이드바에서 올라온 사용자 조작. 목록을 바꾸는 일은 전부 호출부의 몫이다.
 ///
@@ -652,7 +652,8 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
 
 /// 사이트 우클릭 메뉴 — 사이트 이름 머리와 삭제 하나뿐이다 (인벤토리 #9·#10).
 ///
-/// 여기서 지우는 것은 **사이드바 바로가기**다 — 사이트 자체는 사이트 관리자에 남는다
+/// 여기서 지우면 **그 사이트의 연결·원격 탭·전송 큐 항목이 함께 걷힌다**(FR-29) —
+/// 사이트 기록만 사이트 관리자에 남는다. 실제 걷어내기는 `ui::app::detach_site`가 한다
 fn show_site_context_menu(
     row: &egui::Response,
     record: &SiteRecord,
@@ -667,18 +668,19 @@ fn show_site_context_menu(
                 .color(theme::TEXT_MUTED),
         );
         ui.separator();
-        let hide = egui::Button::new(
-            egui::RichText::new(crate::i18n::sidebar_hide_site()).color(theme::TEXT),
-        )
-        .right_text(
-            egui::RichText::new(HIDE_SITE_SHORTCUT)
-                .size(SITE_PROTO_PX)
-                .color(theme::TEXT_MUTED),
-        );
-        // **파괴색을 쓰지 않는다** — 원본은 이 자리를 삭제로 보고 빨갛게 칠했지만(`:358`)
-        // 실제로는 사이드바에서 감출 뿐 사이트는 남는다. 되돌릴 수 있는 일에 되돌릴 수 없는
-        // 일의 색을 쓰면 그 색의 뜻이 닳는다 (2026-08-16 검토)
-        let clicked = ui.add(hide).clicked();
+        let delete =
+            egui::Button::new(egui::RichText::new(crate::i18n::delete()).color(theme::TEXT))
+                .right_text(
+                    egui::RichText::new(DELETE_SITE_SHORTCUT)
+                        .size(SITE_PROTO_PX)
+                        .color(theme::TEXT_MUTED),
+                );
+        // **이 줄만 파괴색으로 칠한다** — 도는 전송이 끊기고 큐가 비워지는, 되돌릴 수 없는
+        // 조작이라 원본(`:359`)의 빨간 hover를 되살렸다. 2026-08-16에 그 색을 뺀 근거는
+        // 「감출 뿐이라 되돌릴 수 있다」였는데 2026-08-21 요청으로 그 전제가 없어졌다.
+        // 메뉴의 다른 줄·다른 팝업은 종전 `MENU_HOT` 그대로다
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = theme::MENU_HOT_DANGER;
+        let clicked = ui.add(delete).clicked();
         if clicked {
             actions.push(SidebarAction::RemoveSite(record.id));
             ui.close();
@@ -848,7 +850,20 @@ mod tests {
         // 이 항목만 **원본과 갈린다** — 사용자 요청(2026-08-20)으로 문구를 바꿨다 (FR-59)
         assert_eq!(crate::i18n::sidebar_site_manager(), "사이트 관리자");
         assert_eq!(crate::i18n::delete(), "삭제");
-        assert_eq!(HIDE_SITE_SHORTCUT, "Del");
+        assert_eq!(DELETE_SITE_SHORTCUT, "Del");
+    }
+
+    #[test]
+    fn 사이트_삭제_줄은_원본의_파괴색을_쓴다() {
+        // 인벤토리 #10 · 원본 `:359`의 `style-hover:background:#C42B1C` — 도는 전송이 끊기고
+        // 큐가 비워지는 되돌릴 수 없는 조작이라 그 색을 되살렸다 (2026-08-21 사용자 결정).
+        // 값은 `theme`이 쥔다 — 메뉴 파일에 박으면 같은 값이 다시 자리마다 갈린다(AGENTS)
+        assert_eq!(
+            theme::MENU_HOT_DANGER,
+            egui::Color32::from_rgb(0xC4, 0x2B, 0x1C)
+        );
+        // 메뉴의 다른 줄·다른 팝업은 종전 색 그대로다
+        assert_ne!(theme::MENU_HOT_DANGER, theme::MENU_HOT);
     }
 
     #[test]

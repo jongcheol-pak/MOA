@@ -422,7 +422,8 @@ impl ExplorerApp {
         }
         self.persist_session();
         if let Some(name) = name {
-            self.toast.show(crate::i18n::dynamic::site_removed(&name), now);
+            self.toast
+                .show(crate::i18n::dynamic::site_removed(&name), now);
         }
     }
 

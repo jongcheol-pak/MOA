@@ -113,6 +113,9 @@ pub const MENU_ITEM_CORNER_RADIUS: u8 = 4;
 /// 행 hover / 메뉴 hover
 pub const ROW_HOT: egui::Color32 = egui::Color32::from_rgb(0x2E, 0x2E, 0x2E);
 pub const MENU_HOT: egui::Color32 = egui::Color32::from_rgb(0x38, 0x38, 0x38);
+/// **되돌릴 수 없는 메뉴 한 줄**의 hover — 디자인 원본의 삭제 줄이 이 색이다(`:359`).
+/// 값은 `CLOSE_HOT`과 같지만 쓰임이 달라 이름을 따로 둔다(그 상수의 주석과 같은 규칙)
+pub const MENU_HOT_DANGER: egui::Color32 = egui::Color32::from_rgb(0xC4, 0x2B, 0x1C);
 
 /// 테두리 — 옅은 것 / 컨트롤
 pub const BORDER_SUBTLE: egui::Color32 = egui::Color32::from_rgb(0x2C, 0x2C, 0x2C);
