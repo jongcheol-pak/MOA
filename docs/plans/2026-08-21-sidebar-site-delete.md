@@ -211,7 +211,7 @@
   - **Halt Forecast**: 없음 — 순수 모델에 함수 하나를 더한다
   - **Depends on**: -
 
-- [ ] T2. `PanelState::close_site_tabs` — 그 사이트를 가리키는 원격 탭을 모두 닫는다
+- [x] T2. `PanelState::close_site_tabs` — 그 사이트를 가리키는 원격 탭을 모두 닫는다
   - **Type**: D
   - **Design**: ① `src/ui/panel.rs`의 `impl PanelState`, `close_tab`(`:595`) 옆 ② `close_site_tabs(&mut self, site: SiteId, ctx: &egui::Context) -> bool` — **모든 탭이 그 사이트라 마지막 하나를 닫지 못했으면 `true`**다. 닫은 탭이 쓰던 연결은 돌려주지 않는다: 연결 회수는 탭이 아니라 매니저에서 사이트로 고르므로(T4 4단계의 `site_connections`) 그 값을 읽을 곳이 없다 ③ `TabsModel::close`(`panel/tabs.rs:298`)를 그대로 쓰고, 활성 탭이 닫혔으면 `reload_active_tab`을 부른다. 패널을 닫을지 로컬로 되돌릴지는 **앱이 정한다**(패널이 마지막인지 모른다) ④ 「조건으로 탭을 닫는 일반 함수」로 추상화하지 않는다 — 사례가 하나다
   - **Acceptance**: Given 로컬 탭 1 + 사이트 A 탭 2 + 사이트 B 탭 1인 패널, When `close_site_tabs(A)`, Then A 탭 둘이 사라지고 로컬·B 탭은 그대로 남으며 반환은 `false`다. Given 사이트 A 탭만 2개인 패널, When 같은 호출, Then 탭 하나가 남고 반환은 `true`이며 그 남은 탭도 A를 가리킨다

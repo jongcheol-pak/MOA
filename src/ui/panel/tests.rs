@@ -1087,13 +1087,15 @@ fn 사이트를_지우면_그_사이트_탭만_닫힌다() {
     panel.attach_conn(ConnectionId(8));
     panel.open_remote_tab(SiteId(1), RemotePath::new("/c"));
     panel.attach_conn(ConnectionId(7));
-    assert_eq!(panel.tabs.len(), 4);
+    // 아직 연결이 붙지 않은 탭(`conn: None`)도 그 사이트의 것이면 닫힌다
+    panel.open_remote_tab(SiteId(1), RemotePath::new("/d"));
+    assert_eq!(panel.tabs.len(), 5);
 
     assert!(
         !panel.close_site_tabs(SiteId(1), &ctx),
         "다른 탭이 남았는데 마지막 탭이라고 알렸다"
     );
-    assert_eq!(panel.tabs.len(), 2, "사이트 1의 탭 둘이 닫히지 않았다");
+    assert_eq!(panel.tabs.len(), 2, "사이트 1의 탭 셋이 닫히지 않았다");
     assert_eq!(
         panel.conns(),
         vec![ConnectionId(8)],
