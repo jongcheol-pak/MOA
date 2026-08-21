@@ -196,3 +196,14 @@ MOA를 MIT로 공개할 수 있는 상태로 만든다 — 라이선스 파일·
 - 앱 버전 올리기·릴리즈 발행 (요청에 없다)
 - 앱 내 고지 화면(FR-57)의 UI 변경 — 자산만 다시 만들고 화면은 손대지 않는다
 - 스크린샷 다시 만들기 — 사용자가 「임의로 만든 것이라 괜찮다」고 확정했다
+
+## Phase Ledger
+
+- Phase F 통과 (HEAD 7d0db39) — 빌드 OK · 시험 956/956 · clippy 경고 0 · fmt OK. F-7(plan-completion-reviewer)이 MAJOR 1·MINOR 6을 냈고 M1(자기 유발 stale 주석)·m1(PRD 문장 순서)·m2·m5를 반영, m3·m6은 근거를 적어 이연했다.
+- Phase G 통과 (Must 100%) — 이 plan이 커버 대상으로 선언한 FR은 FR-57·FR-58(둘 다 Should)이며 실제 구현과 일치함을 F-7이 대조로 확인했다. **active Must FR은 이번 범위 밖(기구현)이고 회귀도 없다** — 앱 소스 변경이 `about_dialog.rs`·`i18n/mod.rs` 추가뿐이고, 의존성은 패치 47건에 `Cargo.toml` 불변·`eframe 0.35` 유지이며, 시험 956건이 전부 통과했다.
+
+## HUMAN-VERIFY (기계로 확인할 수 없는 것)
+
+- **정보 팝업의 세 줄 배치** — 248px 폭 안에서 줄이 겹치거나 잘리지 않는가, 작은 글자(12px)가 읽히는가.
+- **저장소 줄 클릭** — 누르면 브라우저가 `https://github.com/jongcheol-pak/MOA`로 열리는가(전제 검증 P6 — `webbrowser`가 의존 트리에 있다는 것까지만 확인됐고 실제 열림은 미확인이다. 열리지 않으면 셸 실행 경로로 대체한다).
+- **GitHub 렌더** — README 상단 아이콘과 화면 이미지가 push 후 실제로 보이는가.
