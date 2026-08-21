@@ -802,7 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn 도크_상태가_왕복한다() {
+    fn 도크는_열려_있었어도_닫힌_채로_되살아난다() {
         let mut columns = crate::ui::dock::DockState::default().columns;
         columns = crate::ui::queue_panel::QueueColumns::from_saved(&{
             let mut widths = columns.to_saved();
@@ -816,11 +816,12 @@ mod tests {
             columns,
         }
         .to_session();
-        assert_eq!(saved.panel, "log");
         assert_eq!(saved.filter, "error");
         assert_eq!(saved.columns[1], 333.0, "큐 열 폭도 함께 담긴다");
         let back = crate::ui::dock::DockState::from_session(&saved);
-        assert_eq!(back.panel, Some(crate::ui::dock::DockPanel::Log));
+        // 열려 있었어도 닫힌 채로 되살아난다 — 앱은 언제나 도크가 닫힌 채로 시작한다
+        // (2026-08-21 사용자 요청 — FR-44). 트레이 복귀는 같은 실행이라 이 길을 타지 않는다
+        assert_eq!(back.panel, None, "도크는 열려 있었어도 닫힌 채로 뜬다");
         assert_eq!(back.filter, crate::remote::queue::QueueFilter::Error);
         // 사이트 고르기는 담지 않는다 — 연결 없이 시작하므로 가리킬 곳이 없다
         assert_eq!(back.site, None);
