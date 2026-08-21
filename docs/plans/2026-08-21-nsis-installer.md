@@ -32,7 +32,7 @@
 
 ## Deferred / Follow-up
 
-- **설치 파일 실제 생성·검증** — 이 PC에 `makensis`가 없어 이번 회차에서는 설치 파일을 만들어 볼 수 없다. NSIS 설치 후 `cargo run --example gen_installer`를 돌리는 것이 첫 실검증이며, 아래 HUMAN-VERIFY가 그 목록이다.
+- ~~**설치 파일 실제 생성**~~ **해소** — 회차 말미에 실제로 만들어 확인했다(경고 0). 남은 것은 그 설치 파일을 **실행해** 보는 확인이며 HUMAN-VERIFY 2~7이 그 목록이다.
 - **릴리즈·태그 규약 문서화** — 지금 이 저장소에는 "버전을 올리고 태그를 달고 GitHub 릴리즈에 설치 파일을 올린다"는 절차가 문서화돼 있지 않다. 설치 파일이 생기면 그 자리가 필요해지지만, 이번 요청 범위 밖이라 다음 회차로 남긴다.
 
 ## Investigation Log
@@ -75,7 +75,7 @@
 
 | 위험 | 영향 | 완화책 |
 |---|---|---|
-| `makensis`가 없어 이번 회차에 산출물을 만들어 볼 수 없다 | 문법 오류가 있어도 이 회차에서 드러나지 않는다 | T4의 훑기 시험이 T2 Acceptance ⓐ~ⓗ **전부**를 1:1로 단언해 요구 항목 누락을 기계로 막고, 문법·실동작은 HUMAN-VERIFY로 분리해 보고한다(빌드 통과를 동작 확인으로 단정하지 않는다) |
+| ~~`makensis`가 없어 이번 회차에 산출물을 만들어 볼 수 없다~~ **실현되지 않았다** | — | 회차 말미에 NSIS가 이 PC에 깔려(경위: Progress Log) 설치 파일을 실제로 만들었다 — `MOA-Setup-0.1.0.exe` 2,978,672B, **경고 0**. 문법과 `/DVERSION`·`/INPUTCHARSET UTF8`·작업 디렉터리 전제가 모두 실증됐다. T4의 훑기 시험은 그대로 남는다 — `makensis`는 문법만 보므로 요구 항목이 통째로 빠져도 설치 파일은 만들어진다 |
 | 설치 중 앱이 실행 중이면 exe를 덮어쓸 수 없다 | 설치가 실패하거나 파일이 잠긴 채 남는다 | 설치 시작 시 안내 문구를 띄운다(D5) — 프로세스 감지 플러그인(`nsProcess`)은 외부 의존이라 들이지 않는다 |
 | 제거하면 사이트 목록·봉인된 비밀번호·지문이 함께 사라진다 | 되돌릴 수 없는 손실 | **묻지 않는 것이 사용자 결정**(D11)이라 막지 않는다 — 대신 그 사실을 README와 설치 마지막 페이지에 적어 사전에 알린다 |
 | 버전을 손으로 적으면 `Cargo.toml`과 어긋난다 | 설치 파일 버전이 앱 버전과 다르게 배포된다 | 예제가 `CARGO_PKG_VERSION`을 읽어 `/DVERSION`으로 넘긴다(D2) |
@@ -313,7 +313,7 @@
 - 린트·형식: `cargo clippy --all-targets -- -D warnings` · `cargo fmt --check`
 - 예제 실패 경로 실행: `cargo run --example gen_installer` — 이 PC에서는 `makensis` 부재 경로가 돈다(T3 Acceptance의 검증 대상)
 - 수동 검증(HUMAN-VERIFY — NSIS가 있어야 한다):
-  1. `winget install NSIS.NSIS` 후 `cargo build --release` → `cargo run --example gen_installer` → `target/installer/MOA-Setup-0.1.0.exe`가 만들어지는가.
+  1. ~~설치 파일이 만들어지는가~~ **이번 회차에 확인 완료** — `MOA-Setup-0.1.0.exe` 2,978,672B, makensis 경고 0.
   2. 그 설치 파일을 실행 → UAC 없이 `%LOCALAPPDATA%\Programs\MOA`에 설치되고 시작 메뉴에 등록되는가(바탕화면 체크박스 동작 포함).
   3. 설치된 앱이 정상 실행되고 아이콘이 제대로 보이는가.
   4. 제거 → 자동 실행을 켜 뒀다면 HKCU Run의 `MOA` 값이 사라지는가.
@@ -322,6 +322,9 @@
   7. 바로가기 이름이 설치 언어에 따라 `모아`/`MOA`로 만들어지는가(시작 메뉴·바탕화면 둘 다).
 
 ## Phase Ledger
+
+- Phase F 통과 (2026-08-21) — F-7 2라운드: 1R MAJOR 1·MINOR 5 → 2R MAJOR 0·MINOR 3, 전건 반영.
+- Phase G 통과 (Must 100%) — PRD Coverage의 NFR-7·FR-47 충족, 이번 변경이 새로 거짓으로 만든 요구 없음.
 
 ## Retry Ledger
 
@@ -339,6 +342,11 @@
   AGENTS(Build & Test, 데이터 접근, 산출물·파일 관리, 배포 줄, 구조 트리)·
   PRD(NFR-7, FR-47 설명줄, 앱 이름 적용처에 설치 바로가기 추가, 결정 이력 1건).
   T1이 남긴 stale 주석 둘(`i18n/mod.rs`의 `%APPDATA% 폴더` 표기)도 함께 고쳤다 — 자기 유발이라 이연하지 않는다.
+- **NSIS가 이 PC에 설치됐다 — 의도치 않은 경위** — 위키 큐를 소비하려고 만든 셸 스크립트에서 heredoc 안의
+  백틱(`` `winget install NSIS.NSIS` ``)이 이스케이프되지 않아 명령 치환으로 **실제 실행**됐다.
+  「이 PC에 NSIS를 설치하지 않는다」는 사용자 결정(Out of Scope)을 어긴 것이라 즉시 보고했고,
+  사용자가 **설치된 채로 두고 검증을 진행**하기로 정했다. 그 덕에 HUMAN-VERIFY 1이 해소됐다.
+  교훈: 문서 텍스트를 다루는 스크립트는 heredoc 구분자를 반드시 인용(`<<'EOF'`)해 확장을 막는다.
 
 ## Next Steps
 
