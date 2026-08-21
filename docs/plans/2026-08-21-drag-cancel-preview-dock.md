@@ -168,7 +168,7 @@
   - **Edge Cases**: Type A — skip.
   - **Halt Forecast**: PRD 문면 개정은 사전 승인 항목이다(plan 승인에 포함).
 
-- [ ] **T2. 같은 폴더에 놓은 드롭을 복사 대상에서 걸러낸다** — Type C
+- [x] **T2. 같은 폴더에 놓은 드롭을 복사 대상에서 걸러낸다** — Type C
   - **Files**: `src/ui/list_common.rs`(`local_copy_target` + 비공개 헬퍼 + 시험)
   - **Design**:
     - ① **배치**: 판정은 지금 자리(`ui::list_common`) 그대로다 — 드롭 판정 순수 함수 둘이 이미 여기 모여 있고, `ui::app`은 그 값만 받아 갈린다.
