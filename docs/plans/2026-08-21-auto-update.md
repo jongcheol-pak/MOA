@@ -311,9 +311,9 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) `User-Agent` 없이 GitHub이 403을 준다(위키 ⓐ) → `WinHttpOpen`의 agent 인자에 `MOA/<버전>`을 넣어 사전 해소 / (ii-a) `Cargo.toml` feature 추가 — 사전 승인 항목
   - **Depends on**: -
 
-- [ ] T3. SHA256 (CNG) — `src/app/update/sha256.rs`
+- [x] T3. SHA256 (CNG) — `src/app/update/sha256.rs`
   - **Type**: C
-  - **Design**: ① `src/app/update/sha256.rs` ② 신규 심볼 — `file_sha256(path) -> Option<String>`(64KB 청크 스트리밍, 소문자 hex). 내부에 `HashHandle` RAII 1종 ③ 의존 — `windows`(BCrypt)와 **`crate::remote::envelope::to_hex` 재사용**(4-D). `install.rs`가 이것을 부른다. **`app` → `remote` 참조는 새로 만드는 것이 아니다** — `src/app/settings.rs:212`가 이미 `crate::remote::sites::SiteStore`를 쓴다(AGENTS 계층 규약은 「`ui`만 상위」를 말하고 그 둘의 관계는 정하지 않았다) ④ **비추상화 선언** — `Digest` 트레이트·해시 알고리즘 선택 인자를 두지 않는다. SHA256 하나뿐이다
+  - **Design**: ① `src/app/update/sha256.rs` ② 신규 심볼 — `file_sha256(path) -> Option<String>`(64KB 청크 스트리밍, 소문자 hex)과 `matches(expected, actual) -> bool`(**T5의 `verify_downloaded`가 부른다** — 릴리즈 노트는 사람이 쓰는 글이라 값이 대문자로 적히거나 줄 끝에 공백이 붙어, 그 관용을 대조하는 쪽마다 되풀이하지 않고 해시를 아는 이 모듈에 둔다). 내부에 `AlgHandle`·`HashHandle` RAII **2종**(제공자 핸들도 닫아야 하므로 하나로는 새는 자리가 생긴다) ③ 의존 — `windows`(BCrypt)와 **`crate::remote::envelope::to_hex` 재사용**(4-D). `install.rs`가 이것을 부른다. **`app` → `remote` 참조는 새로 만드는 것이 아니다** — `src/app/settings.rs:212`가 이미 `crate::remote::sites::SiteStore`를 쓴다(AGENTS 계층 규약은 「`ui`만 상위」를 말하고 그 둘의 관계는 정하지 않았다) ④ **비추상화 선언** — `Digest` 트레이트·해시 알고리즘 선택 인자를 두지 않는다. SHA256 하나뿐이다
   - **Acceptance**: Given 알려진 시험 벡터, When `file_sha256`을 부르면, Then 빈 파일이 `e3b0c442...b855`, `"abc"`가 `ba7816bf...ad15`를 돌려주고, 64KB 경계를 넘는 파일(예: 100KB)도 한 번에 읽은 것과 같은 값을 낸다. 없는 경로는 `None`. `cargo test` 통과, clippy 0.
   - **Files**: 주: `src/app/update/sha256.rs`(신규), `src/app/update/mod.rs`(모듈 선언) / 테스트: 같은 파일 `#[cfg(test)] mod tests`(임시 폴더 사용 — 기존 시험 관례 `std::env::temp_dir().join(format!("…{}", std::process::id()))`)
   - **Edge Cases**: 빈 파일 → 빈 입력의 정해진 해시 / 읽는 중 파일이 사라짐 → `None` / 큰 파일(수십 MB) → 청크라 메모리가 일정 / `BCrypt` 호출 실패 → `None`(패닉하지 않는다)
@@ -333,7 +333,7 @@ MOA-Setup-0.1.0.exe
   - **Type**: C
   - **Design**: ① `src/app/update/install.rs` ② 신규 심볼 — `is_installed_build() -> bool`(exe 옆 `uninstall.exe`), 그 판정부는 **경로를 인자로 받는 비공개 `is_installed_at(dir) -> bool`**로 두고 공개 함수가 `current_exe`의 부모를 넘긴다(시험 seam), `update_dir() -> Option<PathBuf>`(exe 옆 `update\`), `clear_update_dir()`(폴더째 지운다), `download_and_verify(info) -> Result<PathBuf, UpdateError>`(받기 → SHA256 대조 → 어긋나면 지우고 오류), `launch_installer(path) -> bool`(`/UPDATE` 인자로 분리 실행) ③ 의존 — `http.rs`·`sha256.rs`·`release.rs`의 타입. `mod.rs`가 부른다 ④ **비추상화 선언** — 설치 방식(msi/exe/zip) 분기나 플러그인 지점을 두지 않는다. NSIS exe 하나다
   - **Design(개발 스위치, D14)**: `is_installed_build()`는 **`#[cfg(debug_assertions)]`에서만** `MOA_UPDATE_DEV`가 `1` 또는 `fake`면 `true`를 돌려준다(가짜 릴리즈 주입은 T6이 같은 변수를 보고 한다). 릴리즈 빌드에는 그 분기가 컴파일되지 않는다.
-  - **Design(검증부 분리)**: `download_and_verify`를 둘로 가른다 — 받기는 `http::download_to_file`이 하고, **대조는 `verify_downloaded(path, expected_hex) -> Result<(), UpdateError>`**(불일치면 그 자리에서 파일을 지운다)가 한다. 그래야 **네트워크 없이 대조 규칙을 시험할 수 있다**(합쳐 두면 다운로드가 선행돼 `cargo test`로 관측 불가하다).
+  - **Design(검증부 분리)**: `download_and_verify`를 둘로 가른다 — 받기는 `http::download_to_file`이 하고, **대조는 `verify_downloaded(path, expected_hex) -> Result<(), UpdateError>`**(불일치면 그 자리에서 파일을 지운다)가 하며, 값 비교는 **T3의 `sha256::matches`를 재사용**한다(대소문자·앞뒤 공백 관용). 그래야 **네트워크 없이 대조 규칙을 시험할 수 있다**(합쳐 두면 다운로드가 선행돼 `cargo test`로 관측 불가하다).
   - **Acceptance**: Given 이 모듈, When `cargo test`를 돌리면, Then ① `update_dir()`의 부모가 `std::env::current_exe()`의 부모와 같고 이름이 `update`다 ② `clear_update_dir()`이 파일이 든 폴더를 지우고, 폴더가 없어도 오류 없이 끝난다 ③ `is_installed_at(dir)`이 `uninstall.exe` 유무로 갈린다(임시 폴더로 두 경우를 만들어 직접 시험) ④ **`verify_downloaded`가 임시 파일 + 틀린 hex에서 오류를 내고 그 파일을 지운다**(맞는 hex면 파일이 남는다) — 네트워크를 쓰지 않는다 ⑤ `MOA_UPDATE_DEV` 분기가 `#[cfg(debug_assertions)]` 안에 있어 릴리즈 빌드 소스에 남지 않는다(`cargo build --release` 경고 0으로 그 코드가 죽지 않았음을 함께 확인). clippy 0.
   - **Acceptance(화면 — HUMAN-VERIFY B-13)**: 실제 릴리즈에서 받은 파일이 체크섬 불일치로 거부되는 전 구간은 사람이 본다(다운로드가 선행되므로 자동 관측 불가).
   - **Files**: 주: `src/app/update/install.rs`(신규), `src/app/update/mod.rs`(모듈 선언) / 테스트: 같은 파일 `#[cfg(test)] mod tests`
