@@ -43,7 +43,7 @@ MOA를 MIT로 공개할 수 있는 상태로 만든다 — 라이선스 파일·
   - **Edge Cases**: 갱신 후 빌드·시험이 깨지면 lock을 되돌리고(HEAD의 `Cargo.lock` 복원) 어느 크레이트가 문제인지 적는다 — 그때는 T2를 「갱신 없음」으로 마감하고 T3 이후를 그대로 진행한다(나머지 task는 lock에 의존하지 않는다).
   - **Halt Forecast**: 되돌려도 시험이 깨진 채면 멈추고 보고한다(위임 불가 — 원인이 이번 변경 밖이다).
 
-- [ ] **T3. 라이선스 고지 파일 생성기 확장** — Type C
+- [x] **T3. 라이선스 고지 파일 생성기 확장** — Type C
   - **Files**: `examples/gen_licenses.rs`, `THIRD-PARTY-NOTICES.md`(신규 생성물)
   - **Design**: ① 배치 — 생성 로직은 `examples/gen_licenses.rs` 안에 둔다(앱은 이 파일을 읽지 않으므로 `src/`에 둘 이유가 없다). ② 신규 심볼 — `fn write_notices(data: &LicenseData, out: &Path) -> Result<(), String>`(이미 만든 `LicenseData`를 마크다운으로 옮겨 적는다). ③ 의존 방향 — `main`이 `LicenseData`를 만든 뒤 `write_notices`를 부른다. 앱 코드는 이 함수를 모른다. ④ 비추상화 선언 — 출력 형식을 고르는 트레이트·설정 구조체를 두지 않는다(마크다운 한 가지뿐이다).
   - 형식: 머리말(무엇인지·어떻게 만들어지는지·손으로 고치지 않는다) → 구성 요소 목록 표(이름·버전·SPDX·저작권자) → 라이선스 전문. 전문은 `texts`의 중복 제거를 그대로 살려 **같은 전문을 한 번만 싣고 어느 구성 요소가 그것을 쓰는지 적는다**(구성 요소마다 펼치면 파일이 몇 배가 된다).
