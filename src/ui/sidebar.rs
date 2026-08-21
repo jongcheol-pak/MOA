@@ -678,9 +678,14 @@ fn show_site_context_menu(
         // **이 줄만 파괴색으로 칠한다** — 도는 전송이 끊기고 큐가 비워지는, 되돌릴 수 없는
         // 조작이라 원본(`:359`)의 빨간 hover를 되살렸다. 2026-08-16에 그 색을 뺀 근거는
         // 「감출 뿐이라 되돌릴 수 있다」였는데 2026-08-21 요청으로 그 전제가 없어졌다.
-        // 메뉴의 다른 줄·다른 팝업은 종전 `MENU_HOT` 그대로다
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = theme::MENU_HOT_DANGER;
-        let clicked = ui.add(delete).clicked();
+        // **`scope`로 가둔다** — 지금은 이 버튼이 메뉴의 마지막 줄이라 새어도 칠할 것이
+        // 없지만, 뒤에 줄이 하나 붙는 순간 그 줄이 조용히 빨개진다(`widgets`의 선례와 같다)
+        let clicked = ui
+            .scope(|ui| {
+                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = theme::MENU_HOT_DANGER;
+                ui.add(delete).clicked()
+            })
+            .inner;
         if clicked {
             actions.push(SidebarAction::RemoveSite(record.id));
             ui.close();

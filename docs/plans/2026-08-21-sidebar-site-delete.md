@@ -273,7 +273,7 @@
     - (ii-a) `handle_sidebar`에 `ctx` 인자 추가 · `SidebarAction` 변형 이름 변경(계획된 시그니처 변경) → `## 사전 승인 항목`
   - **Depends on**: T1, T2, T3
 
-- [ ] T5. 사이드바 메뉴를 `삭제`로 되돌리고 파괴색 hover를 복원한다
+- [x] T5. 사이드바 메뉴를 `삭제`로 되돌리고 파괴색 hover를 복원한다
   - **Type**: C
   - **Design**: ① `src/ui/theme.rs`에 `MENU_HOT_DANGER`(#C42B1C — 디자인 `:359`), 사용은 `src/ui/sidebar.rs::show_site_context_menu` ② 신규 심볼은 그 상수 하나 ③ `sidebar`가 `theme`를 참조하는 기존 방향 그대로 ④ 「파괴적 메뉴 항목 위젯」을 만들지 않는다 — 사례가 하나라 그 자리에서 hover 색만 덮는다
   - **Acceptance**: Given 사이드바 사이트 행 우클릭 메뉴, When 그리면, Then 문구가 `삭제`(영어 `Delete`)이고 오른쪽에 `Del`이 서며 그 줄의 hover 배경이 `#C42B1C`다. `i18n::sidebar_hide_site`는 카탈로그에서 사라지고 남은 사용처가 없다(`cargo build` 경고 0). 사이드바 문구 시험이 새 이름·문구로 통과한다
