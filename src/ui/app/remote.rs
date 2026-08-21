@@ -21,7 +21,9 @@ use super::{ExplorerApp, NOTICE_SECS};
 use crate::app::layout::{PanelId, Rect as LayoutRect, SplitDir, SplitPlace};
 use crate::panel::tabs::TabPhase;
 use crate::remote::connection::TransferDirection;
-use crate::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId, OpKind};
+use crate::remote::connection::{
+    ConnCommand, ConnEvent, ConnPhase, ConnectionId, OpKind, TransferId,
+};
 use crate::remote::ftp::FtpSession;
 use crate::remote::log::LogKind;
 use crate::remote::sftp::SftpSession;
@@ -329,6 +331,109 @@ impl ExplorerApp {
         self.views
             .values()
             .any(|view| view.panels.values().any(|panel| panel.uses_conn(conn)))
+    }
+
+    /// 그 사이트로 열려 있는 연결 **전부** — 사이트 하나가 연결 셋을 쓴다 (FR-37 탐색 1 + 전송 2).
+    ///
+    /// 위 `site_connection`은 아무 하나면 되는 일(조회를 보낼 상대 고르기)에 쓰고, 이쪽은
+    /// 사이트를 통째로 거둘 때처럼 **하나도 남기면 안 되는** 일에 쓴다
+    pub(super) fn site_connections(&self, site: SiteId) -> Vec<ConnectionId> {
+        self.manager
+            .ids()
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.manager
+                    .get(*id)
+                    .is_some_and(|connection| connection.site == site)
+            })
+            .collect()
+    }
+
+    /// 사이드바 목록에서 지운 사이트의 **실행 중 상태를 통째로 걷어낸다** (FR-29).
+    ///
+    /// 사이트 기록은 남기고(사이트 관리자에 그대로 있다) 연결·원격 탭·전송만 거둔다.
+    /// 그러지 않으면 지웠는데도 전송 큐 화면의 연결별 탭에 그 서버가 계속 선다 —
+    /// 그 탭은 **큐에 항목이 있거나 연결이 열려 있으면** 서기 때문이다(`ui::queue_panel`).
+    ///
+    /// **순서가 이 함수의 핵심이다** (plan D2):
+    /// 1. 확인 대기를 먼저 버린다 — 연결을 닫으면 그것이 「겹침 없음」으로 큐에 들어간다
+    /// 2. 원격 탭을 닫는다 — 패널이 비면 닫고, 마지막 패널이면 로컬 탭으로 되돌린다(FR-2)
+    /// 3. **연결이 살아 있는 동안** 전송을 취소하고 큐를 비운다 — `TransferRunner::cancel`은
+    ///    워커에 명령을 보내야 받다 만 `.part`를 정리 대상으로 잡는다
+    /// 4. 연결을 접고 곧바로 `forget_connection` — 워커가 사라지면 완료 통지가 오지 않아
+    ///    그 `.part`가 영영 남는다
+    pub(super) fn detach_site(
+        &mut self,
+        site: SiteId,
+        area: LayoutRect,
+        ctx: &egui::Context,
+        now: f64,
+    ) {
+        let name = self.sites.get(site).map(|record| record.name.clone());
+        self.sites.hide(site);
+
+        // 1. 이 사이트로 물어 둔 확인은 답을 받을 곳이 없다
+        self.drop_site_conflicts(site);
+
+        // 2. 그 사이트를 가리키는 원격 탭을 모든 워크스페이스에서 닫는다
+        for view in self.views.values_mut() {
+            let mut emptied: Vec<PanelId> = Vec::new();
+            for (id, panel) in view.panels.iter_mut() {
+                // 그 사이트 탭만 남아 마지막 하나를 닫지 못한 패널이다
+                if panel.close_site_tabs(site, ctx) {
+                    emptied.push(*id);
+                }
+            }
+            for panel in emptied {
+                view.close_panel(panel, area);
+                // 마지막 패널은 닫히지 않는다 (FR-2) — 그때는 로컬 시작 폴더 탭을 세우고
+                // 남은 원격 탭을 마저 닫는다(세션 복원이 사이트 잃은 탭을 되돌리는 것과 같다)
+                if let Some(state) = view.panels.get_mut(&panel) {
+                    state.new_tab(ctx);
+                    state.close_site_tabs(site, ctx);
+                }
+            }
+        }
+
+        // 2-1. 아직 한 번도 열지 않은 워크스페이스는 뷰가 없다 (D1 지연 생성) — 저장된
+        //      상태에서 직접 걷어낸다. 그러지 않으면 그 탭이 그대로 다시 저장돼
+        //      (`collect_session`) 다음에 그 워크스페이스를 열 때 지운 사이트가 되살아난다.
+        //      **빼지 않고 로컬 시작 폴더로 바꾼다** — 탭 목록이 비면 그 패널을 되살릴 수
+        //      없고(`PanelState::from_tabs`가 `None`), 활성 탭 번호도 어긋난다
+        for state in self.restored.values_mut() {
+            crate::ui::session::detach_site_from_state(state, site, &crate::ui::app::start_dir());
+        }
+
+        // 3. 연결이 살아 있는 동안 전송을 그만두고 큐에서 뺀다
+        let ids: Vec<TransferId> = self
+            .queue
+            .site_items(site)
+            .iter()
+            .map(|item| item.id)
+            .collect();
+        for id in &ids {
+            self.runner.cancel(&self.manager, *id);
+        }
+        self.queue.remove(&ids);
+
+        // 4. 연결을 접는다. 접힌 뒤에는 워커의 통지가 오지 않으므로 실행기가 붙들고 있던
+        //    자리(취소 뒤 정리를 기다리던 `.part`)를 그 자리에서 거둔다
+        for conn in self.site_connections(site) {
+            self.release_conn(conn);
+            self.runner.forget_connection(conn);
+        }
+
+        // 5. 늦게 도착할 워커 결과를 버릴 표시를 세우고, 도크가 그 사이트를 고른 채면 `전체`로
+        self.detached_sites.insert(site);
+        if self.dock.site == Some(site) {
+            self.dock.site = None;
+        }
+        self.persist_session();
+        if let Some(name) = name {
+            self.toast
+                .show(crate::i18n::dynamic::site_removed(&name), now);
+        }
     }
 
     /// 연결 하나를 접고 그에 딸린 대기 자리를 함께 지운다 (FR-32).
@@ -774,6 +879,9 @@ impl ExplorerApp {
     /// 사이트를 새 탭으로 여는 진입점(사이드바·주소창·드롭다운)은 T12·T13이 붙인다
     pub fn connect_site(&mut self, site: SiteId) -> Option<ConnectionId> {
         let record = self.sites.get(site)?.clone();
+        // 다시 여는 사이트는 더 이상 「지운 것」이 아니다 — 표시를 풀지 않으면 그 사이트로
+        // 펼친 올리기가 영영 큐에 들어가지 않는다 (FR-29 — `detach_site` 5단계)
+        self.detached_sites.remove(&site);
         // 익명 로그온이면 비밀번호가 없다 — 서버가 관례대로 무시한다
         let password = self.sites.password(site).unwrap_or_default();
         // 세션은 **껍데기만** 만들어 넘긴다 — 소켓도 지문 표도 워커 스레드가 연결할 때 연다

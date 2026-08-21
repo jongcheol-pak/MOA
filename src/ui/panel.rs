@@ -596,6 +596,36 @@ impl PanelState {
         self.handle_tab(TabAction::Close(self.tabs.active_index()), ctx)
     }
 
+    /// 그 사이트를 가리키는 원격 탭을 모두 닫는다 — 사이드바에서 사이트를 지웠을 때 (FR-29).
+    ///
+    /// **모든 탭이 그 사이트라 마지막 하나를 닫지 못했으면 `true`**다. 그때 패널을 닫을지
+    /// 로컬 탭으로 되돌릴지는 **앱이 정한다**(`ui::app::detach_site`) — 이 패널이 창의 마지막
+    /// 하나인지는 여기서 알 수 없고, 마지막 패널은 닫히지 않기 때문이다(FR-2).
+    ///
+    /// 닫은 탭이 쓰던 연결은 돌려주지 않는다 — 사이트를 통째로 거두는 길이라 연결도 탭이
+    /// 아니라 매니저에서 사이트로 고른다(`close_tab`은 그 반대라 연결을 돌려준다).
+    /// `close_requested`도 세우지 않는다: 패널을 닫는 판단이 앱에 있어 여기서 세우면 두 번 닫는다
+    pub fn close_site_tabs(&mut self, site: SiteId, ctx: &egui::Context) -> bool {
+        // 닫을 때마다 뒤 탭의 자리가 당겨진다 — **매번 처음부터 다시 찾는다**
+        loop {
+            let found = self.tabs.sources().iter().position(
+                |source| matches!(source, TabSource::Remote { site: at, .. } if *at == site),
+            );
+            let Some(index) = found else {
+                return false;
+            };
+            let was_active = index == self.tabs.active_index();
+            if let CloseOutcome::Removed(_) = self.tabs.close(index) {
+                if was_active {
+                    self.reload_active_tab(ctx);
+                }
+            } else {
+                // 이 패널에 남은 탭이 그것 하나다 — 탭 목록은 비울 수 없다
+                return true;
+            }
+        }
+    }
+
     pub fn go_back(&mut self, ctx: &egui::Context) {
         self.handle_nav(NavAction::Back, ctx);
     }

@@ -13,6 +13,7 @@
 use super::ExplorerApp;
 use crate::remote::connection::{ConnCommand, ConnectionId, TransferDirection};
 use crate::remote::transfer;
+use crate::remote::types::SiteId;
 use crate::ui::list_common::{self, ConflictChoice, DragItem, DropOutcome, DropTarget};
 use crate::ui::remote_menu::{self, DialogOutcome};
 use eframe::egui;
@@ -107,6 +108,45 @@ impl ExplorerApp {
         // 대화 자리가 비어 있으면 기다리던 것 중 먼저 온 것을 올린다
         if self.conflict_dialog.is_none() && !self.conflict_queue.is_empty() {
             self.conflict_dialog = Some(self.conflict_queue.remove(0));
+        }
+    }
+
+    /// 그 사이트와 오가는 확인 대기를 **버린다** — 사이드바에서 사이트를 지웠을 때 (FR-29).
+    ///
+    /// 아래 `abandon_conflict_lists`와 겨냥하는 것이 다르다. 그쪽은 답이 오지 않게 된 확인을
+    /// **겹침 없음으로 보고 큐에 보내는** 길인데(연결만 사라졌을 뿐 사용자는 그 전송을 원한다),
+    /// 여기서는 사이트째 거두는 것이라 **보낼 곳 자체가 없다**. 그래서 `settle_conflict`를
+    /// 부르지 않는다 — 부르면 방금 비운 큐에 그 사이트의 전송이 되살아나 연결별 탭이 다시 선다.
+    ///
+    /// **큐를 비우기 전에 부른다** — 순서가 뒤집히면 위와 같은 되살아남이 생긴다
+    pub(super) fn drop_site_conflicts(&mut self, site: SiteId) {
+        self.pending_conflicts
+            .retain(|check| conflict_site(&check.drop) != Some(site));
+        self.conflict_queue
+            .retain(|(check, _)| conflict_site(&check.drop) != Some(site));
+        if self
+            .conflict_dialog
+            .as_ref()
+            .is_some_and(|(check, _)| conflict_site(&check.drop) == Some(site))
+        {
+            // 물을 상대가 사라졌다 — 대화를 내린다
+            self.conflict_dialog = None;
+        }
+        // 서버에 물어 둔 조회도 거둔다. 사이트 하나가 연결 셋을 쓰므로(FR-37) 그 사이트의
+        // 연결로 물은 것을 모두 고른다 — 지울 것을 먼저 모으는 이유는 표를 고치는 동안
+        // 연결 관리자를 함께 빌릴 수 없기 때문이다
+        let stale: Vec<u64> = self
+            .conflict_lists
+            .iter()
+            .filter(|(_, (asked, _))| {
+                self.manager
+                    .get(*asked)
+                    .is_some_and(|connection| connection.site == site)
+            })
+            .map(|(generation, _)| *generation)
+            .collect();
+        for generation in stale {
+            self.conflict_lists.remove(&generation);
         }
     }
 
@@ -340,6 +380,17 @@ pub(super) fn apply_conflict_choice(
     }
 }
 
+/// 이 전송이 어느 사이트와 오가는가 — **올리기는 놓은 곳, 받기는 끌어온 곳**이다.
+///
+/// 로컬끼리의 드롭에는 사이트가 없다(`None`) — 그것은 셸 복사라 이 흐름에 오지도 않지만,
+/// 사이트로 거두는 쪽에서 `None`을 대상으로 삼지 않게 여기서 갈라 둔다
+fn conflict_site(drop: &DropOutcome) -> Option<SiteId> {
+    match &drop.target {
+        DropTarget::Remote { site, .. } => Some(*site),
+        DropTarget::Local(_) => drop.source_site,
+    }
+}
+
 /// 같은 이름 확인을 기다리는 전송 한 벌 (FR-55)
 pub(super) struct ConflictCheck {
     /// 이 확인의 번호 — 워커·서버 답이 어느 조작의 것인지 잇는다
@@ -370,6 +421,38 @@ mod tests {
 
     fn 이름들(drop: &DropOutcome) -> Vec<String> {
         drop.items.iter().map(DragItem::name).collect()
+    }
+
+    #[test]
+    fn 확인_대기의_사이트는_방향에_따라_다른_자리에서_온다() {
+        // 사이드바에서 사이트를 지울 때 어떤 확인을 버릴지 이 판정이 정한다 (FR-29).
+        // 받기는 **끌어온 곳**, 올리기는 **놓은 곳**이 그 사이트다
+        let 받기 = 받기_전송(&["a.txt"]);
+        assert_eq!(conflict_site(&받기), Some(SiteId(1)));
+
+        let 올리기 = DropOutcome {
+            items: vec![DragItem::Local {
+                path: PathBuf::from(r"D:\보낼 파일\a.txt"),
+                is_dir: false,
+            }],
+            source_site: None,
+            target: DropTarget::Remote {
+                site: SiteId(2),
+                dir: RemotePath::new("/pub"),
+            },
+        };
+        assert_eq!(conflict_site(&올리기), Some(SiteId(2)));
+
+        // 로컬끼리는 사이트가 없다 — 사이트로 거두는 쪽이 대상으로 삼으면 안 된다
+        let 로컬끼리 = DropOutcome {
+            items: vec![DragItem::Local {
+                path: PathBuf::from(r"D:\a.txt"),
+                is_dir: false,
+            }],
+            source_site: None,
+            target: DropTarget::Local(PathBuf::from(r"D:\받은 파일")),
+        };
+        assert_eq!(conflict_site(&로컬끼리), None);
     }
 
     #[test]

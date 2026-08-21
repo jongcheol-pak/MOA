@@ -17,7 +17,7 @@
 - **Lint**: `cargo clippy --all-targets -- -D warnings`
 - **Format check**: `cargo fmt --check`
 - **Format**: `cargo fmt`
-- **라이선스 자산 재생성**: `cargo run --example gen_licenses` — 의존성을 더하거나 버전을 올린 뒤 반드시 돌린다. `assets/licenses.json`이 낡으면 `Cargo.lock` 지문 대조 시험이 실패한다
+- **라이선스 고지 재생성**: `cargo run --example gen_licenses` — 의존성을 더하거나 버전을 올린 뒤 반드시 돌린다. **산출물이 둘이다**: 앱이 읽는 `assets/licenses.json`과 저장소에서 보는 `THIRD-PARTY-NOTICES.md`(레포 루트). 앞의 것이 낡으면 `Cargo.lock` 지문 대조 시험이 실패한다
 - **아이콘 자산 재생성**: `cargo run --example gen_app_icon` — `docs/AppIcon.png`를 바꾼 뒤에만 돌린다. `assets/app_icon_256.png`를 덮어쓰며, 그 자산은 정보 화면(FR-58)이 읽는다
 
 ## 데이터 접근
@@ -67,8 +67,9 @@
 ## 산출물·파일 관리
 - **빌드 산출물**: `target/` (gitignore)
 - **런타임 생성물**: `%APPDATA%\MOA\settings.json` (설정·세션)
-- **커밋되는 생성물**: 둘 다 **손으로 고치지 않는다** — 생성기가 만든다.
+- **커밋되는 생성물**: 셋 다 **손으로 고치지 않는다** — 생성기가 만든다.
   - `assets/licenses.json` — `examples/gen_licenses.rs`가 만든다. 레지스트리 캐시를 훑어 만들므로 생성은 개발 PC에서만 하고, 빌드·시험은 그 결과만 읽는다(네트워크·캐시 비의존)
+  - `THIRD-PARTY-NOTICES.md` — **같은 생성기가 같은 자료로 함께 만든다**(레포 루트). 앱을 띄우지 않고 저장소에서 바로 보는 고지라 전문까지 담는다
   - `assets/app_icon_256.png` — `examples/gen_app_icon.rs`가 `docs/AppIcon.png`에서 만든다. 원본 그림을 바꿨을 때만 다시 돌리면 된다
 
 ## Conventions

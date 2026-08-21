@@ -1,9 +1,10 @@
 //! 오픈소스 라이선스 고지 자산 생성기 (FR-57) — `cargo run --example gen_licenses`.
 //!
-//! `assets/licenses.json`을 만든다. 이 파일은 **커밋되는 생성물**이라 앱 빌드는 레지스트리
-//! 캐시도 네트워크도 보지 않는다. 예제 타깃에 둔 것은 `cargo build`가 예제를 빌드하지 않아
-//! 배포 산출물이 늘지 않으면서도 `cargo test`·`clippy --all-targets`가 컴파일 검사를 해
-//! 주기 때문이다.
+//! 산출물이 둘이다 — 앱이 읽는 `assets/licenses.json`과 저장소에서 보는
+//! `THIRD-PARTY-NOTICES.md`. 같은 자료를 형식만 달리 적으므로 둘이 갈릴 일이 없다.
+//! 둘 다 **커밋되는 생성물**이라 앱 빌드는 레지스트리 캐시도 네트워크도 보지 않는다.
+//! 예제 타깃에 둔 것은 `cargo build`가 예제를 빌드하지 않아 배포 산출물이 늘지 않으면서도
+//! `cargo test`·`clippy --all-targets`가 컴파일 검사를 해 주기 때문이다.
 //!
 //! 대상 집합은 **`cargo tree`가 정한다** — `cargo metadata`의 의존 그래프에는 feature가
 //! 꺼진 optional까지 남아 실제로 링크되지 않는 크레이트가 섞인다(2026-08-18 실측 155 대 164).
@@ -83,7 +84,92 @@ fn main() -> Result<(), String> {
         data.crates.len(),
         data.texts.len()
     );
+
+    let notices = root.join("THIRD-PARTY-NOTICES.md");
+    write_notices(&data, &notices)?;
+    println!(
+        "{} — 같은 자료를 레포 고지 파일로도 적었다",
+        notices.display()
+    );
     Ok(())
+}
+
+// ── 레포 고지 파일 ──
+
+/// 레포 루트의 `THIRD-PARTY-NOTICES.md`를 쓴다.
+///
+/// 앱 화면(FR-57)은 `assets/licenses.json`을 읽지만, 저장소를 내려받는 쪽은 앱을 띄우지
+/// 않고도 고지를 볼 수 있어야 한다. 대상 집합과 전문은 위에서 만든 것을 그대로 쓰므로
+/// 두 산출물이 갈릴 일이 없다.
+///
+/// **전문을 구성 요소마다 펼치지 않는다** — 대부분이 같은 MIT·Apache-2.0 전문을 쓰므로
+/// 펼치면 파일이 몇 배가 된다. 전문 하나마다 그것을 쓰는 구성 요소를 함께 적는다
+fn write_notices(data: &LicenseData, out: &Path) -> Result<(), String> {
+    let mut md = String::new();
+    md.push_str("# 오픈소스 라이선스 고지\n\n");
+    md.push_str(
+        "MOA가 쓰는 오픈소스 구성 요소와 그 라이선스 전문이다. \
+         `cargo run --example gen_licenses`가 만드는 **생성물이라 손으로 고치지 않는다** — \
+         고칠 곳은 생성기(`examples/gen_licenses.rs`)다.\n\n",
+    );
+    md.push_str(
+        "같은 자료를 앱 안에서도 볼 수 있다(타이틀바 설정 메뉴의 `오픈소스 라이선스`). \
+         MOA 자체의 라이선스는 [LICENSE](LICENSE)에 있다.\n\n",
+    );
+    md.push_str(&format!(
+        "구성 요소 {}개 · 라이선스 전문 {}종.\n\n",
+        data.crates.len(),
+        data.texts.len()
+    ));
+
+    md.push_str("## 구성 요소\n\n");
+    md.push_str("| 이름 | 버전 | 라이선스(SPDX) | 저작권자 |\n|---|---|---|---|\n");
+    for entry in &data.crates {
+        md.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            escape_cell(&entry.name),
+            escape_cell(&entry.version),
+            escape_cell(&entry.spdx),
+            escape_cell(&entry.authors.join(", "))
+        ));
+    }
+
+    md.push_str("\n## 라이선스 전문\n\n");
+    for (index, text) in data.texts.iter().enumerate() {
+        let users: Vec<&str> = data
+            .crates
+            .iter()
+            .filter(|entry| entry.text_indices.contains(&index))
+            .map(|entry| entry.name.as_str())
+            .collect();
+        // 라벨은 겹칠 수 있다(저작권자가 다른 MIT 전문이 여럿이다) — 번호를 앞에 붙여 가른다
+        md.push_str(&format!("### {}. {}\n\n", index + 1, text.spdx));
+        md.push_str(&format!("적용: {}\n\n", users.join(" · ")));
+        let fence = fence_for(&text.body);
+        md.push_str(&format!(
+            "{fence}text\n{}\n{fence}\n\n",
+            text.body.trim_end()
+        ));
+    }
+
+    std::fs::write(out, md).map_err(|err| format!("{}: {err}", out.display()))
+}
+
+/// 표 칸에 들어갈 값 — 칸을 가르는 `|`를 막고 줄바꿈을 편다.
+///
+/// 줄바꿈까지 미는 이유: 마크다운 표는 한 줄이 한 행이라 값에 개행이 섞이면 그 행이
+/// 쪼개져 표가 통째로 깨진다. 지금 들어오는 값(crates.io 메타데이터의 이름·버전·SPDX·
+/// 저작자)에 개행이 있던 적은 없지만, 한 크레이트가 그렇게 적으면 파일 전체가 망가진다
+fn escape_cell(value: &str) -> String {
+    value.replace('|', r"\|").replace(['\n', '\r'], " ")
+}
+
+/// 전문을 감쌀 코드 울타리 — 본문에 든 백틱 런보다 한 칸 길게 만든다.
+///
+/// 전문 안에 백틱 셋이 들어 있으면 그것이 블록을 끊어 뒤가 문서 본문으로 새어 나온다
+fn fence_for(body: &str) -> String {
+    let longest = body.split(|ch| ch != '`').map(str::len).max().unwrap_or(0);
+    "`".repeat(longest.max(2) + 1)
 }
 
 // ── 대상 집합 ──

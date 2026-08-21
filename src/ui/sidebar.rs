@@ -76,7 +76,7 @@ const SITE_MENU_WIDTH: f32 = 180.0;
 /// 행 높이는 여기서 정하지 않는다 — `theme::menu_style`이 세운 공통 값(`MENU_ITEM_HEIGHT`)을 따른다
 const MENU_CAPTION_PX: f32 = 12.0;
 /// 사이트 컨텍스트 메뉴의 삭제 옆에 붙는 단축키 표기 (인벤토리 #10)
-const HIDE_SITE_SHORTCUT: &str = "Del";
+const DELETE_SITE_SHORTCUT: &str = "Del";
 
 /// 사이드바에서 올라온 사용자 조작. 목록을 바꾸는 일은 전부 호출부의 몫이다.
 ///
@@ -96,8 +96,9 @@ pub enum SidebarAction {
     SelectSite(SiteId),
     /// 사이트 행 더블클릭·연결 메뉴 선택 — 이 사이트로 연결한다 (인벤토리 #4·#7)
     ConnectSite(SiteId),
-    /// **사이드바 목록에서만 감춘다** — 사이트 자체는 남는다 (README §1, 인벤토리 #10)
-    HideSite(SiteId),
+    /// **목록에서 지운다** — 그 사이트의 연결·원격 탭·전송 큐 항목을 함께 걷어낸다 (FR-29).
+    /// 사이트 기록만은 사이트 관리자에 남아 되돌릴 수 있다 (인벤토리 #10)
+    RemoveSite(SiteId),
     /// 헤더 `⟳` (인벤토리 #2)
     RefreshSites,
     /// 헤더 `+` (인벤토리 #3) — 연결 메뉴는 사이드바가 직접 띄우므로 이 조작은
@@ -396,8 +397,8 @@ impl WorkspaceSidebar {
     /// 새 항목의 인덱스는 호출부가 추가를 끝낸 다음 프레임에야 정해진다
     /// 연결 섹션 — 헤더(`⟳`·`+`)와 사이트 목록 (인벤토리 #1~10).
     ///
-    /// **숨긴 사이트는 여기 나오지 않는다** — 지운 것이 아니라 사이드바에서만 감춘 것이라
-    /// 사이트 관리자에는 그대로 남는다 (README §1)
+    /// **숨긴 사이트는 여기 나오지 않는다** — 목록에서 지운 사이트도 여기 든다.
+    /// 어느 쪽이든 사이트 기록은 사이트 관리자에 그대로 남는다 (README §1)
     fn show_connections(
         &mut self,
         ui: &mut egui::Ui,
@@ -651,7 +652,8 @@ fn show_connect_menu(plus: &egui::Response, sites: &SiteStore, actions: &mut Vec
 
 /// 사이트 우클릭 메뉴 — 사이트 이름 머리와 삭제 하나뿐이다 (인벤토리 #9·#10).
 ///
-/// 여기서 지우는 것은 **사이드바 바로가기**다 — 사이트 자체는 사이트 관리자에 남는다
+/// 여기서 지우면 **그 사이트의 연결·원격 탭·전송 큐 항목이 함께 걷힌다**(FR-29) —
+/// 사이트 기록만 사이트 관리자에 남는다. 실제 걷어내기는 `ui::app::detach_site`가 한다
 fn show_site_context_menu(
     row: &egui::Response,
     record: &SiteRecord,
@@ -666,20 +668,26 @@ fn show_site_context_menu(
                 .color(theme::TEXT_MUTED),
         );
         ui.separator();
-        let hide = egui::Button::new(
-            egui::RichText::new(crate::i18n::sidebar_hide_site()).color(theme::TEXT),
-        )
-        .right_text(
-            egui::RichText::new(HIDE_SITE_SHORTCUT)
-                .size(SITE_PROTO_PX)
-                .color(theme::TEXT_MUTED),
-        );
-        // **파괴색을 쓰지 않는다** — 원본은 이 자리를 삭제로 보고 빨갛게 칠했지만(`:358`)
-        // 실제로는 사이드바에서 감출 뿐 사이트는 남는다. 되돌릴 수 있는 일에 되돌릴 수 없는
-        // 일의 색을 쓰면 그 색의 뜻이 닳는다 (2026-08-16 검토)
-        let clicked = ui.add(hide).clicked();
+        let delete =
+            egui::Button::new(egui::RichText::new(crate::i18n::delete()).color(theme::TEXT))
+                .right_text(
+                    egui::RichText::new(DELETE_SITE_SHORTCUT)
+                        .size(SITE_PROTO_PX)
+                        .color(theme::TEXT_MUTED),
+                );
+        // **이 줄만 파괴색으로 칠한다** — 도는 전송이 끊기고 큐가 비워지는, 되돌릴 수 없는
+        // 조작이라 원본(`:359`)의 빨간 hover를 되살렸다. 2026-08-16에 그 색을 뺀 근거는
+        // 「감출 뿐이라 되돌릴 수 있다」였는데 2026-08-21 요청으로 그 전제가 없어졌다.
+        // **`scope`로 가둔다** — 지금은 이 버튼이 메뉴의 마지막 줄이라 새어도 칠할 것이
+        // 없지만, 뒤에 줄이 하나 붙는 순간 그 줄이 조용히 빨개진다(`widgets`의 선례와 같다)
+        let clicked = ui
+            .scope(|ui| {
+                ui.style_mut().visuals.widgets.hovered.weak_bg_fill = theme::MENU_HOT_DANGER;
+                ui.add(delete).clicked()
+            })
+            .inner;
         if clicked {
-            actions.push(SidebarAction::HideSite(record.id));
+            actions.push(SidebarAction::RemoveSite(record.id));
             ui.close();
         }
     });
@@ -847,7 +855,20 @@ mod tests {
         // 이 항목만 **원본과 갈린다** — 사용자 요청(2026-08-20)으로 문구를 바꿨다 (FR-59)
         assert_eq!(crate::i18n::sidebar_site_manager(), "사이트 관리자");
         assert_eq!(crate::i18n::delete(), "삭제");
-        assert_eq!(HIDE_SITE_SHORTCUT, "Del");
+        assert_eq!(DELETE_SITE_SHORTCUT, "Del");
+    }
+
+    #[test]
+    fn 사이트_삭제_줄은_원본의_파괴색을_쓴다() {
+        // 인벤토리 #10 · 원본 `:359`의 `style-hover:background:#C42B1C` — 도는 전송이 끊기고
+        // 큐가 비워지는 되돌릴 수 없는 조작이라 그 색을 되살렸다 (2026-08-21 사용자 결정).
+        // 값은 `theme`이 쥔다 — 메뉴 파일에 박으면 같은 값이 다시 자리마다 갈린다(AGENTS)
+        assert_eq!(
+            theme::MENU_HOT_DANGER,
+            egui::Color32::from_rgb(0xC4, 0x2B, 0x1C)
+        );
+        // 메뉴의 다른 줄·다른 팝업은 종전 색 그대로다
+        assert_ne!(theme::MENU_HOT_DANGER, theme::MENU_HOT);
     }
 
     #[test]
