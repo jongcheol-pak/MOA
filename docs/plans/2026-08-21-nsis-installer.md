@@ -285,7 +285,7 @@
   - **Halt Forecast**: 없음 — 파일을 읽어 단언하는 시험이다
   - **Depends on**: T2
 
-- [ ] T5. 문서 갱신 — README·AGENTS
+- [x] T5. 문서 갱신 — README·AGENTS
   - **Type**: A
   - **Acceptance**: ⓐ `README.md`에 설치 파일로 설치하는 방법과 만드는 방법(`cargo build --release` → `cargo run --example gen_installer`), NSIS 선행 설치(`winget install NSIS.NSIS`), 설치 위치(`%LOCALAPPDATA%\Programs\MOA`)와 **설정이 그 폴더 안에 생긴다는 것**, 제거 시 동작(자동 실행 정리 · **묻지 않고 폴더째 삭제 — 설정·지문 파일도 함께 사라진다**)이 적힌다 ⓑ `AGENTS.md`의 「Build & Test」에 그 명령이, 「산출물·파일 관리」에 `target/installer/`가 **커밋되지 않는 산출물**로 적힌다 ⓒ **`AGENTS.md`의 「배포: 단일 exe (cargo build --release)」 줄이 설치 파일까지 포함하도록 고쳐진다** ⓓ **양쪽 구조 트리(`AGENTS.md` Repository Structure·`README.md`)에 `installer/`·`examples/gen_installer.rs`·`tests/installer.rs`가 반영된다** ⓔ **`docs/prd.md` NFR-7과 FR-47 설명줄(`:72`)의 `%APPDATA%\MOA\settings.json` 서술이 새 위치(exe 옆)로 고쳐지고 `## 결정 이력`에 이번 항목이 더해진다** ⓕ **`AGENTS.md`의 「데이터 접근」 절과 「DO NOT」의 관련 서술, `README.md`의 세션 저장 설명이 새 위치로 고쳐진다** ⓖ 존재하지 않는 기능(코드 서명·자동 업데이트)은 적지 않는다
   - **Files**:
@@ -335,6 +335,10 @@
   설치 코드가 사라져도 제거 쪽 문자열이 통과시킨다) ⓑ 삭제 목록은 `Delete "..."` 전체를 needle로
   삼는다(경로만 찾으면 같은 구역의 자동 실행 비교 문자열에 걸린다). 18개 축 전부를 `.nsi`에서
   한 줄씩 지워 시험이 실패하는 것을 실제로 확인했다.
+- T5 완료: README(설치 파일 만들기·설치본 동작 절 신설, 세션 저장 경로, 구조 트리 3곳)·
+  AGENTS(Build & Test, 데이터 접근, 산출물·파일 관리, 배포 줄, 구조 트리)·
+  PRD(NFR-7, FR-47 설명줄, 앱 이름 적용처에 설치 바로가기 추가, 결정 이력 1건).
+  T1이 남긴 stale 주석 둘(`i18n/mod.rs`의 `%APPDATA% 폴더` 표기)도 함께 고쳤다 — 자기 유발이라 이연하지 않는다.
 
 ## Next Steps
 

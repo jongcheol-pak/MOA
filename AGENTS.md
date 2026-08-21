@@ -19,11 +19,12 @@
 - **Format**: `cargo fmt`
 - **라이선스 고지 재생성**: `cargo run --example gen_licenses` — 의존성을 더하거나 버전을 올린 뒤 반드시 돌린다. **산출물이 둘이다**: 앱이 읽는 `assets/licenses.json`과 저장소에서 보는 `THIRD-PARTY-NOTICES.md`(레포 루트). 앞의 것이 낡으면 `Cargo.lock` 지문 대조 시험이 실패한다
 - **아이콘 자산 재생성**: `cargo run --example gen_app_icon` — `docs/AppIcon.png`를 바꾼 뒤에만 돌린다. `assets/app_icon_256.png`를 덮어쓰며, 그 자산은 정보 화면(FR-58)이 읽는다
+- **설치 파일 생성**: `cargo build --release` → `cargo run --example gen_installer` — `installer/moa.nsi`를 makensis에 넘겨 `target/installer/MOA-Setup-<버전>.exe`를 만든다. **NSIS가 선행 설치돼 있어야 한다**(`winget install NSIS.NSIS`) — 없으면 그 안내와 함께 실패로 끝난다(아무것도 만들지 않고 성공으로 끝나지 않는다)
 
 ## 데이터 접근
-- **DB/스토어**: 없음 (`%APPDATA%\MOA\settings.json` 로컬 파일 하나에 **세션 + 앱 설정**을 함께 담는다 — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
+- **DB/스토어**: 없음 (**실행 파일과 같은 폴더의** `settings.json` 하나에 **세션 + 앱 설정**을 함께 담는다 — 설치본이면 `%LOCALAPPDATA%\Programs\MOA\settings.json`, 개발 실행이면 `target/debug\settings.json`이다. 2026-08-21 결정으로 `%APPDATA%\MOA`에서 옮겼고 **옛 파일은 읽지 않는다**(마이그레이션 없음) — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
 - **레지스트리**: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`의 `MOA` 값이 **자동 실행 설정의 정본**이다 (설정 파일 값은 사본 — 다른 도구가 지웠을 수 있어 화면에 보일 때마다 다시 읽는다)
-- **비밀번호**: `%APPDATA%` 파일에 **DPAPI로 봉인해서만** 담는다 (`remote::secret`). 평문을 파일·로그·문서에 남기지 않는다
+- **비밀번호**: 그 `settings.json`에 **DPAPI로 봉인해서만** 담는다 (`remote::secret`). 평문을 파일·로그·문서에 남기지 않는다
   - **통로가 하나 더 있다 — 사이트 목록 내보내기 파일**(`remote::envelope`, FR-59): 그 파일은 다른 PC로 옮기려고 만드는 것이라 DPAPI(사용자·PC에 묶인다)로는 뜻이 없어, **앱 내장 키**에서 키를 파생해 봉한다(CNG PBKDF2-HMAC-SHA256 + AES-256-GCM). **이것은 DPAPI급 보호가 아니다** — 키가 실행 파일에 실려 있어 MOA를 가진 사람은 누구나 풀 수 있고, 막는 것은 파일을 텍스트로 열었을 때 비밀번호가 그대로 보이는 것뿐이다. 그 파일 자체가 자격증명이라고 보아야 하며, 사용자가 불편을 이유로 암호 입력을 걷어내면서 이 대가를 택했다(2026-08-20). **읽을 때는 두 갈래를 모두 받는다** — 직전 버전이 사용자 암호로 만든 파일은 `kdf` 값으로 갈라 종전대로 암호를 물어 연다. **그 문서에 `password_sealed`(DPAPI 바이트)를 담지 않는다** — 그것은 이 PC에 묶여 있어 옮겨 봐야 풀리지 않는데, 담아 두면 같은 PC에서만 조용히 되살아난다
 
 ## 원격 기능 테스트
@@ -47,9 +48,12 @@
 │   ├── licenses.json        # 라이선스 고지 자산 — 생성기가 만든다 (손으로 고치지 않는다)
 │   ├── app_icon_256.png     # 정보 화면 아이콘 자산 — 생성기가 만든다 (손으로 고치지 않는다)
 │   └── spdx/                # SPDX 표준 전문 — 배포 패키지에 원문이 없는 구성 요소에 쓴다
+├── installer/
+│   └── moa.nsi              # NSIS 설치 스크립트 (사용자 단위 설치 — 사람이 읽고 고치는 소스)
 ├── examples/
 │   ├── gen_licenses.rs      # 라이선스 자산 생성기 (개발용 — `cargo build`가 빌드하지 않는다)
-│   └── gen_app_icon.rs      # 아이콘 자산 생성기 (`docs/AppIcon.png` → 256px)
+│   ├── gen_app_icon.rs      # 아이콘 자산 생성기 (`docs/AppIcon.png` → 256px)
+│   └── gen_installer.rs     # 설치 파일 생성기 — makensis를 찾아 `installer/moa.nsi`를 넘긴다
 ├── src/
 │   ├── main.rs              # 진입점 — COM 초기화, 세션 로드, egui 창 실행
 │   ├── ui/                  # egui(eframe/glow) UI 계층 — 화면·입력 전부
@@ -65,8 +69,8 @@
 > 소스에는 남아 있지만 실행 파일에서는 쓰이지 않으므로, 새 UI 작업은 `src/ui/`에서 한다.
 
 ## 산출물·파일 관리
-- **빌드 산출물**: `target/` (gitignore)
-- **런타임 생성물**: `%APPDATA%\MOA\settings.json` (설정·세션)
+- **빌드 산출물**: `target/` (gitignore) — 설치 파일도 그 아래 `target/installer/`에 떨어지므로 커밋되지 않는다
+- **런타임 생성물**: 실행 파일 옆의 `settings.json`(설정·세션)과 `known_hosts.json`(SSH 서버 지문). 설치본에서는 설치 폴더 안에 생기고, **제거하면 묻지 않고 함께 지워진다**
 - **커밋되는 생성물**: 셋 다 **손으로 고치지 않는다** — 생성기가 만든다.
   - `assets/licenses.json` — `examples/gen_licenses.rs`가 만든다. 레지스트리 캐시를 훑어 만들므로 생성은 개발 PC에서만 하고, 빌드·시험은 그 결과만 읽는다(네트워크·캐시 비의존)
   - `THIRD-PARTY-NOTICES.md` — **같은 생성기가 같은 자료로 함께 만든다**(레포 루트). 앱을 띄우지 않고 저장소에서 바로 보는 고지라 전문까지 담는다
@@ -109,4 +113,4 @@ PRD Location:  docs/prd.md
 ## 추가 정보
 - MSRV: stable 최신 (rust-toolchain.toml 미사용, v1 기준)
 - CI/CD: 없음 (로컬 빌드)
-- 배포: 단일 exe (cargo build --release)
+- 배포: 단일 exe (`cargo build --release`) 또는 그 exe를 담은 NSIS 설치 파일 (`cargo run --example gen_installer` — 사용자 단위 설치, 코드 서명·자동 업데이트는 없다)
