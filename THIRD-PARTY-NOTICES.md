@@ -8,7 +8,7 @@ MOA가 쓰는 오픈소스 구성 요소와 그 라이선스 전문이다. `carg
 
 ## 구성 요소
 
-| 이름 | 버전 | 라이선스 | 저작권자 |
+| 이름 | 버전 | 라이선스(SPDX) | 저작권자 |
 |---|---|---|---|
 | accesskit | 0.24.1 | MIT OR Apache-2.0 | The AccessKit contributors |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | Jonas Schievink, oyvindln |

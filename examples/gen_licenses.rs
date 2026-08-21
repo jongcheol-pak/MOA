@@ -123,7 +123,7 @@ fn write_notices(data: &LicenseData, out: &Path) -> Result<(), String> {
     ));
 
     md.push_str("## 구성 요소\n\n");
-    md.push_str("| 이름 | 버전 | 라이선스 | 저작권자 |\n|---|---|---|---|\n");
+    md.push_str("| 이름 | 버전 | 라이선스(SPDX) | 저작권자 |\n|---|---|---|---|\n");
     for entry in &data.crates {
         md.push_str(&format!(
             "| {} | {} | {} | {} |\n",
@@ -155,9 +155,13 @@ fn write_notices(data: &LicenseData, out: &Path) -> Result<(), String> {
     std::fs::write(out, md).map_err(|err| format!("{}: {err}", out.display()))
 }
 
-/// 표 칸에 들어갈 값 — 칸을 가르는 `|`만 막는다.
+/// 표 칸에 들어갈 값 — 칸을 가르는 `|`를 막고 줄바꿈을 편다.
+///
+/// 줄바꿈까지 미는 이유: 마크다운 표는 한 줄이 한 행이라 값에 개행이 섞이면 그 행이
+/// 쪼개져 표가 통째로 깨진다. 지금 들어오는 값(crates.io 메타데이터의 이름·버전·SPDX·
+/// 저작자)에 개행이 있던 적은 없지만, 한 크레이트가 그렇게 적으면 파일 전체가 망가진다
 fn escape_cell(value: &str) -> String {
-    value.replace('|', r"\|")
+    value.replace('|', r"\|").replace(['\n', '\r'], " ")
 }
 
 /// 전문을 감쌀 코드 울타리 — 본문에 든 백틱 런보다 한 칸 길게 만든다.
