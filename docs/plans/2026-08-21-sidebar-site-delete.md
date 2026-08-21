@@ -288,7 +288,7 @@
     - (i) `theme` 소스 훑기 시험(팝업 메뉴 규약)이 새 상수 때문에 깨질 가능성 → 그 시험은 「팝업을 여는 구문 수 ≤ 공통 경로 호출 수」를 보므로 `menu_style` 호출을 유지하면 그대로 통과한다(`src/ui/theme.rs`의 시험 본문 확인 후 진행)
   - **Depends on**: T4
 
-- [ ] T6. PRD FR-29 문면 개정
+- [x] T6. PRD FR-29 문면 개정
   - **Type**: A
   - **Acceptance**: `docs/prd.md` FR-29의 「삭제(Del, 사이드바 바로가기만 제거하고 등록 사이트는 남긴다)」가 새 동작(연결 해제 · 원격 탭 닫기 · 큐 항목 제거 · 진행·대기 전송이 있으면 확인 · 사이트 기록은 관리자에 남음)을 서술하도록 바뀌고, `## 결정 이력`에 2026-08-21 항목이 더해진다. FR-27·FR-36 문면은 그대로다
   - **Files**:
@@ -336,6 +336,9 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T5 완료 (커밋 50a7444): 메뉴 문구 `삭제` + 파괴색 hover(`theme::MENU_HOT_DANGER`) 복원, `sidebar_hide_site` 카탈로그 제거, stale 주석 세 자리 정리. quality SUGGEST(스타일 변경을 `ui.scope`로 가두기)는 같은 파일 범위라 그 자리에서 반영했다.
+  - 검증 중 `fs::thumbnail`의 실측 시험 1건이 한 번 실패했다가 단독 재실행에서 통과했다 — 셸 썸네일 서비스 타이밍에 걸린 것이고 이번 변경과 무관하다.
 
 - T3-T4 완료 (커밋 하나로 묶음): 확인 대기 버리기(`drop_site_conflicts`·`conflict_site`)와 걷어내기 배선(`detach_site`·`site_connections`·확인 대화·늦은 워커 결과 차단).
   - 결정: **T3과 T4를 한 검증으로 묶었다** — T3이 만든 두 심볼은 호출부가 T4에서 생기는데 이 저장소의 린트 게이트(`clippy -D warnings`)가 dead_code를 오류로 막아 T3만으로는 V-3을 통과할 수 없다.
