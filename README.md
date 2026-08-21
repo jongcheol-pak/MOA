@@ -1,3 +1,5 @@
+<img src="assets/app_icon_256.png" alt="MOA 앱 아이콘" width="96">
+
 # MOA — 멀티 분할 경량 파일 탐색기
 
 Windows 11 이상(x64)에서 하나의 창을 **자유 분할(트리형)**하고, 각 패널이 **독립 탭**을 가지며, 좌측 **워크스페이스 목록**으로 여러 벌의 탐색기 화면을 전환하는 초경량 파일 탐색기입니다. UI는 Rust의 egui(eframe/glow)로 직접 그리고, 아이콘·컨텍스트 메뉴·변경 감시·파일 실행 같은 셸 연동은 windows-rs로 Win32 API를 호출합니다 (Q-Dir의 멀티 패널 + VS Code의 자유 분할 UX 참고). **FTP·FTPS·SFTP 원격 서버**를 로컬 폴더와 같은 패널·탭에서 다룹니다.
