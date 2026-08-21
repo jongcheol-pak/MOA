@@ -294,6 +294,15 @@ impl TransferQueue {
             .collect()
     }
 
+    /// 그 사이트의 항목들 — 등록 순서 그대로다.
+    ///
+    /// 사이트를 목록에서 지울 때(`ui::app::detach_site`) 쓴다. **한 번 훑어 두 가지를 얻는다** —
+    /// 지울 번호와 아직 끝나지 않은 건수(확인 대화를 띄울지 가른다). 상태로 거르지 않는 것은
+    /// 그 판정이 호출부마다 다르기 때문이다
+    pub fn site_items(&self, site: SiteId) -> Vec<&TransferItem> {
+        self.items.iter().filter(|item| item.site == site).collect()
+    }
+
     /// 필터별 건수 — 탭 라벨의 `(N)`이다 (인벤토리 #29·#31·#32)
     pub fn count(&self, filter: QueueFilter) -> usize {
         self.items
@@ -660,6 +669,34 @@ mod tests {
 
         queue.set_paused(false);
         assert_eq!(queue.next_for(site(1), 1), vec![ids[0]]);
+    }
+
+    #[test]
+    fn 사이트로_고른_항목은_그_사이트_것뿐이다() {
+        // 사이트를 목록에서 지울 때 지울 번호를 모으는 길이다 — 다른 사이트가 섞이면
+        // 멀쩡한 전송이 함께 취소된다
+        let (mut queue, first) = queue_with(2, site(1));
+        let second = queue.enqueue(
+            site(2),
+            TransferDirection::Upload,
+            PathBuf::from(r"C:\b"),
+            RemotePath::new("/b"),
+            1,
+        );
+        queue.update(first[0], TransferState::Done);
+
+        let picked: Vec<TransferId> = queue.site_items(site(1)).iter().map(|i| i.id).collect();
+        // 끝난 것도 함께 나온다 — 거르는 것은 호출부의 몫이다
+        assert_eq!(picked, first);
+        assert_eq!(
+            queue
+                .site_items(site(2))
+                .iter()
+                .map(|i| i.id)
+                .collect::<Vec<_>>(),
+            vec![second]
+        );
+        assert!(queue.site_items(site(9)).is_empty(), "없는 사이트");
     }
 
     #[test]
