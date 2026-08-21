@@ -60,7 +60,8 @@ fn main() -> Result<(), String> {
 /// PATH를 먼저 보는 이유: 사용자가 다른 자리에 설치했거나 여러 판을 둔 경우 그가 고른 것이
 /// PATH에 있다. 기본 설치는 64비트 Windows에서 `Program Files (x86)`에 놓이므로 그 자리도 본다
 fn find_makensis() -> Option<PathBuf> {
-    // PATH에 있으면 이름만으로 실행된다 — `--version`으로 실제 동작을 확인한다
+    // PATH에 있으면 이름만으로 실행된다 — `/VERSION`으로 실제 실행되는지까지 확인한다
+    // (여기서는 있고 없고만 가른다. 실행이 실패하는 경우는 아래 `run`이 종료 코드로 알린다)
     if Command::new("makensis").arg("/VERSION").output().is_ok() {
         return Some(PathBuf::from("makensis"));
     }

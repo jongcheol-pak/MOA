@@ -255,7 +255,7 @@
     - (i) 문법 오류를 이 회차에서 잡을 수 없다 → T4의 훑기 시험으로 **요구 항목 누락**만 기계로 막고, 문법은 HUMAN-VERIFY 1로 분리한다(Risks 표와 같은 판단)
   - **Depends on**: T1
 
-- [ ] T3. `examples/gen_installer.rs` — 릴리즈 exe 확인·`makensis` 탐색·호출
+- [x] T3. `examples/gen_installer.rs` — 릴리즈 exe 확인·`makensis` 탐색·호출
   - **Type**: C
   - **Design**: ① `examples/gen_installer.rs` 하나 ② 신규 심볼: `main`(절차) · `find_makensis() -> Option<PathBuf>`(PATH → `%ProgramFiles%\NSIS` → `%ProgramFiles(x86)%\NSIS` 순서) · `run(makensis, args) -> Result<(), String>` ③ 표준 라이브러리만 쓴다(`std::process::Command`·`std::env`·`std::path`) — 새 의존성 0. 넘기는 것은 `/DVERSION=<CARGO_PKG_VERSION>`과 `/INPUTCHARSET UTF8` 둘이다(뒤엣것은 값 정의가 아니라 **소스 인코딩 지정** — 이 레포는 BOM 없는 UTF-8이고 makensis는 BOM이 없으면 시스템 코드페이지로 읽어 `.nsi`의 한글 문구가 깨진다. T2 quality 리뷰 m1)이고, 작업 디렉터리를 `installer/`로 지정하며(D8), 산출 폴더(`target/installer/`)는 부르기 전에 만든다 ④ 「빌드 파이프라인」 추상화를 만들지 않는다: 이 예제 하나가 전부다
   - **Acceptance**: 두 실패 경로를 **이번 회차에 실제로 실행해** 확인한다. ① Given `target/release/moa.exe`를 같은 폴더에서 `moa.exe.bak`으로 **임시 rename**한 상태(삭제 금지 — `lto=true` 릴리즈 재빌드가 필요해진다), When `cargo run --example gen_installer`, Then exe가 없다는 것과 `cargo build --release`를 먼저 돌리라는 안내가 나오고 **종료 코드가 0이 아니다**. 확인 후 원래 이름으로 되돌리고 **`target/release/moa.exe`가 있고 `moa.exe.bak`이 남아 있지 않음을 확인한다**. ② Given exe는 있고 `makensis`가 없는 상태(이 PC 그대로), When 같은 명령, Then `winget install NSIS.NSIS` 안내와 함께 실패로 끝난다. 성공 경로(설치 파일 생성)는 makensis가 없어 이번 회차에서 확인할 수 없다 — HUMAN-VERIFY 1로 분리한다
