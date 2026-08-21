@@ -187,7 +187,7 @@
   - **Edge Cases**: 빈 항목 목록(종전대로 `None`) · 원격 항목이 섞임(종전대로 `None`) · 드라이브 뿌리(`C:\`)에서 끈 항목(부모가 `C:\`라 정상 판정) · 부모가 없는 경로(판정에서 "다르다"로 취급해 복사로 보냄 — 안전한 쪽).
   - **Halt Forecast**: 없음. 호출부 시그니처가 그대로라 다른 파일을 건드리지 않는다.
 
-- [ ] **T3. 앱 안 드래그에 첫 항목의 미리보기 그림을 붙인다** — Type D
+- [x] **T3. 앱 안 드래그에 첫 항목의 미리보기 그림을 붙인다** — Type D
   - **Files**: `src/ui/drag_preview.rs`(신규 — 그리기 + 순수 판정 + 그 시험) · `src/ui/mod.rs`(모듈 등록) · `src/ui/panel.rs`(필드 + `show_list` 배선) · `src/ui/app.rs`(`drop_highlight` 주석 정정)
     - **`src/ui/panel/tests.rs`는 건드리지 않는다** — `PanelState` 시험은 전부 그 파일에 있지만(`panel.rs`에는 인라인 `mod tests`가 없다) 이번에 늘어나는 검증 대상은 `next_item` 하나이고 그것은 `PanelState` 없이 도는 순수 함수라 새 모듈 안에서 시험한다. 필드를 하나 더하는 것은 `PanelState::new`·`from_tabs`(둘 다 `panel.rs`) 밖의 코드를 깨지 않는다 — 그 둘이 유일한 생성자다.
   - **Design**:
@@ -267,7 +267,10 @@
 
 ## Progress Log
 
-<!-- implement-task가 채운다 -->
+- T1–T3 완료 (커밋 `ff209fc`·`3d89f10`·T3 완료 커밋): PRD 문면 3건 개정 + 같은 폴더 드롭 취소 + 앱 안 미리보기 그림. 빌드·시험·clippy·fmt 전부 통과(953 passed).
+  - **검증 경로 (이 회차 한정)**: 사용자의 `moa.exe`가 실행 중이라 기본 `target/debug`의 링크가 막혀, 모든 빌드·시험·clippy를 **`CARGO_TARGET_DIR=target/verify`**로 돌렸다. 앱을 강제 종료하면 세션(`on_exit` 저장)이 날아가므로 종료하지 않기로 했다. `target/`은 gitignore라 산출물이 커밋되지 않는다.
+  - **결정**: `drag_preview`의 `egui::Id`를 **ASCII**(`"drag_preview"`)로 뒀다. 이 레포에는 한글 Id(`"정보 대화"` 등)도 있지만 그때마다 `i18n` 소스 훑기 시험의 `EXEMPT_LITERALS`에 손으로 등재해야 한다 — `app.rs`의 `"titlebar"`·`"status_bar"`처럼 ASCII를 쓰면 그 등재가 필요 없다(그 파일은 T3 Files 밖이기도 하다).
+  - **T3 리뷰**: spec이 BLOCKER 1건(내 acceptance가 못박은 `grep "egui가 끌고 있는 항목을 이미" → 0건`을 정정 문단의 인용구가 어겼다)을 냈고 그 자리에서 문구를 바꿔 해소했다. quality는 첫 판에 OK.
 
 ## Phase Ledger
 
