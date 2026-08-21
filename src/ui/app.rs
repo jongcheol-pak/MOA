@@ -54,6 +54,7 @@ use std::sync::Arc;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 
+mod autosave;
 mod remote;
 mod transfer_conflict;
 
@@ -613,6 +614,8 @@ pub struct ExplorerApp {
     conflict_dialog: Option<(ConflictCheck, Vec<String>)>,
     /// 워커가 일을 마쳤을 때 화면을 깨우는 통로 — 연결 관리자에 준 것과 같다
     repaint: Arc<dyn Fn() + Send + Sync>,
+    /// 세션이 바뀌었는지 지켜보다 곧 적는 관측기 (`app::autosave`)
+    autosave: autosave::AutoSave<Session>,
 }
 
 impl ExplorerApp {
@@ -737,6 +740,7 @@ impl ExplorerApp {
             conflict_queue: Vec::new(),
             conflict_dialog: None,
             repaint,
+            autosave: autosave::AutoSave::default(),
         };
         if let Some(session) = session {
             app.apply_session(session);
@@ -1997,8 +2001,29 @@ impl ExplorerApp {
     /// **사이트 목록이 바뀌면 그 자리에서 적는다** — 종료 때만 적으면 그 사이에 앱이
     /// 비정상 종료됐을 때(패닉·강제 종료·전원 차단) 등록한 사이트가 통째로 사라진다.
     /// 파일이 작고 사이트 등록은 드문 일이라 그때마다 적어도 부담이 없다
-    fn persist_session(&self) {
-        save_session(&self.collect_session());
+    fn persist_session(&mut self) {
+        let session = self.collect_session();
+        save_session(&session);
+        // 방금 적은 것을 기준으로 삼는다 — 알리지 않으면 자동 저장이 같은 내용을 한 번 더 적는다
+        self.autosave.mark(session);
+    }
+
+    /// 바뀐 것이 있으면 곧 세션 파일에 적는다 (`app::autosave`).
+    ///
+    /// **탭·분할·창 크기·즐겨찾기처럼 저장을 부르지 않던 것까지 여기서 담긴다** —
+    /// 상태를 바꾸는 자리마다 저장을 심는 대신 바뀐 결과를 지켜본다 (2026-08-21 사용자 요청)
+    fn pump_autosave(&mut self, ctx: &egui::Context, now: f64) {
+        if self.autosave.due(now) {
+            let snapshot = self.collect_session();
+            if let Some(session) = self.autosave.observe(now, snapshot) {
+                save_session(session);
+            }
+        }
+        // 아직 적지 못한 변화가 있으면 화면을 깨워 둔다 — egui는 할 일이 없으면 프레임을
+        // 그리지 않아, 그러지 않으면 마지막 변화가 다음 조작 때까지 파일에 닿지 못한다
+        if self.autosave.pending() {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(autosave::QUIET_SECS));
+        }
     }
 }
 
@@ -2081,6 +2106,7 @@ impl eframe::App for ExplorerApp {
             }
         }
         self.sync_subtitle();
+        self.pump_autosave(ctx, now);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
