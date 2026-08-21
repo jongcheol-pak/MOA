@@ -82,8 +82,8 @@ impl AboutDialog {
 
     /// 지금 배율에 맞는 텍스처를 돌려준다. 들고 있는 것이 다른 크기면 다시 만든다.
     ///
-    /// 자산을 읽지 못하면 `None` — 아이콘 없이 이름·버전만 그린다(타이틀바가 아이콘 없이도
-    /// 자리를 잡는 것과 같은 처리)
+    /// 자산을 읽지 못하면 `None` — 아이콘 자리만 비우고 글자 줄은 그대로 그린다(타이틀바가
+    /// 아이콘 없이도 자리를 잡는 것과 같은 처리)
     fn icon_texture(&mut self, ctx: &egui::Context, physical: u32) -> Option<egui::TextureId> {
         if !cache_hit(self.icon.as_ref().map(|(_, size)| *size), physical) {
             let image = decode_icon(physical)?;
@@ -94,7 +94,7 @@ impl AboutDialog {
     }
 }
 
-/// 본문 — 아이콘과 그 아래 한 줄을 가운데에 세운다
+/// 본문 — 아이콘과 그 아래 네 줄(이름·버전 / 저작권 / 라이선스 / 저장소)을 가운데에 세운다
 fn show_body(ui: &mut egui::Ui, icon: Option<egui::TextureId>, pixels_per_point: f32) {
     let line = ui.painter().layout_no_wrap(
         i18n::dynamic::about_version_line(),

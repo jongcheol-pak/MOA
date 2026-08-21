@@ -179,9 +179,14 @@ MOA를 MIT로 공개할 수 있는 상태로 만든다 — 라이선스 파일·
   - 결정: 표 머리를 `라이선스(SPDX)`로 적어 plan 문면과 실제를 함께 만족(spec M1). `escape_cell`에 개행 처리를 더했다(quality m1).
   - 결정: 신규 카탈로그 항목을 FR-57 섹션에서 빼내 `// ── 정보 대화 (FR-58) ──` 아래로 옮겼다(quality m1 — 섹션 관례 유지).
 
+- T5-T7 완료 (커밋 2edfca2, 0a580b9, 84b6821): PRD FR-57·FR-58 문면 개정과 결정 이력 · README 이미지·`## 라이선스` 절·어긋난 서술 2자리 정정 · AGENTS.md 생성물 규약(둘 → 셋). 문서 task 셋이라 빌드·시험 대상 없음.
+  - F-7 지적 반영: `about_dialog.rs`의 doc 주석 두 자리가 네 줄 구성과 어긋난 채 남아 있어 고쳤다(M1 — 자기 유발이라 이연 불가). PRD FR-58의 「닫기 버튼」 구를 실제 순서대로 다시 썼다(m1 — T5가 원래 지시한 형태).
+  - 이연 판정: AGENTS.md의 Repository Structure 트리에 새 두 파일을 넣지 않았다(m3) — 그 트리는 `README.md`조차 싣지 않는 선택 목록이고 T7 acceptance가 두 자리로 한정했다. `Cargo.toml`의 `license = "MIT"` 필드도 두지 않았다(m6) — 이 앱은 crates.io에 발행하지 않아 그 필드가 쓰이는 곳이 없다.
+
 ## Deferred / Follow-up
 
-- **[SUGGEST] 시험용 셰이프 텍스트 수집 헬퍼가 여러 파일에 흩어져 있다** — `collect_text`(`about_dialog.rs`)와 같은 패턴(`Shape::Vec` 재귀 + `Shape::Text` 수집)이 `ui/tabs.rs`·`ui/menu.rs`·`ui/sidebar.rs`·`ui/tree.rs`·`ui/panel/tests.rs`에 각각 손으로 재구현돼 있다. 각 파일이 독립 `#[cfg(test)] mod tests`라 3회 공통화 문턱이 파일 간에 그대로 적용되지는 않지만, 시험 전용 공용 모듈(`src/ui/test_support.rs`)로 뽑으면 반복이 준다. 대장의 2026-08-20 「`ui_sources` 재귀 헬퍼가 세 곳에 중복」과 **같은 해법을 요구하는 건**이라 함께 다루는 편이 낫다 (출처: T4 quality S1)
+- **[SUGGEST] `Cargo.toml`에 `license = "MIT"` 필드 더하기** — 지금은 `LICENSE` 파일만 있고 매니페스트에는 선언이 없다. crates.io에 발행하지 않는 앱이라 쓰이는 곳이 없어 이번엔 두지 않았으나, 도구가 라이선스를 읽는 자리가 생기면 한 줄로 끝난다 (출처: F-7 m6)
+- **[SUGGEST] 시험용 셰이프 텍스트 수집 헬퍼가 여러 파일에 흩어져 있다** — `collect_text`(`about_dialog.rs`)와 같은 패턴(`Shape::Vec` 재귀 + `Shape::Text` 수집)이 `ui/tabs.rs`·`ui/menu.rs`·`ui/sidebar.rs`·`ui/tree.rs`·`ui/panel/tests.rs`에 각각 손으로 재구현돼 있다. 각 파일이 독립 `#[cfg(test)] mod tests`라 3회 공통화 문턱이 파일 간에 그대로 적용되지는 않지만, 시험 전용 공용 모듈(`src/ui/test_support.rs`)로 뽑으면 반복이 준다. **이번 회차가 그 사본을 하나 늘렸다**(`about_dialog.rs`의 것이 여섯 번째 — F-7 m2). 대장의 2026-08-20 「`ui_sources` 재귀 헬퍼가 세 곳에 중복」과 **같은 해법을 요구하는 건**이라 함께 다루는 편이 낫다 (출처: T4 quality S1)
 - **위키 갱신** — `20_projects/personal/moa/`의 `feat-about-dialog.md`(「저작권 줄·홈페이지 링크는 두지 않았다」가 뒤집힌다)·`feat-license-notice.md`(레포 고지 파일이 새로 생긴다)가 실제와 어긋나게 된다. F-6.5의 위키 큐가 맡는다.
 - **`eframe` 0.36 상향** — `egui-phosphor` 0.14(egui 0.36 대응)가 나오면 둘을 함께 올린다. 대응판 없이 가려면 Phosphor 글꼴(488KB)을 `assets/`에 담고 쓰는 아이콘 23종의 상수를 직접 정의해야 하며, AGENTS 아이콘 규약·`is_icon_font` 시험·라이선스 자산이 함께 바뀐다. egui 0.36의 브레이킹은 작다(전제 검증 P5) — 걸리는 것은 글꼴 크레이트뿐이다.
 - **정보 화면 링크의 브라우저 열기 방식** — `ui.hyperlink_to`로 열리지 않으면 셸 실행으로 대체한다(P6).
