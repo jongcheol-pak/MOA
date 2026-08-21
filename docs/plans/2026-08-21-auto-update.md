@@ -302,9 +302,9 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) FR 번호 충돌 → 현재 최대가 FR-61임을 실측했다(Investigation Log). 착수 시점에 다른 세션이 번호를 쓰지 않는다(단독 작업) — 사전 해소 / (ii-b) 없음 — 문서 한 파일이라 파괴적·외부 작업이 없다
   - **Depends on**: -
 
-- [ ] T2. WinHTTP GET 래퍼 — `src/app/update/http.rs`
+- [x] T2. WinHTTP GET 래퍼 — `src/app/update/http.rs`
   - **Type**: C
-  - **Design**: ① `src/app/update/http.rs` 신설, `app` 계층(ui를 모른다) ② 신규 심볼 — `get_bytes(url, accept) -> Result<Vec<u8>, HttpError>`(작은 응답을 메모리로), `download_to_file(url, dest) -> Result<(), HttpError>`(64KB 청크로 파일에 흘린다), 내부에 `SessionHandle`·`ConnectHandle`·`RequestHandle` RAII 래퍼 3종과 `split_url(url) -> Option<(host, path, https)>`(순수 — 시험 대상) ③ 의존 방향 — `windows` 크레이트만 본다. `release.rs`·`mod.rs`가 이것을 부르고, 이 파일은 그 둘을 모른다 ④ **비추상화 선언** — HTTP 클라이언트 트레이트·미들웨어·리트라이 정책을 만들지 않는다. GET 둘뿐이고 재시도는 사용자가 다시 누르는 것으로 갈음한다
+  - **Design**: ① `src/app/update/http.rs` 신설, `app` 계층(ui를 모른다) ② 신규 심볼 — `get_bytes(url, accept) -> Result<Vec<u8>, HttpError>`(작은 응답을 메모리로), `download_to_file(url, dest) -> Result<(), HttpError>`(64KB 청크로 파일에 흘린다), 내부에 `Session`·`Connect`·`Request` RAII 래퍼 3종과 `split_url(url) -> Option<UrlParts>`(순수 — 시험 대상. 포트를 함께 다뤄야 해 3튜플이 아니라 `host`·`port`·`path`·`secure` 네 칸의 구조체다) ③ 의존 방향 — `windows` 크레이트만 본다. `release.rs`·`mod.rs`가 이것을 부르고, 이 파일은 그 둘을 모른다 ④ **비추상화 선언** — HTTP 클라이언트 트레이트·미들웨어·리트라이 정책을 만들지 않는다. GET 둘뿐이고 재시도는 사용자가 다시 누르는 것으로 갈음한다
   - **Acceptance**: Given 이 모듈, When `cargo test`를 돌리면, Then `split_url`이 `https://api.github.com/repos/a/b/releases/latest`를 (`api.github.com`, `/repos/a/b/releases/latest`, https=true)로 가르고, 포트·쿼리·비-https·빈 문자열·스킴 없는 문자열을 각각 정해진 대로 다루는 시험이 통과한다. `unsafe` 블록마다 사유 주석이 있고 핸들 3종이 `Drop`에서 닫힌다. `cargo clippy --all-targets -- -D warnings` 0.
   - **Files**: 주: `src/app/update/http.rs`(신규), `src/app/update/mod.rs`(신규 — 모듈 선언만 먼저), `src/app/mod.rs`(`pub mod update;`), `Cargo.toml`(`Win32_Networking_WinHttp` feature + 사유 주석) / 테스트: 같은 파일 `#[cfg(test)] mod tests`
   - **Edge Cases**: 네트워크 없음 → `WinHttpConnect`/`SendRequest` 실패를 `HttpError`로 / HTTP 상태가 200이 아님(403 한도·404) → 상태 코드를 `WinHttpQueryHeaders`로 읽어 오류로 / 리다이렉트 → WinHTTP 기본이 추종한다(자산 URL의 S3 리다이렉트 — 위키 ⓑ) / 응답이 비정상적으로 큼 → 메모리 경로에 상한(16MB)을 두고 넘으면 오류 / 쓰기 실패(디스크 풀·권한) → 파일을 지우고 오류

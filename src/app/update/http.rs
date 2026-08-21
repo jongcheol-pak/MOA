@@ -153,11 +153,11 @@ fn read_response(
     }
     let headers: Vec<u16> = headers.encode_utf16().collect();
 
-    // SAFETY: 위에서 만든 유효한 요청 핸들과, 이 함수가 살아 있는 동안 유지되는 헤더
+    // 안전성: 위에서 만든 유효한 요청 핸들과, 이 함수가 살아 있는 동안 유지되는 헤더
     // 버퍼를 넘긴다. 보낼 본문이 없어 optional 인자는 비운다
     unsafe { WinHttpSendRequest(request.0, Some(&headers), None, 0, 0, 0) }
         .map_err(|error| HttpError::Transport(error.code().0 as u32))?;
-    // SAFETY: 같은 요청 핸들. 두 번째 인자는 예약분이라 반드시 null이다
+    // 안전성: 같은 요청 핸들. 두 번째 인자는 예약분이라 반드시 null이다
     unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) }
         .map_err(|error| HttpError::Transport(error.code().0 as u32))?;
 
@@ -169,7 +169,7 @@ fn read_response(
     let mut buffer = vec![0u8; CHUNK];
     loop {
         let mut read = 0u32;
-        // SAFETY: 유효한 요청 핸들과, 길이를 함께 넘기는 우리 소유 버퍼. 읽은 바이트 수는
+        // 안전성: 유효한 요청 핸들과, 길이를 함께 넘기는 우리 소유 버퍼. 읽은 바이트 수는
         // 스택 변수에 받는다
         unsafe {
             WinHttpReadData(
@@ -202,7 +202,7 @@ impl Session {
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
-        // SAFETY: 널로 끝나는 이름 버퍼를 넘기고, 프록시 인자는 자동 검색이라 비운다.
+        // 안전성: 널로 끝나는 이름 버퍼를 넘기고, 프록시 인자는 자동 검색이라 비운다.
         // 실패는 널 핸들로 돌아온다
         let handle = unsafe {
             WinHttpOpen(
@@ -221,7 +221,7 @@ impl Session {
 
     fn connect(&self, host: &str, port: u16) -> Result<Connect, HttpError> {
         let host: Vec<u16> = host.encode_utf16().chain(std::iter::once(0)).collect();
-        // SAFETY: 살아 있는 세션 핸들과 널로 끝나는 호스트 버퍼. 마지막 인자는 예약분(0)이다
+        // 안전성: 살아 있는 세션 핸들과 널로 끝나는 호스트 버퍼. 마지막 인자는 예약분(0)이다
         let handle = unsafe { WinHttpConnect(self.0, PCWSTR(host.as_ptr()), port, 0) };
         if handle.is_null() {
             return Err(HttpError::Transport(last_error()));
@@ -232,7 +232,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // SAFETY: 우리가 열어 아직 닫지 않은 핸들. 실패해도 할 수 있는 일이 없다
+        // 안전성: 우리가 열어 아직 닫지 않은 핸들. 실패해도 할 수 있는 일이 없다
         let _ = unsafe { WinHttpCloseHandle(self.0) };
     }
 }
@@ -247,7 +247,7 @@ impl Connect {
         } else {
             WINHTTP_OPEN_REQUEST_FLAGS(0)
         };
-        // SAFETY: 살아 있는 연결 핸들과 널로 끝나는 경로 버퍼. 동사·판·참조 주소는 기본값을
+        // 안전성: 살아 있는 연결 핸들과 널로 끝나는 경로 버퍼. 동사·판·참조 주소는 기본값을
         // 쓰고(널), 받을 형식 목록도 제한하지 않는다(널)
         let handle = unsafe {
             WinHttpOpenRequest(
@@ -269,7 +269,7 @@ impl Connect {
 
 impl Drop for Connect {
     fn drop(&mut self) {
-        // SAFETY: 위 Session::drop과 같다
+        // 안전성: 위 Session::drop과 같다
         let _ = unsafe { WinHttpCloseHandle(self.0) };
     }
 }
@@ -281,7 +281,7 @@ impl Request {
     fn status_code(&self) -> Result<u32, HttpError> {
         let mut status = 0u32;
         let mut size = std::mem::size_of::<u32>() as u32;
-        // SAFETY: 응답을 이미 받은 요청 핸들. 숫자 플래그를 켜 두어 WinHTTP가 문자열이 아니라
+        // 안전성: 응답을 이미 받은 요청 핸들. 숫자 플래그를 켜 두어 WinHTTP가 문자열이 아니라
         // u32를 채우며, 그 크기를 함께 넘긴다. 헤더 이름과 색인은 상태 코드 조회에 쓰이지 않는다
         unsafe {
             WinHttpQueryHeaders(
@@ -300,7 +300,7 @@ impl Request {
 
 impl Drop for Request {
     fn drop(&mut self) {
-        // SAFETY: 위 Session::drop과 같다
+        // 안전성: 위 Session::drop과 같다
         let _ = unsafe { WinHttpCloseHandle(self.0) };
     }
 }
@@ -308,7 +308,7 @@ impl Drop for Request {
 /// 널 핸들로 돌아온 호출의 사유. 핸들을 돌려주는 WinHTTP 함수는 `Result`가 아니라
 /// 널을 주므로 오류 코드를 따로 물어야 한다
 fn last_error() -> u32 {
-    // SAFETY: 인자 없는 조회 함수다
+    // 안전성: 인자 없는 조회 함수다
     unsafe { windows::Win32::Foundation::GetLastError().0 }
 }
 
