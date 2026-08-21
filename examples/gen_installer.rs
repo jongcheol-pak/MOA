@@ -29,12 +29,11 @@ fn main() -> Result<(), String> {
     }
 
     let Some(makensis) = find_makensis() else {
-        return Err(concat!(
-            "makensis를 찾지 못했다 — NSIS가 설치돼 있지 않다.\n",
-            "  설치: winget install NSIS.NSIS\n",
-            "  설치 뒤 이 명령을 다시 돌린다"
-        )
-        .to_owned());
+        // 여러 줄 안내는 **직접 찍는다** — `main`이 돌려주는 `Err`는 `Debug`로 인쇄되므로
+        // 줄바꿈이 `\n` 글자 그대로 나와 세 줄이 한 줄로 뭉개진다. 종료 코드는 `Err`가 싣는다
+        eprintln!("  설치: winget install NSIS.NSIS");
+        eprintln!("  설치 뒤 이 명령을 다시 돌린다");
+        return Err("makensis를 찾지 못했다 — NSIS가 설치돼 있지 않다".to_owned());
     };
     println!("makensis {}", makensis.display());
 

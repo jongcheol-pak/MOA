@@ -70,13 +70,30 @@ fn 설치_스크립트는_사용자_단위로_설치한다() {
     // ⓔ 버전을 손으로 돌려도 빌드가 성립한다
     assert_has(&text, "!ifndef VERSION", "버전 기본값");
 
-    // ⓖ 담는 파일·아이콘·산출 경로는 모두 `installer/` 기준 상대경로다
+    // ⓖ 담는 파일·아이콘·산출 경로는 모두 `installer/` 기준 상대경로다.
+    //    경로만 찾지 않고 **그 경로를 쓰는 명령까지** needle에 넣는다 — `..\LICENSE`는
+    //    라이선스 페이지(`MUI_PAGE_LICENSE`)에도, `..\docs\AppIcon.ico`는 제거 아이콘
+    //    (`MUI_UNICON`)에도 있어서, 경로만 찾으면 동봉이 빠져도 그쪽에 걸려 통과한다
     for (needle, 요구) in [
-        (r"..\target\release\moa.exe", "담을 실행 파일"),
-        (r"..\LICENSE", "동봉할 라이선스"),
-        (r"..\THIRD-PARTY-NOTICES.md", "동봉할 오픈소스 고지"),
-        (r"..\docs\AppIcon.ico", "설치 프로그램 아이콘"),
-        (r"..\target\installer\MOA-Setup-${VERSION}.exe", "산출 경로"),
+        (r#"File "..\target\release\moa.exe""#, "담을 실행 파일"),
+        (r#"File "..\LICENSE""#, "동봉할 라이선스"),
+        (
+            r#"File "..\THIRD-PARTY-NOTICES.md""#,
+            "동봉할 오픈소스 고지",
+        ),
+        (r#"MUI_ICON "..\docs\AppIcon.ico""#, "설치 프로그램 아이콘"),
+        (
+            r#"MUI_UNICON "..\docs\AppIcon.ico""#,
+            "제거 프로그램 아이콘",
+        ),
+        (
+            r#"OutFile "..\target\installer\MOA-Setup-${VERSION}.exe""#,
+            "산출 경로",
+        ),
+        (
+            r#"MUI_PAGE_LICENSE "..\LICENSE""#,
+            "설치 중 보이는 라이선스 원문",
+        ),
     ] {
         assert_has(&text, needle, 요구);
     }
