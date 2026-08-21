@@ -96,7 +96,8 @@ pub enum SidebarAction {
     SelectSite(SiteId),
     /// 사이트 행 더블클릭·연결 메뉴 선택 — 이 사이트로 연결한다 (인벤토리 #4·#7)
     ConnectSite(SiteId),
-    /// **사이드바 목록에서만 감춘다** — 사이트 자체는 남는다 (README §1, 인벤토리 #10)
+    /// **목록에서 지운다** — 그 사이트의 연결·원격 탭·전송 큐 항목을 함께 걷어낸다 (FR-29).
+    /// 사이트 기록만은 사이트 관리자에 남아 되돌릴 수 있다 (인벤토리 #10)
     RemoveSite(SiteId),
     /// 헤더 `⟳` (인벤토리 #2)
     RefreshSites,

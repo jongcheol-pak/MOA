@@ -226,7 +226,7 @@
     - (i) 닫는 도중 인덱스가 밀려 엉뚱한 탭이 닫히는 문제 → 매번 **처음부터 다시 찾아** 하나씩 닫는 방식으로 해결(`open_remote_tab_only`와 같은 반복 형태)
   - **Depends on**: -
 
-- [ ] T3. 그 사이트로 오가는 「같은 이름 확인」 대기를 버린다
+- [x] T3. 그 사이트로 오가는 「같은 이름 확인」 대기를 버린다
   - **Type**: C
   - **Design**: ① `src/ui/app/transfer_conflict.rs` ② 순수 함수 `conflict_site(drop: &DropOutcome) -> Option<SiteId>`(올리기는 `target`의 사이트, 받기는 `source_site`)와 `ExplorerApp::drop_site_conflicts(&mut self, site: SiteId)` — `pending_conflicts`·`conflict_queue`·`conflict_dialog`에서 그 사이트 것을 버리고, `conflict_lists`에서 **그 사이트의 연결로 물어 둔 조회**도 지운다(`settle_conflict`를 부르지 않는다 — 부르면 큐에 들어간다) ③ 순수 함수는 `ui::list_common`의 타입만 읽고, 메서드는 앱 상태를 만진다 ④ 「사이트로 거두는 일반 회수기」를 만들지 않는다 — 연결 단위 회수(`abandon_conflict_lists`)는 그대로 남기고 그 옆에 둔다
   - **Acceptance**: Given 사이트 A로 올리는 확인과 사이트 B로 올리는 확인이 함께 대기 중, When `drop_site_conflicts(A)`, Then A의 대기·대화·조회만 사라지고 B의 것은 그대로 남으며 **A의 전송은 큐에 들어가지 않는다**. `conflict_site`는 올리기·받기 양쪽에서 사이트를 옳게 집어낸다(단위 시험)
@@ -242,7 +242,7 @@
     - (i) `ExplorerApp` 메서드라 시험할 수 없다 → 판정을 순수 함수로 뽑아 그것만 시험하고, 나머지는 수동 검증 항목으로 남긴다
   - **Depends on**: -
 
-- [ ] T4. `ExplorerApp::detach_site` — 사이드바 삭제가 연결·탭·큐를 함께 걷어낸다
+- [x] T4. `ExplorerApp::detach_site` — 사이드바 삭제가 연결·탭·큐를 함께 걷어낸다
   - **Type**: D
   - **Design**: ① 걷어내기는 `src/ui/app/remote.rs`(연결·사이트 소관), 확인 대화와 사이드바 처리는 `src/ui/app.rs` ② 신규 `detach_site(&mut self, site, area, ctx)`가 **D2의 순서 그대로** 실행한다:
       1. `drop_site_conflicts(site)` — 확인 대기·대화·조회를 버린다(T3)
@@ -336,6 +336,15 @@
 ## Retry Ledger
 
 ## Progress Log
+
+- T3-T4 완료 (커밋 하나로 묶음): 확인 대기 버리기(`drop_site_conflicts`·`conflict_site`)와 걷어내기 배선(`detach_site`·`site_connections`·확인 대화·늦은 워커 결과 차단).
+  - 결정: **T3과 T4를 한 검증으로 묶었다** — T3이 만든 두 심볼은 호출부가 T4에서 생기는데 이 저장소의 린트 게이트(`clippy -D warnings`)가 dead_code를 오류로 막아 T3만으로는 V-3을 통과할 수 없다.
+  - 결정: `egui::Id::new("사이드바 사이트 삭제 확인")`을 i18n 소스 훑기 시험의 위젯 ID 예외 목록에 등재했다(기존 "사이트 삭제 확인"과 같은 처리).
+  - spec 리뷰 MAJOR(이름을 바꾼 열거 변형 위의 stale 주석)는 자기 유발이라 그 자리에서 고쳤다.
+
+- T1-T2 완료 (커밋 d8d69d4, e076d30): 큐의 `site_items`와 패널의 `close_site_tabs`. 둘 다 순수 판정이라 단위 시험으로 덮었다(신규 3건).
+  - 결정: `close_site_tabs`는 `close_requested`를 세우지 않는다 — 패널을 닫을지 로컬 탭으로 되돌릴지는 앱(T4)이 정하고, 여기서 세우면 두 번 닫힌다.
+  - spec 리뷰 MINOR(연결이 안 붙은 탭의 시험 공백)는 같은 task 범위라 그 자리에서 시험을 보강해 해소했다.
 
 ## Next Steps
 
