@@ -171,8 +171,17 @@ MOA를 MIT로 공개할 수 있는 상태로 만든다 — 라이선스 파일·
 - `cargo update` 후 되돌려도 시험이 깨지는 경우(원인이 이번 변경 밖)
 - `eframe` 0.36 상향(D4로 보류 — 하려면 별도 승인)
 
+## Progress Log
+
+- T1-T2 완료 (커밋 6401ee4, d9ff93f): MIT `LICENSE` 추가 · `cargo update` 47건 + 라이선스 자산 재생성. 빌드·시험 954건 통과, 리뷰 지적 0.
+  - 확인된 사실: `Cargo.toml`은 실제로 불변이었고 lock만 움직였다(P3 검증). eframe은 0.35에 그대로 남았다.
+- T3-T4 완료 (커밋 3ab1dae, +T4): 생성기가 `THIRD-PARTY-NOTICES.md`도 만들게 확장 · 정보 화면에 저작권·라이선스·저장소 세 줄 추가. 시험 948건(신규 2건 포함) 통과.
+  - 결정: 표 머리를 `라이선스(SPDX)`로 적어 plan 문면과 실제를 함께 만족(spec M1). `escape_cell`에 개행 처리를 더했다(quality m1).
+  - 결정: 신규 카탈로그 항목을 FR-57 섹션에서 빼내 `// ── 정보 대화 (FR-58) ──` 아래로 옮겼다(quality m1 — 섹션 관례 유지).
+
 ## Deferred / Follow-up
 
+- **[SUGGEST] 시험용 셰이프 텍스트 수집 헬퍼가 여러 파일에 흩어져 있다** — `collect_text`(`about_dialog.rs`)와 같은 패턴(`Shape::Vec` 재귀 + `Shape::Text` 수집)이 `ui/tabs.rs`·`ui/menu.rs`·`ui/sidebar.rs`·`ui/tree.rs`·`ui/panel/tests.rs`에 각각 손으로 재구현돼 있다. 각 파일이 독립 `#[cfg(test)] mod tests`라 3회 공통화 문턱이 파일 간에 그대로 적용되지는 않지만, 시험 전용 공용 모듈(`src/ui/test_support.rs`)로 뽑으면 반복이 준다. 대장의 2026-08-20 「`ui_sources` 재귀 헬퍼가 세 곳에 중복」과 **같은 해법을 요구하는 건**이라 함께 다루는 편이 낫다 (출처: T4 quality S1)
 - **위키 갱신** — `20_projects/personal/moa/`의 `feat-about-dialog.md`(「저작권 줄·홈페이지 링크는 두지 않았다」가 뒤집힌다)·`feat-license-notice.md`(레포 고지 파일이 새로 생긴다)가 실제와 어긋나게 된다. F-6.5의 위키 큐가 맡는다.
 - **`eframe` 0.36 상향** — `egui-phosphor` 0.14(egui 0.36 대응)가 나오면 둘을 함께 올린다. 대응판 없이 가려면 Phosphor 글꼴(488KB)을 `assets/`에 담고 쓰는 아이콘 23종의 상수를 직접 정의해야 하며, AGENTS 아이콘 규약·`is_icon_font` 시험·라이선스 자산이 함께 바뀐다. egui 0.36의 브레이킹은 작다(전제 검증 P5) — 걸리는 것은 글꼴 크레이트뿐이다.
 - **정보 화면 링크의 브라우저 열기 방식** — `ui.hyperlink_to`로 열리지 않으면 셸 실행으로 대체한다(P6).

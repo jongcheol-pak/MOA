@@ -155,19 +155,6 @@ strings! {
         => "이 앱은 아래 오픈소스 구성 요소를 사용합니다"
         / "This app uses the open source components listed below";
     licenses_copyright => "저작권" / "Copyright";
-
-    /// 정보 화면의 저작권·라이선스·저장소 세 줄 (FR-58).
-    ///
-    /// **두 언어에서 값이 같다** — 저작권 표기와 라이선스 이름은 번역 대상이 아니고
-    /// (SPDX 식별자 `MIT`가 그 자체로 이름이다) 주소도 언어를 타지 않는다. 그런데도
-    /// 카탈로그를 거치는 것은 화면 문구를 소스에 박지 않는다는 규약(AGENTS) 때문이다
-    about_copyright
-        => "Copyright (c) 2026 jongcheol-pak"
-        / "Copyright (c) 2026 jongcheol-pak";
-    about_license => "MIT License" / "MIT License";
-    about_repository_url
-        => "https://github.com/jongcheol-pak/MOA"
-        / "https://github.com/jongcheol-pak/MOA";
     /// 배포 패키지에 원문이 없어 표준 전문을 대신 보이는 항목에 붙는다
     licenses_standard_note
         => "이 구성 요소는 배포 파일에 라이선스 원문을 담고 있지 않아 해당 라이선스의 표준 전문을 보입니다"
@@ -180,6 +167,20 @@ strings! {
     licenses_unavailable
         => "라이선스 정보를 읽지 못했습니다"
         / "Could not read the license information";
+
+    // ── 정보 대화 (FR-58) ──
+    /// 이름·버전 줄 아래에 서는 세 줄.
+    ///
+    /// **두 언어에서 값이 같다** — 저작권 표기와 라이선스 이름은 번역 대상이 아니고
+    /// (SPDX 식별자 `MIT`가 그 자체로 이름이다) 주소도 언어를 타지 않는다. 그런데도
+    /// 카탈로그를 거치는 것은 화면 문구를 소스에 박지 않는다는 규약(AGENTS) 때문이다
+    about_copyright
+        => "Copyright (c) 2026 jongcheol-pak"
+        / "Copyright (c) 2026 jongcheol-pak";
+    about_license => "MIT License" / "MIT License";
+    about_repository_url
+        => "https://github.com/jongcheol-pak/MOA"
+        / "https://github.com/jongcheol-pak/MOA";
 
     // ── 패널 메뉴 (FR-23) ──
     /// 열 메뉴 캡션 (인벤토리 #22)
