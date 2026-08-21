@@ -48,7 +48,7 @@ use crate::ui::toast::{self, Toast};
 use crate::ui::tray::{Tray, TrayEvent};
 use crate::ui::tree::TreeRequest;
 use eframe::egui;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
@@ -489,6 +489,15 @@ pub struct ExplorerApp {
     /// 인덱스가 아니라 id로 잡는다 — 확인 대화는 프레임을 넘겨 살아 있는데,
     /// 그 사이 순서가 바뀌면 인덱스는 다른 워크스페이스를 가리킨다 (D12 ①과 같은 이유)
     pending_remove: Option<WorkspaceId>,
+    /// 사이드바에서 지우기를 기다리는 사이트 (FR-29) — 진행·대기 중인 전송이 있을 때만
+    /// 확인을 받는다. 인덱스가 아니라 식별자로 잡는 이유는 위 `pending_remove`와 같다
+    pending_site_remove: Option<SiteId>,
+    /// 방금 걷어낸 사이트들 (FR-29) — **늦게 도착하는 워커 결과를 버리는 표시**다.
+    ///
+    /// 폴더 펼치기(`expand_rx`)와 OS 드롭 스캔(`os_drop_rx`)은 다음 프레임에 큐로 들어가므로,
+    /// 지운 뒤에 답이 오면 비운 큐가 되살아나 연결별 탭이 다시 선다. 그 사이트를 다시
+    /// 연결하면(`connect_site`) 표시를 지운다 — 그때부터는 종전대로 큐에 들어가야 한다
+    detached_sites: HashSet<SiteId>,
     /// 앱 전역 설정 (FR-47) — 설정 대화가 바꾸고 각 기능이 읽는다
     settings: AppSettings,
     /// 앱 설정 대화 (FR-47) — 타이틀바 설정 메뉴의 `설정`이 연다
@@ -672,6 +681,8 @@ impl ExplorerApp {
             restore_window: None,
             restoring_maximized: 0,
             pending_remove: None,
+            pending_site_remove: None,
+            detached_sites: HashSet::new(),
             // 워커가 소식을 올리면 창을 다시 그리게 한다 — 입력이 없으면 egui는 프레임을
             // 돌리지 않아, 이 신호가 없으면 목록이 사용자가 마우스를 움직일 때까지 안 나타난다
             manager: ConnectionManager::new({
@@ -872,7 +883,13 @@ impl ExplorerApp {
     }
 
     /// 사이드바 조작 반영 — 목록 변경은 전부 여기서만 일어난다
-    fn handle_sidebar(&mut self, action: SidebarAction, area: LayoutRect, now: f64) {
+    fn handle_sidebar(
+        &mut self,
+        action: SidebarAction,
+        area: LayoutRect,
+        now: f64,
+        ctx: &egui::Context,
+    ) {
         match action {
             SidebarAction::Select(index) => {
                 self.workspaces.set_active(index);
@@ -897,15 +914,21 @@ impl ExplorerApp {
                 // 여는 방법에 따라 배치가 달라진다
                 self.open_site_tab(site, None, area);
             }
-            // 목록에서 감출 뿐 사이트는 남는다 (README §1) — 사이트 관리자에 그대로 보인다.
-            // **그 사실을 알린다** — 메뉴가 감춘다고 적어도, 사라진 줄에서 되돌리는 길까지는
-            // 읽히지 않는다 (2026-08-16 검토)
-            SidebarAction::HideSite(site) => {
-                let name = self.sites.get(site).map(|record| record.name.clone());
-                self.sites.hide(site);
-                if let Some(name) = name {
-                    self.toast
-                        .show(crate::i18n::dynamic::site_hidden(&name), now);
+            // 목록에서 지우면 **그 사이트의 실행 중 상태를 함께 걷어낸다** (FR-29) —
+            // 연결·원격 탭·전송 큐 항목이 그대로 남으면 지웠는데도 전송 큐 화면의
+            // 연결별 탭에 그 서버가 계속 선다 (2026-08-21 사용자 요청).
+            // 사이트 기록 자체는 사이트 관리자에 남아 되돌릴 수 있다
+            SidebarAction::RemoveSite(site) => {
+                // 도는 전송을 끊는 것은 되돌릴 수 없다 — 그때만 한 번 묻는다 (D4)
+                if self
+                    .queue
+                    .site_items(site)
+                    .iter()
+                    .any(|item| item.state.is_pending())
+                {
+                    self.pending_site_remove = Some(site);
+                } else {
+                    self.detach_site(site, area, ctx, now);
                 }
             }
             // 사이트 목록은 메모리에 있어 지금은 다시 읽을 것이 없다.
@@ -1493,6 +1516,66 @@ impl ExplorerApp {
         }
     }
 
+    /// 사이드바에서 사이트를 지우기 전의 확인 (FR-29 · D4).
+    ///
+    /// **도는 전송이 있을 때만 뜬다** — 끝난·실패한 항목만 남았으면 묻지 않는다(그것들은 기록일
+    /// 뿐 다시 걸 수 있다). 배경 클릭·`Esc`는 취소로 본다: 지우는 쪽이 기본값이 되면 실수로 지운다.
+    ///
+    /// `area`가 아직 없으면(첫 프레임) 그 프레임에는 실행하지 않고 기다린다 — 패널을 닫으려면
+    /// 배치를 알아야 하고, 임의의 영역을 지어내면 엉뚱한 패널이 닫힌다
+    fn show_site_remove_confirm(&mut self, ctx: &egui::Context, area: Option<LayoutRect>) {
+        let Some(site) = self.pending_site_remove else {
+            return;
+        };
+        let Some(name) = self.sites.get(site).map(|record| record.name.clone()) else {
+            // 묻는 사이에 대상이 사라졌다(사이트 관리자에서 지웠다) — 물을 것이 없다
+            self.pending_site_remove = None;
+            return;
+        };
+        let running = self
+            .queue
+            .site_items(site)
+            .iter()
+            .filter(|item| item.state.is_pending())
+            .count();
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::delete()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("사이드바 사이트 삭제 확인"),
+            REMOVE_DIALOG_WIDTH,
+            &buttons,
+            |ui| {
+                ui.heading(crate::i18n::sidebar_site_remove_title());
+                ui.add_space(8.0);
+                ui.label(crate::i18n::dynamic::sidebar_site_remove_confirm(
+                    &name, running,
+                ));
+                ui.label(crate::i18n::sidebar_site_remove_detail());
+            },
+        );
+        let confirmed = match shell.clicked {
+            Some(0) => Some(true),
+            Some(_) => Some(false),
+            None => shell.should_close.then_some(false),
+        };
+        match confirmed {
+            Some(true) => {
+                // 배치를 알아야 패널을 닫을 수 있다 — 모르는 프레임에는 대기를 유지한다
+                let Some(area) = area else {
+                    return;
+                };
+                self.pending_site_remove = None;
+                let now = ctx.input(|input| input.time);
+                self.detach_site(site, area, ctx, now);
+            }
+            Some(false) => self.pending_site_remove = None,
+            None => {}
+        }
+    }
+
     /// 사이트 관리자 대화 (FR-27) — 등록 결과를 받아 연결까지 잇는다.
     ///
     /// `area`는 `연결(C)`이 패널을 좌우로 나눌 때 쓴다(T14와 같은 착지점). 아직 배치를 모르는
@@ -1841,6 +1924,10 @@ impl ExplorerApp {
     /// 폴더 여부를 다 잰 OS 드롭을 전송으로 보낸다 (FR-61)
     fn pump_os_drop_scan(&mut self) {
         while let Ok((site, dir, items)) = self.os_drop_rx.try_recv() {
+            // 재는 사이에 지운 사이트면 버린다 (FR-29 — 위 `expand_rx`와 같은 이유)
+            if self.detached_sites.contains(&site) {
+                continue;
+            }
             self.start_transfer(list_common::DropOutcome {
                 items,
                 source_site: None,
@@ -1957,6 +2044,11 @@ impl eframe::App for ExplorerApp {
         while let Ok((site, files, skipped)) = self.expand_rx.try_recv() {
             // 이 펼치기가 끝났다 — 상태 줄의 `펼치는 중`이 그만큼 줄어든다
             self.expanding = self.expanding.saturating_sub(1);
+            // 그 사이 사이드바에서 지운 사이트면 버린다 (FR-29) — 넣으면 방금 비운 큐가
+            // 되살아나 연결별 탭이 다시 선다. 읽지 못한 폴더 알림도 함께 뜻을 잃는다
+            if self.detached_sites.contains(&site) {
+                continue;
+            }
             for (local, remote, size) in files {
                 self.queue
                     .enqueue(site, TransferDirection::Upload, local, remote, size);
@@ -2064,13 +2156,14 @@ impl eframe::App for ExplorerApp {
                 layout_area = Some(area);
                 let now = ui.input(|input| input.time);
                 for action in sidebar_actions {
-                    self.handle_sidebar(action, area, now);
+                    self.handle_sidebar(action, area, now, &ctx);
                 }
                 // 단축키는 프레임당 한 번만 소비한다(`consume_shortcut`이 입력을 소모한다).
                 // 메뉴와 단축키가 같은 프레임에 겹쳐도 둘 다 실행한다
                 // 모달이 떠 있는 동안에는 단축키를 받지 않는다 — 모달은 입력을 막는다는 뜻이다
                 // (워크스페이스 삭제 확인 · 서버 지문 확인)
                 let shortcut_command = if self.pending_remove.is_some()
+                    || self.pending_site_remove.is_some()
                     || self.hostkey.is_open()
                     || self.site_manager.is_open()
                 {
@@ -2217,6 +2310,9 @@ impl eframe::App for ExplorerApp {
 
         // 삭제 확인은 egui 모달이라 `CentralPanel` 밖에서 그려도 된다(자체 레이어를 쓴다)
         self.show_remove_confirm(&ctx);
+        // 사이드바에서 사이트를 지우기 전의 확인도 같다 (FR-29) — 배치를 알아야
+        // 패널을 닫을 수 있어 그 영역을 함께 넘긴다
+        self.show_site_remove_confirm(&ctx, layout_area);
         // 서버 지문 확인도 같다. 사용자가 고를 때까지 그 연결의 워커는 기다리고 있다 (D15)
         self.hostkey.show(&ctx);
         // 사이트 관리자도 자체 레이어를 쓴다 (FR-27)

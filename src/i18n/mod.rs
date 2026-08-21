@@ -312,6 +312,12 @@ strings! {
     site_delete_detail
         => "저장한 주소와 로그인 정보가 함께 사라집니다."
         / "Its address and sign-in details will be removed as well.";
+    /// 사이드바 목록에서 지울 때의 확인 (FR-29) — **진행·대기 중인 전송이 있을 때만** 뜬다.
+    /// 위 `site_delete_*`(사이트 관리자의 `삭제(D)`)와 다른 일이다: 이쪽은 사이트 기록을 남긴다
+    sidebar_site_remove_title => "목록에서 삭제" / "Remove from list";
+    sidebar_site_remove_detail
+        => "사이트 자체는 사이트 관리자에 그대로 남습니다."
+        / "The site itself remains in Site Manager.";
     site_tab_general => "일반" / "General";
     site_tab_transfer => "전송 설정" / "Transfer";
     site_tab_charset => "문자셋" / "Charset";
@@ -1071,18 +1077,32 @@ pub mod dynamic {
         }
     }
 
-    /// 사이드바에서 감춘 뒤 뜨는 알림 — **지운 것이 아님**과 어디에 남았는지를 함께 알린다.
-    /// 이름 뒤에 `사이트`를 세워 조사를 피한다(이름은 사용자가 지은 말이라 받침을 알 수 없다)
-    pub fn site_hidden(name: &str) -> String {
+    /// 사이드바 목록에서 지운 뒤 뜨는 알림 (FR-29) — **연결·전송까지 걷혔다는 것**과
+    /// 사이트 기록은 남았다는 것을 함께 알린다. 이름 뒤에 `사이트`를 세워 조사를 피한다
+    /// (이름은 사용자가 지은 말이라 받침을 알 수 없다)
+    pub fn site_removed(name: &str) -> String {
         match current() {
             Language::Korean => {
                 format!(
-                    "'{name}' 사이트를 사이드바에서 숨겼습니다 · 사이트 관리자에 그대로 있습니다"
+                    "'{name}' 사이트를 목록에서 지웠습니다 · 사이트 관리자에 그대로 있습니다"
                 )
             }
             Language::English => {
-                format!("Hid '{name}' from the sidebar · it remains in Site Manager")
+                format!("Removed '{name}' from the list · it remains in Site Manager")
             }
+        }
+    }
+
+    /// 사이드바 목록에서 지울 때의 확인 첫 줄 (FR-29) — 몇 건이 함께 취소되는지 밝힌다.
+    /// 그 수가 곧 되돌릴 수 없는 손실이라 확인을 띄우는 이유이기도 하다
+    pub fn sidebar_site_remove_confirm(name: &str, running: usize) -> String {
+        match current() {
+            Language::Korean => format!(
+                "'{name}' 사이트를 목록에서 지웁니다. 진행 중이거나 기다리는 전송 {running}건이 함께 취소됩니다."
+            ),
+            Language::English => format!(
+                "Removing '{name}' from the list. {running} transfer(s) in progress or waiting will be cancelled."
+            ),
         }
     }
 
@@ -1262,7 +1282,7 @@ mod tests {
         ///
         /// 위젯 상태를 잇는 열쇠(`Id::new`·`id_salt`)는 바꾸면 대화 상태가 초기화되고,
         /// 나머지는 화면에 나오지 않는 내부 값이다
-        const EXEMPT_LITERALS: [&str; 31] = [
+        const EXEMPT_LITERALS: [&str; 32] = [
             // 위젯 ID
             "정보 대화",
             "라이선스 대화",
@@ -1280,6 +1300,7 @@ mod tests {
             "원격 호스트 키 확인",
             "사이트 관리자",
             "사이트 삭제 확인",
+            "사이드바 사이트 삭제 확인",
             "사이트 이름 바꾸기",
             "사이트 가져오기 암호",
             "사이트 가져오기 충돌",

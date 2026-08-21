@@ -97,7 +97,7 @@ pub enum SidebarAction {
     /// 사이트 행 더블클릭·연결 메뉴 선택 — 이 사이트로 연결한다 (인벤토리 #4·#7)
     ConnectSite(SiteId),
     /// **사이드바 목록에서만 감춘다** — 사이트 자체는 남는다 (README §1, 인벤토리 #10)
-    HideSite(SiteId),
+    RemoveSite(SiteId),
     /// 헤더 `⟳` (인벤토리 #2)
     RefreshSites,
     /// 헤더 `+` (인벤토리 #3) — 연결 메뉴는 사이드바가 직접 띄우므로 이 조작은
@@ -679,7 +679,7 @@ fn show_site_context_menu(
         // 일의 색을 쓰면 그 색의 뜻이 닳는다 (2026-08-16 검토)
         let clicked = ui.add(hide).clicked();
         if clicked {
-            actions.push(SidebarAction::HideSite(record.id));
+            actions.push(SidebarAction::RemoveSite(record.id));
             ui.close();
         }
     });
