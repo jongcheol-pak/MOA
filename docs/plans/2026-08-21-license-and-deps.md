@@ -35,7 +35,7 @@ MOA를 MIT로 공개할 수 있는 상태로 만든다 — 라이선스 파일·
   - **Edge Cases**: 이미 `LICENSE`가 있으면 덮어쓰지 않고 멈춘다(현재 없음 — Investigation Log에서 확인).
   - **Halt Forecast**: 없음 — 신규 문서 파일이며 덮어쓸 대상이 없다.
 
-- [ ] **T2. 의존성 패치 갱신과 라이선스 자산 재생성** — Type C
+- [x] **T2. 의존성 패치 갱신과 라이선스 자산 재생성** — Type C
   - **Files**: `Cargo.lock`, `assets/licenses.json`
   - `cargo update`로 semver 호환 갱신 47건을 반영한다(D4). **`eframe` 0.36은 올리지 않는다** — `egui-phosphor`가 `egui = "0.35"`에 묶여 있다(전제 검증 P2).
   - 그 뒤 `cargo run --example gen_licenses`로 `assets/licenses.json`을 다시 만든다 — 안 만들면 lock 지문 대조 시험이 실패한다.

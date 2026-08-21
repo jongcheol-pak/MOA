@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "lock_fingerprint": 7884736583931670695,
+  "lock_fingerprint": 4815187613157414316,
   "crates": [
     {
       "name": "accesskit",
@@ -117,7 +117,7 @@
     },
     {
       "name": "bytemuck_derive",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "spdx": "Zlib OR Apache-2.0 OR MIT",
       "authors": [
         "Lokathor"
@@ -224,7 +224,7 @@
     },
     {
       "name": "displaydoc",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "Jane Lusby"
@@ -347,7 +347,7 @@
     },
     {
       "name": "either",
-      "version": "1.17.0",
+      "version": "1.18.0",
       "spdx": "MIT OR Apache-2.0",
       "authors": [],
       "text_indices": [
@@ -387,7 +387,7 @@
     },
     {
       "name": "error-code",
-      "version": "3.3.2",
+      "version": "3.4.0",
       "spdx": "BSL-1.0",
       "authors": [
         "Douman"
@@ -601,7 +601,7 @@
     },
     {
       "name": "icu_collections",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -614,7 +614,7 @@
     },
     {
       "name": "icu_locale_core",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -627,7 +627,7 @@
     },
     {
       "name": "icu_normalizer",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -640,7 +640,7 @@
     },
     {
       "name": "icu_normalizer_data",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -653,7 +653,7 @@
     },
     {
       "name": "icu_properties",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -666,7 +666,7 @@
     },
     {
       "name": "icu_properties_data",
-      "version": "2.2.0",
+      "version": "2.3.0",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -679,7 +679,7 @@
     },
     {
       "name": "icu_provider",
-      "version": "2.2.0",
+      "version": "2.3.1",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -880,7 +880,7 @@
     },
     {
       "name": "litemap",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -1154,7 +1154,7 @@
     },
     {
       "name": "potential_utf",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -1266,7 +1266,7 @@
     },
     {
       "name": "regex-automata",
-      "version": "0.4.17",
+      "version": "0.4.18",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "The Rust Project Developers",
@@ -1495,7 +1495,7 @@
     },
     {
       "name": "suppaftp",
-      "version": "10.0.1",
+      "version": "10.0.2",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "Christian Visintin"
@@ -1509,7 +1509,7 @@
     },
     {
       "name": "syn",
-      "version": "2.0.119",
+      "version": "3.0.3",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "David Tolnay"
@@ -1523,7 +1523,7 @@
     },
     {
       "name": "syn",
-      "version": "3.0.3",
+      "version": "2.0.119",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "David Tolnay"
@@ -1550,7 +1550,7 @@
     },
     {
       "name": "thiserror",
-      "version": "2.0.19",
+      "version": "2.0.20",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "David Tolnay"
@@ -1564,7 +1564,7 @@
     },
     {
       "name": "thiserror-impl",
-      "version": "2.0.19",
+      "version": "2.0.20",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "David Tolnay"
@@ -1578,7 +1578,7 @@
     },
     {
       "name": "tinystr",
-      "version": "0.8.3",
+      "version": "0.8.4",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -1689,7 +1689,7 @@
     },
     {
       "name": "uuid",
-      "version": "1.24.0",
+      "version": "1.24.1",
       "spdx": "Apache-2.0 OR MIT",
       "authors": [
         "Ashley Mannix",
@@ -1741,7 +1741,7 @@
     },
     {
       "name": "webbrowser",
-      "version": "1.2.1",
+      "version": "1.2.4",
       "spdx": "MIT OR Apache-2.0",
       "authors": [
         "Amod Malviya"
@@ -1993,7 +1993,7 @@
     },
     {
       "name": "writeable",
-      "version": "0.6.3",
+      "version": "0.6.4",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -2032,12 +2032,9 @@
     },
     {
       "name": "zerocopy",
-      "version": "0.8.55",
+      "version": "0.8.56",
       "spdx": "BSD-2-Clause OR Apache-2.0 OR MIT",
-      "authors": [
-        "Joshua Liebow-Feeser",
-        "Jack Wrenn"
-      ],
+      "authors": [],
       "text_indices": [
         6,
         7,
@@ -2074,7 +2071,7 @@
     },
     {
       "name": "zerotrie",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -2087,7 +2084,7 @@
     },
     {
       "name": "zerovec",
-      "version": "0.11.6",
+      "version": "0.11.8",
       "spdx": "Unicode-3.0",
       "authors": [
         "The ICU4X Project Developers"
@@ -2100,7 +2097,7 @@
     },
     {
       "name": "zerovec-derive",
-      "version": "0.11.3",
+      "version": "0.11.6",
       "spdx": "Unicode-3.0",
       "authors": [
         "Manish Goregaokar"
