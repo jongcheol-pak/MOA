@@ -312,18 +312,19 @@
 - 시험: `cargo test` (T1·T4의 신규 시험 포함)
 - 린트·형식: `cargo clippy --all-targets -- -D warnings` · `cargo fmt --check`
 - 예제 실패 경로 실행: `cargo run --example gen_installer` — 이 PC에서는 `makensis` 부재 경로가 돈다(T3 Acceptance의 검증 대상)
-- 수동 검증(HUMAN-VERIFY — NSIS가 있어야 한다):
-  1. ~~설치 파일이 만들어지는가~~ **이번 회차에 확인 완료** — `MOA-Setup-0.1.0.exe` 2,978,672B, makensis 경고 0.
-  2. 그 설치 파일을 실행 → UAC 없이 `%LOCALAPPDATA%\Programs\MOA`에 설치되고 시작 메뉴에 등록되는가(바탕화면 체크박스 동작 포함).
-  3. 설치된 앱이 정상 실행되고 아이콘이 제대로 보이는가.
-  4. 제거 → 자동 실행을 켜 뒀다면 HKCU Run의 `MOA` 값이 사라지는가.
-  5. 제거 → **묻지 않고** 설치가 놓은 여섯 파일과 앱이 만든 `settings.json`·`known_hosts.json`이 사라지는가. 그 폴더에 따로 넣어 둔 파일이 없으면 폴더도 함께 사라진다(`RMDir`는 재귀가 아니다).
-  6. 설치본을 실행해 설정을 바꾼 뒤 다시 켜면 그 설정이 유지되는가 — 그리고 그 파일이 **설치 폴더 안에** 생겼는가.
-  7. 바로가기 이름이 설치 언어에 따라 `모아`/`MOA`로 만들어지는가(시작 메뉴·바탕화면 둘 다).
+- 수동 검증(HUMAN-VERIFY) — **2026-08-21 전항목 확인 완료**(사용자 확인):
+  1. 설치 파일 생성 — `MOA-Setup-0.1.0.exe` 2,978,672B, makensis 경고 0.
+  2. UAC 없이 `%LOCALAPPDATA%\Programs\MOA`에 설치·시작 메뉴 등록·바탕화면 체크박스 — 정상.
+  3. 설치된 앱 실행과 아이콘 — 정상.
+  4. 제거 시 HKCU Run의 `MOA` 값 삭제 — 정상.
+  5. 묻지 않는 제거(설치가 놓은 여섯 파일 + `settings.json`·`known_hosts.json`) — 정상.
+  6. 설정이 설치 폴더 안에 생기고 재시작해도 유지 — 정상.
+  7. 바로가기 이름이 설치 언어를 따름(`모아`/`MOA`, 시작 메뉴·바탕화면) — 정상.
 
 ## Phase Ledger
 
 - Phase F 통과 (2026-08-21) — F-7 2라운드: 1R MAJOR 1·MINOR 5 → 2R MAJOR 0·MINOR 3, 전건 반영.
+- HUMAN-VERIFY 전항목 확인 완료 (2026-08-21, 사용자 확인) — 설치·실행·제거·설정 유지·바로가기 이름 전부 정상.
 - Phase G 통과 (Must 100%) — PRD Coverage의 NFR-7·FR-47 충족, 이번 변경이 새로 거짓으로 만든 요구 없음.
 
 ## Retry Ledger
