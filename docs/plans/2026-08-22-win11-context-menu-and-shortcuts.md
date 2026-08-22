@@ -409,10 +409,10 @@
 
 - [ ] T12. 문서를 갱신한다
   - **Type**: A
-  - **Acceptance**: Given `README.md`, When 42행 셸 메뉴 서술·24행 단축키 서술·88행 아키텍처 절의 소스 트리와 플로우를 읽으면, Then 신규 모듈 4개(`fs::bitmap`·`fs::clipboard`·`fs::shell_menu` 확장·`ui::shell_context_menu`)와 단축키 11종·인라인 이름 편집·잘라내기 표시가 실제 구현과 일치한다. Given `AGENTS.md`의 「DO NOT」 UI 스레드 블로킹 예외 열거, When 읽으면, Then 셸 메뉴 열기·하위 메뉴 채움이 그 예외에 **이름으로 적혀 있다**(D10). Given `docs/plans/deferred.md`, When 「32bpp 중복」(2026-08-21 등재)·「메뉴 보정 실측」(2026-08-20 등재) 두 항목을 보면, Then 해소로 종결 처리돼 `## 대기`에 남지 않는다
+  - **Acceptance**: Given `README.md`, When 42행 셸 메뉴 서술·24행 단축키 서술·88행 아키텍처 절의 소스 트리와 플로우를 읽으면, Then 신규 모듈 4개(`fs::bitmap`·`fs::clipboard`·`fs::shell_menu` 확장·`ui::shell_context_menu`)와 단축키 11종·인라인 이름 편집·잘라내기 표시가 실제 구현과 일치한다. Given `AGENTS.md`의 「DO NOT」 UI 스레드 블로킹 예외 열거, When 읽으면, Then 셸 메뉴 열기·하위 메뉴 채움이 그 예외에 **이름으로 적혀 있다**(D10). Given `AGENTS.md`의 「원격 기능 테스트」 절, When 읽으면, Then 진짜 클립보드를 쓰는 시험을 켜는 환경변수(`MOA_TEST_CLIPBOARD`)가 적혀 있다 — 기본은 꺼짐이라 적어 두지 않으면 그 시험이 있다는 것을 아무도 모른다. Given `docs/plans/deferred.md`, When 「32bpp 중복」(2026-08-21 등재)·「메뉴 보정 실측」(2026-08-20 등재) 두 항목을 보면, Then 해소로 종결 처리돼 `## 대기`에 남지 않는다
   - **Files**:
     - 주: `README.md`, `docs/plans/deferred.md`
-    - 동반: `AGENTS.md`(「DO NOT」의 UI 스레드 예외 열거 1곳만 — **절을 늘리지 않는다**. 이 파일은 이미 주입 상한(16KB)을 넘어 21KB이므로 기존 문장 안에서 고친다)
+    - 동반: `AGENTS.md`(두 곳만 — ⓐ 「DO NOT」의 UI 스레드 예외 열거 ⓑ 「원격 기능 테스트」 절 곁에 **클립보드 시험 스위치**(`MOA_TEST_CLIPBOARD=1`) 한 줄. **절을 늘리지 않는다** — 이 파일은 이미 주입 상한(16KB)을 넘어 21KB이므로 기존 문장·절 안에서 고친다)
   - **Edge Cases**: README에 없던 절을 새로 만들지 않는다(공통 지침) / PRD는 이 회차 시작 시 이미 개정됐으므로 다시 손대지 않는다 / AGENTS.md가 더 커지면 주입 상한 초과가 심해진다 → 예외 열거 문장 안에서만 고쳐 증가를 한 줄 이내로 묶는다(대장의 2026-08-22 「AGENTS.md 주입 상한 초과」 항목은 이번에 해소하지 않는다 — 별건이다)
   - **Halt Forecast**:
     - 없음 — 문서 수정만이고 파괴적·외부 요소가 없다

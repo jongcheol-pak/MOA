@@ -80,8 +80,11 @@ pub(crate) fn data_object(paths: &[PathBuf]) -> Option<IDataObject> {
     if pidls.is_empty() {
         return None;
     }
-    // 안전성: COM이 STA로 초기화된 스레드에서만 부른다. PIDL은 `Pidls`가 소유해 이 함수를
-    // 벗어날 때 `CoTaskMemFree`로 되돌리며, 셸이 만든 객체는 그것과 무관하게 산다
+    // 안전성: COM이 STA로 초기화된 스레드에서만 부른다. PIDL은 `Pidls`가 소유해 **이 함수를
+    // 벗어날 때** 되돌리며, 셸이 만든 객체는 그것과 무관하게 산다 —
+    // `SHCreateShellItemArrayFromIDLists`가 PIDL을 자기 안으로 복제하기 때문이다.
+    // 근거는 실측이다: `fs::clipboard`의 왕복 시험이 이 함수가 돌아온 **뒤**(=PIDL 해제 뒤)
+    // 담고 읽어 경로 두 개를 그대로 받는다. 복제하지 않는다면 그 시험이 깨진다
     unsafe {
         let items = SHCreateShellItemArrayFromIDLists(pidls.as_slice()).ok()?;
         items
