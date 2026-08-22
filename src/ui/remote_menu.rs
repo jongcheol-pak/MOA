@@ -192,11 +192,9 @@ pub fn menu_rows(selected: usize, connected: bool, targets: TransferTargets) -> 
 /// 잘리는 것보다 낫다
 pub fn menu_size(style: &egui::Style) -> egui::Vec2 {
     // 줄 **수**만 센다 — 비활성 줄도 그려지므로 대상 유무는 높이를 바꾸지 않는다
-    let rows = menu_rows(0, false, TransferTargets::default()).len();
-    let 구분선 = menu_rows(0, false, TransferTargets::default())
-        .iter()
-        .filter(|row| row.separator_before)
-        .count();
+    let 줄 = menu_rows(0, false, TransferTargets::default());
+    let rows = 줄.len();
+    let 구분선 = 줄.iter().filter(|row| row.separator_before).count();
     // 줄 사이 간격까지 센다 — egui가 위젯마다 `item_spacing.y`를 더한다
     let gap = style.spacing.item_spacing.y;
     let inner = egui::vec2(
