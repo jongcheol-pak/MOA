@@ -395,7 +395,7 @@
     - (i) `menu.rs:295-303`의 주석이 「삭제는 키를 배정하지 않았다」고 적고 있다 → 이 task에서 함께 고친다(동반 변경 판정 — 필수)
   - **Depends on**: -
 
-- [ ] T10. 단축키를 명령에 잇는다
+- [x] T10. 단축키를 명령에 잇는다
   - **Type**: C
   - **Design**: ① `src/ui/menu.rs`(`Command`·`shortcut_table`)·`src/ui/app.rs`(`apply_command`) ② 신규 variant: `Rename` · `Delete { permanent: bool }` · `ClipboardCopy` · `ClipboardCut` · `ClipboardPaste`. `NewFolder`에는 `Ctrl+Shift+N`을 더한다(variant 추가 없음) ③ `shortcut_table`은 **수식 키가 많은 조합을 앞에** 두는 기존 규칙을 지킨다 — `Shift+Delete`가 `Delete`보다 앞 ④ **비추상화 선언**: 사용자 정의 키 매핑·설정 화면 항목을 만들지 않는다(요청에 없다)
   - **Acceptance**: Given `shortcut_table()`, When 조회하면, Then 요청 11종이 모두 있고 `Shift+Delete`가 `Delete`보다 앞선다(단위 시험). Given 아무 선택 없이 `F2`·`Delete`·`Ctrl+C`, When 누르면, Then 아무 일도 일어나지 않는다(대상 없음 — 단위 시험)
@@ -473,6 +473,7 @@
 - T4: 리뷰 지적 수정 사이클 1/5 — 1라운드 MAJOR 2·MINOR 3 전건 반영
 - T6: 리뷰 지적 수정 사이클 4/5 · 재호출 2/2(상한 도달) — 1라운드 MAJOR 6·MINOR 4, 2라운드 BLOCKER 1·MINOR 3. **「창을 숨길 때 메뉴 닫기」가 2회 연속**(1라운드 반영이 같은 함수에 두 번 들어가고 정작 다른 경로가 빠졌다) — 3라운드에서 `hide_window` 단일 진입점으로 닫힘 확인
 - T7: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec PASS · 품질 MINOR 1(중복 호출)+SUGGEST 1(죽은 코드) 전건 반영, 증분 재리뷰 OK. **리뷰어 둘 다 첫 응답이 판정문 없이 골격만 도착**(recovery D 분기) — 같은 에이전트에 판정문만 재요청해 해소(재조사 없음)
+- T10: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec MINOR 2, 품질 OK. 둘 다 반영
 - T9: 리뷰 지적 수정 사이클 2/5 — 1라운드 spec MAJOR 1·MINOR 1, 품질 MAJOR 1·MINOR 1·SUGGEST 1 / 2라운드 품질 MINOR 1(빈 doc 줄). **양쪽이 같은 결함을 독립으로 잡았다**(사이드바 접힘 시 소유 고정 · doc 중복 줄)
 - T8: 리뷰 지적 수정 사이클 3/5 — 1라운드 spec MAJOR 1·MINOR 2, 품질 MAJOR 2 / 2라운드 spec MINOR 2, 품질 MAJOR 1(내 수정이 만든 회귀 — 표시 설정 토글에서 편집 유실). / 3라운드 품질 MAJOR 1(함수를 가르며 doc이 앞 함수로 쏠림). **동일 지적 반복 0**(매 라운드 새 지적)
 - T5: 리뷰 지적 수정 사이클 3/5 · 재호출 2/2(상한 도달) — 1라운드 BLOCKER 3·MAJOR 5, 2라운드 BLOCKER 1(**B3 재발 — 라벨 말줄임**)·MINOR 1. **B3만 2회 연속**이며 3라운드에서 확인한다(3회면 Halt)
@@ -521,6 +522,13 @@
   - **리뷰가 찾은 실제 결함**: 사이드바를 **접으면** 소유가 `Sidebar`에 고정됐다 — 접힌 프레임에는 사이드바를 그리는 블록이 통째로 건너뛰어져 소유를 놓을 기회가 없었다. T10이 `F2`·`Delete`를 파일 대상 명령으로 얹는 순간 드러날 자리였다. 프레임 시작에서 되돌린다.
   - **결정**: `poll_shortcuts`는 소유하지 않은 키를 **소비하지 않고** 건너뛴다 — 소비하면 그 키를 기다리던 사이드바가 받지 못한다.
   - **T9 시점에는 동작이 바뀌지 않는다** — 지금 단축키는 전부 탐색·분할·탭·보기라 `targets_file_list`가 모두 거짓이다. 시험 `파일_대상_명령만_키_소유를_가린다`가 그 사실을 못 박고, T10이 그것을 뒤집는다.
+
+- **T10 완료**: 요청한 단축키 11종이 모두 명령에 닿았다 (FR-12). `Ctrl+Shift+N`·`Alt+←/→/↑`·`F5`·`F2`·`Delete`·`Shift+Delete`·`Ctrl+C/X/V`.
+  - **계획에 없던 추가 — `fs::file_op::move_into`**: 잘라낸 것을 붙여넣는 것은 **옮기기**인데(FR-64) 그 모듈에는 복사(`copy_into`)만 있었다. 실제로 갈리는 것은 셸에 거는 명령 하나(`CopyItem` ↔ `MoveItem`)라, 그것만 `Transfer` 열거형으로 `perform`에 넘긴다. `src/fs/file_op.rs`가 T10 Files에 추가됐다.
+  - **결정**: `NewFolder`는 파일 대상 명령이 **아니다**(`targets_file_list`가 거짓) — 고른 것이 아니라 보고 있는 폴더가 대상이라, 사이드바를 누른 뒤에도 `Ctrl+Shift+N`은 들어야 한다.
+  - **결정**: 붙여넣기는 클립보드를 **읽기만** 하고 비우지 않는다(`take`는 이름과 달리 소비하지 않는다) — 원격 탭이라 되돌아가도 담긴 것이 사라지지 않는다. 잘라내기 표시는 셸에 **걸린 뒤에만** 푼다.
+  - **정리**: HWND 획득이 다섯 자리로 늘어 `ExplorerApp::owner_hwnd()`로 모았다(3회 이상 반복).
+  - `tabs.rs`·`titlebar.rs`는 손대지 않았다 — `Command`를 생성만 하고 `match`하지 않는다(계획 4-A의 예측 그대로).
 
 ## Next Steps
 
