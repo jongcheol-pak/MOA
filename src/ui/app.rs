@@ -1408,13 +1408,7 @@ impl ExplorerApp {
             return;
         }
         self.persist_session();
-        self.hidden = true;
-        // 열려 있던 컨텍스트 메뉴는 함께 닫는다 — 창이 다시 보일 때 그 사이 사라졌을 수도
-        // 있는 대상을 쥔 메뉴가 남아 있으면 안 된다
-        self.shell_menu = None;
-        // 위 `hide_on_start`와 같은 이유로 함께 닫는다
-        self.shell_menu = None;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.hide_window(ctx);
     }
 
     /// 닫기 요청을 가로채 창만 숨긴다 (FR-50).
@@ -1434,8 +1428,18 @@ impl ExplorerApp {
         }
         // **숨기기 전에 저장한다** — 종료 때 도는 `on_exit`가 이번에는 오지 않는다
         self.persist_session();
-        self.hidden = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.hide_window(ctx);
+    }
+
+    /// 창을 트레이로 숨긴다 — **숨는 길이 둘이라 그 뒷정리를 한 곳에 모은다** (FR-50).
+    ///
+    /// 열려 있던 컨텍스트 메뉴를 함께 닫는 것이 그 정리다 — 창이 다시 보일 때 그 사이
+    /// 사라졌을 수도 있는 대상을 쥔 메뉴가 남아 있으면 안 된다. 두 길에 각각 적으면
+    /// 한쪽을 빠뜨려도 아무도 모른다(실제로 그렇게 빠뜨렸다)
+    fn hide_window(&mut self, ctx: &egui::Context) {
+        self.hidden = true;
+        self.shell_menu = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
@@ -2059,9 +2063,11 @@ impl ExplorerApp {
 
     /// 끝난 이름 바꾸기·삭제의 결과를 알린다 (FR-64).
     ///
-    /// **성공은 알리지 않는다** — 셸이 자기 대화로 이미 알렸고 목록에서 사라지거나 이름이
-    /// 바뀌는 것이 곧 확인이라, 여기서 또 띄우면 조작 하나에 알림이 둘이 된다
-    /// (`pump_local_copy`와 같은 판단)
+    /// **성공도 취소도 알리지 않는다** — 셸이 자기 대화로 이미 알렸고, 목록에서 사라지거나
+    /// 이름이 바뀌는 것(또는 그대로 남는 것)이 곧 확인이라 여기서 또 띄우면 조작 하나에
+    /// 알림이 둘이 된다. 복사(`pump_local_copy`)가 취소를 알리는 것은 **여러 개를 끌어다
+    /// 놓은 뒤라 몇 개가 갔는지 목록만 보고는 알기 어렵기** 때문이며, 여기는 대상이 눈앞에
+    /// 그대로 있어 그 어려움이 없다
     fn pump_file_op(&mut self, now: f64) {
         while let Ok(outcome) = self.file_op_rx.try_recv() {
             let Some(detail) = outcome.error else {

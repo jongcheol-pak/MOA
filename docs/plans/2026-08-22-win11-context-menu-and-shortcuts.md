@@ -345,10 +345,11 @@
   - **Design**: ① `src/ui/app.rs`(메뉴 상태 보유·실행)·`src/ui/panel.rs`(`MenuRequest` 생성) ② `MenuRequest`에 선택 항목의 폴더 여부를 더하고, `ExplorerApp`에 `open_menu: Option<OpenShellMenu>`(핸들 + 화면 위치 + 대상 경로)를 둔다. 그리기는 프레임 **마지막**에 — `TrackPopupMenuEx`와 달리 재진입은 없지만, 모든 패널을 그린 뒤 최상위에 떠야 한다 ③ 실행 분기: 아이콘 줄 → T2·T3의 자체 기능(공유만 `invoke`) / 일반 항목 → `ShellMenu::invoke` / `추가 옵션 표시` → **기존 `ShellHost::popup`**(그 호출만 종전대로 프레임 밖에서) ④ 화면 밖 보정은 **기존 `ui::menu::clamp_menu_pos`를 그대로** 부른다(T5가 낸 메뉴 크기를 넘긴다). 프레임 여백은 이 시점에 아직 어림이며 **T7이 실측으로 바꾼다** — 그 사이 화면 끝에서 몇 px 어긋날 수 있으나 계획된 중간 상태다 ⑤ **비추상화 선언**: 메뉴 실행 결과를 명령 열거형(`ui::menu::Command`)에 합치지 않는다 — 셸 항목 id는 그 메뉴 인스턴스에서만 뜻이 있어 저장·재생할 수 있는 값이 아니다
   - **Acceptance**: Given 로컬 목록에서 우클릭, When 메뉴가 뜨면, Then Win11 모양 메뉴가 뜨고 `추가 옵션 표시`를 누르면 종전 표준 메뉴가 같은 자리에 뜬다(HUMAN-VERIFY 2·3). Given 메뉴가 열린 프레임, When 파일 대화·OS 드래그 요청이 함께 들어오면, Then 종전과 같이 그 둘을 다음 프레임으로 미룬다(`app.rs:2422-2431`의 기존 규칙 유지 — 단언은 코드 검토)
   - **Files**:
-    - 주: `src/ui/app.rs`, `src/ui/panel.rs`
-    - 동반: **`src/ui/splitter.rs:73,423,477`(`MenuRequest` 필드 통과 + 시험 안 구조체 리터럴 2개 — 고치지 않으면 컴파일 실패)**, `src/ui/shell_host.rs`, `src/ui/list_details.rs`, `src/ui/list_grid.rs`(우클릭 시 폴더 여부 전달)
-    - 테스트: `src/ui/panel/tests.rs`(`MenuRequest` 생성 규칙 — 선택 밖 우클릭이 단독 선택으로 바뀌는 기존 규칙 유지), `src/ui/splitter.rs` 내 `mod tests`(`여러_패널의_서로_다른_결과가_함께_살아남는다` 등 리터럴을 든 시험)
-  - **Edge Cases**: 메뉴가 열린 채 폴더가 바뀜(감시 갱신) → 메뉴를 닫는다 / 메뉴가 열린 채 앱이 트레이로 숨음 → 닫는다 / 메뉴 밖 클릭·`Esc` → 닫는다 / COM STA를 못 잡은 환경 → 종전과 같이 안내를 띄우고 메뉴를 열지 않는다(`app.rs:2186`) / 셸 항목 실행이 새 창을 띄우는 동안 → 메뉴는 먼저 닫는다 / **하위 메뉴를 처음 펼칠 때 확장이 늦게 응답** → 그 프레임이 늘어지는 것을 그대로 둔다(D10 — UI 스레드에서 기다린다). 펼치는 동안 다른 항목의 hover는 반응하지 않는다
+    - 주: `src/ui/app.rs`, **`src/ui/app/shell_menu.rs`(신규 — 배선을 `ExplorerApp`의 자식 모듈로 뺐다. `app.rs`가 3000줄을 넘어 `transfer_conflict.rs`와 같은 관례를 따랐다)**
+    - 동반: `src/ui/shell_context_menu.rs`(팝업 프레임을 여는 `show_popup`·`show_submenu_popup`을 이 모듈로 옮겼다 — 그래야 프레임 모양과 줄 모양이 한 곳에서 정해지고 소스 훑기 시험도 만족한다)
+    - **손대지 않은 것 (계획의 예측이 빗나갔다)**: `src/ui/panel.rs`·`src/ui/splitter.rs`·`src/ui/shell_host.rs`·`src/ui/list_details.rs`·`src/ui/list_grid.rs` — **`MenuRequest`에 필드를 더하지 않아서다**. 아이콘 줄이 고른 개수와 `공유` verb 유무만 보고 폴더 여부를 쓰지 않으므로, 쓰지 않는 값을 실어 나르지 않았다(그 판단의 근거는 `app/shell_menu.rs`의 `OpenShellMenu` 생성부 주석에 있다)
+    - 테스트: `src/ui/shell_context_menu.rs` 내 `mod tests`(아이콘 줄 활성 규칙 — `can_rename` 포함)
+  - **Edge Cases**: 메뉴가 열린 채 **보고 있는 폴더가 다른 폴더로 바뀜** → 메뉴를 닫는다(가리키는 곳과 화면이 어긋난 채 남으면 엉뚱한 폴더의 항목을 실행하게 된다). **같은 폴더 안에서 파일이 지워지는 것은 닫지 않는다** — 그때는 셸이 실행 시점에 자기 대화로 알린다(`fs::shell_menu`가 종전부터 그렇게 위임했다). T8의 「편집 중 폴더가 갱신됨」과 동사가 다른 것이 이 구분이다 / 메뉴가 열린 채 앱이 트레이로 숨음 → 닫는다(**숨는 길이 둘이라 그 뒷정리를 `hide_window` 한 곳에 모은다** — 각각 적으면 한쪽을 빠뜨려도 아무도 모른다) / 메뉴 밖 클릭·`Esc` → 닫는다 / COM STA를 못 잡은 환경 → 종전과 같이 안내를 띄우고 메뉴를 열지 않는다(`app.rs:2186`) / 셸 항목 실행이 새 창을 띄우는 동안 → 메뉴는 먼저 닫는다 / **하위 메뉴를 처음 펼칠 때 확장이 늦게 응답** → 그 프레임이 늘어지는 것을 그대로 둔다(D10 — UI 스레드에서 기다린다). 펼치는 동안 다른 항목의 hover는 반응하지 않는다
   - **Halt Forecast**:
     - (i) 두 메뉴(자체·표준)가 겹칠 수 있다 → `추가 옵션 표시`는 **자체 메뉴를 닫은 뒤** 프레임 밖에서 표준 메뉴를 띄운다
     - (ii-a) `MenuRequest` 구조체 필드 변경(공개 계약) → `## 사전 승인 항목`에 등록
