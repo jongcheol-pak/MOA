@@ -69,7 +69,7 @@
 - **위키 참조: `40_guides/recipes/rust/installer-sha256-verify.md`** — 릴리즈 노트 본문에서 체크섬을 뽑는 방법이 정규식 없이 「비-hex 문자로 토큰을 가르고 길이 64짜리를 고른다」다. 불일치 시 파일을 즉시 지운다.
 - **위키 참조: `20_projects/personal/moa/decisions.md`** — 2026-08-21 결정에 *"코드 서명·자동 업데이트·MSI는 범위 밖으로 **기각**"*이 있다. **이번 요청이 그 기각을 뒤집는다** — PRD Out of Scope와 함께 고쳐야 할 자리다(T1).
 - **위키 참조: 관련 recipe 외 MOA 쪽 자동 업데이트 자료 없음** — `20_projects/personal/moa/`에 그 주제 feature 페이지가 없다(목록 확인).
-- **Deferred 대장** — `docs/plans/deferred.md` `## 대기` 81건. 이번 요청과 걸리는 것은 **「릴리즈·태그 규약 문서화」(2026-08-21)** 하나이며 T9로 재수용한다. 나머지 80건은 주제가 닿지 않고, 제목 스캔에서 이 plan의 전제를 부정하는 항목도 없다. 잔량 81건 < 100건, 절대 상한 130건 미만, 최고령 판정일이 2026-07-23이나 신규 등재분 30건 조건과 AND라 **소진 batch는 착수하지 않는다**.
+- **Deferred 대장** — `docs/plans/deferred.md` `## 대기` 81건. 이번 요청과 걸리는 것은 **둘**이다 — **「릴리즈·태그 규약 문서화」(2026-08-21)**는 T9로 재수용하고, **「설정 팝업 두 항목의 실제 기능 — 업데이트·릴리즈 노트」(2026-07-29)**는 이번 회차가 그 자체를 해소한다(**처음 스캔에서 이 둘째를 「주제가 닿지 않는다」고 잘못 셌다** — F-7이 잡았다). 나머지 79건은 닿지 않고, 제목 스캔에서 이 plan의 전제를 부정하는 항목도 없다. 잔량 81건 < 100건, 절대 상한 130건 미만, 최고령 판정일이 2026-07-23이나 신규 등재분 30건 조건과 AND라 **소진 batch는 착수하지 않는다**.
 
 ### 전제 검증
 
@@ -324,7 +324,7 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) `BCryptFinishHash`가 요구하는 해시 오브젝트 버퍼 크기 → `BCryptGetProperty(BCRYPT_OBJECT_LENGTH)`로 묻거나 Windows 8+ 관례대로 CNG에 맡긴다(`envelope.rs:238~240`이 같은 판단을 이미 적어 뒀다) — 사전 해소
   - **Depends on**: -
 
-- [ ] T4. 릴리즈 조회·버전 비교·에셋 선택·체크섬 추출 — `src/app/update/release.rs`
+- [x] T4. 릴리즈 조회·버전 비교·에셋 선택·체크섬 추출 — `src/app/update/release.rs`
   - **Type**: C
   - **Design**: ① `src/app/update/release.rs` ② 신규 심볼 — `ReleaseInfo { version, asset_name, asset_url, sha256 }`, `fetch_latest() -> Result<Option<ReleaseInfo>, UpdateError>`(HTTP + 파싱 + 비교를 엮는다), 순수 함수 넷: **`parse_release(json, current) -> Result<Option<ReleaseInfo>, UpdateError>`**·`is_newer(latest, current) -> bool`·`pick_asset(names) -> Option<…>`·`extract_sha256(body) -> Option<String>`. **`parse_release`가 `Option`이 아니라 `Result`인 이유가 둘이다** — ⓐ 실패 사유를 갈라야 화면이 「최신입니다」와 「릴리즈가 깨졌습니다」를 구분해 알릴 수 있다(FR-62가 결과를 알리라고 요구한다) ⓑ **체크섬 없는 릴리즈를 타입으로 막는다**: `ReleaseInfo.sha256`이 `Option<String>`이 아니라 `String`이라 값이 없으면 그 구조체가 애초에 만들어지지 않는다(D3을 T5의 성실함에 기대지 않는다). `current` 인자는 T6의 `new(enabled)`와 같은 시험 seam이다 — 박아 두면 판정을 `CARGO_PKG_VERSION` 하나로만 시험할 수 있다 ③ 의존 — `http.rs`·`serde_json`. `mod.rs`가 부른다 ④ **비추상화 선언** — 릴리즈 제공자 트레이트(GitHub/GitLab 추상화)를 만들지 않는다. 저장소는 하나다
   - **Acceptance**: Given 실제 GitHub 응답 형태의 JSON 문자열(시험에 박아 둔 표본), When 순수 함수들을 부르면, Then ① `parse_release`가 `tag_name`·`body`·`assets`에서 넷을 뽑고, **빠진 것에 따라 사유를 갈라 `Err`를 낸다**(형태가 아니면 `BadResponse` · 설치 파일이 없으면 `NoAsset` · 체크섬이 없으면 `NoChecksum`). 새 판이 아니면 `Ok(None)` ② `is_newer`가 `v0.2.0 > 0.1.0`, `0.1.10 > 0.1.9`(사전식 문자열 비교였다면 뒤집혔을 값), `0.1.0 == 0.1.0` → false, `v` 접두사 유무 무관, 형식이 깨진 값 → false를 낸다 ③ `pick_asset`이 `MOA-Setup-0.2.0.exe`를 고르고 `MOA-Setup-0.2.0.exe.sha256`·`source.zip`은 거르며 후보가 없으면 `None` ④ `extract_sha256`이 본문 어느 자리에 있든 64자 hex를 소문자로 뽑고, 63·65자·비-hex는 무시하며 없으면 `None`. **표본에 D15의 실제 릴리즈 노트 형식을 쓴다** — 사용자용 요약(한글 문장·목록) 아래 `<details>` 접기 안에 백틱으로 감싼 체크섬이 있는 본문에서 그 값을 뽑아야 한다(태그·백틱·파일명은 전부 비-hex 문자라 구분자로 잘린다. `<details>`·`summary`·`MOA-Setup-0.1.0.exe` 어느 것도 64자 hex가 아니다). `cargo test` 통과, clippy 0.
@@ -333,7 +333,7 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) `latest`가 초안·프리릴리즈를 어떻게 다루는지 → 그 엔드포인트가 정식 릴리즈만 준다는 전제에 기대지 않고, 자산 이름 매칭이 실패하면 조용히 없는 것으로 다룬다 — 사전 해소
   - **Depends on**: T2
 
-- [ ] T5. 설치본 판정·`update\` 폴더·설치 실행·정리 — `src/app/update/install.rs`
+- [x] T5. 설치본 판정·`update\` 폴더·설치 실행·정리 — `src/app/update/install.rs`
   - **Type**: C
   - **Design**: ① `src/app/update/install.rs` ② 신규 심볼 — `is_installed_build() -> bool`(exe 옆 `uninstall.exe`), 그 판정부는 **경로를 인자로 받는 비공개 `is_installed_at(dir) -> bool`**로 두고 공개 함수가 `current_exe`의 부모를 넘긴다(시험 seam), `update_dir() -> Option<PathBuf>`(exe 옆 `update\`), `clear_update_dir()`(폴더째 지운다), `download_and_verify(info) -> Result<PathBuf, UpdateError>`(받기 → SHA256 대조 → 어긋나면 지우고 오류), `launch_installer(path) -> bool`(`/UPDATE` 인자로 분리 실행) ③ 의존 — `http.rs`·`sha256.rs`·`release.rs`의 타입. `mod.rs`가 부른다 ④ **비추상화 선언** — 설치 방식(msi/exe/zip) 분기나 플러그인 지점을 두지 않는다. NSIS exe 하나다
   - **Design(개발 스위치, D14)**: `is_installed_build()`는 **`#[cfg(debug_assertions)]`에서만** `MOA_UPDATE_DEV`가 `1` 또는 `fake`면 `true`를 돌려준다(가짜 릴리즈 주입은 T6이 같은 변수를 보고 한다). 릴리즈 빌드에는 그 분기가 컴파일되지 않는다.
@@ -345,7 +345,7 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) 설치 프로그램을 띄우고 앱을 언제 닫는가 → D9로 확정(띄우기 성공을 확인한 뒤에만 닫는다) / (ii-b) 없음
   - **Depends on**: T2, T3, T4
 
-- [ ] T6. 업데이트 상태 기계 + 워커 — `src/app/update/mod.rs`
+- [x] T6. 업데이트 상태 기계 + 워커 — `src/app/update/mod.rs`
   - **Type**: C
   - **Design**: ① `src/app/update/mod.rs`(하위 넷을 선언하고 그 위에 상태를 얹는다) ② 신규 심볼 — `UpdateStatus { Idle, Checking, Available(ReleaseInfo), Downloading, Ready(PathBuf), UpToDate, Failed(UpdateError) }`, `UpdateService { enabled, status, rx }` + `new(enabled: bool)`·`start_check(&mut self, wake)`·`start_download(&mut self, wake)`·`pump(&mut self)`(채널을 비워 상태를 옮긴다)·`status()` ③ 의존 — 하위 넷 + `std::thread`·`std::sync::mpsc`. **`ui::app`이 이것을 소유해 프레임마다 `pump`한다**(단방향 — 이 모듈은 egui를 모른다) ④ **비추상화 선언** — 상태 기계 프레임워크·이벤트 버스를 만들지 않는다. `enum` 하나와 채널 하나다
   - **Design(시험 seam — 게이트와 작업 **둘 다** 주입한다)**:
