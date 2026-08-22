@@ -129,10 +129,24 @@ type ContentOutcome = (
     Option<RemoteMenuPick>,
 );
 
+/// 목록에서 확정된 이름 바꾸기 한 건 (FR-64).
+///
+/// 경로와 새 이름만 담는다 — 어느 행이었는지는 여기서 쓸모가 없다(거는 쪽은 경로만 안다)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameRequest {
+    pub path: PathBuf,
+    pub new_name: String,
+}
+
 /// 패널이 상위(레이아웃)에 올려보내는 요청.
 /// 전부 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
 pub struct PanelOutcome {
     pub menu: Option<MenuRequest>,
+    /// 목록에서 고쳐 확정한 이름 (FR-64) — **거는 것은 앱의 몫이다**.
+    ///
+    /// 패널이 직접 걸지 않는 이유: 셸이 띄우는 오류 대화의 주인 창(HWND)을 아는 곳은
+    /// 앱뿐이고, 결과를 받을 채널도 앱이 이미 들고 있다(메뉴의 삭제·복사와 같은 채널)
+    pub rename: Option<RenameRequest>,
     /// 패널 메뉴에서 고른 명령 — 대상은 **이 패널**이다 (plan D16)
     pub command: Option<Command>,
     /// 원격 단계 화면에서 고른 조치 (FR-29·FR-32)
@@ -1109,6 +1123,45 @@ impl PanelState {
         }
     }
 
+    /// 확정된 이름 바꾸기를 요청으로 바꾼다 (FR-64) — 대상이 아니면 `None`.
+    ///
+    /// 원격 목록에는 인라인 편집이 없어(FR-39는 대화로 묻는다) 로컬 탭에서만 성립한다.
+    /// 행 번호로 항목을 다시 찾는 이유: 확정과 폴더 갱신이 같은 프레임에 겹칠 수 있어,
+    /// 그때는 가리키던 항목이 없어져 아무것도 걸지 않는 편이 옳다
+    fn take_rename(&self, action: &FileListAction) -> Option<RenameRequest> {
+        let FileListAction::Rename { index, new_name } = action else {
+            return None;
+        };
+        let dir = self.tabs.active().source.local_path()?;
+        let entry = self.list.entry_at(*index)?;
+        Some(RenameRequest {
+            path: dir.join(entry.name_string()),
+            new_name: new_name.clone(),
+        })
+    }
+
+    /// 고른 것 중 첫 항목의 이름 편집을 연다 (FR-64) — 열지 못했으면 거짓.
+    ///
+    /// 메뉴의 아이콘 줄과 `F2`가 함께 쓰는 진입점이다
+    pub fn begin_rename_selected(&mut self) -> bool {
+        self.list.begin_rename_selected()
+    }
+
+    /// 잘라내기로 담긴 경로들을 이 패널의 목록에 표시한다 (FR-64)
+    pub fn set_cut_marks(&mut self, paths: &[PathBuf]) {
+        self.list.set_cut_marks(paths);
+    }
+
+    /// 잘라내기 표시를 푼다 — 붙여넣었거나 다른 것이 클립보드에 담겼을 때 (FR-64)
+    pub fn clear_cut_marks(&mut self) {
+        self.list.clear_cut_marks();
+    }
+
+    /// 목록에서 이름을 고치는 중인가 — 단축키가 목록에 갈지 가르는 데 쓴다 (FR-64)
+    pub fn is_renaming(&self) -> bool {
+        self.list.is_renaming()
+    }
+
     /// 목록에서 올라온 조작 처리. 셸 메뉴 요청은 **실행하지 않고 값으로 돌려준다**.
     ///
     /// `TrackPopupMenuEx`는 자체 메시지 루프를 돌려 winit 이벤트 루프를 재진입시킨다 —
@@ -1161,6 +1214,9 @@ impl PanelState {
                 let folder = folder.to_path_buf();
                 Some(MenuRequest { folder, items, pos })
             }
+            // 이 갈래는 메뉴가 아니라 이름 바꾸기라 `handle_list_action`이 돌려주는 값에
+            // 실리지 않는다 — 아래 `show`가 목록에서 곧바로 받아 `PanelOutcome`에 담는다
+            FileListAction::Rename { .. } => None,
         }
     }
 
@@ -1301,7 +1357,11 @@ impl PanelState {
         if let Some(nav) = nav {
             self.handle_nav(nav, ctx);
         }
+        // 확정된 이름은 메뉴 요청과 갈래가 달라 먼저 꺼낸다 — 한 프레임에 둘이 함께
+        // 일어나지 않으므로(편집 중에는 우클릭 메뉴가 열리지 않는다) 순서는 문제되지 않는다
+        let rename = self.take_rename(&action);
         PanelOutcome {
+            rename,
             menu: self.handle_list_action(action, ctx),
             // 드롭다운·드롭존에서 고른 사이트는 명령으로 올려 보낸다 —
             // 새 탭 생성·연결은 앱이 한다 (T13 착지 규약).

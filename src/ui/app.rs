@@ -2068,6 +2068,45 @@ impl ExplorerApp {
     /// 알림이 둘이 된다. 복사(`pump_local_copy`)가 취소를 알리는 것은 **여러 개를 끌어다
     /// 놓은 뒤라 몇 개가 갔는지 목록만 보고는 알기 어렵기** 때문이며, 여기는 대상이 눈앞에
     /// 그대로 있어 그 어려움이 없다
+    /// 잘라내기 표시를 이 워크스페이스의 **모든 패널**에 건다 (FR-64).
+    ///
+    /// 표시를 연 패널에만 두지 않는 이유: 한쪽에서 잘라내 다른 쪽에 붙여넣는 것이 보통이라,
+    /// 같은 폴더를 보고 있는 옆 패널에서 그 항목만 멀쩡해 보이면 어느 쪽이 맞는지 알 수 없다
+    fn set_cut_marks(&mut self, paths: &[std::path::PathBuf]) {
+        let view = self.ensure_active_view();
+        for panel in view.panels.values_mut() {
+            panel.set_cut_marks(paths);
+        }
+    }
+
+    /// 잘라내기 표시를 모두 푼다 — 다른 것이 클립보드에 담겼을 때 (FR-64)
+    fn clear_cut_marks(&mut self) {
+        let view = self.ensure_active_view();
+        for panel in view.panels.values_mut() {
+            panel.clear_cut_marks();
+        }
+    }
+
+    /// 목록에서 확정한 이름을 셸에 건다 (FR-64).
+    ///
+    /// 결과는 메뉴의 삭제·복사와 **같은 채널**로 온다 — 실패하면 `pump_file_op`가 알린다.
+    /// 성공했을 때 목록을 다시 읽지 않는 이유: 폴더 감시(FR-10)가 그 변화를 통지하며,
+    /// 이는 메뉴에서 지웠을 때와 같은 처리다
+    fn start_rename(&mut self, request: crate::ui::panel::RenameRequest) {
+        let owner = self
+            .shell
+            .as_ref()
+            .map(|shell| shell.hwnd())
+            .unwrap_or_default();
+        crate::fs::file_op::rename_item(
+            request.path,
+            request.new_name,
+            owner,
+            self.file_op_tx.clone(),
+            self.repaint.clone(),
+        );
+    }
+
     fn pump_file_op(&mut self, now: f64) {
         while let Ok(outcome) = self.file_op_rx.try_recv() {
             let Some(detail) = outcome.error else {
@@ -2194,6 +2233,8 @@ impl eframe::App for ExplorerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut menu = None;
+        // 목록에서 확정된 이름 (FR-64) — 셸에 거는 것은 그리기가 끝난 뒤다
+        let mut rename = None;
         let mut panel_command = None;
         let mut remote_action = None;
         let mut remote_url = None;
@@ -2324,6 +2365,7 @@ impl eframe::App for ExplorerApp {
                         view.note_pressed(pressed);
                     }
                     menu = outcome.menu;
+                    rename = outcome.rename;
                     panel_command = outcome.command;
                     remote_action = outcome.remote;
                     remote_url = outcome.remote_url;
@@ -2450,6 +2492,9 @@ impl eframe::App for ExplorerApp {
 
         // 우클릭 요청이 왔으면 **이 프레임 안에서** 메뉴를 연다 — `ShellMenu::open`은
         // 메시지 루프를 돌리지 않아(`TrackPopupMenuEx`와 다르다) 그리기 도중에 불러도 된다
+        if let Some(request) = rename {
+            self.start_rename(request);
+        }
         if let Some(request) = menu {
             self.open_shell_menu(&ctx, request);
         }

@@ -19,6 +19,11 @@ pub enum FileListAction {
         index: Option<usize>,
         pos: egui::Pos2,
     },
+    /// 목록에서 고친 이름이 확정됐다 (FR-64) — 실제로 바꾸는 것은 셸에 맡긴다.
+    ///
+    /// `index`를 함께 싣는 이유: 경로만으로는 확정 시점에 그 행이 아직 그 자리에 있는지
+    /// 부르는 쪽이 확인할 수 없다(폴더가 그 사이에 다시 읽혔을 수 있다)
+    Rename { index: usize, new_name: String },
 }
 
 /// 끌어 옮기는 항목 하나 (FR-38).
@@ -210,6 +215,130 @@ pub fn dim_if_hidden(color: egui::Color32, hidden: bool) -> egui::Color32 {
     } else {
         color
     }
+}
+
+/// 목록에서 이름을 고치는 중인 상태 (FR-64).
+///
+/// **행 번호로 든다** — 편집 중에는 그 행이 화면에 그려지고 있어야 하고, 그리는 쪽이 아는
+/// 것은 번호다. 폴더가 다시 읽혀 번호가 달라지는 경우는 상태를 쥔 `ui::file_list`가
+/// 이름으로 다시 찾아 고친다(그쪽이 옛 목록과 새 목록을 둘 다 아는 유일한 자리다)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameEdit {
+    pub index: usize,
+    /// 편집을 열 때의 이름 — 폴더가 다시 읽혔을 때 그 행을 **이름으로 다시 찾는** 데 쓴다.
+    ///
+    /// `text`로는 찾을 수 없다: 사용자가 이미 고치고 있는 글자라 목록의 어느 이름과도
+    /// 맞지 않는다
+    pub original: String,
+    /// 지금 입력칸에 든 글자 — 그리는 쪽이 곧바로 고친다
+    pub text: String,
+    /// 아직 포커스를 주지 않았는가. 첫 프레임에만 참이며 거기서 선택 범위도 잡는다
+    pub first_frame: bool,
+    /// 폴더인가 — 첫 프레임의 선택 범위를 가른다(폴더는 이름 전체)
+    pub is_dir: bool,
+}
+
+/// 이름 편집이 이번 프레임에 끝난 방식 (FR-64)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameEnd {
+    /// `Enter` — 이 이름으로 확정한다
+    Commit(String),
+    /// `Esc`·다른 곳 누르기 — 되돌린다
+    Cancel,
+}
+
+/// 잘라내기로 담긴 항목을 그릴 때 곱하는 불투명도 (FR-64).
+///
+/// 숨김 항목과 **같은 0.5를 쓰되 상수를 따로 둔다** — 둘은 뜻이 다르고(하나는 파일 속성,
+/// 하나는 클립보드 상태) 한쪽 값을 바꿀 때 다른 쪽이 딸려 가면 안 된다
+pub const CUT_ALPHA: f32 = 0.5;
+
+/// 잘라내기로 담긴 항목이면 흐린 색으로 바꾼다 — 탐색기와 같은 표시다.
+///
+/// **글자는 `theme::TEXT_DIM`으로 낮추고 거기에 불투명도까지 곱한다** — 색만 낮추면 숨김
+/// 항목과 구분이 되지 않고, 불투명도만 낮추면 잘라낸 것인지 흐린 화면인지 알기 어렵다
+pub fn cut_text_color(cut: bool) -> Option<egui::Color32> {
+    cut.then(|| crate::ui::theme::TEXT_DIM.gamma_multiply(CUT_ALPHA))
+}
+
+/// 잘라내기로 담긴 항목의 아이콘에 곱할 tint — 담기지 않았으면 `None`
+pub fn cut_icon_tint(cut: bool) -> Option<egui::Color32> {
+    cut.then(|| egui::Color32::WHITE.gamma_multiply(CUT_ALPHA))
+}
+
+/// 편집을 열었을 때 처음 잡아 둘 선택 범위 — **글자 수 기준**이다 (FR-64).
+///
+/// 탐색기와 같은 규칙이다: 폴더는 이름 전체, 파일은 **마지막 점 앞까지**를 잡는다
+/// (`report.tar.gz` → `report.tar`). 확장자만 그대로 두고 이름을 고치는 것이 대부분이라
+/// 매번 손으로 범위를 줄이지 않게 한다.
+///
+/// **맨 앞의 점은 확장자 구분이 아니다** — `.gitignore`는 이름 전체가 잡힌다
+pub fn name_edit_range(name: &str, is_dir: bool) -> std::ops::Range<usize> {
+    let chars = name.chars().count();
+    if is_dir {
+        return 0..chars;
+    }
+    let last_dot = name
+        .chars()
+        .enumerate()
+        .filter(|(_, ch)| *ch == '.')
+        .map(|(at, _)| at)
+        .last();
+    match last_dot {
+        Some(at) if at > 0 => 0..at,
+        _ => 0..chars,
+    }
+}
+
+/// 이름 칸 자리에 입력칸을 얹고, 이번 프레임에 편집이 끝났으면 그 방식을 돌려준다 (FR-64).
+///
+/// **두 렌더 모듈이 같은 함수를 쓴다** — 자세히 보기와 격자 보기는 칸의 자리만 다르고
+/// 편집이 시작되고 끝나는 규칙은 같다. 각자 적으면 한쪽만 고쳐져 보기 모드에 따라
+/// `Esc`가 다르게 듣는 일이 생긴다.
+///
+/// `Enter`만 확정이고 `Esc`·다른 곳 누르기는 취소다 — 실수로 바뀐 이름이 조용히 확정되는
+/// 것보다 되돌리는 쪽이 안전하다
+pub fn rename_editor(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    edit: &mut RenameEdit,
+) -> Option<RenameEnd> {
+    // 행 번호를 id에 섞는다 — 편집이 다른 행으로 옮겨 가면 egui가 옛 상태(커서·선택)를
+    // 물려주지 않아야 한다
+    let id = ui.id().with(("rename", edit.index));
+    let resp = ui.put(
+        rect,
+        egui::TextEdit::singleline(&mut edit.text)
+            .id(id)
+            // 이름이 칸보다 길면 잘라 보인다 — 넘치는 만큼 칸이 늘어나면 옆 열을 덮는다
+            .clip_text(true)
+            .desired_width(rect.width()),
+    );
+    if edit.first_frame {
+        edit.first_frame = false;
+        resp.request_focus();
+        // 확장자 앞까지 잡아 둔다 — 상태는 위젯이 자기 id로 들고 있어 여기서 덮어쓴다
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
+            let range = name_edit_range(&edit.text, edit.is_dir);
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(range.start),
+                    egui::text::CCursor::new(range.end),
+                )));
+            egui::TextEdit::store_state(ui.ctx(), id, state);
+        }
+    }
+    if resp.lost_focus() {
+        // `Esc`는 egui가 포커스를 거두므로 여기로 온다 — `Enter`로 끝난 것만 확정이다
+        let by_enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+        return Some(if by_enter {
+            RenameEnd::Commit(edit.text.clone())
+        } else {
+            RenameEnd::Cancel
+        });
+    }
+    None
 }
 
 /// 텍스트를 **한 줄로만** 배치하고, 폭을 넘으면 끝을 `…`로 줄인 갤리를 만든다.

@@ -6,11 +6,14 @@
 use crate::fs::icons::{IconCache, IconSize};
 use crate::panel::file_list::{ListRow, format_filetime, format_size};
 use crate::ui::icon_tex::{IconTextures, ThumbnailTextures};
-use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_rows};
+use crate::ui::list_common::{
+    FileListAction, RenameEdit, RenameEnd, cut_icon_tint, cut_text_color, dim_if_hidden,
+    elided_galley_rows, rename_editor,
+};
 use crate::ui::theme;
 use crate::ui::view_mode::{GRID_NAME_ROWS, ViewMode, grid_metrics};
 use eframe::egui;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 /// 아이콘과 이름 사이 간격 (세로 배치)
@@ -37,6 +40,10 @@ pub struct GridInput<'a, R: ListRow> {
     /// 보이는 항목에 도달했을 때 채우는 지연 캐시라 가변으로 받는다
     pub icon_indices: &'a mut Vec<Option<i32>>,
     pub selection: &'a BTreeSet<usize>,
+    /// 이름을 고치는 중인 항목 (FR-64) — 그 칸의 이름 자리에 입력칸을 얹는다
+    pub rename: Option<&'a mut RenameEdit>,
+    /// 잘라내기로 담긴 경로들 (FR-64) — 그 항목은 흐리게 그린다
+    pub cut_marks: &'a HashSet<PathBuf>,
     /// 종류 열 문자열 (entries와 같은 인덱스) — 타일 보기가 함께 보인다
     pub type_names: &'a [String],
     pub mode: ViewMode,
@@ -61,6 +68,8 @@ pub struct GridOutcome {
     pub clear_selection: bool,
     /// 이 항목에서 끌기가 시작됐다 (FR-38) — 무엇을 실을지는 호출부가 정한다
     pub drag_started: Option<usize>,
+    /// 이름 편집이 이번 프레임에 끝난 방식 (FR-64) — 상태를 접는 것은 호출부가 한다
+    pub rename_end: Option<RenameEnd>,
 }
 
 /// 격자 보기를 그린다.
@@ -81,6 +90,8 @@ pub fn show<R: ListRow>(
         entries,
         icon_indices,
         selection,
+        mut rename,
+        cut_marks,
         type_names,
         mode,
         thumbnails,
@@ -109,6 +120,9 @@ pub fn show<R: ListRow>(
         let origin = area.min.to_vec2();
 
         let font = egui::TextStyle::Body.resolve(ui.style());
+        // 입력칸 높이의 바탕 — 이름 한 줄이 차지하는 높이다
+        let line_height = ui.text_style_height(&egui::TextStyle::Body);
+        let mut editor_drawn = false;
         let hover_bg = ui.visuals().widgets.hovered.bg_fill;
         let sel_bg = ui.visuals().selection.bg_fill;
         for index in metrics.visible_range(viewport.top(), viewport.bottom(), count) {
@@ -152,6 +166,11 @@ pub fn show<R: ListRow>(
             }
 
             let entry = &entries[index];
+            // 잘라내기 표시 (FR-64). **표시가 하나도 없으면 경로를 짓지 않는다** —
+            // 그 문자열 만들기가 보이는 칸마다 붙는데 대부분의 프레임에서 헛일이다
+            let cut =
+                local_paths && !cut_marks.is_empty() && cut_marks.contains(&dir.join(entry.name()));
+            let editing = rename.as_ref().is_some_and(|edit| edit.index == index);
             // 썸네일은 파일만 — 폴더는 폴더 아이콘이 맞다
             let thumb = if wants_thumbnails && !entry.is_dir() {
                 let path = dir.join(entry.name());
@@ -181,10 +200,33 @@ pub fn show<R: ListRow>(
                     entry,
                     type_name: &type_names[index],
                     show_extensions,
+                    cut,
+                    editing,
                 },
                 texture,
                 font.clone(),
             );
+            // 이름 자리에 입력칸을 얹는다 — 칸을 다 그린 뒤라 위에 놓인다
+            if editing && let Some(edit) = rename.as_mut() {
+                editor_drawn = true;
+                if let Some(end) = rename_editor(ui, name_edit_rect(cell, mode, line_height), edit)
+                {
+                    outcome.rename_end = Some(end);
+                }
+            }
+        }
+
+        // 편집 중인 칸이 화면 밖으로 밀려도 입력칸을 계속 놓는다 — 위젯을 그리지 않으면
+        // egui가 포커스를 거두고 그것이 취소로 처리돼, 스크롤 한 번에 고치던 이름이
+        // 사라진다(탐색기는 유지한다). 스크롤 영역 밖이라 잘려 보이지 않는다
+        if !editor_drawn
+            && let Some(edit) = rename.as_mut()
+            && edit.index < count
+        {
+            let cell = metrics.item_rect(edit.index).translate(origin);
+            if let Some(end) = rename_editor(ui, name_edit_rect(cell, mode, line_height), edit) {
+                outcome.rename_end = Some(end);
+            }
         }
         area
     });
@@ -238,6 +280,11 @@ struct CellItem<'a, R> {
     /// 형식 이름 — 셸에 물어 얻은 값이라 항목만으로는 알 수 없다
     type_name: &'a str,
     show_extensions: bool,
+    /// 잘라내기로 담겼는가 (FR-64) — 글자·아이콘을 흐리게 그린다
+    cut: bool,
+    /// 이름을 고치는 중인가 — 그 자리에 입력칸이 놓이므로 **이름 글자를 그리지 않는다**.
+    /// 줄 자리는 그대로 비워 둔다(타일·내용 보기에서 아래 줄이 밀리지 않게)
+    editing: bool,
 }
 
 /// 칸 하나를 그린다 — 아이콘과 이름의 배치는 흐름에 따라 갈린다.
@@ -262,12 +309,22 @@ fn draw_cell<R: ListRow>(
     let CellItem {
         entry,
         show_extensions,
+        cut,
+        editing,
         ..
     } = item;
     // 숨김·시스템 항목은 아이콘과 글자를 함께 흐리게 그린다 (FR-13 — 탐색기와 같은 표시)
     let dimmed = entry.is_dimmed();
-    let tint = dim_if_hidden(egui::Color32::WHITE, dimmed);
-    let text_color = dim_if_hidden(theme::TEXT, dimmed);
+    let tint = cut_icon_tint(cut).unwrap_or_else(|| dim_if_hidden(egui::Color32::WHITE, dimmed));
+    let text_color = cut_text_color(cut).unwrap_or_else(|| dim_if_hidden(theme::TEXT, dimmed));
+    // 편집 중이면 이름 자리를 비운다 — 그 위에 입력칸이 놓인다
+    let name_text = |entry: &R| {
+        if editing {
+            String::new()
+        } else {
+            entry.display_name(show_extensions)
+        }
+    };
     if is_single_row(mode) {
         let icon_rect = egui::Rect::from_min_size(
             egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
@@ -279,7 +336,7 @@ fn draw_cell<R: ListRow>(
         let text_left = icon_rect.right() + ROW_ICON_GAP;
         let galley = elided_galley_rows(
             ui.painter(),
-            entry.display_name(show_extensions),
+            name_text(entry),
             font,
             (cell.right() - CELL_PAD_X - text_left).max(0.0),
             1,
@@ -305,7 +362,7 @@ fn draw_cell<R: ListRow>(
     let text_width = (cell.width() - CELL_PAD_X * 2.0).max(0.0);
     let galley = elided_galley_rows(
         ui.painter(),
-        entry.display_name(show_extensions),
+        name_text(entry),
         font,
         text_width,
         GRID_NAME_ROWS,
@@ -337,12 +394,20 @@ fn draw_multiline_cell<R: ListRow>(
         entry,
         type_name,
         show_extensions,
+        cut,
+        editing,
     } = item;
     let icon_px = mode.icon_px();
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     // 숨김·시스템 항목을 흐리게 그리는 규칙은 한 줄짜리 칸과 같다 (FR-13)
     let dimmed = entry.is_dimmed();
-    let text_color = dim_if_hidden(theme::TEXT, dimmed);
+    let text_color = cut_text_color(cut).unwrap_or_else(|| dim_if_hidden(theme::TEXT, dimmed));
+    // 편집 중이면 이름 줄을 비운다 — 자리는 그대로 둬야 아래 줄이 밀리지 않는다
+    let name = if editing {
+        String::new()
+    } else {
+        entry.display_name(show_extensions)
+    };
     let icon_rect = egui::Rect::from_min_size(
         egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
         egui::Vec2::splat(icon_px),
@@ -352,7 +417,7 @@ fn draw_multiline_cell<R: ListRow>(
             id,
             icon_rect,
             uv,
-            dim_if_hidden(egui::Color32::WHITE, dimmed),
+            cut_icon_tint(cut).unwrap_or_else(|| dim_if_hidden(egui::Color32::WHITE, dimmed)),
         );
     }
     let text_left = icon_rect.right() + ROW_ICON_GAP;
@@ -367,7 +432,7 @@ fn draw_multiline_cell<R: ListRow>(
         let meta_left = (cell.right() - CELL_PAD_X - CONTENT_META_WIDTH).max(text_left);
         let name = elided_galley_rows(
             ui.painter(),
-            entry.display_name(show_extensions),
+            name.clone(),
             font.clone(),
             (meta_left - ROW_ICON_GAP - text_left).max(0.0),
             1,
@@ -392,11 +457,7 @@ fn draw_multiline_cell<R: ListRow>(
     }
 
     // 타일 — 이름·종류·크기 세 줄
-    let lines = [
-        entry.display_name(show_extensions),
-        type_name.to_owned(),
-        size_text,
-    ];
+    let lines = [name, type_name.to_owned(), size_text];
     let width = (cell.right() - CELL_PAD_X - text_left).max(0.0);
     draw_stacked(ui, &lines, text_left, cell, font, width, text_color);
 }
@@ -429,6 +490,48 @@ fn draw_stacked(
         }
         y += line_height + LINE_GAP;
     }
+}
+
+/// 이름 편집 입력칸이 이름 글자 위아래로 더 차지하는 여백 (FR-64)
+const EDIT_PAD_Y: f32 = 1.0;
+
+/// 이름 편집 입력칸을 놓을 자리 — **`draw_cell`의 이름 배치와 같은 셈을 쓴다** (FR-64).
+///
+/// 두 곳이 갈리면 편집을 열었을 때 입력칸이 이름 자리에서 어긋나 튄다. 보기 모드마다
+/// 이름이 놓이는 곳이 달라 여기서 한 번에 가른다
+fn name_edit_rect(cell: egui::Rect, mode: ViewMode, line_height: f32) -> egui::Rect {
+    let icon_px = mode.icon_px();
+    let height = line_height.max(1.0) + EDIT_PAD_Y * 2.0;
+    if is_single_row(mode) || matches!(mode, ViewMode::Tiles | ViewMode::Content) {
+        // 아이콘 오른쪽 — 한 줄짜리 칸과 여러 줄 칸이 같은 x에서 시작한다
+        let left = cell.left() + ROW_ICON_X + icon_px + ROW_ICON_GAP;
+        // 내용 보기는 오른쪽 끝에 날짜·크기가 붙어 있어 그 앞까지만 쓴다
+        let right = if mode == ViewMode::Content {
+            (cell.right() - CELL_PAD_X - CONTENT_META_WIDTH - ROW_ICON_GAP).max(left)
+        } else {
+            cell.right() - CELL_PAD_X
+        };
+        // 타일은 이름·종류·크기 세 줄의 **첫 줄**이다 — `draw_stacked`가 세 줄 묶음을
+        // 세로 가운데에 놓으므로 그 묶음의 위쪽이 곧 이름 줄이다
+        let top = if mode == ViewMode::Tiles {
+            cell.center().y - (line_height * 3.0 + LINE_GAP * 2.0) / 2.0 - EDIT_PAD_Y
+        } else {
+            cell.center().y - height / 2.0
+        };
+        return egui::Rect::from_min_size(
+            egui::pos2(left, top),
+            egui::vec2((right - left).max(0.0), height),
+        );
+    }
+    // 아이콘 계열 — 아이콘 아래, 칸 폭 전체
+    let icon_bottom = cell.top() + CELL_PAD_TOP + icon_px;
+    egui::Rect::from_min_size(
+        egui::pos2(
+            cell.left() + CELL_PAD_X,
+            icon_bottom + ICON_TEXT_GAP - EDIT_PAD_Y,
+        ),
+        egui::vec2((cell.width() - CELL_PAD_X * 2.0).max(0.0), height),
+    )
 }
 
 /// 한 줄짜리 칸인가 — 아이콘과 이름이 가로로 나란히 놓이는 모드
@@ -502,6 +605,8 @@ mod tests {
             show(
                 ui,
                 GridInput {
+                    rename: None,
+                    cut_marks: &HashSet::new(),
                     dir: &dir,
                     entries: &entries,
                     icon_indices: &mut icon_indices,
@@ -568,6 +673,8 @@ mod tests {
             show(
                 ui,
                 GridInput {
+                    rename: None,
+                    cut_marks: &HashSet::new(),
                     dir: &dir,
                     entries: &entries,
                     icon_indices: &mut icon_indices,
@@ -735,6 +842,8 @@ mod tests {
             show(
                 ui,
                 GridInput {
+                    rename: None,
+                    cut_marks: &HashSet::new(),
                     dir: &dir,
                     entries: &rows,
                     icon_indices: &mut icon_indices,

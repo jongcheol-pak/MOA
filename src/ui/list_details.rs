@@ -6,11 +6,14 @@
 use crate::fs::icons::IconCache;
 use crate::panel::file_list::{ListRow, SortKey, format_filetime, format_size};
 use crate::ui::icon_tex::IconTextures;
-use crate::ui::list_common::{FileListAction, dim_if_hidden, elided_galley_colored};
+use crate::ui::list_common::{
+    FileListAction, RenameEdit, RenameEnd, cut_icon_tint, cut_text_color, dim_if_hidden,
+    elided_galley_colored, rename_editor,
+};
 use crate::ui::theme;
 use eframe::egui;
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeSet, HashSet};
+use std::path::{Path, PathBuf};
 
 /// 행 높이 — 16px 시스템 아이콘이 들어갈 여유를 둔다
 pub const ROW_HEIGHT: f32 = 20.0;
@@ -23,6 +26,10 @@ const ICON_X: f32 = 4.0;
 const NAME_X: f32 = 24.0;
 /// 셀 사이 여백
 const CELL_PAD: f32 = 6.0;
+
+/// 이름 편집 입력칸이 행 위아래로 물러나는 여백 (FR-64) — 행 높이가 20px이라
+/// 입력칸 테두리가 위아래 행에 닿지 않게 조금 줄인다
+const EDIT_INSET_Y: f32 = 1.0;
 /// 열 최소 폭 — 머리글이 잘려도 드래그 핸들은 잡히는 하한 (plan 시각 속성 표)
 pub const MIN_COL_WIDTH: f32 = 40.0;
 /// 열 경계 드래그 핸들 폭 — 경계 중심에서 좌우로 절반씩
@@ -243,6 +250,10 @@ pub struct DetailsInput<'a, R: ListRow> {
     /// 보이는 행에 도달했을 때 채우는 지연 캐시라 가변으로 받는다
     pub icon_indices: &'a mut Vec<Option<i32>>,
     pub selection: &'a BTreeSet<usize>,
+    /// 이름을 고치는 중인 행 (FR-64) — 그 행의 이름 칸에 입력칸을 얹는다
+    pub rename: Option<&'a mut RenameEdit>,
+    /// 잘라내기로 담긴 경로들 (FR-64) — 그 행은 흐리게 그린다
+    pub cut_marks: &'a HashSet<PathBuf>,
     pub sort_key: SortKey,
     pub ascending: bool,
     pub columns: &'a mut Columns,
@@ -271,6 +282,8 @@ pub struct DetailsOutcome {
     pub column_toggle: Option<ColumnKind>,
     /// 이 행에서 끌기가 시작됐다 (FR-38) — 무엇을 실을지는 호출부가 정한다
     pub drag_started: Option<usize>,
+    /// 이름 편집이 이번 프레임에 끝난 방식 (FR-64) — 상태를 접는 것은 호출부가 한다
+    pub rename_end: Option<RenameEnd>,
     /// 지금 끌고 있는 열 경계의 x — **이 모듈 안에서 소비한다**(호출부는 보지 않는다).
     ///
     /// `show_header`가 담고 행을 다 그린 뒤에 긋는다. 머리글이 행보다 먼저 그려지므로
@@ -300,6 +313,8 @@ pub fn show<R: ListRow>(
         type_names,
         icon_indices,
         selection,
+        mut rename,
+        cut_marks,
         sort_key,
         ascending,
         columns,
@@ -346,7 +361,23 @@ pub fn show<R: ListRow>(
             .max(0.0) as usize;
         let last =
             (((viewport.bottom() - HEADER_HEIGHT) / ROW_HEIGHT).ceil() as usize + 1).min(row_count);
+        // 이름 칸의 자리 — 편집 입력칸을 얹는 데 쓴다. 보이는 행과 화면 밖으로 밀린
+        // 편집 행이 **같은 계산**을 써야 스크롤 중에 입력칸이 튀지 않는다
+        let name_slot = visible.iter().position(|kind| *kind == ColumnKind::Name);
+        let name_cell_rect = |index: usize| -> Option<egui::Rect> {
+            let slot = name_slot?;
+            let width = widths[slot] - NAME_X - CELL_PAD;
+            if width <= 0.0 {
+                return None;
+            }
+            let row_top = top + HEADER_HEIGHT + index as f32 * ROW_HEIGHT;
+            Some(egui::Rect::from_min_size(
+                egui::pos2(left + offsets[slot] + NAME_X, row_top + EDIT_INSET_Y),
+                egui::vec2(width, ROW_HEIGHT - EDIT_INSET_Y * 2.0),
+            ))
+        };
         let font = egui::TextStyle::Body.resolve(ui.style());
+        let mut editor_drawn = false;
         let stripe = ui.visuals().faint_bg_color;
         let hover_bg = ui.visuals().widgets.hovered.bg_fill;
         let sel_bg = ui.visuals().selection.bg_fill;
@@ -400,7 +431,13 @@ pub fn show<R: ListRow>(
             let y = rect.center().y;
             // 숨김·시스템 항목은 아이콘과 글자를 함께 흐리게 그린다 (FR-13 — 탐색기와 같은 표시)
             let dimmed = entry.is_dimmed();
-            let text_color = dim_if_hidden(theme::TEXT, dimmed);
+            // 잘라내기로 담긴 항목도 흐리게 (FR-64). **표시가 하나도 없으면 경로를 짓지
+            // 않는다** — 그 문자열 만들기가 보이는 행마다 붙는데 대부분의 프레임에서 헛일이다
+            let cut =
+                local_paths && !cut_marks.is_empty() && cut_marks.contains(&dir.join(entry.name()));
+            let text_color =
+                cut_text_color(cut).unwrap_or_else(|| dim_if_hidden(theme::TEXT, dimmed));
+            let editing = rename.as_ref().is_some_and(|edit| edit.index == index);
             // 보이는 행에 한해 아이콘 인덱스를 조회한다 — 로드 시 전체를 미리 계산하면
             // exe가 많은 폴더에서 로드가 길어진다(PoC 실측 585ms → 84ms)
             let icon_index = match icon_indices[index] {
@@ -424,12 +461,17 @@ pub fn show<R: ListRow>(
                     tex.id(),
                     icon_rect,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    dim_if_hidden(egui::Color32::WHITE, dimmed),
+                    cut_icon_tint(cut)
+                        .unwrap_or_else(|| dim_if_hidden(egui::Color32::WHITE, dimmed)),
                 );
             }
 
             let painter = ui.painter();
             for (slot, kind) in visible.iter().enumerate() {
+                // 편집 중인 행의 이름은 그리지 않는다 — 그 자리에 입력칸이 놓인다
+                if editing && *kind == ColumnKind::Name {
+                    continue;
+                }
                 let text = cell_text(entry, &type_names[index], *kind, show_extensions);
                 // 이름 열만 아이콘 자리를 비켜 시작한다
                 let leading = if *kind == ColumnKind::Name {
@@ -445,6 +487,29 @@ pub fn show<R: ListRow>(
                 let galley = elided_galley_colored(painter, text, font.clone(), width, text_color);
                 painter.galley(egui::pos2(x, y - galley.size().y / 2.0), galley, text_color);
             }
+
+            // 이름 칸 자리에 입력칸을 얹는다 — 행 배경·아이콘을 다 그린 뒤라 위에 놓인다
+            if editing
+                && let Some(edit_rect) = name_cell_rect(index)
+                && let Some(edit) = rename.as_mut()
+            {
+                editor_drawn = true;
+                if let Some(end) = rename_editor(ui, edit_rect, edit) {
+                    outcome.rename_end = Some(end);
+                }
+            }
+        }
+
+        // 편집 중인 행이 화면 밖으로 밀려도 입력칸을 계속 놓는다 — 위젯을 그리지 않으면
+        // egui가 포커스를 거두고 그것이 취소로 처리돼, 스크롤 한 번에 고치던 이름이
+        // 사라진다(탐색기는 유지한다). 스크롤 영역 밖이라 잘려 보이지 않는다
+        if !editor_drawn
+            && let Some(edit) = rename.as_mut()
+            && edit.index < row_count
+            && let Some(edit_rect) = name_cell_rect(edit.index)
+            && let Some(end) = rename_editor(ui, edit_rect, edit)
+        {
+            outcome.rename_end = Some(end);
         }
         // 끄는 동안의 강조선 — 행 배경보다 **나중에** 그어야 끊기지 않는다
         if let Some(x) = outcome.resize_guide_x {

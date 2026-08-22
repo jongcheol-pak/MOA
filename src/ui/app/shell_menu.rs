@@ -56,8 +56,8 @@ impl ExplorerApp {
     /// 탐색기 자신의 목록 뷰가 처리하는 것이라 여기서 불러도 아무 일이 없고, 잘라내기·복사도
     /// verb로 부르면 셸이 자기 클립보드 상태를 쥐어 우리 화면의 잘라내기 표시와 어긋난다.
     ///
-    /// **`이름 바꾸기`만 아직 잇지 않았다** — 받을 곳(목록의 인라인 편집)이 T8 산출물이라
-    /// 그때까지 그 칸은 비활성이다(`MenuState::can_rename`)
+    /// **`이름 바꾸기`는 목록의 인라인 편집을 연다** (FR-64) — 여기서 셸에 거는 것이 아니라
+    /// 편집을 열어 두고, 사용자가 `Enter`로 확정한 뒤에 걸린다
     fn apply_menu_action(
         &mut self,
         action: shell_context_menu::MenuAction,
@@ -68,10 +68,16 @@ impl ExplorerApp {
         let targets = &open.items_paths;
         match action {
             MenuAction::Copy => {
-                crate::fs::clipboard::put(targets, false);
+                // 담기지 못했으면 클립보드에는 **종전 것이 그대로** 남아 있다 —
+                // 그때 잘라내기 표시를 풀면 화면과 클립보드가 어긋난다
+                if crate::fs::clipboard::put(targets, false) {
+                    self.clear_cut_marks();
+                }
             }
             MenuAction::Cut => {
-                crate::fs::clipboard::put(targets, true);
+                if crate::fs::clipboard::put(targets, true) {
+                    self.set_cut_marks(targets);
+                }
             }
             MenuAction::Delete => {
                 // **휴지통으로 보낸다** — 메뉴에는 영구 삭제를 가를 자리가 없다(탐색기와 같다).
@@ -91,9 +97,14 @@ impl ExplorerApp {
                     open.menu.invoke(id, owner);
                 }
             }
-            // 받을 곳(목록의 인라인 편집)이 아직 없다 — `can_rename`이 거짓이라 이 칸은
-            // 비활성이고 여기까지 오지 않는다. T8이 그 편집을 만들면서 함께 잇는다
-            MenuAction::Rename => {}
+            MenuAction::Rename => {
+                // 메뉴를 연 패널이 곧 활성 패널이다 — 우클릭이 그 패널을 활성으로 만든다.
+                // 고른 것이 하나일 때만 이 칸이 열리므로(`MenuState::allows`) 첫 항목이
+                // 곧 그 항목이다
+                if let Some(panel) = self.command_panel_mut(None) {
+                    panel.begin_rename_selected();
+                }
+            }
         }
     }
 
@@ -129,9 +140,9 @@ impl ExplorerApp {
             state: shell_context_menu::MenuState {
                 selected: request.items.len(),
                 can_share: share_id.is_some(),
-                // **아직 받을 곳이 없다** — 목록의 인라인 이름 편집(T8)이 들어오면 참이 된다.
-                // 그때까지 그 칸은 비활성이다(눌러도 아무 일이 없는 것보다 낫다)
-                can_rename: false,
+                // 목록의 인라인 편집이 받는다 (FR-64) — 로컬 목록에서만 열리는데
+                // 이 메뉴 자체가 로컬 전용이라(D21) 여기서 더 가릴 것이 없다
+                can_rename: true,
             },
             share_id,
             items_paths: request.items,

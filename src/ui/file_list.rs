@@ -13,12 +13,12 @@ use crate::ui::list_grid::{self, GridInput};
 use crate::ui::view_mode::ViewMode;
 use eframe::egui;
 use std::collections::{BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // 조작 타입은 보기 모드별 렌더 모듈이 함께 쓰므로 공용 모듈에 둔다.
 // 호출부(`ui::panel`)가 종전 경로를 그대로 쓰도록 여기서 다시 내보낸다
-use crate::ui::list_common::DragItem;
 pub use crate::ui::list_common::FileListAction;
+use crate::ui::list_common::{DragItem, RenameEdit, RenameEnd};
 use crate::ui::remote_menu::RemoteTarget;
 
 /// 목록이 담은 항목 — 로컬 폴더의 것이거나 원격 폴더의 것이다 (plan T8).
@@ -86,6 +86,15 @@ pub struct FileListView {
     ///
     /// 어긋나게 두면 **첫 프레임마다 "바뀌었다"고 판정돼 폴더를 다시 읽는다**
     show_system: bool,
+    /// 목록에서 이름을 고치는 중인 행 (FR-64) — 없으면 편집 중이 아니다.
+    ///
+    /// 세션에 담지 않는다(4-B): 앱을 다시 띄웠을 때 편집 중이 아닌 것이 옳다
+    rename: Option<RenameEdit>,
+    /// 잘라내기로 클립보드에 담긴 경로들 (FR-64) — 이 목록에서 흐리게 그린다.
+    ///
+    /// **행 번호가 아니라 경로로 든다** — 폴더가 다시 읽혀 번호가 통째로 바뀌어도 어긋나지
+    /// 않고, 다른 폴더에서 잘라낸 것이 우연히 같은 번호의 행을 흐리게 만들지도 않는다
+    cut_marks: HashSet<PathBuf>,
 }
 
 impl Default for FileListView {
@@ -113,6 +122,8 @@ impl FileListView {
             show_extensions: true,
             show_hidden: true,
             show_system: false,
+            rename: None,
+            cut_marks: HashSet::new(),
         }
     }
 
@@ -183,6 +194,7 @@ impl FileListView {
             entries.retain(|e| self.shows(e));
         }
         let keep = (dir == self.dir).then(|| self.selected_name_keys());
+        self.drop_rename_on_dir_change(&dir);
         self.dir = dir;
         self.type_names = entries
             .iter()
@@ -198,6 +210,7 @@ impl FileListView {
             // 없는 상태가 엉뚱한 위치를 가리키는 것보다 낫다
             self.selection = self.matching_selection(&keep);
         }
+        self.relocate_rename();
     }
 
     /// 목록을 비운다 — 아직 무엇을 보여 줄지 모르는 구간에서 **옛 항목이 남지 않게** 한다.
@@ -205,6 +218,8 @@ impl FileListView {
     /// 선택도 함께 지운다: 지우지 않으면 없는 항목을 고른 상태가 되어, 다음 목록이 도착했을 때
     /// 엉뚱한 줄이 골라진 것처럼 보인다
     pub fn clear_entries(&mut self) {
+        // 보여 줄 항목이 없어지므로 편집도 접는다 — 없는 행 위에 입력칸만 남는다
+        self.rename = None;
         self.type_names.clear();
         self.icon_indices.clear();
         self.model = ListModel::Remote(Vec::new());
@@ -217,6 +232,8 @@ impl FileListView {
     /// 로컬과 달리 **선택을 되살리지 않는다** — 원격 목록은 사용자가 새로 고침을 눌렀을 때만
     /// 바뀌고(변경 감시가 없다 — Deferred), 그때는 선택이 풀리는 것이 자연스럽다
     pub fn set_remote_entries(&mut self, mut entries: Vec<RemoteEntry>, icons: &mut IconCache) {
+        // 인라인 편집은 로컬 목록에만 있다 (FR-64) — 원격은 대화로 이름을 묻는다(FR-39)
+        self.rename = None;
         if !self.show_hidden || !self.show_system {
             entries.retain(|e| self.shows(e));
         }
@@ -384,6 +401,8 @@ impl FileListView {
             columns,
             column_flags,
             view_mode,
+            rename,
+            cut_marks,
             ..
         } = self;
         let request = RenderRequest {
@@ -391,6 +410,8 @@ impl FileListView {
             type_names,
             icon_indices,
             selection,
+            rename: rename.as_mut(),
+            cut_marks,
             sort_key: *sort_key,
             ascending: *ascending,
             columns,
@@ -420,10 +441,120 @@ impl FileListView {
             self.selection.clear();
             self.anchor = None;
         }
+        // 편집이 끝났으면 상태를 접고, 확정이면 그것을 이번 프레임의 조작으로 올린다 —
+        // 실제로 이름을 바꾸는 것은 셸에 맡기므로 여기서는 값만 돌려준다
+        let action = match outcome.rename_end {
+            Some(RenameEnd::Commit(new_name)) => match self.rename.take() {
+                Some(edit) => FileListAction::Rename {
+                    index: edit.index,
+                    new_name,
+                },
+                None => outcome.action,
+            },
+            Some(RenameEnd::Cancel) => {
+                self.rename = None;
+                outcome.action
+            }
+            None => outcome.action,
+        };
         ListInteraction {
-            action: outcome.action,
+            action,
             drag_started: outcome.drag_started,
         }
+    }
+
+    /// 이 행의 이름 편집을 연다 (FR-64) — 열지 못했으면 거짓.
+    ///
+    /// 로컬 목록의 실제 항목에서만 열린다: 원격은 대화로 묻고(FR-39), 상위 이동(`..`) 줄은
+    /// 이 폴더에 든 것이 아니라 이름이랄 것이 없다
+    pub fn begin_rename(&mut self, index: usize) -> bool {
+        let ListModel::Local(rows) = &self.model else {
+            return false;
+        };
+        let Some(entry) = rows.get(index) else {
+            return false;
+        };
+        if entry.is_parent() {
+            return false;
+        }
+        let name = entry.name_string();
+        self.rename = Some(RenameEdit {
+            index,
+            original: name.clone(),
+            text: name,
+            first_frame: true,
+            is_dir: entry.is_dir(),
+        });
+        true
+    }
+
+    /// 고른 것 중 **첫 항목**의 이름 편집을 연다 (FR-64) — 탐색기와 같은 규칙이다.
+    ///
+    /// 여러 개를 골라 두고 `F2`를 눌러도 한 번에 하나만 고친다(새 이름은 하나뿐이다)
+    pub fn begin_rename_selected(&mut self) -> bool {
+        let Some(index) = self.selection.iter().next().copied() else {
+            return false;
+        };
+        self.begin_rename(index)
+    }
+
+    /// 지금 이름을 고치는 중인가 — 단축키가 목록에 갈지 가르는 데 쓴다
+    pub fn is_renaming(&self) -> bool {
+        self.rename.is_some()
+    }
+
+    /// 편집을 접는다 — 고친 글자는 버린다 (탭·패널 전환 등)
+    pub fn cancel_rename(&mut self) {
+        self.rename = None;
+    }
+
+    /// 다른 폴더로 옮겨 갔으면 편집을 접는다 (FR-64) — 탭·패널 전환도 이 길로 온다.
+    ///
+    /// 이름으로 다시 찾는 것(`relocate_rename`)만 믿으면, 새 폴더에 **우연히 같은 이름**이
+    /// 있을 때 엉뚱한 항목을 고치기 시작한다
+    fn drop_rename_on_dir_change(&mut self, dir: &Path) {
+        if dir != self.dir {
+            self.rename = None;
+        }
+    }
+
+    /// 폴더가 다시 읽혀 행 번호가 바뀌었을 때 편집 중인 행을 **이름으로 다시 찾는다**.
+    ///
+    /// 찾지 못하면 편집을 접는다 — 고치던 항목이 그 사이에 사라졌다는 뜻이라, 남겨 두면
+    /// 엉뚱한 행 위에 입력칸이 놓인다
+    fn relocate_rename(&mut self) {
+        let Some(edit) = self.rename.as_mut() else {
+            return;
+        };
+        let ListModel::Local(rows) = &self.model else {
+            self.rename = None;
+            return;
+        };
+        match rows
+            .iter()
+            .position(|row| row.name_string() == edit.original)
+        {
+            Some(index) => edit.index = index,
+            None => self.rename = None,
+        }
+    }
+
+    /// 잘라내기로 담긴 경로들을 표시한다 (FR-64) — 종전 표시는 대체된다.
+    ///
+    /// **복사로 담은 것은 표시하지 않는다** — 원본이 그대로 남으므로 흐리게 보일 이유가 없다.
+    /// 어느 조건에서 이 표시를 풀지는 클립보드를 다루는 쪽(`ui::app`)이 정한다
+    pub fn set_cut_marks(&mut self, paths: &[PathBuf]) {
+        self.cut_marks = paths.iter().cloned().collect();
+    }
+
+    /// 잘라내기 표시를 모두 푼다 — 붙여넣었거나 다른 것이 클립보드에 담겼을 때
+    pub fn clear_cut_marks(&mut self) {
+        self.cut_marks.clear();
+    }
+
+    /// 이 경로가 잘라내기로 담겨 있는가 — 흐리게 그릴지 가른다
+    pub fn is_cut(&self, path: &Path) -> bool {
+        self.cut_marks.contains(path)
     }
 
     /// 끌어 옮길 항목들 (FR-38).
@@ -589,6 +720,10 @@ struct RenderRequest<'a> {
     type_names: &'a [String],
     icon_indices: &'a mut Vec<Option<i32>>,
     selection: &'a BTreeSet<usize>,
+    /// 이름을 고치는 중인 행 — 그리는 쪽이 입력칸을 얹고 글자를 곧바로 고친다 (FR-64)
+    rename: Option<&'a mut RenameEdit>,
+    /// 잘라내기로 담긴 경로들 — 그 행은 흐리게 그린다 (FR-64)
+    cut_marks: &'a HashSet<PathBuf>,
     sort_key: SortKey,
     ascending: bool,
     columns: &'a mut Columns,
@@ -611,6 +746,8 @@ struct RenderOutcome {
     clear_selection: bool,
     /// 끌기가 시작된 항목 (FR-38)
     drag_started: Option<usize>,
+    /// 이름 편집이 이번 프레임에 끝난 방식 (FR-64) — 상태를 접는 것은 호출부가 한다
+    rename_end: Option<RenameEnd>,
 }
 
 /// 보기 모드에 맞는 렌더 모듈에 넘긴다. **모델 종류마다 한 번씩 찍히는 유일한 자리**다
@@ -631,6 +768,8 @@ fn render_rows<R: ListRow>(
                 type_names: request.type_names,
                 icon_indices: request.icon_indices,
                 selection: request.selection,
+                rename: request.rename,
+                cut_marks: request.cut_marks,
                 sort_key: request.sort_key,
                 ascending: request.ascending,
                 columns: request.columns,
@@ -651,6 +790,7 @@ fn render_rows<R: ListRow>(
             select_request: outcome.select_request,
             clear_selection: outcome.clear_selection,
             drag_started: outcome.drag_started,
+            rename_end: outcome.rename_end,
         }
     } else {
         let outcome = list_grid::show(
@@ -660,6 +800,8 @@ fn render_rows<R: ListRow>(
                 entries: rows,
                 icon_indices: request.icon_indices,
                 selection: request.selection,
+                rename: request.rename,
+                cut_marks: request.cut_marks,
                 type_names: request.type_names,
                 mode: request.view_mode,
                 thumbnails: request.thumbnails,
@@ -678,6 +820,7 @@ fn render_rows<R: ListRow>(
             select_request: outcome.select_request,
             clear_selection: outcome.clear_selection,
             drag_started: outcome.drag_started,
+            rename_end: outcome.rename_end,
         }
     }
 }
@@ -717,6 +860,161 @@ mod tests {
             ListModel::Local(rows) => rows.iter().map(|e| e.name_string()).collect(),
             ListModel::Remote(rows) => rows.iter().map(|e| e.name.clone()).collect(),
         }
+    }
+
+    /// 목록을 통째로 갈아 끼운다 — `set_entries`는 `IconCache`(Win32)를 요구해 시험에서
+    /// 쓸 수 없으므로, 그 함수가 하는 일 중 **이 시험이 보는 부분**(모델 교체 + 재정렬 +
+    /// 편집 위치 되찾기)만 같은 순서로 밟는다
+    fn replace_rows(v: &mut FileListView, rows: Vec<FileEntry>) {
+        v.type_names = vec![String::new(); rows.len()];
+        v.icon_indices = vec![None; rows.len()];
+        v.model = ListModel::Local(rows);
+        v.resort();
+        v.relocate_rename();
+    }
+
+    #[test]
+    fn 편집을_열면_마지막_점_앞까지_잡힌다() {
+        // 확장자만 그대로 두고 이름을 고치는 것이 대부분이다 — `report.tar.gz`는
+        // `report.tar`가 잡혀야 한다(탐색기와 같다). `.tar.gz` 전체가 아니다
+        assert_eq!(
+            crate::ui::list_common::name_edit_range("report.tar.gz", false),
+            0..10
+        );
+        // 폴더는 점이 있어도 이름 전체 — 확장자라는 개념이 없다
+        assert_eq!(crate::ui::list_common::name_edit_range("v1.2", true), 0..4);
+        // 맨 앞의 점은 확장자 구분이 아니다
+        assert_eq!(
+            crate::ui::list_common::name_edit_range(".gitignore", false),
+            0..10
+        );
+        // 점이 없으면 전체
+        assert_eq!(
+            crate::ui::list_common::name_edit_range("README", false),
+            0..6
+        );
+        // 글자 수로 센다 — 바이트로 세면 한글 이름에서 범위가 어긋난다
+        assert_eq!(
+            crate::ui::list_common::name_edit_range("보고서.txt", false),
+            0..3
+        );
+    }
+
+    #[test]
+    fn 상위_이동_줄은_편집을_열_수_없다() {
+        // `..`는 이 폴더에 든 항목이 아니라 밖으로 나가는 문이다 — 고칠 이름이 없다
+        let mut v = view(vec![(entry("..", true, 0, 0), "폴더")]);
+        assert!(!v.begin_rename(0));
+        assert!(!v.is_renaming());
+    }
+
+    #[test]
+    fn 여럿을_골라도_첫_항목만_편집한다() {
+        // 새 이름은 하나뿐이라 한 번에 하나만 고친다(탐색기와 같은 규칙)
+        let mut v = view(vec![
+            (entry("a.txt", false, 0, 0), "텍스트"),
+            (entry("b.txt", false, 0, 0), "텍스트"),
+        ]);
+        v.selection.insert(1);
+        v.selection.insert(0);
+        assert!(v.begin_rename_selected());
+        let edit = v.rename.as_ref().expect("편집이 열려 있어야 한다");
+        assert_eq!(edit.index, 0);
+        // 처음 든 글자는 원래 이름이다 — 사용자가 그 위에서 고친다
+        assert_eq!(edit.text, "a.txt");
+        assert_eq!(edit.original, "a.txt");
+    }
+
+    #[test]
+    fn 되돌리면_이름도_편집_상태도_남지_않는다() {
+        // `Esc`가 부르는 길이다 — 고치던 글자를 버리고 편집만 접는다.
+        // 목록의 이름 자체는 손대지 않았으므로 그대로 되돌아간다
+        let mut v = view(vec![(entry("a.txt", false, 0, 0), "텍스트")]);
+        v.selection.insert(0);
+        assert!(v.begin_rename_selected());
+        v.rename.as_mut().expect("편집").text = "고치던 이름".to_owned();
+        v.cancel_rename();
+        assert!(!v.is_renaming());
+        assert_eq!(names(&v), vec!["a.txt".to_owned()]);
+        // 선택은 유지된다 — 편집을 접었다고 고른 것까지 풀리면 다음 조작이 대상을 잃는다
+        assert_eq!(v.selection.iter().copied().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn 폴더가_갱신되면_편집_행을_이름으로_다시_찾는다() {
+        // 감시(FR-10)로 목록이 다시 읽히면 행 번호가 통째로 바뀐다 — 번호만 들고 있으면
+        // 엉뚱한 행 위에 입력칸이 놓인다
+        let mut v = view(vec![
+            (entry("a.txt", false, 0, 0), "텍스트"),
+            (entry("b.txt", false, 0, 0), "텍스트"),
+        ]);
+        v.selection.insert(1);
+        assert!(v.begin_rename_selected());
+        assert_eq!(v.rename.as_ref().expect("편집").index, 1);
+        // 앞에 새 파일이 하나 생겨 `b.txt`가 뒤로 밀린다
+        replace_rows(
+            &mut v,
+            vec![
+                entry("a.txt", false, 0, 0),
+                entry("aa.txt", false, 0, 0),
+                entry("b.txt", false, 0, 0),
+            ],
+        );
+        assert_eq!(v.rename.as_ref().expect("편집").index, 2);
+    }
+
+    #[test]
+    fn 고치던_항목이_사라지면_편집을_접는다() {
+        // 다른 곳에서 그 파일을 지웠다는 뜻이다 — 남겨 두면 없는 항목의 이름을 걸게 된다
+        let mut v = view(vec![(entry("a.txt", false, 0, 0), "텍스트")]);
+        v.selection.insert(0);
+        assert!(v.begin_rename_selected());
+        replace_rows(&mut v, vec![entry("b.txt", false, 0, 0)]);
+        assert!(!v.is_renaming());
+    }
+
+    #[test]
+    fn 다른_폴더로_옮기면_편집을_접는다() {
+        // 탭·패널을 바꾸면 이 길로 온다 — 새 폴더에 우연히 같은 이름이 있어도
+        // 그것을 고치기 시작해서는 안 된다
+        let mut v = view(vec![(entry("a.txt", false, 0, 0), "텍스트")]);
+        v.dir = PathBuf::from(r"C:\먼저");
+        v.selection.insert(0);
+        assert!(v.begin_rename_selected());
+        // `set_entries`는 `IconCache`(Win32)를 요구해 시험에서 부를 수 없다 —
+        // 그 함수가 폴더 판정에 쓰는 바로 그 메서드를 같은 순서로 부른다
+        let 새폴더 = PathBuf::from(r"C:\다음");
+        v.drop_rename_on_dir_change(&새폴더);
+        v.dir = 새폴더;
+        replace_rows(&mut v, vec![entry("a.txt", false, 0, 0)]);
+        assert!(!v.is_renaming());
+    }
+
+    #[test]
+    fn 잘라내기_표시는_붙여넣으면_풀린다() {
+        // FR-64 — "붙여넣거나 다른 것을 담으면 그 표시가 풀린다"
+        let mut v = FileListView::new();
+        let 담은것 = [PathBuf::from(r"C:\일.txt"), PathBuf::from(r"C:\일.txt")];
+        v.set_cut_marks(&담은것);
+        assert!(v.is_cut(Path::new(r"C:\일.txt")));
+        assert!(v.is_cut(Path::new(r"C:\일.txt")));
+        assert!(!v.is_cut(Path::new(r"C:\일\c.txt")));
+        // 붙여넣기가 성공한 뒤 — 집합이 비고 그 행은 다시 정상 색으로 그려진다
+        v.clear_cut_marks();
+        assert!(!v.is_cut(Path::new(r"C:\일.txt")));
+        assert!(crate::ui::list_common::cut_text_color(false).is_none());
+        assert!(crate::ui::list_common::cut_icon_tint(false).is_none());
+    }
+
+    #[test]
+    fn 다른_것을_담으면_종전_표시는_대체된다() {
+        // 두 번째 잘라내기가 첫 번째 표시를 덮는다 — 두 벌이 함께 흐려지면 어느 것이
+        // 클립보드에 있는지 화면으로 알 수 없다
+        let mut v = FileListView::new();
+        v.set_cut_marks(&[PathBuf::from(r"C:\일.txt")]);
+        v.set_cut_marks(&[PathBuf::from(r"C:\일.txt")]);
+        assert!(!v.is_cut(Path::new(r"C:\일.txt")));
+        assert!(v.is_cut(Path::new(r"C:\일.txt")));
     }
 
     #[test]

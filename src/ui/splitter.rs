@@ -14,6 +14,7 @@ use crate::ui::list_common::DropOutcome;
 use crate::ui::menu::{Command, PanelMenuState};
 use crate::ui::panel::{
     DisplayRules, MenuRequest, PanelOutcome, PanelState, RemoteAction, RemoteMenuPick,
+    RenameRequest,
 };
 use crate::ui::remote_states::RemoteView;
 use crate::ui::tabs::TransferTargets;
@@ -71,6 +72,11 @@ pub fn draw_drop_highlight(ui: &egui::Ui, rect: egui::Rect) {
 #[derive(Default)]
 pub struct LayoutOutcome {
     pub menu: Option<MenuRequest>,
+    /// 목록에서 고쳐 확정한 이름 (FR-64) — 셸에 거는 것은 앱이다.
+    ///
+    /// 어느 패널이었는지는 담지 않는다: 요청에 **전체 경로**가 들어 있어 대상이 이미
+    /// 하나로 정해진다(`command`처럼 "어느 패널에 적용할지"를 가릴 일이 없다)
+    pub rename: Option<RenameRequest>,
     /// 패널 메뉴에서 고른 명령과 그 패널. **활성 패널이 아니라 메뉴를 연 패널**이다.
     ///
     /// 활성 판정은 포인터가 눌린 위치로만 이뤄지는데, 메뉴 팝업은 자기 패널 밖으로 뻗을 수
@@ -126,6 +132,7 @@ pub struct LayoutOutcome {
 fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOutcome) {
     let PanelOutcome {
         menu,
+        rename,
         command,
         remote,
         remote_url,
@@ -139,6 +146,10 @@ fn merge_panel_outcome(outcome: &mut LayoutOutcome, id: PanelId, panel: PanelOut
     // 한 프레임에 메뉴는 하나만 뜬다 — 먼저 요청한 패널 것을 쓴다
     if outcome.menu.is_none() {
         outcome.menu = menu;
+    }
+    // 이름 확정도 한 프레임에 하나뿐이다 — 편집칸은 포커스를 가진 한 곳에만 있다
+    if outcome.rename.is_none() {
+        outcome.rename = rename;
     }
     // 명령도 한 프레임에 하나만 — 어느 패널이 요청했는지 함께 담는다
     if outcome.command.is_none()
@@ -365,6 +376,7 @@ mod tests {
                 &mut outcome,
                 id,
                 PanelOutcome {
+                    rename: None,
                     menu: None,
                     command: None,
                     remote: None,
@@ -396,6 +408,7 @@ mod tests {
             &mut outcome,
             PanelId(1),
             PanelOutcome {
+                rename: None,
                 menu: None,
                 command: None,
                 remote: None,
@@ -420,6 +433,7 @@ mod tests {
             &mut outcome,
             PanelId(1),
             PanelOutcome {
+                rename: None,
                 menu: Some(MenuRequest {
                     folder: std::path::PathBuf::from(r"C:\A"),
                     items: Vec::new(),
@@ -440,6 +454,7 @@ mod tests {
             &mut outcome,
             PanelId(2),
             PanelOutcome {
+                rename: None,
                 menu: None,
                 command: Some(Command::NewFolder),
                 remote: None,
@@ -474,6 +489,7 @@ mod tests {
                 &mut outcome,
                 id,
                 PanelOutcome {
+                    rename: None,
                     menu: Some(MenuRequest {
                         folder: std::path::PathBuf::from(folder),
                         items: Vec::new(),
@@ -508,6 +524,7 @@ mod tests {
                 &mut outcome,
                 id,
                 PanelOutcome {
+                    rename: None,
                     menu: None,
                     command: None,
                     remote: Some(RemoteAction::Retry),
@@ -549,6 +566,7 @@ mod tests {
             &mut outcome,
             id,
             PanelOutcome {
+                rename: None,
                 menu: None,
                 command: None,
                 remote: None,
@@ -577,6 +595,7 @@ mod tests {
             &mut outcome,
             PanelId(1),
             PanelOutcome {
+                rename: None,
                 menu: None,
                 command: None,
                 remote: None,
@@ -593,6 +612,7 @@ mod tests {
             &mut outcome,
             PanelId(2),
             PanelOutcome {
+                rename: None,
                 menu: None,
                 command: None,
                 remote: None,
