@@ -292,7 +292,7 @@ fn show_right(
     {
         request = Some(WindowRequest::Minimize);
     }
-    show_settings_menu(ui, &mut command, badge.update_enabled);
+    show_settings_menu(ui, &mut command, update_menu_enabled(badge));
     // 배지는 설정 버튼 **뒤에** 더한다 — 이 영역은 오른쪽부터 채워지므로 나중에 더한 것이
     // 화면에서 더 왼쪽에 선다
     if let Some(badge_command) = show_update_badge(ui, badge) {
@@ -388,6 +388,21 @@ fn badge_parts(badge: UpdateBadge) -> (&'static str, &'static str) {
     }
 }
 
+/// 설정 메뉴의 `업데이트` 항목을 누를 수 있는가 — 두 조건을 모두 넘어야 한다.
+///
+/// ① **설치본이어야 한다**(D4·FR-62) — 개발 실행에서는 확인 자체를 하지 않는다.
+/// ② **받는 중이 아니어야 한다** — 그때 눌러도 서비스가 겹쳐 띄우지 않으려고 그냥
+///    반환하므로(`UpdateService::start_check_with`의 `busy()` 가드) 무반응이 된다.
+///    내려받기는 수 초에서 수십 초라 그 구간 내내 「눌리는데 아무 일도 없는」 항목이
+///    보이는데, 이 레포는 그것을 고장으로 오인되는 상태로 보고 피해 왔다(종전
+///    `pending_item`의 주석이 같은 판단이었다).
+///
+/// **확인 중(`Checking`)은 막지 않는다** — 대개 1초 안에 끝나 그 사이 비활성으로
+/// 깜빡이면 오히려 눈에 거슬리고, 사람이 그 구간을 노려 누르기도 어렵다
+fn update_menu_enabled(badge: UpdateBadge) -> bool {
+    badge.update_enabled && !badge.downloading
+}
+
 /// 배지가 차지하는 폭 — **그 자리에서 잰다**(설정 메뉴 폭과 같은 방식).
 ///
 /// 배지가 없으면 0이라 우측 버튼군 폭이 종전 그대로가 된다.
@@ -430,8 +445,7 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>, update_enabl
             *out = Some(Command::OpenAppSettings);
             ui.close();
         }
-        // **설치본에서만 누를 수 있다** (D4·FR-62) — 개발 실행에서는 확인 자체를 하지
-        // 않으므로 눌러도 아무 일이 없다. 활성처럼 보이면서 반응이 없으면 고장으로 오인된다.
+        // 활성 조건은 `update_menu_enabled`가 정한다.
         // `릴리즈 노트`는 이 조건이 없다 — 브라우저를 여는 것뿐이라 설치본과 무관하다(FR-63)
         if ui
             .add_enabled(
@@ -656,6 +670,44 @@ mod tests {
         // 어정쩡한 상태가 된다. 이 분기는 `resize_direction`이 아니라 여기 있어 Context가 필요하다
         let ctx = egui::Context::default();
         assert_eq!(show_resize_handles(&ctx, true, RIGHT_GROUP_BASE), None);
+    }
+
+    #[test]
+    fn 받는_중에는_설정_메뉴의_업데이트도_비활성이다() {
+        // 배지만 막고 메뉴를 열어 두면 그 항목이 내려받는 내내 「눌리는데 아무 일도
+        // 없는」 상태가 된다 — 서비스가 겹침을 막으려 그냥 반환하기 때문이다
+        let installed_idle = UpdateBadge {
+            visible: true,
+            downloading: false,
+            update_enabled: true,
+        };
+        let installed_downloading = UpdateBadge {
+            downloading: true,
+            ..installed_idle
+        };
+        let dev_build = UpdateBadge {
+            update_enabled: false,
+            ..installed_idle
+        };
+
+        assert!(
+            update_menu_enabled(installed_idle),
+            "설치본이고 놀고 있으면 누를 수 있다"
+        );
+        assert!(
+            !update_menu_enabled(installed_downloading),
+            "받는 중에는 막는다"
+        );
+        assert!(
+            !update_menu_enabled(dev_build),
+            "개발 실행에서는 막는다 (D4)"
+        );
+        // 배지가 서지 않은 평상시(설치본)에도 메뉴로는 언제든 확인할 수 있어야 한다
+        assert!(update_menu_enabled(UpdateBadge {
+            visible: false,
+            downloading: false,
+            update_enabled: true,
+        }));
     }
 
     #[test]

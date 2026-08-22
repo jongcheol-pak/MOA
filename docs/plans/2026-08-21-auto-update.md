@@ -469,6 +469,8 @@ MOA-Setup-0.1.0.exe
   - **T7 quality MINOR 2 → 전건 수용.** `ui/app.rs`가 3100줄이 되어 업데이트 배선을 `src/ui/app/update.rs` 자식 모듈로 옮겼다(`app::remote`·`app::transfer_conflict` 선례와 같은 패턴 — 부모의 private 필드를 가시성 확대 없이 만진다). 실행 실패 문구에 다음 행동을 덧붙였다.
   - **T8 실측**: `cargo run --example gen_installer`가 makensis 경고 0으로 `MOA-Setup-0.1.0.exe`(2,999,381B)를 만들었다. `MUI_PAGE_CUSTOMFUNCTION_PRE`는 페이지 매크로가 쓰고 `!undef` 하므로 네 페이지에 **각각** 다시 정의했다.
 
+- 회차 뒤 추가 요청 (2026-08-22): **받는 중에는 설정 메뉴의 `업데이트`도 비활성**. 사용자가 「클릭할 때마다 계속 체크하나」고 물어 확인해 보니, `busy()` 가드가 겹침을 막느라 그냥 반환해 **내려받는 수 초~수십 초 동안 눌리는데 무반응**이었다. 활성 조건을 `update_menu_enabled`(설치본 && !받는 중) 순수 함수로 빼고 시험을 붙였다. **확인 중(`Checking`)은 막지 않는다** — 대개 1초 안에 끝나 비활성으로 깜빡이면 오히려 거슬린다. PRD FR-62 문면에도 그 동작을 적었다.
+
 ## Next Steps
 
 - 권장 다음 액션: **HUMAN-VERIFY A(1~6)를 사람이 확인** → 통과하면 첫 릴리즈 발행 승인을 청하고 → 발행 뒤 HUMAN-VERIFY B(7~14).
