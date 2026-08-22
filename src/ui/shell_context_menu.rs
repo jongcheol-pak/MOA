@@ -145,7 +145,9 @@ pub fn show(
     egui::ScrollArea::vertical()
         .max_height(목록_높이)
         .show(ui, |ui| {
-            // 스크롤 영역은 별도 `Ui`라 스타일을 다시 세운다 (AGENTS 「팝업 메뉴 한 줄」)
+            // 스크롤 영역은 자식 `Ui`라 부모 스타일을 잇지만, **이어받는지에 기대지 않고**
+            // 다시 세운다 — 값은 같고 부작용이 없어 비용이 없다(AGENTS가 재호출을 못 박는
+            // 것은 별도 `Area`인 하위 메뉴이며, 여기는 그보다 넓게 잡은 것이다)
             theme::menu_style(ui);
             ui.set_width(MENU_WIDTH);
             for (index, item) in items.iter().enumerate() {
@@ -224,7 +226,8 @@ impl MenuIcons {
     fn row(&self, index: usize) -> MenuRowIcon<'_> {
         match self.textures.get(index).and_then(|slot| slot.as_ref()) {
             Some(texture) => MenuRowIcon::Texture(texture),
-            None => MenuRowIcon::None,
+            // 아이콘이 없어도 **열은 남긴다** — 이 메뉴에는 아이콘 있는 줄이 섞여 있다
+            None => MenuRowIcon::Blank,
         }
     }
 }

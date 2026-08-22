@@ -744,12 +744,26 @@ pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
 /// 정렬이 두 곳에서 따로 정해져 어긋난다
 #[derive(Clone, Copy)]
 pub(crate) enum MenuRowIcon<'a> {
-    /// 아이콘이 없다 — 그래도 열은 자리를 지킨다
+    /// **아이콘 열 자체가 없다** — 아이콘을 쓰지 않는 메뉴(원격 목록·트리 즐겨찾기·드롭다운)가
+    /// 이것을 쓴다. 열을 만들면 그 메뉴들의 라벨이 통째로 오른쪽으로 밀린다
     None,
+    /// 아이콘은 없지만 **열은 자리를 지킨다** — 같은 메뉴 안에 아이콘 있는 줄이 섞여 있을 때다.
+    /// 비우지 않으면 줄마다 라벨이 다른 x에서 시작해 목록이 들쭉날쭉해진다
+    Blank,
     /// 셸이 준 비트맵
     Texture(&'a egui::TextureHandle),
     /// 아이콘 글꼴의 글리프 (프로젝트 아이콘 규약 — phosphor에서만 가져온다)
     Glyph(&'a str),
+}
+
+impl MenuRowIcon<'_> {
+    /// 이 줄에서 아이콘 열이 차지하는 너비 — 열이 없으면 0이다
+    fn column_width(self) -> f32 {
+        match self {
+            MenuRowIcon::None => 0.0,
+            _ => MENU_ICON_COLUMN_PX,
+        }
+    }
 }
 
 /// Win11 모양 메뉴 한 줄 — 아이콘 열·라벨·우측 단축키·하위 메뉴 화살표를 함께 그린다 (FR-8).
@@ -790,13 +804,14 @@ pub(crate) fn menu_row_rich(
         theme::TEXT_DIM
     };
 
-    // **아이콘 열은 아이콘이 없어도 자리를 지킨다** — 그러지 않으면 아이콘 있는 줄과 없는
-    // 줄의 라벨이 서로 다른 x에서 시작해 목록이 들쭉날쭉해진다
+    // 아이콘 열의 너비는 갈래가 정한다 — 아이콘을 쓰지 않는 메뉴는 0이라 라벨이 밀리지 않고,
+    // 섞여 있는 메뉴는 빈 줄도 자리를 지켜 라벨 x가 맞는다
     let column_left = rect.left() + theme::MENU_ITEM_PAD_X;
-    let icon_center = egui::pos2(column_left + MENU_ICON_COLUMN_PX / 2.0, rect.center().y);
+    let column_width = icon.column_width();
+    let icon_center = egui::pos2(column_left + column_width / 2.0, rect.center().y);
     let 아이콘_알파 = MENU_ICON_ALPHA[enabled as usize];
     match icon {
-        MenuRowIcon::None => {}
+        MenuRowIcon::None | MenuRowIcon::Blank => {}
         MenuRowIcon::Texture(texture) => {
             painter.image(
                 texture.id(),
@@ -846,10 +861,18 @@ pub(crate) fn menu_row_rich(
             + MENU_SHORTCUT_GAP_PX;
     }
 
-    // **라벨은 남은 폭에서 잘린다** — 셸 확장이 주는 긴 이름이 단축키·화살표를 덮거나 메뉴
-    // 밖으로 흘러넘치지 않게 한다. egui가 말줄임까지 해 준다
-    let text_left = column_left + MENU_ICON_COLUMN_PX;
-    let galley = painter.layout(label.to_owned(), font, 글자색, (right - text_left).max(0.0));
+    // **라벨은 남은 폭에서 한 줄로 잘린다** — 셸 확장이 주는 긴 이름이 단축키·화살표를 덮거나
+    // 메뉴 밖으로 흘러넘치지 않게 한다.
+    //
+    // `max_rows = 1`을 **반드시 적어야 한다** — 폭만 주면(`Painter::layout`) 말줄임이 아니라
+    // 다음 줄로 넘어가고, 행 높이는 28px로 고정이라 두 줄이 위아래 항목을 침범한다.
+    // `toggle_row`가 라벨을 자를 때 쓰는 것과 같은 관용구다
+    let text_left = column_left + column_width;
+    let mut job =
+        egui::text::LayoutJob::simple(label.to_owned(), font, 글자색, (right - text_left).max(0.0));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = painter.layout_job(job);
     painter.galley(
         egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
         galley,
