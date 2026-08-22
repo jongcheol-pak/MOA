@@ -1594,7 +1594,10 @@ impl PanelState {
                 // (`theme::MENU_CORNER_RADIUS`)
                 egui::Frame::menu(ui.style())
                     .fill(theme::SURFACE_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                    .stroke(egui::Stroke::new(
+                        theme::MENU_FRAME_STROKE,
+                        theme::PANE_BORDER,
+                    ))
                     .show(ui, |ui| {
                         chosen =
                             remote_menu::show_remote_menu(ui, picked.len(), connected, targets);

@@ -295,7 +295,10 @@ impl FolderTreeView {
                 // (`theme::MENU_CORNER_RADIUS`)
                 egui::Frame::menu(ui.style())
                     .fill(theme::SURFACE_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                    .stroke(egui::Stroke::new(
+                        theme::MENU_FRAME_STROKE,
+                        theme::PANE_BORDER,
+                    ))
                     .show(ui, |ui| {
                         ui.set_width(MENU_WIDTH);
                         match &target {

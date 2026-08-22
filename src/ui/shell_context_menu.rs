@@ -259,7 +259,10 @@ pub fn show_popup(
             // (`theme::MENU_CORNER_RADIUS`)
             egui::Frame::menu(ui.style())
                 .fill(theme::SURFACE_BG)
-                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                .stroke(egui::Stroke::new(
+                    theme::MENU_FRAME_STROKE,
+                    theme::PANE_BORDER,
+                ))
                 .show(ui, |ui| {
                     picked = show(ui, state, items, icons, max_height);
                 });
@@ -283,7 +286,10 @@ pub fn show_submenu_popup(
         .show(ctx, |ui| {
             egui::Frame::menu(ui.style())
                 .fill(theme::SURFACE_BG)
-                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                .stroke(egui::Stroke::new(
+                    theme::MENU_FRAME_STROKE,
+                    theme::PANE_BORDER,
+                ))
                 .show(ui, |ui| {
                     picked = show_submenu(ui, items, icons);
                 });
