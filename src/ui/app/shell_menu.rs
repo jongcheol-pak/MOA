@@ -246,11 +246,7 @@ impl ExplorerApp {
                 open.submenu = Some((handle, rows, icons));
             }
             shell_context_menu::ShellMenuPick::Command(id) => {
-                let owner = self
-                    .shell
-                    .as_ref()
-                    .map(|shell| shell.hwnd())
-                    .unwrap_or_default();
+                let owner = self.owner_hwnd();
                 // **닫고 나서 실행한다** — 셸 확장의 `InvokeCommand`는 새 창을 띄우거나 자기
                 // 메시지 펌프를 돌기도 해서, 그 사이에 다시 그려지면 이미 고른 메뉴가 화면에
                 // 남는다. 나머지 두 분기(`ShowMore`·`Action`)도 같은 순서다.
@@ -268,11 +264,7 @@ impl ExplorerApp {
                 }
             }
             shell_context_menu::ShellMenuPick::Action(action) => {
-                let owner = self
-                    .shell
-                    .as_ref()
-                    .map(|shell| shell.hwnd())
-                    .unwrap_or_default();
+                let owner = self.owner_hwnd();
                 // 무엇을 하든 메뉴를 **먼저 닫는다** — 셸 대화가 뜨는 갈래가 있어서다
                 let Some(open) = self.shell_menu.take() else {
                     return;

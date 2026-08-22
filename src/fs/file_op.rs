@@ -75,7 +75,7 @@ pub fn copy_into(
     let requested = sources.len();
     spawn_shell_op(done, wake, move || {
         // 결과 타입이 `FileOpOutcome`과 달라 조립만 따로 한다 — 워커 껍데기는 같이 쓴다
-        match perform(&dest, &sources, &owner) {
+        match perform(&dest, &sources, &owner, Transfer::Copy) {
             Ok(cancelled) => CopyOutcome {
                 requested,
                 cancelled,
@@ -90,6 +90,51 @@ pub fn copy_into(
     })
 }
 
+/// `sources`를 `dest` 폴더로 **옮긴다** — 곧바로 돌아오고 결과는 `done`으로 온다 (FR-64).
+///
+/// 잘라낸 것을 붙여넣는 길이다. `copy_into`와 갈라 두는 이유는 뜻이 다르기 때문이며
+/// (저쪽은 드래그 복사 FR-60, 이쪽은 클립보드 FR-64), 실제로 갈리는 것은 셸에 거는 명령
+/// 하나(`CopyItem` ↔ `MoveItem`)다 — 그것을 `perform`이 인자로 받는다.
+///
+/// `sources`가 비면 워커를 띄우지 않고 `false`를 돌려준다(`copy_into`와 같은 계약)
+pub fn move_into(
+    dest: PathBuf,
+    sources: Vec<PathBuf>,
+    owner: HWND,
+    done: Sender<CopyOutcome>,
+    wake: Wake,
+) -> bool {
+    if sources.is_empty() {
+        return false;
+    }
+    let owner = HwndSend(owner.0 as isize);
+    let requested = sources.len();
+    spawn_shell_op(done, wake, move || {
+        match perform(&dest, &sources, &owner, Transfer::Move) {
+            Ok(cancelled) => CopyOutcome {
+                requested,
+                cancelled,
+                error: None,
+            },
+            Err(error) => CopyOutcome {
+                requested,
+                cancelled: false,
+                error: Some(error),
+            },
+        }
+    })
+}
+
+/// 셸에 걸 전송 방식 — 복사인가 이동인가.
+///
+/// 불리언 대신 두는 이유: 호출부에서 `perform(dest, sources, owner, true)`가 무엇의
+/// 참인지 읽히지 않는다
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transfer {
+    Copy,
+    Move,
+}
+
 /// 실제 COM 호출 — 성공하면 `사용자가 그만뒀는가`를 돌려준다.
 ///
 /// **읽지 못하는 원본은 그것만 건너뛴다** — 여러 개를 끌어다 놓았는데 그 사이 하나가
@@ -97,7 +142,12 @@ pub fn copy_into(
 ///
 /// **여기서 화면 문구를 만들지 않는다** — 이 층은 `ui`를 모르고(AGENTS 계층 규약), 셸이
 /// 준 사유는 그대로 옮길 값이다
-fn perform(dest: &Path, sources: &[PathBuf], owner: &HwndSend) -> Result<bool, String> {
+fn perform(
+    dest: &Path,
+    sources: &[PathBuf],
+    owner: &HwndSend,
+    how: Transfer,
+) -> Result<bool, String> {
     // 안전성: 아래 호출은 모두 COM이 STA로 초기화된 이 스레드에서만 돌고, 얻은 인터페이스는
     // 이 함수 안에서만 살다 `Drop`으로 해제된다. 경로 문자열은 호출이 끝날 때까지 지역 소유다
     unsafe {
@@ -113,7 +163,11 @@ fn perform(dest: &Path, sources: &[PathBuf], owner: &HwndSend) -> Result<bool, S
             };
             // 사유를 만들지 않는다 — 이 실패는 그 항목만 건너뛰는 것이라 아무도 읽지 않는다.
             // 하나도 걸지 못한 경우의 사유는 아래에서 따로 만든다
-            if op.CopyItem(&item, &folder, PCWSTR::null(), None).is_ok() {
+            let queued_one = match how {
+                Transfer::Copy => op.CopyItem(&item, &folder, PCWSTR::null(), None),
+                Transfer::Move => op.MoveItem(&item, &folder, PCWSTR::null(), None),
+            };
+            if queued_one.is_ok() {
                 queued += 1;
             }
         }
@@ -437,6 +491,44 @@ mod tests {
             );
             assert!(!started, "{새_이름:?} 는 워커를 띄우지 않는다");
             assert!(rx.try_recv().is_err(), "결과도 오지 않는다");
+        }
+    }
+
+    #[test]
+    fn 대상이_없으면_워커를_띄우지_않는다() {
+        // 고른 것 없이 `Delete`·`Ctrl+V`를 눌렀을 때다 (FR-12) — 워커도, 결과도 없어야
+        // 부르는 쪽이 헛되이 기다리지 않는다
+        let (tx, rx) = channel();
+        assert!(!delete_items(
+            Vec::new(),
+            false,
+            HWND(std::ptr::null_mut()),
+            tx,
+            가짜_깨우기()
+        ));
+        assert!(rx.try_recv().is_err());
+
+        for 옮기기 in [false, true] {
+            let (tx, rx) = channel();
+            let 시작 = if 옮기기 {
+                move_into(
+                    PathBuf::from(r"C:\일"),
+                    Vec::new(),
+                    HWND(std::ptr::null_mut()),
+                    tx,
+                    가짜_깨우기(),
+                )
+            } else {
+                copy_into(
+                    PathBuf::from(r"C:\일"),
+                    Vec::new(),
+                    HWND(std::ptr::null_mut()),
+                    tx,
+                    가짜_깨우기(),
+                )
+            };
+            assert!(!시작, "옮기기={옮기기} 에서 워커가 떴다");
+            assert!(rx.try_recv().is_err());
         }
     }
 

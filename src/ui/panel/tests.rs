@@ -2852,3 +2852,19 @@ fn 표시_설정을_바꿔도_고치던_이름은_남는다() {
         "표시 설정을 바꿨다고 편집을 버려서는 안 된다"
     );
 }
+
+#[test]
+fn 고른_것이_없으면_파일_대상_명령은_대상을_얻지_못한다() {
+    // 고른 것 없이 `F2`·`Delete`·`Ctrl+C`를 눌렀을 때다 (FR-12) — 아무 일도 일어나지
+    // 않아야 한다. 실행하는 쪽(`ui::app`)이 보는 것은 이 두 값뿐이라 여기서 잡는다
+    let (mut panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    assert!(panel.selected_local().is_empty(), "고른 것이 없다");
+    assert!(!panel.begin_rename_selected(), "편집도 열리지 않는다");
+}
+
+#[test]
+fn 원격_탭에서는_로컬_대상_목록이_비어_있다() {
+    // 원격 탭의 삭제·클립보드는 로컬 경로를 얻지 못한다 — T11이 원격 기능으로 잇는다
+    let panel = panel_with_remote_tab("/pub");
+    assert!(panel.selected_local().is_empty());
+}

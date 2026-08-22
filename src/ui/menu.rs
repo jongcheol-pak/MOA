@@ -94,6 +94,26 @@ pub enum Command {
     /// 좌우로 나눠 열며(FR-35) 이 명령을 거치지 않는다.
     /// `SiteId`가 `Copy`라 이 열거형의 `Copy`도 유지된다
     OpenSiteTab(SiteId),
+    /// 고른 것 중 첫 항목의 이름을 목록에서 바로 고친다 (FR-12·FR-64) — `F2`.
+    ///
+    /// 여러 개를 골라 두어도 하나만 고친다(새 이름은 하나뿐이다 — 탐색기와 같다)
+    Rename,
+    /// 고른 것을 지운다 (FR-12·FR-64) — `Delete`는 휴지통, `Shift+Delete`는 곧바로.
+    ///
+    /// 확인 대화는 셸이 자기 정책대로 띄운다(우리가 묻지 않는다)
+    Delete {
+        permanent: bool,
+    },
+    /// 고른 것을 클립보드에 담는다 (FR-12·FR-64) — `Ctrl+C`
+    ClipboardCopy,
+    /// 고른 것을 잘라내기로 담는다 (FR-12·FR-64) — `Ctrl+X`.
+    ///
+    /// 담는 순간 원본이 사라지지는 않는다 — 붙여넣을 때 옮겨진다(탐색기와 같다)
+    ClipboardCut,
+    /// 클립보드에 담긴 것을 지금 폴더에 붙여넣는다 (FR-12·FR-64) — `Ctrl+V`.
+    ///
+    /// 복사로 담겼으면 복사하고 잘라내기로 담겼으면 옮긴다
+    ClipboardPaste,
 }
 
 /// 패널 메뉴 항목의 활성/비활성을 가르는 현재 상태
@@ -347,6 +367,12 @@ fn targets_file_list(command: Command) -> bool {
         | Command::StartUpdate
         | Command::OpenReleaseNotes
         | Command::OpenSiteTab(_) => false,
+        // 고른 항목이 대상이다 — 파일 목록이 키를 쥔 때만 나간다
+        Command::Rename
+        | Command::Delete { .. }
+        | Command::ClipboardCopy
+        | Command::ClipboardCut
+        | Command::ClipboardPaste => true,
     }
 }
 
@@ -382,7 +408,7 @@ pub fn poll_shortcuts(ctx: &egui::Context, owner: KeyOwner) -> Option<Command> {
 
 /// 단축키 → 명령 대응표 (현행 `app::menu::create_accels`와 같은 구성).
 /// 수식 키가 많은 조합을 앞에 두어 `Ctrl+Shift+\`가 `Ctrl+\`로 오인되지 않게 한다
-fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
+fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 21] {
     let ctrl_shift = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
     let ctrl_alt = egui::Modifiers::CTRL | egui::Modifiers::ALT;
     [
@@ -393,6 +419,15 @@ fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
             Command::Split(SplitTo::Down),
         ),
         (ctrl_shift, egui::Key::W, Command::ClosePanel),
+        // 탐색기와 같은 새 폴더 단축키 (FR-12) — `NewFolder`는 패널 메뉴에도 있다
+        (ctrl_shift, egui::Key::N, Command::NewFolder),
+        // **`Shift+Delete`가 `Delete`보다 앞이다** — 수식 키가 많은 조합을 먼저 본다는
+        // 이 표의 규칙 그대로다. 뒤집히면 영구 삭제가 휴지통 이동으로 읽힌다
+        (
+            egui::Modifiers::SHIFT,
+            egui::Key::Delete,
+            Command::Delete { permanent: true },
+        ),
         (
             egui::Modifiers::CTRL,
             egui::Key::Backslash,
@@ -424,7 +459,16 @@ fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
             Command::Forward,
         ),
         (egui::Modifiers::ALT, egui::Key::ArrowUp, Command::Up),
+        (egui::Modifiers::CTRL, egui::Key::C, Command::ClipboardCopy),
+        (egui::Modifiers::CTRL, egui::Key::X, Command::ClipboardCut),
+        (egui::Modifiers::CTRL, egui::Key::V, Command::ClipboardPaste),
         (egui::Modifiers::NONE, egui::Key::F5, Command::Refresh),
+        (egui::Modifiers::NONE, egui::Key::F2, Command::Rename),
+        (
+            egui::Modifiers::NONE,
+            egui::Key::Delete,
+            Command::Delete { permanent: false },
+        ),
     ]
 }
 
@@ -612,15 +656,91 @@ mod tests {
 
     #[test]
     fn 파일_대상_명령만_키_소유를_가린다() {
-        // T9 시점의 단축키는 **전부 탐색·분할·탭·보기**라 어느 영역이 키를 갖든 활성 패널로
-        // 간다 — 즉 이 task는 동작을 바꾸지 않는다. 파일 대상 명령(이름 바꾸기·삭제·클립보드)은
-        // T10이 더하며, 그때 이 판정이 실제로 갈리기 시작한다
-        for (_, _, command) in shortcut_table() {
-            assert!(
-                !targets_file_list(command),
-                "{command:?}가 파일 대상으로 분류됐다 — 이 task는 동작을 바꾸지 않아야 한다"
-            );
-        }
+        // 고른 항목을 건드리는 명령만 파일 목록이 키를 쥔 때 나간다 (FR-12) —
+        // 사이드바를 누른 뒤 `Delete`를 눌렀는데 파일이 지워지면 안 된다.
+        // 나머지(탐색·분할·탭·보기)는 어느 쪽을 눌렀든 활성 패널로 간다
+        let 파일_대상: Vec<Command> = shortcut_table()
+            .into_iter()
+            .map(|(_, _, command)| command)
+            .filter(|command| targets_file_list(*command))
+            .collect();
+        assert_eq!(
+            파일_대상,
+            vec![
+                Command::Delete { permanent: true },
+                Command::ClipboardCopy,
+                Command::ClipboardCut,
+                Command::ClipboardPaste,
+                Command::Rename,
+                Command::Delete { permanent: false },
+            ]
+        );
+        // 새 폴더는 **고른 것이 아니라 보고 있는 폴더**가 대상이라 여기 없다
+        assert!(!targets_file_list(Command::NewFolder));
+    }
+
+    #[test]
+    fn fr12_요청한_단축키_열하나가_모두_있다() {
+        // 사용자가 적어 준 목록 그대로다 (FR-12 — 2026-08-22 요청)
+        let table = shortcut_table();
+        let 찾기 = |modifiers, key| {
+            table
+                .iter()
+                .find(|(m, k, _)| *m == modifiers && *k == key)
+                .map(|(_, _, command)| *command)
+        };
+        let ctrl = egui::Modifiers::CTRL;
+        let ctrl_shift = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+        let none = egui::Modifiers::NONE;
+        assert_eq!(찾기(ctrl_shift, egui::Key::N), Some(Command::NewFolder));
+        assert_eq!(
+            찾기(egui::Modifiers::ALT, egui::Key::ArrowLeft),
+            Some(Command::Back)
+        );
+        assert_eq!(
+            찾기(egui::Modifiers::ALT, egui::Key::ArrowRight),
+            Some(Command::Forward)
+        );
+        assert_eq!(
+            찾기(egui::Modifiers::ALT, egui::Key::ArrowUp),
+            Some(Command::Up)
+        );
+        assert_eq!(찾기(none, egui::Key::F5), Some(Command::Refresh));
+        assert_eq!(찾기(none, egui::Key::F2), Some(Command::Rename));
+        assert_eq!(
+            찾기(none, egui::Key::Delete),
+            Some(Command::Delete { permanent: false })
+        );
+        assert_eq!(
+            찾기(egui::Modifiers::SHIFT, egui::Key::Delete),
+            Some(Command::Delete { permanent: true })
+        );
+        assert_eq!(찾기(ctrl, egui::Key::C), Some(Command::ClipboardCopy));
+        assert_eq!(찾기(ctrl, egui::Key::X), Some(Command::ClipboardCut));
+        assert_eq!(찾기(ctrl, egui::Key::V), Some(Command::ClipboardPaste));
+    }
+
+    #[test]
+    fn shift_delete가_delete보다_앞선다() {
+        // 수식 키가 많은 조합을 먼저 본다는 이 표의 규칙 그대로다 — 뒤집히면
+        // 영구 삭제가 휴지통 이동으로 읽힌다
+        let table = shortcut_table();
+        let 자리 = |modifiers, key| {
+            table
+                .iter()
+                .position(|(m, k, _)| *m == modifiers && *k == key)
+                .expect("표에 있어야 한다")
+        };
+        assert!(
+            자리(egui::Modifiers::SHIFT, egui::Key::Delete)
+                < 자리(egui::Modifiers::NONE, egui::Key::Delete)
+        );
+        // 새 폴더도 같은 규칙 — `Ctrl+Shift+N`이 있고 `Ctrl+N`은 두지 않았다
+        assert!(
+            !table
+                .iter()
+                .any(|(m, k, _)| *m == egui::Modifiers::CTRL && *k == egui::Key::N)
+        );
     }
 
     #[test]
@@ -790,13 +910,19 @@ mod tests {
     }
 
     #[test]
-    fn 무수식_키는_f5_외에_두지_않는다() {
-        // F2·Delete를 단축키로 두면 이름 편집 중 텍스트 입력을 가로챈다(현행과 같은 결정)
-        for (modifiers, key, _) in shortcut_table() {
-            if modifiers == egui::Modifiers::NONE {
-                assert_eq!(key, egui::Key::F5);
-            }
-        }
+    fn 무수식_키는_셋뿐이다() {
+        // `F5`·`F2`·`Delete` 셋만 수식 키 없이 받는다 (FR-12). 글자 키를 여기 더하면
+        // 이름 편집 중 텍스트 입력을 가로챈다 — `F2`·`Delete`는 글자가 아니고,
+        // 편집 중에는 `egui_wants_keyboard_input`이 먼저 걸러 낸다
+        let 무수식: Vec<egui::Key> = shortcut_table()
+            .into_iter()
+            .filter(|(modifiers, ..)| *modifiers == egui::Modifiers::NONE)
+            .map(|(_, key, _)| key)
+            .collect();
+        assert_eq!(
+            무수식,
+            vec![egui::Key::F5, egui::Key::F2, egui::Key::Delete]
+        );
     }
 
     #[test]

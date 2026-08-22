@@ -1801,6 +1801,16 @@ impl ExplorerApp {
                 // 하나도 없어도 그 페이지는 성립한다 (D10)
                 ctx.open_url(egui::OpenUrl::new_tab(crate::i18n::releases_url()));
             }
+            // 파일 대상 명령 — 셸에 걸려면 주인 창과 결과 채널이 필요해 여기서 따로 받는다
+            Command::Rename => {
+                if let Some(panel) = self.command_panel_mut(target) {
+                    panel.begin_rename_selected();
+                }
+            }
+            Command::Delete { permanent } => self.delete_selected(target, permanent),
+            Command::ClipboardCopy => self.clipboard_put(target, false),
+            Command::ClipboardCut => self.clipboard_put(target, true),
+            Command::ClipboardPaste => self.clipboard_paste(target),
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -2019,12 +2029,7 @@ impl ExplorerApp {
         dest: std::path::PathBuf,
         sources: Vec<std::path::PathBuf>,
     ) {
-        // 창을 얻지 못했으면 소유자 없이 건다 — 셸 대화가 앱 위에 서지 않을 뿐 복사는 된다
-        let owner = self
-            .shell
-            .as_ref()
-            .map(|shell| shell.hwnd())
-            .unwrap_or_default();
+        let owner = self.owner_hwnd();
         crate::fs::file_op::copy_into(
             dest,
             sources,
@@ -2073,6 +2078,105 @@ impl ExplorerApp {
     /// 알림이 둘이 된다. 복사(`pump_local_copy`)가 취소를 알리는 것은 **여러 개를 끌어다
     /// 놓은 뒤라 몇 개가 갔는지 목록만 보고는 알기 어렵기** 때문이며, 여기는 대상이 눈앞에
     /// 그대로 있어 그 어려움이 없다
+    /// 고른 것을 지운다 (FR-12·FR-64) — 확인 대화는 셸이 띄운다.
+    ///
+    /// 고른 것이 없으면 아무 일도 하지 않는다 — `Delete`를 헛눌렀을 때 대화만 뜨는 것보다
+    /// 조용한 편이 낫다. 원격 탭은 여기 오지 않는다(`selected_local`이 빈 목록을 준다)
+    fn delete_selected(&mut self, target: Option<PanelId>, permanent: bool) {
+        let owner = self.owner_hwnd();
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        let paths: Vec<std::path::PathBuf> = panel
+            .selected_local()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        crate::fs::file_op::delete_items(
+            paths,
+            permanent,
+            owner,
+            self.file_op_tx.clone(),
+            self.repaint.clone(),
+        );
+    }
+
+    /// 고른 것을 클립보드에 담는다 (FR-12·FR-64) — `cut`이면 잘라내기다.
+    ///
+    /// 담긴 뒤에만 화면의 잘라내기 표시를 손댄다 — 담기지 못했으면 클립보드에는 종전 것이
+    /// 그대로 남아 있어, 표시를 바꾸면 화면과 클립보드가 어긋난다
+    fn clipboard_put(&mut self, target: Option<PanelId>, cut: bool) {
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        let paths: Vec<std::path::PathBuf> = panel
+            .selected_local()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        if paths.is_empty() || !crate::fs::clipboard::put(&paths, cut) {
+            return;
+        }
+        if cut {
+            self.set_cut_marks(&paths);
+        } else {
+            self.clear_cut_marks();
+        }
+    }
+
+    /// 클립보드에 담긴 것을 지금 폴더에 붙여넣는다 (FR-12·FR-64).
+    ///
+    /// 복사로 담겼으면 복사하고 **잘라내기로 담겼으면 옮긴다** — 어느 쪽인지는 클립보드가
+    /// 함께 든 `Preferred DropEffect`가 말한다(탐색기가 담은 것도 같은 형식이라 그대로 읽힌다).
+    ///
+    /// 옮기기가 걸렸으면 잘라내기 표시를 푼다 — 셸이 실제로 옮기기를 마치기 전이지만,
+    /// 그 결과를 기다려 푸는 것은 워커가 돌아올 때까지 화면이 거짓을 보이게 한다
+    fn clipboard_paste(&mut self, target: Option<PanelId>) {
+        let Some(files) = crate::fs::clipboard::take() else {
+            return;
+        };
+        let owner = self.owner_hwnd();
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        // 원격 탭에는 붙여넣을 로컬 폴더가 없다 (plan Out of Scope — 전송은 큐가 담당한다)
+        if panel.is_remote() {
+            return;
+        }
+        let dest = panel.dir().to_path_buf();
+        let started = if files.cut {
+            crate::fs::file_op::move_into(
+                dest,
+                files.paths,
+                owner,
+                self.copy_tx.clone(),
+                self.repaint.clone(),
+            )
+        } else {
+            crate::fs::file_op::copy_into(
+                dest,
+                files.paths,
+                owner,
+                self.copy_tx.clone(),
+                self.repaint.clone(),
+            )
+        };
+        if started && files.cut {
+            self.clear_cut_marks();
+        }
+    }
+
+    /// 셸 대화·메뉴 실행의 **주인 창** — 창이 아직 없으면 주인 없이 띄운다.
+    ///
+    /// 창을 얻지 못했을 때 셸 대화가 앱 위에 서지 않을 뿐, 하려던 일은 그대로 된다.
+    /// 부르는 자리가 다섯이라 한 곳에 모았다(복사·이동·삭제·이름 바꾸기·메뉴 실행)
+    pub(super) fn owner_hwnd(&self) -> windows::Win32::Foundation::HWND {
+        self.shell
+            .as_ref()
+            .map(|shell| shell.hwnd())
+            .unwrap_or_default()
+    }
+
     /// 잘라내기 표시를 이 워크스페이스의 **모든 패널**에 건다 (FR-64).
     ///
     /// 표시를 연 패널에만 두지 않는 이유: 한쪽에서 잘라내 다른 쪽에 붙여넣는 것이 보통이라,
@@ -2098,11 +2202,7 @@ impl ExplorerApp {
     /// 성공했을 때 목록을 다시 읽지 않는 이유: 폴더 감시(FR-10)가 그 변화를 통지하며,
     /// 이는 메뉴에서 지웠을 때와 같은 처리다
     fn start_rename(&mut self, request: crate::ui::panel::RenameRequest) {
-        let owner = self
-            .shell
-            .as_ref()
-            .map(|shell| shell.hwnd())
-            .unwrap_or_default();
+        let owner = self.owner_hwnd();
         crate::fs::file_op::rename_item(
             request.path,
             request.new_name,
