@@ -731,8 +731,8 @@ impl PanelState {
 
     /// 원격 목록에서 고른 항목들 — 로컬 탭이면 빈 목록이다 (FR-39).
     ///
-    /// 우클릭 메뉴가 쓰던 것과 **같은 경로**다(`show_remote_menu`) — 단축키가 그 메뉴와
-    /// 다른 대상을 고르면 두 길의 결과가 갈린다
+    /// **우클릭 메뉴(`show_remote_menu`)와 단축키 라우팅이 함께 부른다** — 각자 고르면
+    /// 메뉴와 단축키가 다른 항목에 명령을 걸 수 있다
     pub fn selected_remote(&self) -> Vec<RemoteTarget> {
         let Some(dir) = self.tabs.active().source.remote_path() else {
             return Vec::new();
@@ -1667,11 +1667,14 @@ impl PanelState {
         targets: TransferTargets,
     ) -> Option<RemoteMenuPick> {
         let at = self.remote_menu_at?;
-        let Some(dir) = self.tabs.active().source.remote_path().cloned() else {
+        if !self.is_remote() {
+            // 원격 탭이 아니면 열 메뉴가 없다 — 요청도 함께 지운다
             self.remote_menu_at = None;
             return None;
-        };
-        let picked = self.list.selected_remote(&dir);
+        }
+        // 단축키 라우팅(`ui::app::remote::route_to_remote`)과 **같은 함수**로 대상을 고른다 —
+        // 두 길이 각자 고르면 메뉴와 단축키가 다른 항목에 명령을 걸 수 있다(품질 리뷰 S1)
+        let picked = self.selected_remote();
         let mut chosen = None;
         // 창 가장자리에서 눌러도 메뉴가 밖으로 넘어가지 않게 안으로 당긴다 — 셸 메뉴는
         // OS가 해 주는 일이라(D21) 우리가 그리는 이쪽에서는 직접 해야 한다 (quality 리뷰 m1)
