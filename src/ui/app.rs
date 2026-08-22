@@ -475,6 +475,10 @@ pub struct ExplorerApp {
     /// 마지막으로 관측한 사이드바 폭 — 세션 저장용
     sidebar_width: f32,
     sidebar_collapsed: bool,
+    /// 무수식 키(`F2`·`Delete`)를 받는 영역 (FR-12) — 마지막으로 누른 쪽이 갖는다.
+    ///
+    /// 세션에 담지 않는다: 앱을 다시 띄우면 아무것도 누르지 않은 상태이므로 기본값이 옳다
+    key_owner: menu::KeyOwner,
     /// 마지막으로 관측한 창 위치·크기 (최대화가 아닐 때만 갱신 — 최대화 상태를 저장하면
     /// 다음 실행에서 창을 되돌릴 "일반 크기"가 사라진다)
     window: WindowState,
@@ -701,6 +705,7 @@ impl ExplorerApp {
             sidebar: WorkspaceSidebar::new(),
             sidebar_width: SIDEBAR_DEFAULT_WIDTH as f32,
             sidebar_collapsed: false,
+            key_owner: menu::KeyOwner::default(),
             window: DEFAULT_WINDOW,
             restore_window: None,
             restoring_maximized: 0,
@@ -2233,6 +2238,9 @@ impl eframe::App for ExplorerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut menu = None;
+        // 키 소유는 그리기 클로저 안에서 옮겨진다 — 그 안은 `self`가 통째로 빌려져 있어
+        // 지역 값으로 들고 나와 클로저가 끝난 뒤에 돌려놓는다
+        let mut key_owner = self.key_owner;
         // 목록에서 확정된 이름 (FR-64) — 셸에 거는 것은 그리기가 끝난 뒤다
         let mut rename = None;
         let mut panel_command = None;
@@ -2286,6 +2294,10 @@ impl eframe::App for ExplorerApp {
                         ))
                         .frame(egui::Frame::NONE)
                         .show(ui, |ui| {
+                            // 이 프레임에 F2를 받을 자격을 먼저 알린다 (FR-12) —
+                            // 인자로 넘기지 않는 이유는 `set_owns_keys` 주석에 있다
+                            self.sidebar
+                                .set_owns_keys(key_owner == menu::KeyOwner::Sidebar);
                             self.sidebar.show(
                                 ui,
                                 &self.workspaces,
@@ -2296,6 +2308,19 @@ impl eframe::App for ExplorerApp {
                             )
                         });
                     self.sidebar_width = panel.response.rect.width();
+                    // 사이드바를 누른 프레임에는 무수식 키가 그쪽으로 간다 (FR-12).
+                    // 패널 쪽 전이는 아래 `show_layout`이 돌려주는 `pressed_panel`이 맡는다 —
+                    // 그 판정을 여기서 다시 하지 않는 이유는 분할 영역을 아직 모르기 때문이다
+                    let pressed_sidebar = ctx
+                        .input(|input| {
+                            input
+                                .pointer
+                                .any_pressed()
+                                .then(|| input.pointer.interact_pos())
+                        })
+                        .flatten()
+                        .is_some_and(|pos| panel.response.rect.contains(pos));
+                    key_owner = menu::next_key_owner(key_owner, pressed_sidebar, false);
                     // 조작은 모아 두었다가 아래에서 처리한다 — 연결은 분할 영역을 알아야 하는데
                     // 그 영역은 **사이드바를 뺀 나머지**라 여기서는 아직 정해지지 않았다
                     sidebar_actions = panel.inner;
@@ -2318,7 +2343,7 @@ impl eframe::App for ExplorerApp {
                 {
                     None
                 } else {
-                    menu::poll_shortcuts(&ctx)
+                    menu::poll_shortcuts(&ctx, self.key_owner)
                 };
                 // 단축키·타이틀바 명령은 대상을 지정하지 않는다 — 활성 패널에 적용된다
                 for command in shortcut_command.into_iter().chain(titlebar_command) {
@@ -2364,6 +2389,9 @@ impl eframe::App for ExplorerApp {
                     if let Some(pressed) = outcome.pressed_panel {
                         view.note_pressed(pressed);
                     }
+                    // 패널을 누르면 무수식 키가 파일 목록으로 돌아온다 (FR-12)
+                    key_owner =
+                        menu::next_key_owner(key_owner, false, outcome.pressed_panel.is_some());
                     menu = outcome.menu;
                     rename = outcome.rename;
                     panel_command = outcome.command;
@@ -2492,6 +2520,7 @@ impl eframe::App for ExplorerApp {
 
         // 우클릭 요청이 왔으면 **이 프레임 안에서** 메뉴를 연다 — `ShellMenu::open`은
         // 메시지 루프를 돌리지 않아(`TrackPopupMenuEx`와 다르다) 그리기 도중에 불러도 된다
+        self.key_owner = key_owner;
         if let Some(request) = rename {
             self.start_rename(request);
         }

@@ -291,14 +291,79 @@ fn item(
     }
 }
 
-/// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
+/// 무수식 키(`F2`·`Delete`)를 받는 영역 (FR-12).
 ///
-/// 무수식 키는 F5 말고는 단축키로 두지 않는다 — 이름 편집 중 텍스트 입력을 가로챈다(현행 판의 같은 결정).
-/// 메뉴에 적힌 F2는 사이드바가 직접 처리한다. 삭제는 키를 배정하지 않았다 —
-/// 지금 구조에서는 사이드바가 키를 **전역으로** 보기 때문에, Delete를 받으면 파일 목록에서 누른
-/// Delete까지 워크스페이스를 지운다. 카드에 포커스를 주고 `has_focus()`일 때만 받으면 해결되지만
-/// 그 전환은 사이드바 입력 전반에 걸쳐 있어 별도 작업으로 미뤘다(Deferred)
-pub fn poll_shortcuts(ctx: &egui::Context) -> Option<Command> {
+/// **마지막으로 조작한 쪽이 갖는다** — 탐색기와 같은 방식이다. 지금 갈라야 하는 것은 두
+/// 영역뿐이라 일반 포커스 체계(위젯별 포커스 링·Tab 순회)를 만들지 않는다.
+///
+/// `ui::app`이 이 값을 들고 `ui::menu`·`ui::sidebar`에 내려 준다 — 타입을 `ui::app`이 아니라
+/// 여기 두는 이유는 사이드바가 `ui::app`을 참조하게 되면 의존이 거꾸로 서기 때문이다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyOwner {
+    /// 파일 목록 — 앱이 막 떴을 때의 기본값이다(아무것도 누르지 않은 상태)
+    #[default]
+    FileList,
+    /// 워크스페이스 사이드바
+    Sidebar,
+}
+
+/// 이번 프레임에 눌린 자리로 키 소유를 옮긴다 (FR-12).
+///
+/// **누르지 않은 프레임에는 그대로 둔다** — 마우스가 지나가기만 해도 대상이 바뀌면
+/// `F2`가 어디로 갈지 예측할 수 없다(그래서 hover가 아니라 클릭으로 가른다).
+///
+/// 두 곳을 동시에 누를 수는 없지만 인자로는 그럴 수 있어, **사이드바를 먼저 본다** —
+/// 사이드바가 패널 위에 겹쳐 그려지므로 겹치는 자리는 사이드바의 것이다
+pub fn next_key_owner(current: KeyOwner, pressed_sidebar: bool, pressed_panel: bool) -> KeyOwner {
+    if pressed_sidebar {
+        KeyOwner::Sidebar
+    } else if pressed_panel {
+        KeyOwner::FileList
+    } else {
+        current
+    }
+}
+
+/// 이 명령이 **파일 목록의 고른 항목**을 대상으로 하는가 (FR-12).
+///
+/// 그런 명령은 파일 목록이 키를 가질 때만 듣는다 — 사이드바를 누른 뒤 `Delete`를 눌렀는데
+/// 파일이 지워지면 안 된다. 나머지(탐색·분할·탭·보기)는 어느 쪽을 눌렀든 활성 패널에 간다.
+///
+/// **망라 `match`로 적는다** — 새 명령을 더할 때 컴파일러가 이 판정을 묻게 한다
+fn targets_file_list(command: Command) -> bool {
+    match command {
+        Command::NewTab
+        | Command::CloseTab
+        | Command::Back
+        | Command::Forward
+        | Command::Up
+        | Command::Refresh
+        | Command::Split(_)
+        | Command::ClosePanel
+        | Command::NewFile
+        | Command::NewFolder
+        | Command::SetViewMode(_)
+        | Command::ToggleSidebar
+        | Command::OpenAppSettings
+        | Command::OpenLicenses
+        | Command::OpenAbout
+        | Command::CheckUpdate
+        | Command::StartUpdate
+        | Command::OpenReleaseNotes
+        | Command::OpenSiteTab(_) => false,
+    }
+}
+
+/// 이번 프레임에 눌린 단축키를 명령으로 바꾼다./// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
+///
+/// 무수식 키(`F2`·`Delete`·`F5`)도 여기서 받는다 — 이름 편집 중에는 아래 `egui_wants_keyboard_input`이
+/// 먼저 걸러 텍스트 입력을 가로채지 않는다.
+///
+/// **어느 영역이 키를 갖는지는 `owner`가 정한다** (FR-12). 사이드바가 키를 **전역으로** 보던
+/// 종전 구조에서는 파일 목록에서 누른 `F2`까지 워크스페이스 이름 편집을 열었다
+/// (`docs/plans/deferred.md` 2026-07-28). 이제 마지막으로 누른 영역이 키를 가지며,
+/// 파일 목록을 대상으로 하는 명령은 그쪽이 키를 쥔 때만 나간다
+pub fn poll_shortcuts(ctx: &egui::Context, owner: KeyOwner) -> Option<Command> {
     // 포커스를 가진 위젯이 있으면 단축키를 보지 않는다 — 주소창·이름 편집이 키를 먼저 가져간다.
     // 이 검사는 텍스트 입력뿐 아니라 포커스를 받은 위젯 전부를 덮는다(가로채기를 막는 쪽으로 넉넉하게)
     if ctx.egui_wants_keyboard_input() {
@@ -308,6 +373,11 @@ pub fn poll_shortcuts(ctx: &egui::Context) -> Option<Command> {
         shortcut_table()
             .into_iter()
             .find_map(|(modifiers, key, command)| {
+                // 파일 목록이 키를 갖지 않으면 그 대상 명령은 **소비하지도 않는다** —
+                // 소비해 버리면 그 키를 기다리던 다른 곳(사이드바)이 받지 못한다
+                if targets_file_list(command) && owner != KeyOwner::FileList {
+                    return None;
+                }
                 let shortcut = egui::KeyboardShortcut::new(modifiers, key);
                 input.consume_shortcut(&shortcut).then_some(command)
             })
@@ -528,6 +598,34 @@ mod tests {
                     "{command:?}의 단축키가 앞선 항목과 겹친다"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn 키_소유는_마지막으로_누른_영역이_갖는다() {
+        use KeyOwner::{FileList, Sidebar};
+        // 앱이 막 떴을 때는 파일 목록이다 — 아무것도 누르지 않았다
+        assert_eq!(KeyOwner::default(), FileList);
+        // 누른 자리로 옮겨 간다
+        assert_eq!(next_key_owner(FileList, true, false), Sidebar);
+        assert_eq!(next_key_owner(Sidebar, false, true), FileList);
+        // 누르지 않은 프레임에는 그대로다 — 마우스가 지나가기만 해서는 바뀌지 않는다
+        assert_eq!(next_key_owner(Sidebar, false, false), Sidebar);
+        assert_eq!(next_key_owner(FileList, false, false), FileList);
+        // 겹치는 자리는 사이드바의 것이다 — 사이드바가 패널 위에 그려진다
+        assert_eq!(next_key_owner(FileList, true, true), Sidebar);
+    }
+
+    #[test]
+    fn 파일_대상_명령만_키_소유를_가린다() {
+        // T9 시점의 단축키는 **전부 탐색·분할·탭·보기**라 어느 영역이 키를 갖든 활성 패널로
+        // 간다 — 즉 이 task는 동작을 바꾸지 않는다. 파일 대상 명령(이름 바꾸기·삭제·클립보드)은
+        // T10이 더하며, 그때 이 판정이 실제로 갈리기 시작한다
+        for (_, _, command) in shortcut_table() {
+            assert!(
+                !targets_file_list(command),
+                "{command:?}가 파일 대상으로 분류됐다 — 이 task는 동작을 바꾸지 않아야 한다"
+            );
         }
     }
 
