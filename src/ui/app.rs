@@ -2148,7 +2148,18 @@ impl ExplorerApp {
     /// 옮기기가 걸렸으면 잘라내기 표시를 푼다 — 셸이 실제로 옮기기를 마치기 전이지만,
     /// 그 결과를 기다려 푸는 것은 워커가 돌아올 때까지 화면이 거짓을 보이게 한다
     fn clipboard_paste(&mut self, target: Option<PanelId>) {
-        let Some(files) = crate::fs::clipboard::take() else {
+        let files = crate::fs::clipboard::take();
+        // **읽은 값으로 화면의 잘라내기 표시부터 맞춘다** (FR-64 세 번째 해제 조건).
+        // 우리가 잘라낸 뒤 다른 앱이 클립보드를 가져갔으면 흐린 줄은 이미 클립보드에 없는
+        // 것을 가리킨다 — 여기서 풀지 않으면 영영 흐린 채 남는다. **붙여넣기에 성공했을
+        // 때가 아니라 눌렀을 때** 맞추는 것이 요점이라, 아래 되돌아가는 갈래보다 앞에 둔다
+        let marks = crate::fs::clipboard::cut_marks_for(files.as_ref()).to_vec();
+        if marks.is_empty() {
+            self.clear_cut_marks();
+        } else {
+            self.set_cut_marks(&marks);
+        }
+        let Some(files) = files else {
             return;
         };
         let owner = self.owner_hwnd();

@@ -64,6 +64,24 @@ pub fn put(paths: &[PathBuf], cut: bool) -> bool {
     }
 }
 
+/// 클립보드가 지금 든 것으로 **화면에 흐리게 그릴 경로**를 정한다 (FR-64).
+///
+/// 잘라내기로 담긴 것만 표시 대상이다 — 복사로 담겼거나(원본이 그대로 남는다) 담긴 것이
+/// 파일이 아니면(`None`) 빈 목록이며, 그것이 곧 **표시를 푼다**는 뜻이다.
+///
+/// **다른 앱이 클립보드를 가져간 경우가 이 함수의 존재 이유다** — 우리가 잘라낸 뒤 탐색기에서
+/// `Ctrl+C`를 누르면 우리 화면의 흐린 줄은 이미 클립보드에 없는 것을 가리킨다. 그것을 그대로
+/// 두면 영영 흐린 채 남는다.
+///
+/// **프레임마다 묻지 않는다** — `OleGetClipboard`는 COM 호출이라 매 프레임 도는 자리에 둘 수
+/// 없다. 부르는 쪽이 붙여넣기·담기 시점에만 묻는다
+pub fn cut_marks_for(files: Option<&ClipboardFiles>) -> &[PathBuf] {
+    match files {
+        Some(files) if files.cut => &files.paths,
+        _ => &[],
+    }
+}
+
 /// 클립보드에 담긴 파일 목록을 읽는다 — 파일이 아니면 `None` (FR-64).
 ///
 /// 탐색기·다른 앱이 담은 것도 같은 형식이라 그대로 읽힌다
@@ -307,6 +325,36 @@ mod tests {
         // 고른 것 없이 `Ctrl+C`·`Ctrl+X`를 누르는 길이 여기로 온다 (FR-12)
         assert!(!put(&[], false));
         assert!(!put(&[], true));
+    }
+
+    #[test]
+    fn 표시_대상은_잘라내기로_담긴_것뿐이다() {
+        // FR-64 세 번째 해제 조건 — 다른 앱이 클립보드를 가져가면 우리 표시도 따라간다
+        let 잘라냄 = ClipboardFiles {
+            paths: vec![PathBuf::from(r"C:\일\a.txt"), PathBuf::from(r"C:\일\b.txt")],
+            cut: true,
+        };
+        assert_eq!(cut_marks_for(Some(&잘라냄)), 잘라냄.paths.as_slice());
+
+        // 다른 앱이 **복사**로 담았다 — 원본이 그대로 남으므로 흐리게 그릴 것이 없다
+        let 복사됨 = ClipboardFiles {
+            paths: vec![PathBuf::from(r"C:\남의\c.txt")],
+            cut: false,
+        };
+        assert!(cut_marks_for(Some(&복사됨)).is_empty());
+
+        // 다른 앱이 **다른 것을 잘라냈다** — 표시가 그쪽으로 옮겨 간다
+        let 남의_잘라내기 = ClipboardFiles {
+            paths: vec![PathBuf::from(r"D:\다른\d.txt")],
+            cut: true,
+        };
+        assert_eq!(
+            cut_marks_for(Some(&남의_잘라내기)),
+            남의_잘라내기.paths.as_slice()
+        );
+
+        // 클립보드에 파일이 없다(글자만 담겼거나 다른 앱이 쥐고 있어 읽지 못했다)
+        assert!(cut_marks_for(None).is_empty());
     }
 
     #[test]
