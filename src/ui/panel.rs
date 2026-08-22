@@ -631,7 +631,7 @@ impl PanelState {
             let was_active = index == self.tabs.active_index();
             if let CloseOutcome::Removed(_) = self.tabs.close(index) {
                 if was_active {
-                    self.reload_active_tab(ctx);
+                    self.switch_active_tab(ctx);
                 }
             } else {
                 // 이 패널에 남은 탭이 그것 하나다 — 탭 목록은 비울 수 없다
@@ -898,18 +898,25 @@ impl PanelState {
     /// 주소창은 이 탭을, 목록은 저 탭의 폴더를 보이게 된다. 그 위에서 연 원격 메뉴는
     /// **화면에 없는 경로**에 삭제·권한 변경을 걸 수 있다(로컬은 종전부터 다시 읽어 왔고,
     /// 원격만 빠져 있었다)
-    fn reload_active_tab(&mut self, ctx: &egui::Context) {
-        // 활성 탭을 **다시 읽는 길**에서는 고치던 이름을 버린다 (FR-64 Edge Case).
-        // 여기로 오는 것은 탭 전환·탭 닫기·새 탭·사이트 탭 거두기, 그리고 표시 규칙(숨김·시스템)
-        // 변경이다 — 어느 쪽이든 보고 있던 것이 통째로 바뀐다.
-        //
-        // **폴더가 바뀌는지로 가릴 수 없다** — 두 탭이 같은 폴더를 보고 있으면
-        // `FileListView::drop_rename_on_dir_change`가 아무 일도 하지 않아, 옮겨 간 탭에서
-        // 편집이 그대로 살아 있게 된다(spec 리뷰 N1).
-        //
-        // **감시 갱신(FR-10)은 이 길로 오지 않는다** — `poll_watch`가 `start_load`를 곧바로
-        // 불러, 폴더가 밖에서 바뀌어도 편집은 유지된다(그쪽이 plan의 Edge Case다)
+    /// 활성 탭이 **바뀌었을** 때 그 탭의 것을 다시 읽는다 (FR-64 Edge Case).
+    ///
+    /// `reload_active_tab`과 갈라 두는 이유는 하나다 — **고치던 이름을 접는 것은 탭이
+    /// 바뀔 때뿐**이다. 표시 규칙(숨김·시스템)이 바뀌어 같은 탭·같은 폴더를 다시 읽는 길은
+    /// 편집을 그대로 둬야 한다: 그 체크박스를 누르는 것은 마우스 조작이라 입력칸의 포커스를
+    /// 뺏지 않는데, 거기서 편집을 버리면 입력하던 이름이 예고 없이 사라진다(품질 리뷰 M1).
+    ///
+    /// **폴더가 바뀌는지로는 가릴 수 없다** — 두 탭이 같은 폴더를 보고 있으면
+    /// `FileListView::drop_rename_on_dir_change`가 아무 일도 하지 않아, 옮겨 간 탭에서
+    /// 편집이 그대로 살아 있게 된다(spec 리뷰 N1).
+    ///
+    /// **감시 갱신(FR-10)도 이 길로 오지 않는다** — `poll_watch`가 `start_load`를 곧바로
+    /// 불러, 폴더가 밖에서 바뀌어도 편집은 유지된다(plan Edge Case 그대로)
+    fn switch_active_tab(&mut self, ctx: &egui::Context) {
         self.list.cancel_rename();
+        self.reload_active_tab(ctx);
+    }
+
+    fn reload_active_tab(&mut self, ctx: &egui::Context) {
         match self.tabs.active().source.local_path() {
             Some(path) => {
                 let path = path.to_path_buf();
@@ -1051,7 +1058,7 @@ impl PanelState {
                 if self.tabs.switch(index) {
                     // 탭마다 소스가 다르므로 전환하면 그 탭의 것을 다시 읽는다.
                     // 히스토리는 이미 그 탭의 것이라 손대지 않는다
-                    self.reload_active_tab(ctx);
+                    self.switch_active_tab(ctx);
                 }
             }
             TabAction::Close(index) => {
@@ -1068,7 +1075,7 @@ impl PanelState {
                     });
                 if let CloseOutcome::Removed(_) = self.tabs.close(index) {
                     if was_active {
-                        self.reload_active_tab(ctx);
+                        self.switch_active_tab(ctx);
                     }
                     // 이 패널의 마지막 원격 탭이었으면 연결을 접는다 (FR-32·README §3)
                     if let Some(conn) = closing
@@ -1097,7 +1104,7 @@ impl PanelState {
                 self.tabs.add(TabState::new(path));
                 // `start_load`를 곧바로 부르지 않는다 — 새 탭도 **활성 탭이 바뀌는 길**이라
                 // 고치던 이름을 접어야 하고, 그 규칙은 이 함수 하나에 있다
-                self.reload_active_tab(ctx);
+                self.switch_active_tab(ctx);
             }
         }
         None

@@ -2831,3 +2831,24 @@ fn 잘라내기_표시는_패널을_거쳐_목록에_닿는다() {
     panel.clear_cut_marks();
     assert!(!panel.list.is_cut(std::path::Path::new(r"C:\테스트\a.txt")));
 }
+
+#[test]
+fn 표시_설정을_바꿔도_고치던_이름은_남는다() {
+    // 숨김·시스템 표시를 켜면 같은 폴더를 다시 읽지만 탭은 그대로다 — 그 체크박스는
+    // 마우스로 누르는 것이라 입력칸의 포커스를 뺏지 않는데, 거기서 편집을 버리면
+    // 입력하던 이름이 예고 없이 사라진다 (품질 리뷰 M1)
+    let (mut panel, ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    assert!(panel.list.begin_rename(1), "편집이 열려야 한다");
+    panel.apply_display_rules(
+        DisplayRules {
+            show_extensions: true,
+            show_hidden: false,
+            show_system: true,
+        },
+        &ctx,
+    );
+    assert!(
+        panel.list.is_renaming(),
+        "표시 설정을 바꿨다고 편집을 버려서는 안 된다"
+    );
+}
