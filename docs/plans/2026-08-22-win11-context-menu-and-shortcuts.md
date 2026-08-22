@@ -358,7 +358,7 @@
 - [ ] T7. 메뉴 화면 밖 보정을 실측 값으로 바꾼다
   - **Type**: C
   - **Design**: ① `src/ui/menu.rs`(`clamp_menu_pos` 옆) ② `pub(crate) fn menu_frame_pad(ui: &egui::Ui) -> egui::Vec2` — `Frame::menu`가 쓰는 여백·테두리 굵기·그림자 확장을 egui 스타일에서 읽어 더한다 ③ **이 함수를 쓰는 메뉴는 셋이며 이 task가 셋 다 붙인다** — ⓐ `ui::remote_menu::FRAME_PAD`(`remote_menu.rs:203`, 사용 `197`·`198`) ⓑ `ui::tree::MENU_FRAME_PAD`(`tree.rs:108`, 사용 `287`·`288`) 두 어림 상수를 지우고 호출로 바꾸며, ⓒ **T5·T6이 만든 새 메뉴(`ui::shell_context_menu`)의 크기 산출에도 이 여백을 더한다**. T7이 T5·T6 뒤에 오는 이유가 ⓒ다 — 그 파일이 있어야 붙일 수 있다 ④ **비추상화 선언**: 「메뉴 배치기」 타입을 만들지 않는다 — 필요한 것은 함수 하나다
-  - **Acceptance**: Given 기본 다크 스타일, When `menu_frame_pad`를 부르면, Then `Frame::menu`의 실제 여백·테두리 합과 같다(egui 스타일 값으로 단언하는 단위 시험). Given `grep -rn "FRAME_PAD" src/ui`, When 검색하면, Then **0 hit**이다(`MENU_FRAME_PAD`도 이 문자열을 포함하므로 `tree.rs`의 사본까지 함께 지워야 통과한다)
+  - **Acceptance**: Given 기본 다크 스타일, When `menu_frame_pad`를 부르면, Then `Frame::menu`의 실제 여백·테두리 합과 같다(egui 스타일 값으로 단언하는 단위 시험). Given `grep -rn "const .*FRAME_PAD" src/ui`, When 검색하면, Then **정의가 0건**이다 — `remote_menu::FRAME_PAD`와 `tree::MENU_FRAME_PAD` 둘 다 사라져야 통과한다(**주석에 그 이름이 이력으로 남는 것은 무방하다** — 재는 것은 실제로 쓰이는 상수다. T4에서 같은 이유로 측정 명령을 고쳤다)
   - **Files**:
     - 주: `src/ui/menu.rs`, `src/ui/remote_menu.rs`, `src/ui/tree.rs`
     - 동반: `src/ui/shell_context_menu.rs`(T5 산출물 — 새 메뉴의 크기 산출에 여백을 더한다. Design ③ⓒ)

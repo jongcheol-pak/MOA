@@ -375,9 +375,56 @@ pub(crate) fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec
     )
 }
 
+/// 팝업 **프레임**이 안쪽 내용 밖에 더 차지하는 크기 — 화면 밖 보정에 더한다.
+///
+/// `Frame::menu`가 스타일에서 읽어 가는 것 그대로를 읽는다(egui `Frame::menu` 정의):
+/// 안쪽 여백(`spacing.menu_margin`)과 테두리 두께(`visuals.window_stroke`)다.
+///
+/// **그림자는 세지 않는다** — 그것은 프레임 **밖에** 번지는 그리기라 자리를 차지하지 않고,
+/// 화면 끝에서 잘려도 메뉴 내용이 가려지지 않는다.
+///
+/// 종전에는 세 메뉴가 각자 `8.0`이라는 어림값을 적고 있었다(`remote_menu::FRAME_PAD`·
+/// `tree::MENU_FRAME_PAD`). 값이 스타일과 어긋나면 메뉴가 화면 끝에서 잘리거나 쓸데없이
+/// 안으로 당겨진다
+pub(crate) fn menu_frame_pad(style: &egui::Style) -> egui::Vec2 {
+    let margin = style.spacing.menu_margin;
+    let stroke = style.visuals.window_stroke().width;
+    egui::vec2(
+        (margin.left + margin.right) as f32 + stroke * 2.0,
+        (margin.top + margin.bottom) as f32 + stroke * 2.0,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 프레임_여백은_스타일에서_읽는다() {
+        // 어림값이 아니라 `Frame::menu`가 실제로 쓰는 값을 읽어야 한다 —
+        // 어긋나면 메뉴가 화면 끝에서 잘리거나 쓸데없이 안으로 당겨진다
+        let mut style = egui::Style::default();
+        style.spacing.menu_margin = egui::Margin::same(7);
+        style.visuals.window_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
+        let pad = menu_frame_pad(&style);
+        assert_eq!(pad.x, 7.0 * 2.0 + 2.0 * 2.0, "좌우 여백 + 테두리 양쪽");
+        assert_eq!(pad.y, 7.0 * 2.0 + 2.0 * 2.0, "위아래도 같은 규칙");
+    }
+
+    #[test]
+    fn 여백이_0인_스타일에서는_보태지_않는다() {
+        // 그림자는 세지 않는다 — 프레임 밖에 번지는 그리기라 자리를 차지하지 않는다
+        let mut style = egui::Style::default();
+        style.spacing.menu_margin = egui::Margin::ZERO;
+        style.visuals.window_stroke = egui::Stroke::NONE;
+        style.visuals.popup_shadow = egui::epaint::Shadow {
+            offset: [0, 0],
+            blur: 40,
+            spread: 40,
+            color: egui::Color32::BLACK,
+        };
+        assert_eq!(menu_frame_pad(&style), egui::Vec2::ZERO);
+    }
 
     #[test]
     fn 네_방향은_축과_배치로_정확히_갈린다() {

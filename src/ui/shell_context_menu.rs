@@ -349,25 +349,31 @@ fn action_row(ui: &mut egui::Ui, state: MenuState) -> Option<MenuAction> {
 
 /// 이 메뉴가 차지할 크기 — 화면 밖으로 나가지 않게 미리 재는 데 쓴다.
 ///
-/// 프레임 여백은 더하지 않는다 — 그 몫은 `ui::menu::menu_frame_pad`가 따로 잰다(T7).
+/// **프레임 여백까지 더한 값이다** — 화면 밖 보정은 실제로 차지하는 자리를 알아야 한다.
+/// 그 여백은 `ui::menu::menu_frame_pad`가 스타일에서 읽는다(원격 메뉴·트리 메뉴와 같은 값).
 ///
 /// **`ui`를 받는 이유는 위젯 사이 간격 때문이다** — egui는 위젯을 하나 놓을 때마다
 /// `item_spacing.y`를 더하는데, 그 값이 스타일에 있어 상수로 적어 두면 스타일이 바뀔 때
 /// 조용히 어긋난다. 실제로 그것을 빼고 세었더니 줄마다 3px씩 모자랐다
 pub fn menu_size(ui: &egui::Ui, items: &[ShellMenuItem]) -> egui::Vec2 {
     let (rows, separators) = count_rows(items);
-    egui::vec2(
+    let inner = egui::vec2(
         MENU_WIDTH,
         menu_height(rows, separators, ui.spacing().item_spacing.y),
-    )
+    );
+    inner + crate::ui::menu::menu_frame_pad(ui.style())
 }
 
 /// 위와 같되 `Ui`가 아직 없는 자리에서 쓴다 — 메뉴를 **열기 전에** 자리를 정해야 하는
 /// `ui::app`이 그렇다. 스타일은 컨텍스트에서 읽는다
 pub fn menu_size_at(ctx: &egui::Context, items: &[ShellMenuItem]) -> egui::Vec2 {
     let (rows, separators) = count_rows(items);
-    let gap = ctx.style_of(ctx.theme()).spacing.item_spacing.y;
-    egui::vec2(MENU_WIDTH, menu_height(rows, separators, gap))
+    let style = ctx.style_of(ctx.theme());
+    let inner = egui::vec2(
+        MENU_WIDTH,
+        menu_height(rows, separators, style.spacing.item_spacing.y),
+    );
+    inner + crate::ui::menu::menu_frame_pad(&style)
 }
 
 /// 하위 메뉴 한 판을 그린다 — 아이콘 줄도 `추가 옵션 표시`도 없는 **줄 목록뿐**이다.

@@ -190,17 +190,27 @@ pub fn menu_rows(selected: usize, connected: bool, targets: TransferTargets) -> 
 ///
 /// 테두리·구분선까지 정확히 재지 않는다 — 조금 넉넉하게 잡으면 안쪽으로 더 당겨질 뿐이라
 /// 잘리는 것보다 낫다
-pub fn menu_size() -> egui::Vec2 {
+pub fn menu_size(style: &egui::Style) -> egui::Vec2 {
     // 줄 **수**만 센다 — 비활성 줄도 그려지므로 대상 유무는 높이를 바꾸지 않는다
-    let rows = menu_rows(0, false, TransferTargets::default()).len() as f32;
-    egui::vec2(
-        MENU_WIDTH + FRAME_PAD * 2.0,
-        rows * theme::MENU_ITEM_HEIGHT + FRAME_PAD * 4.0,
-    )
+    let rows = menu_rows(0, false, TransferTargets::default()).len();
+    let 구분선 = menu_rows(0, false, TransferTargets::default())
+        .iter()
+        .filter(|row| row.separator_before)
+        .count();
+    // 줄 사이 간격까지 센다 — egui가 위젯마다 `item_spacing.y`를 더한다
+    let gap = style.spacing.item_spacing.y;
+    let inner = egui::vec2(
+        MENU_WIDTH,
+        theme::MENU_ITEM_HEIGHT * rows as f32
+            + SEPARATOR_HEIGHT * 구분선 as f32
+            + gap * (rows + 구분선).saturating_sub(1) as f32,
+    );
+    inner + crate::ui::menu::menu_frame_pad(style)
 }
 
-/// 메뉴 테두리와 안쪽 여백을 어림한 값
-const FRAME_PAD: f32 = 8.0;
+/// 구분선 한 줄이 차지하는 높이 — egui `Separator`의 기본 `spacing`이다
+/// (`ui::shell_context_menu`의 같은 값과 근거가 같다)
+const SEPARATOR_HEIGHT: f32 = 6.0;
 
 /// 원격 이름으로 쓸 수 있는가 (plan Edge Case).
 ///

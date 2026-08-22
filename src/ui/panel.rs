@@ -1585,7 +1585,7 @@ impl PanelState {
         // 창 가장자리에서 눌러도 메뉴가 밖으로 넘어가지 않게 안으로 당긴다 — 셸 메뉴는
         // OS가 해 주는 일이라(D21) 우리가 그리는 이쪽에서는 직접 해야 한다 (quality 리뷰 m1)
         let viewport = ui.ctx().input(|input| input.viewport_rect());
-        let at = clamp_menu_pos(viewport, at, remote_menu::menu_size());
+        let at = clamp_menu_pos(viewport, at, remote_menu::menu_size(ui.style()));
         let response = egui::Area::new(ui.id().with("원격 메뉴"))
             .order(egui::Order::Foreground)
             .fixed_pos(at)
