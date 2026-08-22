@@ -317,9 +317,18 @@ fn show_update_badge(ui: &mut egui::Ui, badge: UpdateBadge) -> Option<Command> {
     };
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TITLEBAR_HEIGHT), sense);
     // **받는 중에는 hover 배경을 칠하지 않는다** — 누를 수 없는데 눌릴 것처럼 보이면
-    // 반응이 없는 것이 고장으로 읽힌다(`Sense::hover()`도 hover 자체는 참이 된다)
+    // 반응이 없는 것이 고장으로 읽힌다(`Sense::hover()`도 hover 자체는 참이 된다).
+    //
+    // **`widgets::hover_backdrop`을 쓰지 않는다** — 그것은 짧은 변을 한 변으로 삼아
+    // 정사각형을 그리는 아이콘 버튼용이라, 폭이 높이의 두세 배인 이 배지에서는 가운데
+    // 36px만 칠해져 글자가 배경 밖으로 삐져나온다(2026-08-22 사용자 보고).
+    // 자리를 그대로 칠하되 모서리 반경은 같은 값을 써 다른 버튼과 같은 표식으로 보인다
     if !badge.downloading && response.hovered() {
-        crate::ui::widgets::hover_backdrop(ui.painter(), rect, theme::CONTROL_HOT);
+        ui.painter().rect_filled(
+            rect,
+            crate::ui::widgets::HOVER_CORNER_RADIUS,
+            theme::CONTROL_HOT,
+        );
     }
 
     let (icon, label) = badge_parts(badge);
@@ -365,10 +374,20 @@ fn draw_spinner(ui: &egui::Ui, icon: &str, center: egui::Pos2, font: &egui::Font
         .painter()
         .layout_no_wrap(icon.to_owned(), font.clone(), theme::TEXT);
     ui.painter().add(
-        egui::epaint::TextShape::new(center, galley, theme::TEXT)
+        egui::epaint::TextShape::new(text_top_left(center, galley.size()), galley, theme::TEXT)
             .with_angle_and_anchor(angle, egui::Align2::CENTER_CENTER),
     );
     ui.ctx().request_repaint();
+}
+
+/// 글자 덩어리를 `center`에 **가운데 맞춰** 놓으려면 좌상단을 어디에 두어야 하는가.
+///
+/// **`TextShape::pos`는 가운데가 아니라 글자의 좌상단이다** — 중심 좌표를 그대로 넘기면
+/// 글자가 그만큼 오른쪽 아래로 밀려 그려진다(2026-08-22 사용자 보고: 도는 아이콘이 문구보다
+/// 아래에 떴다). `with_angle_and_anchor`는 **회전 축**만 정할 뿐 이 해석을 바꾸지 않는다 —
+/// `painter().text(…, Align2::CENTER_CENTER, …)`가 안에서 해 주던 보정을 직접 해야 한다
+fn text_top_left(center: egui::Pos2, size: egui::Vec2) -> egui::Pos2 {
+    center - size / 2.0
 }
 
 /// 배지에 그릴 아이콘과 글자 — 받는 중인지에 따라 갈린다.
@@ -670,6 +689,20 @@ mod tests {
         // 어정쩡한 상태가 된다. 이 분기는 `resize_direction`이 아니라 여기 있어 Context가 필요하다
         let ctx = egui::Context::default();
         assert_eq!(show_resize_handles(&ctx, true, RIGHT_GROUP_BASE), None);
+    }
+
+    #[test]
+    fn 도는_아이콘은_가운데에_놓인다() {
+        // `TextShape::pos`는 좌상단이라 중심을 그대로 넘기면 글자가 오른쪽 아래로 밀린다 —
+        // 실제로 도는 아이콘이 문구보다 아래에 떴다(2026-08-22 사용자 보고)
+        let center = egui::pos2(100.0, 18.0);
+        let size = egui::vec2(14.0, 20.0);
+        let top_left = text_top_left(center, size);
+
+        assert_eq!(top_left, egui::pos2(93.0, 8.0));
+        // 좌상단에서 크기만큼 내려온 사각형의 한가운데가 다시 `center`여야 한다
+        let drawn = egui::Rect::from_min_size(top_left, size);
+        assert_eq!(drawn.center(), center, "그려진 자리의 가운데가 어긋난다");
     }
 
     #[test]
