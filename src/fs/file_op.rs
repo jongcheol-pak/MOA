@@ -121,10 +121,7 @@ fn perform(dest: &Path, sources: &[PathBuf], owner: &HwndSend) -> Result<bool, S
             return Err(crate::i18n::copy_no_source().to_owned());
         }
         op.PerformOperations().map_err(|err| err.message())?;
-        Ok(op
-            .GetAnyOperationsAborted()
-            .map(|aborted| aborted.as_bool())
-            .unwrap_or(false))
+        Ok(aborted(&op))
     }
 }
 

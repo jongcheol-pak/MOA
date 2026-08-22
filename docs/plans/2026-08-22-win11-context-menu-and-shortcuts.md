@@ -274,7 +274,7 @@
     - (i) 세 경로의 픽셀 후처리가 미묘하게 달라 합치면 화면이 바뀔 수 있다 → Design ④가 후처리를 옮기지 않도록 못 박았다
   - **Depends on**: -
 
-- [ ] T2. 로컬 이름 바꾸기·삭제를 `fs::file_op`에 더한다
+- [x] T2. 로컬 이름 바꾸기·삭제를 `fs::file_op`에 더한다
   - **Type**: C
   - **Design**: ① `src/fs/file_op.rs`(기존 모듈) ② `pub fn rename_item(path, new_name, owner, done, wake) -> bool` / `pub fn delete_items(paths, permanent: bool, owner, done, wake) -> bool` — 둘 다 `copy_into`와 같이 **곧바로 돌아오고 결과는 채널로** 온다. 결과 타입은 기존 `CopyOutcome`을 일반화하지 않고 `OpOutcome { requested, cancelled, error }`를 새로 두되 필드는 같게 한다 ③ 기존 `perform`의 COM 셋업·`shell_item` 헬퍼를 그대로 쓴다. `ui` 계층은 이 모듈을 모른다 ④ **비추상화 선언**: 세 작업(복사·이름·삭제)을 공통 `enum FileOp`로 묶지 않는다 — 인자가 서로 다르고(대상 폴더 vs 새 이름 vs 영구 여부) 묶으면 호출부가 매번 쓰지 않는 필드를 채우게 된다
   - **Acceptance**: Given 빈 대상 목록, When `delete_items`를 부르면, Then 워커를 띄우지 않고 `false`를 돌려준다(기존 `원본이_없으면_워커를_띄우지_않는다`와 같은 계약). Given `permanent = false`, When 삭제 플래그를 만들면, Then `FOF_ALLOWUNDO`가 켜지고 `permanent = true`면 꺼진다(플래그 산출 함수 단위 시험)
@@ -455,7 +455,15 @@
 
 ## Retry Ledger
 
+- T2: 리뷰 지적 수정 사이클 1/5 (품질 MINOR 1 + SUGGEST 2 반영 — 구조 변경이라 전량 재리뷰)
+
 ## Progress Log
+
+- **T1-T2 완료** (커밋 `b22be28`, 진행 중): 32bpp 비트맵 읽기를 `fs::bitmap`으로 모으고, `fs::file_op`에 이름 바꾸기·삭제를 더했다. 빌드·clippy 경고 0, 테스트 1027건 통과.
+  - **결정**: 결과 타입 이름을 plan의 `OpOutcome` 대신 **`FileOpOutcome`**으로 했다 — `ui::app::remote::OpOutcome`(원격 명령 뒤 재조회 여부를 정하는 열거형)이 이미 있어 뜻이 겹친다. impact-warn hook이 이 충돌을 잡았다.
+  - **결정**: `CopyOutcome`과 `FileOpOutcome`을 합치지 않는다(필드는 같다) — 바뀌는 이유가 다르다(드래그 복사 FR-60·61 / 메뉴·단축키 FR-64). 대신 **워커 껍데기**(COM 초기화·해제·송신)는 `spawn_shell_op<T, F>`로 공통화했다(3회 반복 확인 — 품질 리뷰 SUGGEST 수용).
+  - **계획 정정**: 전제 검증 8을 8·8-1로 갈랐다 — T3의 `RegisterClipboardFormatW`·`GlobalAlloc`이 아직 켜지지 않은 feature(`Win32_System_DataExchange`·`Win32_System_Memory`)에 있어 「새 feature 없이 가능」이 틀렸다. T3이 두 feature를 켠다(새 crate는 없으므로 라이선스 자산 재생성은 불요).
+  - **T2의 신규 심볼은 아직 미연결**(`rename_item`·`delete_items`·`invalid_name_reason`·`FileOpOutcome`) — **T8**(인라인 이름 편집)과 **T10**(단축키)이 실행 경로에 잇는다.
 
 ## Next Steps
 
