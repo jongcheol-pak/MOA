@@ -467,6 +467,8 @@
 
 ## Phase Ledger
 
+- **F-1~F-6 통과** (2026-08-22). Goal 충족: 셸 항목까지 담은 Win11 모양 메뉴(T4~T7)와 단축키 11종(T9~T11)이 diff에서 지목된다. 전체 빌드·`cargo test` 1067건 통과. Impact Analysis 재확인 — `const .*FRAME_PAD` 0건, 세 파일의 `GetDIBits` 각 0건, `show_context_menu`·`forward_menu_msg`는 `추가 옵션 표시` 경로로 그대로 살아 있고 Win32 이식 이전 판의 호출 3건도 손대지 않았다. Deferred 2건은 둘 다 **기존 문제·범위 밖**이라 자기 유발 이연 0건. 약화·삭제한 acceptance 없음(T4·T7의 **측정 명령** 정정 둘은 기준이 아니라 재는 도구를 고친 것이다).
+
 ## Retry Ledger
 
 - T2: 리뷰 지적 수정 사이클 1/5 (품질 MINOR 1 + SUGGEST 2 반영 — 구조 변경이라 전량 재리뷰)
