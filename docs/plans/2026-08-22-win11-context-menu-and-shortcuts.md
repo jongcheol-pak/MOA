@@ -303,7 +303,7 @@
 - [ ] T4. 셸 컨텍스트 메뉴를 읽어 모델로 바꾼다
   - **Type**: D
   - **Design**: ① `src/fs/shell_menu.rs`(기존 모듈 — PIDL·COM 수명 규약이 이미 격리돼 있다) ② `pub struct ShellMenu` — `IContextMenu`(+ `IContextMenu2/3` 캐스트)와 HMENU를 함께 쥐는 핸들. `Drop`에서 `DestroyMenu`. `pub fn open(owner, folder, items) -> Option<ShellMenu>` / `pub fn model(&self) -> Vec<ShellMenuItem>` / `pub fn submenu(&self, id) -> Vec<ShellMenuItem>`(펼칠 때 `HandleMenuMsg(WM_INITMENUPOPUP)` 후 다시 읽는다) / `pub fn invoke(&self, id, owner)` / `pub fn verb(&self, id) -> Option<String>`. `ShellMenuItem { id, label, icon: Option<(i32,i32,Vec<u8>)>, enabled, checked, separator, has_submenu }` ③ `fs` 계층 — `ui`를 모르고 egui 타입을 쓰지 않는다(아이콘은 픽셀 바이트로 넘긴다). 아이콘 읽기는 T1의 `fs::bitmap` ④ **비추상화 선언**: 「메뉴 공급자」 추상 trait을 만들지 않는다 — 원격 메뉴(`ui::remote_menu`)와 합치지 않는다는 기존 선언(`remote_menu.rs:1-6`)을 그대로 잇는다
-  - **Acceptance**: Given `&` 액셀러레이터·탭 단축키가 섞인 메뉴 문자열, When 라벨 정규화 함수를 통과시키면, Then `&`가 제거되고 탭 뒤 단축키가 별도 필드로 갈린다(순수 함수 단위 시험). Given 로컬 파일 하나, When 메뉴를 열면, Then 모델에 항목이 1개 이상 담긴다(HUMAN-VERIFY 1 — HWND가 필요해 자동 시험 비대상). Given `grep -n "CMF_" src/fs/shell_menu.rs`, When 검색하면, Then `CMF_NORMAL`만 남는다(D9 — `CMF_CANRENAME`을 넣지 않는다)
+  - **Acceptance**: Given `&` 액셀러레이터·탭 단축키가 섞인 메뉴 문자열, When 라벨 정규화 함수를 통과시키면, Then `&`가 제거되고 탭 뒤 단축키가 별도 필드로 갈린다(순수 함수 단위 시험). Given 로컬 파일 하나, When 메뉴를 열면, Then 모델에 항목이 1개 이상 담긴다(HUMAN-VERIFY 1 — HWND가 필요해 자동 시험 비대상). Given `grep -n "QueryContextMenu" -A 2 src/fs/shell_menu.rs`, When 그 **호출부 전건**을 보면, Then 넘기는 플래그가 `CMF_NORMAL`뿐이다(D9 — `CMF_CANRENAME`을 넣지 않는다. **주석에 그 이름이 근거로 적히는 것은 무방하다** — 재는 것은 실제로 넘기는 값이다)
   - **Files**:
     - 주: `src/fs/shell_menu.rs`
     - 동반: `src/fs/bitmap.rs`(T1 산출물 사용), `src/ui/shell_host.rs`(핸들을 여는 진입점 추가 — 기존 `popup`은 유지)

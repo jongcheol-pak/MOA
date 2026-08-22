@@ -20,10 +20,10 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, DestroyMenu, GetMenuItemCount, GetMenuItemInfoW, MENUITEMINFOW, MFS_CHECKED,
-    MFS_DISABLED, MFT_MENUBARBREAK, MFT_MENUBREAK, MFT_OWNERDRAW, MFT_SEPARATOR, MIIM_BITMAP,
-    MIIM_FTYPE, MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, SW_SHOWNORMAL, TPM_LEFTALIGN,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP,
-    WM_MEASUREITEM, WM_MENUCHAR,
+    MFS_DISABLED, MFT_MENUBARBREAK, MFT_MENUBREAK, MFT_SEPARATOR, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID,
+    MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, SW_SHOWNORMAL, TPM_LEFTALIGN, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx, WM_DRAWITEM, WM_INITMENUPOPUP, WM_MEASUREITEM,
+    WM_MENUCHAR,
 };
 use windows::core::{HSTRING, Interface, PCSTR, PSTR, PWSTR, Result};
 
@@ -103,9 +103,19 @@ pub struct ShellMenuItem {
 /// 하위 메뉴 하나를 가리키는 손잡이 — 안을 들여다볼 수 없는 값이다.
 ///
 /// `HMENU`를 그대로 내보내지 않는 이유는 `ui`가 Win32 핸들을 들고 다니게 되기 때문이다.
-/// **이 값은 그것을 준 [`ShellMenu`]가 살아 있는 동안만 뜻이 있다**
+/// **부모 안에서의 자리도 함께 든다** — 셸에게 채워 달라고 물을 때 그 값을 요구한다
+/// (`WM_INITMENUPOPUP`의 `lParam`).
+///
+/// **이 값은 그것을 준 [`ShellMenu`]가 살아 있는 동안만 뜻이 있다.** 타입으로 막지 않은 것은
+/// 그리는 쪽이 이 손잡이를 프레임 사이에 들고 있어야 해서다(빌림으로 묶으면 그 보관이 막힌다).
+/// 대신 **어겨도 안전하게 실패한다** — 이미 지워진 메뉴를 물으면 `GetMenuItemCount`가 `-1`을
+/// 주고 [`ShellMenu::expand`]는 빈 목록을 돌려준다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SubmenuHandle(isize);
+pub struct SubmenuHandle {
+    menu: isize,
+    /// 부모 메뉴에서 이 하위 메뉴가 놓인 0부터의 자리
+    index: u32,
+}
 
 /// 열려 있는 셸 메뉴 하나 — 인터페이스와 HMENU를 함께 쥔다 (FR-8).
 ///
@@ -164,16 +174,21 @@ impl ShellMenu {
     /// 오지 않으므로 **직접 보낸다**
     pub fn expand(&self, handle: SubmenuHandle) -> Vec<ShellMenuItem> {
         let submenu =
-            windows::Win32::UI::WindowsAndMessaging::HMENU(handle.0 as *mut core::ffi::c_void);
-        // 안전성: 손잡이는 `model`이 이 메뉴에서 읽어 준 것이라 이 인스턴스가 사는 동안 유효하다
+            windows::Win32::UI::WindowsAndMessaging::HMENU(handle.menu as *mut core::ffi::c_void);
+        // 안전성: 손잡이는 `model`이 이 메뉴에서 읽어 준 것이다. 그 메뉴가 이미 지워졌으면
+        // `GetMenuItemCount`가 `-1`을 주어 빈 목록으로 끝난다(잘못된 핸들에도 안전하게 실패한다)
         unsafe {
-            // 위치는 셸이 보지 않는 것이 보통이지만 규격대로 0을 준다
+            // 규격: `wParam`은 하위 메뉴 핸들, `lParam`의 하위 워드는 **부모 안에서의 자리**,
+            // 상위 워드는 시스템 메뉴 여부다. 우리 것은 팝업이라 상위 워드가 0이고, 자리는
+            // 손잡이가 들고 온 값을 그대로 쓴다 — 0으로 뭉개면 같은 항목이 여러 하위 메뉴에
+            // 걸린 확장이 엉뚱한 쪽을 채운다
             let wparam = WPARAM(submenu.0 as usize);
+            let lparam = LPARAM(handle.index as isize);
             if let Some(cm3) = &self.owner_draw.1 {
                 let mut result = LRESULT(0);
-                let _ = cm3.HandleMenuMsg2(WM_INITMENUPOPUP, wparam, LPARAM(0), Some(&mut result));
+                let _ = cm3.HandleMenuMsg2(WM_INITMENUPOPUP, wparam, lparam, Some(&mut result));
             } else if let Some(cm2) = &self.owner_draw.0 {
-                let _ = cm2.HandleMenuMsg(WM_INITMENUPOPUP, wparam, LPARAM(0));
+                let _ = cm2.HandleMenuMsg(WM_INITMENUPOPUP, wparam, lparam);
             }
             read_menu(submenu, &self.context_menu)
         }
@@ -273,18 +288,32 @@ unsafe fn read_menu(
                 id: info.wID,
                 label,
                 shortcut,
-                icon: bgra_from_hbitmap(info.hbmpItem),
+                icon: is_real_bitmap(info.hbmpItem)
+                    .then(|| bgra_from_hbitmap(info.hbmpItem))
+                    .flatten(),
                 enabled: info.fState & MFS_DISABLED
                     == windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_STATE(0),
                 checked: info.fState & MFS_CHECKED
                     != windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_STATE(0),
                 separator: false,
-                submenu: (!info.hSubMenu.is_invalid())
-                    .then_some(SubmenuHandle(info.hSubMenu.0 as isize)),
+                submenu: (!info.hSubMenu.is_invalid()).then_some(SubmenuHandle {
+                    menu: info.hSubMenu.0 as isize,
+                    index: index as u32,
+                }),
             });
         }
         collapse_separators(out)
     }
+}
+
+/// `hbmpItem`이 진짜 비트맵인가 — 시스템 의사 핸들이면 아니다.
+///
+/// `HBMMENU_*`(닫기·최소화 단추 등)는 **핸들이 아니라 1~11의 작은 표식**이다. 창 시스템
+/// 메뉴용이라 셸 확장이 쓰는 일은 드물지만, 걸러 두지 않으면 그 값이 유효한 핸들처럼
+/// `GetObjectW`에 넘어간다 — 지금은 GDI가 실패로 돌려주어 탈이 없지만 **그것은 우연이지
+/// 우리가 정한 것이 아니다**. `HBMMENU_CALLBACK`(-1)과 널은 `fs::bitmap`이 이미 거른다
+fn is_real_bitmap(hbm: windows::Win32::Graphics::Gdi::HBITMAP) -> bool {
+    !(1..=11).contains(&(hbm.0 as isize))
 }
 
 /// 구분선 한 줄 — 나머지 필드는 뜻이 없다
@@ -309,9 +338,9 @@ unsafe fn read_label(
     index: u32,
     info: &mut MENUITEMINFOW,
 ) -> Option<String> {
-    if info.fType & MFT_OWNERDRAW != windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_TYPE(0) {
-        // 스스로 그리는 줄은 글자를 담지 않는 것이 보통이다 — 담았으면 아래에서 읽힌다
-    }
+    // 스스로 그리는 줄(`MFT_OWNERDRAW`)은 글자를 담지 않는 것이 보통이라 아래 `cch == 0`에서
+    // 걸린다 — 담아 두는 확장이 있으면 그대로 읽힌다. 종류로 미리 가르지 않는 이유가 그것이다
+    // (가르면 글자를 담은 확장까지 함께 버린다)
     if info.cch == 0 {
         return None;
     }
