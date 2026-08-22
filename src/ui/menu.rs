@@ -309,19 +309,15 @@ pub enum KeyOwner {
 
 /// 이번 프레임에 눌린 자리로 키 소유를 옮긴다 (FR-12).
 ///
-/// **누르지 않은 프레임에는 그대로 둔다** — 마우스가 지나가기만 해도 대상이 바뀌면
-/// `F2`가 어디로 갈지 예측할 수 없다(그래서 hover가 아니라 클릭으로 가른다).
+/// **누른 곳이 없으면 그대로 둔다**(`pressed`가 `None`) — 마우스가 지나가기만 해도 대상이
+/// 바뀌면 `F2`가 어디로 갈지 예측할 수 없다(그래서 hover가 아니라 클릭으로 가른다).
 ///
-/// 두 곳을 동시에 누를 수는 없지만 인자로는 그럴 수 있어, **사이드바를 먼저 본다** —
-/// 사이드바가 패널 위에 겹쳐 그려지므로 겹치는 자리는 사이드바의 것이다
-pub fn next_key_owner(current: KeyOwner, pressed_sidebar: bool, pressed_panel: bool) -> KeyOwner {
-    if pressed_sidebar {
-        KeyOwner::Sidebar
-    } else if pressed_panel {
-        KeyOwner::FileList
-    } else {
-        current
-    }
+/// 누른 영역을 `Option` 하나로 받는 이유: 부르는 쪽은 한 프레임에 **사이드바를 그린 뒤**와
+/// **패널을 그린 뒤** 두 번 부르는데, 각 시점에 아는 것은 자기 영역 하나뿐이다. 두 개의
+/// 불리언으로 받으면 한쪽은 늘 거짓이라, 있지도 않은 "동시에 눌렸을 때의 우선순위"를
+/// 시그니처가 약속하게 된다(품질 리뷰 S1)
+pub fn next_key_owner(current: KeyOwner, pressed: Option<KeyOwner>) -> KeyOwner {
+    pressed.unwrap_or(current)
 }
 
 /// 이 명령이 **파일 목록의 고른 항목**을 대상으로 하는가 (FR-12).
@@ -354,7 +350,8 @@ fn targets_file_list(command: Command) -> bool {
     }
 }
 
-/// 이번 프레임에 눌린 단축키를 명령으로 바꾼다./// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
+/// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
+///
 ///
 /// 무수식 키(`F2`·`Delete`·`F5`)도 여기서 받는다 — 이름 편집 중에는 아래 `egui_wants_keyboard_input`이
 /// 먼저 걸러 텍스트 입력을 가로채지 않는다.
@@ -607,13 +604,11 @@ mod tests {
         // 앱이 막 떴을 때는 파일 목록이다 — 아무것도 누르지 않았다
         assert_eq!(KeyOwner::default(), FileList);
         // 누른 자리로 옮겨 간다
-        assert_eq!(next_key_owner(FileList, true, false), Sidebar);
-        assert_eq!(next_key_owner(Sidebar, false, true), FileList);
+        assert_eq!(next_key_owner(FileList, Some(Sidebar)), Sidebar);
+        assert_eq!(next_key_owner(Sidebar, Some(FileList)), FileList);
         // 누르지 않은 프레임에는 그대로다 — 마우스가 지나가기만 해서는 바뀌지 않는다
-        assert_eq!(next_key_owner(Sidebar, false, false), Sidebar);
-        assert_eq!(next_key_owner(FileList, false, false), FileList);
-        // 겹치는 자리는 사이드바의 것이다 — 사이드바가 패널 위에 그려진다
-        assert_eq!(next_key_owner(FileList, true, true), Sidebar);
+        assert_eq!(next_key_owner(Sidebar, None), Sidebar);
+        assert_eq!(next_key_owner(FileList, None), FileList);
     }
 
     #[test]

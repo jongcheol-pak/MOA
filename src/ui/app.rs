@@ -2241,6 +2241,12 @@ impl eframe::App for ExplorerApp {
         // 키 소유는 그리기 클로저 안에서 옮겨진다 — 그 안은 `self`가 통째로 빌려져 있어
         // 지역 값으로 들고 나와 클로저가 끝난 뒤에 돌려놓는다
         let mut key_owner = self.key_owner;
+        // **접힌 사이드바는 키를 쥐지 못한다** (FR-12) — 접힌 프레임에는 사이드바를 그리는
+        // 블록 자체가 돌지 않아 소유를 놓을 기회가 없고, 그대로 두면 파일 목록을 누르기
+        // 전까지 `F2`·`Delete`가 아무 데도 가지 않는다(품질 리뷰 m1)
+        if self.sidebar_collapsed {
+            key_owner = menu::KeyOwner::FileList;
+        }
         // 목록에서 확정된 이름 (FR-64) — 셸에 거는 것은 그리기가 끝난 뒤다
         let mut rename = None;
         let mut panel_command = None;
@@ -2320,7 +2326,10 @@ impl eframe::App for ExplorerApp {
                         })
                         .flatten()
                         .is_some_and(|pos| panel.response.rect.contains(pos));
-                    key_owner = menu::next_key_owner(key_owner, pressed_sidebar, false);
+                    key_owner = menu::next_key_owner(
+                        key_owner,
+                        pressed_sidebar.then_some(menu::KeyOwner::Sidebar),
+                    );
                     // 조작은 모아 두었다가 아래에서 처리한다 — 연결은 분할 영역을 알아야 하는데
                     // 그 영역은 **사이드바를 뺀 나머지**라 여기서는 아직 정해지지 않았다
                     sidebar_actions = panel.inner;
@@ -2390,8 +2399,10 @@ impl eframe::App for ExplorerApp {
                         view.note_pressed(pressed);
                     }
                     // 패널을 누르면 무수식 키가 파일 목록으로 돌아온다 (FR-12)
-                    key_owner =
-                        menu::next_key_owner(key_owner, false, outcome.pressed_panel.is_some());
+                    key_owner = menu::next_key_owner(
+                        key_owner,
+                        outcome.pressed_panel.map(|_| menu::KeyOwner::FileList),
+                    );
                     menu = outcome.menu;
                     rename = outcome.rename;
                     panel_command = outcome.command;
