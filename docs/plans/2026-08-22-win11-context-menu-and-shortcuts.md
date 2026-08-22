@@ -355,7 +355,7 @@
     - (ii-a) `MenuRequest` 구조체 필드 변경(공개 계약) → `## 사전 승인 항목`에 등록
   - **Depends on**: T5, T2, T3
 
-- [ ] T7. 메뉴 화면 밖 보정을 실측 값으로 바꾼다
+- [x] T7. 메뉴 화면 밖 보정을 실측 값으로 바꾼다
   - **Type**: C
   - **Design**: ① `src/ui/menu.rs`(`clamp_menu_pos` 옆) ② `pub(crate) fn menu_frame_pad(ui: &egui::Ui) -> egui::Vec2` — `Frame::menu`가 쓰는 여백·테두리 굵기·그림자 확장을 egui 스타일에서 읽어 더한다 ③ **이 함수를 쓰는 메뉴는 셋이며 이 task가 셋 다 붙인다** — ⓐ `ui::remote_menu::FRAME_PAD`(`remote_menu.rs:203`, 사용 `197`·`198`) ⓑ `ui::tree::MENU_FRAME_PAD`(`tree.rs:108`, 사용 `287`·`288`) 두 어림 상수를 지우고 호출로 바꾸며, ⓒ **T5·T6이 만든 새 메뉴(`ui::shell_context_menu`)의 크기 산출에도 이 여백을 더한다**. T7이 T5·T6 뒤에 오는 이유가 ⓒ다 — 그 파일이 있어야 붙일 수 있다 ④ **비추상화 선언**: 「메뉴 배치기」 타입을 만들지 않는다 — 필요한 것은 함수 하나다
   - **Acceptance**: Given 기본 다크 스타일, When `menu_frame_pad`를 부르면, Then `Frame::menu`의 실제 여백·테두리 합과 같다(egui 스타일 값으로 단언하는 단위 시험). Given `grep -rn "const .*FRAME_PAD" src/ui`, When 검색하면, Then **정의가 0건**이다 — `remote_menu::FRAME_PAD`와 `tree::MENU_FRAME_PAD` 둘 다 사라져야 통과한다(**주석에 그 이름이 이력으로 남는 것은 무방하다** — 재는 것은 실제로 쓰이는 상수다. T4에서 같은 이유로 측정 명령을 고쳤다)
@@ -472,6 +472,7 @@
 - T3: 리뷰 지적 수정 사이클 2/5 · 재호출 2/2(상한 도달) — 1라운드 BLOCKER 1·MAJOR 3·MINOR 3, 2라운드 MAJOR 2. **동일 지적 반복 0** (매 라운드 새 지적이라 3회 연속 조건에 닿지 않았다)
 - T4: 리뷰 지적 수정 사이클 1/5 — 1라운드 MAJOR 2·MINOR 3 전건 반영
 - T6: 리뷰 지적 수정 사이클 4/5 · 재호출 2/2(상한 도달) — 1라운드 MAJOR 6·MINOR 4, 2라운드 BLOCKER 1·MINOR 3. **「창을 숨길 때 메뉴 닫기」가 2회 연속**(1라운드 반영이 같은 함수에 두 번 들어가고 정작 다른 경로가 빠졌다) — 3라운드에서 `hide_window` 단일 진입점으로 닫힘 확인
+- T7: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec PASS · 품질 MINOR 1(중복 호출)+SUGGEST 1(죽은 코드) 전건 반영, 증분 재리뷰 OK. **리뷰어 둘 다 첫 응답이 판정문 없이 골격만 도착**(recovery D 분기) — 같은 에이전트에 판정문만 재요청해 해소(재조사 없음)
 - T5: 리뷰 지적 수정 사이클 3/5 · 재호출 2/2(상한 도달) — 1라운드 BLOCKER 3·MAJOR 5, 2라운드 BLOCKER 1(**B3 재발 — 라벨 말줄임**)·MINOR 1. **B3만 2회 연속**이며 3라운드에서 확인한다(3회면 Halt)
 
 ## Progress Log
@@ -499,6 +500,11 @@
   - **정정**: T4 acceptance의 측정 명령을 `grep "CMF_"` → `grep "QueryContextMenu" -A 2`로 고쳤다. 앞의 것은 근거를 적은 **주석까지** 잡아 좋은 관행을 벌했다.
   - **T4의 신규 심볼도 미연결**(`ShellMenu`·`ShellMenuItem`·`SubmenuHandle`·`ShellHost::open_menu`) — **T5**(그리기)와 **T6**(배선)이 잇는다.
   - **T2의 신규 심볼은 아직 미연결**(`rename_item`·`delete_items`·`invalid_name_reason`·`FileOpOutcome`) — **T8**(인라인 이름 편집)과 **T10**(단축키)이 실행 경로에 잇는다.
+
+- **T7 완료** (커밋 아래): 메뉴 화면 밖 보정의 어림 상수 둘(`remote_menu::FRAME_PAD`·`tree::MENU_FRAME_PAD`)을 지우고 `ui::menu::menu_frame_pad` 한 곳에서 잰다. 세 메뉴가 같은 값을 쓴다.
+  - **메인이 스스로 찾은 결함**: `menu_frame_pad`가 테두리를 `style.visuals.window_stroke()`에서 읽었는데 세 메뉴는 전부 그것을 무시하고 `Stroke::new(1.0, ...)`로 덮어쓰고 있었다 — **재는 값과 그리는 값의 출처가 달랐다**(둘 다 1.0이라 결과만 우연히 맞았다). `theme::MENU_FRAME_STROKE`를 정본으로 두고 그리는 3곳과 재는 1곳이 모두 그것을 읽게 했다.
+  - **결정**: 그림자는 여백으로 세지 않는다 — `Frame::menu`의 그림자는 프레임 **밖에** 그려져 자리를 차지하지 않는다(egui 0.35 `frame.rs` 대조). 시험이 그림자를 크게 잡아 두고 계산에 섞이지 않음을 단언한다.
+  - **정리**: 쓰이지 않던 `shell_context_menu::menu_size(ui, items)`를 지웠다(T5에서 만든 죽은 코드 — 실사용은 `menu_size_at` 하나다).
 
 ## Next Steps
 
