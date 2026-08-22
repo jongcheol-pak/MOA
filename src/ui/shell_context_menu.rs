@@ -223,13 +223,68 @@ impl MenuIcons {
     }
 
     /// 그 줄에 그릴 아이콘
-    fn row(&self, index: usize) -> MenuRowIcon<'_> {
+    pub(crate) fn row(&self, index: usize) -> MenuRowIcon<'_> {
         match self.textures.get(index).and_then(|slot| slot.as_ref()) {
             Some(texture) => MenuRowIcon::Texture(texture),
             // 아이콘이 없어도 **열은 남긴다** — 이 메뉴에는 아이콘 있는 줄이 섞여 있다
             None => MenuRowIcon::Blank,
         }
     }
+}
+
+/// 메뉴를 팝업으로 띄운다 — 고른 것과 그 팝업이 차지한 자리를 함께 돌려준다 (FR-8).
+///
+/// **프레임을 여는 것도 이 모듈이 한다** — 그래야 프레임 모양(모서리·채움·테두리)과 그 안의
+/// 줄 모양이 한 곳에서 정해진다. 부르는 쪽(`ui::app`)은 자리와 상태만 준다
+pub fn show_popup(
+    ctx: &egui::Context,
+    id: egui::Id,
+    at: egui::Pos2,
+    state: MenuState,
+    items: &[ShellMenuItem],
+    icons: &MenuIcons,
+    max_height: f32,
+) -> (Option<ShellMenuPick>, egui::Rect) {
+    let mut picked = None;
+    let response = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(at)
+        .show(ctx, |ui| {
+            // 모서리는 적지 않는다 — `Frame::menu`가 테마의 공통 값을 읽는다
+            // (`theme::MENU_CORNER_RADIUS`)
+            egui::Frame::menu(ui.style())
+                .fill(theme::SURFACE_BG)
+                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                .show(ui, |ui| {
+                    picked = show(ui, state, items, icons, max_height);
+                });
+        })
+        .response;
+    (picked, response.rect)
+}
+
+/// 하위 메뉴를 팝업으로 띄운다 — 부모 오른쪽에 붙는다 (FR-8)
+pub fn show_submenu_popup(
+    ctx: &egui::Context,
+    id: egui::Id,
+    at: egui::Pos2,
+    items: &[ShellMenuItem],
+    icons: &MenuIcons,
+) -> (Option<ShellMenuPick>, egui::Rect) {
+    let mut picked = None;
+    let response = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(at)
+        .show(ctx, |ui| {
+            egui::Frame::menu(ui.style())
+                .fill(theme::SURFACE_BG)
+                .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                .show(ui, |ui| {
+                    picked = show_submenu(ui, items, icons);
+                });
+        })
+        .response;
+    (picked, response.rect)
 }
 
 /// 위쪽 아이콘 줄 — 다섯 칸을 균등하게 나눈다
@@ -300,6 +355,48 @@ pub fn menu_size(ui: &egui::Ui, items: &[ShellMenuItem]) -> egui::Vec2 {
         MENU_WIDTH,
         menu_height(rows, separators, ui.spacing().item_spacing.y),
     )
+}
+
+/// 위와 같되 `Ui`가 아직 없는 자리에서 쓴다 — 메뉴를 **열기 전에** 자리를 정해야 하는
+/// `ui::app`이 그렇다. 스타일은 컨텍스트에서 읽는다
+pub fn menu_size_at(ctx: &egui::Context, items: &[ShellMenuItem]) -> egui::Vec2 {
+    let (rows, separators) = count_rows(items);
+    let gap = ctx.style_of(ctx.theme()).spacing.item_spacing.y;
+    egui::vec2(MENU_WIDTH, menu_height(rows, separators, gap))
+}
+
+/// 하위 메뉴 한 판을 그린다 — 아이콘 줄도 `추가 옵션 표시`도 없는 **줄 목록뿐**이다.
+///
+/// 그 둘은 부모 메뉴의 것이라 하위에 다시 두면 같은 것이 두 번 보인다
+pub fn show_submenu(
+    ui: &mut egui::Ui,
+    items: &[ShellMenuItem],
+    icons: &MenuIcons,
+) -> Option<ShellMenuPick> {
+    // 하위 메뉴는 부모 스타일을 잇지 않는 **별도 `Area`**라 여기서 다시 세운다
+    // (AGENTS 「팝업 메뉴 한 줄」)
+    theme::menu_style(ui);
+    ui.set_width(MENU_WIDTH);
+    let mut picked = None;
+    for (index, item) in items.iter().enumerate() {
+        if item.separator {
+            ui.separator();
+            continue;
+        }
+        if widgets::menu_row_rich(
+            ui,
+            icons.row(index),
+            &item.label,
+            &item.shortcut,
+            // **두 단계까지만 편다** — 셸 메뉴가 그보다 깊은 경우는 드물고, 더 펼치면
+            // 어느 것이 열려 있는지 화면에서 읽기 어렵다
+            false,
+            item.enabled,
+        ) {
+            picked = Some(ShellMenuPick::Command(item.id));
+        }
+    }
+    picked
 }
 
 /// 셸이 준 줄을 `(항목 수, 구분선 수)`로 센다

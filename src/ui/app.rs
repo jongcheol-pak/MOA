@@ -31,11 +31,12 @@ use crate::ui::license_dialog::LicenseDialog;
 use crate::ui::list_common;
 use crate::ui::log_panel;
 use crate::ui::menu::{self, Command};
-use crate::ui::panel::{DisplayRules, PanelState};
+use crate::ui::panel::{self, DisplayRules, PanelState};
 use crate::ui::queue_panel::{self, QueueAction};
 use crate::ui::remote_states::{HostKeyGate, RemoteView};
 use crate::ui::session::{self, PanelTabs, RemoteSnapshot, TabSpec, WorkspaceState};
 use crate::ui::settings_dialog::{FontChoices, SettingsDialog};
+use crate::ui::shell_context_menu;
 use crate::ui::shell_host::ShellHost;
 use crate::ui::sidebar::{SidebarAction, WorkspaceSidebar};
 use crate::ui::site_manager::{FileRequest, SiteManager, SiteManagerOutcome};
@@ -584,6 +585,11 @@ pub struct ExplorerApp {
     /// 받는 곳의 존재 확인 결과가 오는 통로 — `(확인 번호, 겹친 이름들)`
     conflict_tx: std::sync::mpsc::Sender<(u64, Vec<String>)>,
     conflict_rx: std::sync::mpsc::Receiver<(u64, Vec<String>)>,
+    /// 지금 열려 있는 Win11 모양 컨텍스트 메뉴 (FR-8) — 없으면 메뉴가 떠 있지 않다
+    shell_menu: Option<OpenShellMenu>,
+    /// 이번 프레임이 끝난 뒤 띄울 **종전 표준 메뉴** (`추가 옵션 표시`) — 그것은
+    /// `TrackPopupMenuEx`가 자체 메시지 루프를 돌려 그리기 도중에 부를 수 없다
+    pending_show_more: Option<(std::path::PathBuf, Vec<std::path::PathBuf>, egui::Pos2)>,
     /// 셸 복사의 결과를 받는 자리 (FR-60) — `pump_local_copy`가 프레임마다 거둔다.
     /// 워커가 여럿 돌 수 있어 채널 하나를 나눠 쓴다
     copy_tx: std::sync::mpsc::Sender<crate::fs::file_op::CopyOutcome>,
@@ -741,6 +747,8 @@ impl ExplorerApp {
             expand_rx,
             pending_conflicts: Vec::new(),
             next_conflict: 0,
+            shell_menu: None,
+            pending_show_more: None,
             copy_tx,
             copy_rx,
             os_drop_tx,
@@ -2027,6 +2035,171 @@ impl ExplorerApp {
     ///
     /// **성공은 알리지 않는다** — 셸이 자기 진행률 대화로 이미 알렸고 대상 목록에 파일이
     /// 나타나는 것이 곧 확인이라, 여기서 또 띄우면 조작 하나에 알림이 둘이 된다
+    /// 아이콘 줄에서 고른 것을 수행한다 (FR-8·FR-64).
+    ///
+    /// **`공유`만 셸에 넘긴다**(D2) — 나머지 넷은 앱이 자체 기능으로 한다. 셸의 `rename`은
+    /// 탐색기 자신의 목록 뷰가 처리하는 것이라 여기서 불러도 아무 일이 없고, 잘라내기·복사도
+    /// verb로 부르면 셸이 자기 클립보드 상태를 쥐어 우리 화면의 잘라내기 표시와 어긋난다.
+    ///
+    /// **이름 바꾸기와 삭제는 T8·T10이 배선한다** — 이 회차에는 클립보드 둘만 잇는다
+    fn apply_menu_action(
+        &mut self,
+        action: shell_context_menu::MenuAction,
+        targets: Vec<std::path::PathBuf>,
+    ) {
+        use shell_context_menu::MenuAction;
+        match action {
+            MenuAction::Copy => {
+                crate::fs::clipboard::put(&targets, false);
+            }
+            MenuAction::Cut => {
+                crate::fs::clipboard::put(&targets, true);
+            }
+            // 이 셋은 뒤 task가 잇는다 — 지금은 아무 일도 하지 않는다
+            MenuAction::Rename | MenuAction::Delete | MenuAction::Share => {}
+        }
+    }
+
+    /// 우클릭 요청을 받아 Win11 모양 메뉴를 연다 (FR-8).
+    ///
+    /// 셸이 메뉴를 주지 못하면(COM 실패·다룰 수 없는 경로) **아무것도 열지 않는다** — 종전
+    /// 경로도 그런 경우 조용히 지나갔고, 빈 메뉴를 띄우면 고장으로 보인다
+    fn open_shell_menu(&mut self, ctx: &egui::Context, request: panel::MenuRequest) {
+        let Some(shell) = self.shell.as_ref() else {
+            return;
+        };
+        let Some(menu) = shell.open_menu(&request.folder, &request.items) else {
+            return;
+        };
+        let items = menu.model();
+        let icons = shell_context_menu::MenuIcons::build(ctx, &items);
+        // `공유`는 셸이 그 verb를 준 항목이 있을 때만 열린다 — 없는데 눌리면 아무 일도
+        // 일어나지 않고 사용자는 그 까닭을 알 수 없다
+        let can_share = items
+            .iter()
+            .any(|item| menu.verb(item.id).is_some_and(|verb| verb == SHARE_VERB));
+        self.shell_menu = Some(OpenShellMenu {
+            menu,
+            items,
+            icons,
+            submenu: None,
+            pos: request.pos,
+            folder: request.folder,
+            state: shell_context_menu::MenuState {
+                selected: request.items.len(),
+                can_share,
+            },
+            items_paths: request.items,
+        });
+    }
+
+    /// 열려 있는 메뉴를 그리고 고른 것을 실행한다 (FR-8).
+    ///
+    /// 바깥을 누르거나 `Esc`면 닫는다 — 메뉴가 화면에 눌어붙지 않게 한다(원격 메뉴와 같은 규칙)
+    fn show_shell_menu(&mut self, ctx: &egui::Context) {
+        let Some(open) = self.shell_menu.as_ref() else {
+            return;
+        };
+        let viewport = ctx.input(|input| input.viewport_rect());
+        let size = shell_context_menu::menu_size_at(ctx, &open.items);
+        let at = menu::clamp_menu_pos(viewport, open.pos, size);
+        // 아래로 뻗을 수 있는 만큼이 목록이 쓸 수 있는 최대 높이다
+        let max_height = (viewport.bottom() - at.y).max(theme::MENU_ITEM_HEIGHT);
+
+        let (mut picked, rect) = shell_context_menu::show_popup(
+            ctx,
+            egui::Id::new("shell_context_menu"),
+            at,
+            open.state,
+            &open.items,
+            &open.icons,
+            max_height,
+        );
+
+        // 펼쳐 둔 하위 메뉴는 부모 오른쪽에 붙인다
+        let mut submenu_rect = None;
+        if let Some((_, rows, icons)) = open.submenu.as_ref() {
+            let sub_at = menu::clamp_menu_pos(
+                viewport,
+                egui::pos2(at.x + size.x, at.y),
+                shell_context_menu::menu_size_at(ctx, rows),
+            );
+            let (sub_picked, sub_rect) = shell_context_menu::show_submenu_popup(
+                ctx,
+                egui::Id::new("shell_context_submenu"),
+                sub_at,
+                rows,
+                icons,
+            );
+            if sub_picked.is_some() {
+                picked = sub_picked;
+            }
+            submenu_rect = Some(sub_rect);
+        }
+
+        let inside = |pos: egui::Pos2| {
+            rect.contains(pos) || submenu_rect.is_some_and(|sub| sub.contains(pos))
+        };
+        let outside = ctx.input(|input| {
+            input.pointer.any_click() && input.pointer.interact_pos().is_none_or(|pos| !inside(pos))
+        });
+        let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        if let Some(pick) = picked {
+            self.apply_shell_menu_pick(ctx, pick);
+        } else if outside || escape {
+            self.shell_menu = None;
+        }
+    }
+
+    /// 메뉴에서 고른 것을 수행한다 (FR-8).
+    ///
+    /// **하위 메뉴 펼치기만 메뉴를 열어 둔다** — 나머지는 무엇을 하든 메뉴를 먼저 닫는다.
+    /// 셸 항목은 새 창을 띄우기도 해서, 닫지 않으면 그 창 뒤에 메뉴가 남는다
+    fn apply_shell_menu_pick(
+        &mut self,
+        ctx: &egui::Context,
+        pick: shell_context_menu::ShellMenuPick,
+    ) {
+        let Some(open) = self.shell_menu.as_mut() else {
+            return;
+        };
+        match pick {
+            shell_context_menu::ShellMenuPick::Expand(handle) => {
+                // 같은 것을 다시 누르면 접는다
+                if open
+                    .submenu
+                    .as_ref()
+                    .is_some_and(|(had, ..)| *had == handle)
+                {
+                    open.submenu = None;
+                    return;
+                }
+                let rows = open.menu.expand(handle);
+                let icons = shell_context_menu::MenuIcons::build(ctx, &rows);
+                open.submenu = Some((handle, rows, icons));
+            }
+            shell_context_menu::ShellMenuPick::Command(id) => {
+                let owner = self
+                    .shell
+                    .as_ref()
+                    .map(|shell| shell.hwnd())
+                    .unwrap_or_default();
+                open.menu.invoke(id, owner);
+                self.shell_menu = None;
+            }
+            shell_context_menu::ShellMenuPick::ShowMore => {
+                // 우리 메뉴를 먼저 닫고, 표준 메뉴는 그리기가 끝난 뒤에 띄운다
+                let open = self.shell_menu.take().expect("바로 위에서 확인했다");
+                self.pending_show_more = Some((open.folder, open.items_paths, open.pos));
+            }
+            shell_context_menu::ShellMenuPick::Action(action) => {
+                let targets = open.items_paths.clone();
+                self.shell_menu = None;
+                self.apply_menu_action(action, targets);
+            }
+        }
+    }
+
     fn pump_local_copy(&mut self, now: f64) {
         while let Ok(outcome) = self.copy_rx.try_recv() {
             let text = match (&outcome.error, outcome.cancelled) {
@@ -2408,14 +2581,25 @@ impl eframe::App for ExplorerApp {
             ctx.copy_text(text);
         }
 
-        // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
-        // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다
-        let shell_menu_pending = menu.is_some();
-        if let (Some(menu), Some(shell)) = (menu, self.shell.as_ref()) {
+        // 우클릭 요청이 왔으면 **이 프레임 안에서** 메뉴를 연다 — `ShellMenu::open`은
+        // 메시지 루프를 돌리지 않아(`TrackPopupMenuEx`와 다르다) 그리기 도중에 불러도 된다
+        if let Some(request) = menu {
+            self.open_shell_menu(&ctx, request);
+        }
+        // 열려 있으면 그린다 — 모든 패널 위에 떠야 해서 그리기 맨 끝이다
+        self.show_shell_menu(&ctx);
+
+        // **종전 표준 메뉴만** 그리기가 모두 끝난 뒤에 띄운다 — `TrackPopupMenuEx`가 자체
+        // 메시지 루프를 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로
+        // 들어가면 안 된다
+        let shell_menu_pending = self.pending_show_more.is_some();
+        if let (Some((folder, items, pos)), Some(shell)) =
+            (self.pending_show_more.take(), self.shell.as_ref())
+        {
             // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
             let scale = ctx.pixels_per_point();
-            let (x, y) = shell.to_screen((menu.pos.x * scale) as i32, (menu.pos.y * scale) as i32);
-            shell.popup(&menu.folder, &menu.items, x, y);
+            let (x, y) = shell.to_screen((pos.x * scale) as i32, (pos.y * scale) as i32);
+            shell.popup(&folder, &items, x, y);
         }
         // 사이트 목록 파일 대화도 같은 제약이다 (FR-59). **셸 메뉴가 뜬 프레임에는 미룬다** —
         // 두 모달을 겹쳐 띄우면 어느 쪽이 답을 기다리는지 알 수 없다. 요청은 그대로 남아
@@ -2431,6 +2615,38 @@ impl eframe::App for ExplorerApp {
             self.pump_export_drag(&ctx);
         }
     }
+}
+
+/// 셸이 `공유` 항목에 붙이는 verb 이름 — 아이콘 줄의 그 칸이 이것을 찾는다.
+///
+/// **화면 문구가 아니라 셸이 정한 식별자다** — 앱 언어를 따르면 그 항목을 못 찾는다
+/// (AGENTS 「화면 문구」의 그 예외)
+const SHARE_VERB: &str = "Windows.Share";
+
+/// 지금 열려 있는 Win11 모양 컨텍스트 메뉴 한 판 (FR-8).
+///
+/// **셸 인터페이스와 그 판의 아이콘·항목을 함께 든다** — `ShellMenu`가 살아 있어야 고른 것을
+/// 실행할 수 있고(`invoke`), 아이콘 텍스처는 이 판에서만 쓰는 그림이라 함께 버려야 한다.
+///
+/// 하위 메뉴는 **펼친 하나만** 든다 — 셸 메뉴는 두 단계를 넘지 않고, 여러 개를 동시에 펼치는
+/// 것은 어느 것이 열려 있는지 화면에서 읽기 어렵다
+struct OpenShellMenu {
+    menu: crate::fs::shell_menu::ShellMenu,
+    items: Vec<crate::fs::shell_menu::ShellMenuItem>,
+    icons: crate::ui::shell_context_menu::MenuIcons,
+    /// 펼쳐 둔 하위 메뉴 — `(손잡이, 그 줄들, 그 아이콘들)`
+    submenu: Option<(
+        crate::fs::shell_menu::SubmenuHandle,
+        Vec<crate::fs::shell_menu::ShellMenuItem>,
+        crate::ui::shell_context_menu::MenuIcons,
+    )>,
+    /// 메뉴가 뜬 자리 (논리 pt)
+    pos: egui::Pos2,
+    /// 이 메뉴가 대상으로 삼은 폴더와 항목들 — `추가 옵션 표시`가 그대로 다시 쓴다
+    folder: std::path::PathBuf,
+    items_paths: Vec<std::path::PathBuf>,
+    /// 아이콘 줄 판정에 쓰는 상태
+    state: crate::ui::shell_context_menu::MenuState,
 }
 
 /// OS에서 끌어온 것이 놓인 자리 (FR-61) — 탭의 종류가 처리를 가른다
