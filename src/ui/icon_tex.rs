@@ -250,43 +250,47 @@ unsafe fn hicon_to_image(hicon: HICON) -> Option<egui::ColorImage> {
 
 /// 셸 아이콘의 컬러 비트맵을 egui 이미지로 바꾼다.
 ///
-/// GDI로 픽셀을 읽는 것은 `fs::bitmap`이 하고, 여기서는 **BGRA → RGBA 뒤집기와 알파
-/// 되돌리기**만 한다(그 후처리가 사용처마다 달라 공용 모듈에 넣지 않았다).
+/// GDI로 픽셀을 읽는 것은 `fs::bitmap`이 하고, 뒤집기·알파 되돌리기는 아래
+/// [`bgra_to_color_image`]가 한다
 fn color_bitmap_to_image(hbm: HBITMAP) -> Option<egui::ColorImage> {
-    let (width, height, mut pixels) = bgra_from_hbitmap(hbm)?;
-    let (width, height) = (width as usize, height as usize);
+    let (width, height, pixels) = bgra_from_hbitmap(hbm)?;
+    Some(bgra_to_color_image(width as usize, height as usize, pixels))
+}
 
-    // GDI는 BGRA 순서로 주고 알파는 프리멀티플라이일 수 있다.
-    // egui의 from_rgba_unmultiplied는 스트레이트 알파를 받으므로 되돌린다
+/// GDI가 준 BGRA를 egui 이미지로 바꾼다 — **뒤집기와 알파 되돌리기**.
+///
+/// **셸 아이콘과 컨텍스트 메뉴 아이콘이 함께 쓴다**(`ui::shell_context_menu`) — 둘 다 셸이
+/// 준 32bpp 비트맵이라 후처리가 똑같고, 각자 하면 한쪽이 알파를 잘못 다뤄 가장자리가 달라진다.
+/// 이것을 `fs::bitmap`에 두지 않는 이유는 egui 타입을 돌려주기 때문이다(`fs`는 `ui`를 모른다).
+///
+/// **알파를 안 쓰는 비트맵은 통째로 불투명으로 되살린다** — 픽셀마다 판정하면 진짜 투명한
+/// 자리까지 메워 검은 테두리가 생긴다(`fs::thumbnail`의 같은 규칙)
+pub(crate) fn bgra_to_color_image(
+    width: usize,
+    height: usize,
+    mut pixels: Vec<u8>,
+) -> egui::ColorImage {
+    // 알파를 쓰지 않는 비트맵인지 **바꾸기 전에** 판정한다 — 되돌린 뒤에는 알 수 없다
+    let opaque_bitmap = pixels.chunks_exact(4).all(|px| px[3] == 0);
     for px in pixels.chunks_exact_mut(4) {
         let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
+        if opaque_bitmap {
+            // 알파를 안 쓰는 비트맵 — 색만 옮기고 불투명으로 둔다
+            px.copy_from_slice(&[r, g, b, 255]);
+            continue;
+        }
         if a == 0 {
             px.copy_from_slice(&[0, 0, 0, 0]);
             continue;
         }
+        // GDI는 프리멀티플라이 알파를 줄 수 있다 — 스트레이트 알파로 되돌린다
         let unmul = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
         px[0] = unmul(r);
         px[1] = unmul(g);
         px[2] = unmul(b);
         px[3] = a;
     }
-    // 알파가 전부 0이면 32bpp인데 알파 채널을 쓰지 않는 아이콘이다 — 불투명으로 되살린다
-    if pixels.chunks_exact(4).all(|px| px[3] == 0) {
-        let mut opaque = vec![0u8; width * height * 4];
-        // 위 루프가 `pixels`를 제자리에서 바꿔 놨으므로 원본을 한 번 더 읽는다
-        let (_, _, raw) = bgra_from_hbitmap(hbm)?;
-        for (dst, src) in opaque.chunks_exact_mut(4).zip(raw.chunks_exact(4)) {
-            dst.copy_from_slice(&[src[2], src[1], src[0], 255]);
-        }
-        return Some(egui::ColorImage::from_rgba_unmultiplied(
-            [width, height],
-            &opaque,
-        ));
-    }
-    Some(egui::ColorImage::from_rgba_unmultiplied(
-        [width, height],
-        &pixels,
-    ))
+    egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels)
 }
 
 #[cfg(test)]

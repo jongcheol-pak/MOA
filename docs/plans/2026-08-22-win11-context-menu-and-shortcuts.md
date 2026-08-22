@@ -321,7 +321,7 @@
   - **Acceptance**: Given 모델 항목 N개, When 메뉴 높이를 계산하면, Then `아이콘 줄 + 구분선 + N × MENU_ITEM_HEIGHT + 추가 옵션 줄`과 같다(순수 함수 시험). Given `cargo test`, When 소스 훑기 시험 3종(`팝업_메뉴는_항목_스타일을_거친다` · `팝업_메뉴는_모서리를_따로_적지_않는다` · `화면_코드에_원본_아이콘_기호가_남아_있지_않다`)을 돌리면, Then 신규 파일을 포함해 전부 통과한다
   - **Files**:
     - 주: `src/ui/shell_context_menu.rs`(신규), `src/ui/mod.rs`, `src/ui/widgets.rs`
-    - 동반: `src/i18n/mod.rs`(`추가 옵션 표시` 등 신규 문구), `src/ui/theme.rs`(토큰 추가가 필요할 때만)
+    - 동반: `src/i18n/mod.rs`(`추가 옵션 표시`·아이콘 줄 툴팁 등 신규 문구), `src/ui/theme.rs`(토큰 추가가 필요할 때만), **`src/ui/icon_tex.rs`**(BGRA→egui 이미지 변환을 `bgra_to_color_image`로 뽑아 메뉴 아이콘과 함께 쓴다 — 셸이 준 32bpp 비트맵이라 후처리가 같다)
     - 테스트: `src/ui/shell_context_menu.rs` 내 `mod tests`(높이 계산 · 아이콘 줄 활성 규칙 · 빈 모델)
   - **Edge Cases**: 항목이 화면 높이를 넘음 → 세로 스크롤(egui `ScrollArea`) / 라벨이 메뉴 폭을 넘음 → 말줄임 / 아이콘 텍스처를 만들지 못함 → 아이콘 자리를 비워 두고 라벨은 그대로 / 선택이 0개(배경 메뉴) → 아이콘 줄 전체가 비활성 / 아이콘 줄의 다섯 중 대응 기능이 없는 것(공유 verb 부재) → 그 칸만 비활성
   - **Halt Forecast**:
