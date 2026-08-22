@@ -354,7 +354,7 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) 워커에서 UI를 깨우는 방법 → 기존 관례대로 `repaint` 콜백(`ctx.request_repaint`를 감싼 `Arc<dyn Fn()>`)을 넘긴다(`ui::app::spawn_os_drop_scan`이 `self.repaint.clone()`으로 같은 일을 한다) — 사전 해소
   - **Depends on**: T4, T5
 
-- [ ] T7. UI 배선 — 타이틀바 배지·메뉴 두 항목·확인 대화·문구
+- [x] T7. UI 배선 — 타이틀바 배지·메뉴 두 항목·확인 대화·문구
   - **Type**: D
   - **Design**: ① 배치 — 배지 그리기는 `src/ui/titlebar.rs`(`show_right`의 설정 버튼 왼쪽), 명령은 `src/ui/menu.rs`, 실행·상태 보유·확인 대화는 `src/ui/app.rs`, 문구는 `src/i18n/mod.rs` ② 신규 심볼 — `Command::CheckUpdate`·`Command::StartUpdate`·`Command::OpenReleaseNotes` 세 변형, `titlebar::UpdateBadge { visible, downloading }`(그리는 데 필요한 최소 상태만 나른다 — 타이틀바는 `app::update`를 모른다), `titlebar::update_badge_width(ui, badge)`, `ExplorerApp::update`(서비스 필드)·`show_update_confirm(ctx)` ③ 의존 — `ui::titlebar` → `ui::menu`(기존)만, `app::update`는 `ui::app`만 안다(계층 단방향 유지) ④ **비추상화 선언** — 타이틀바에 "부가 위젯" 슬롯 체계를 만들지 않는다. 배지 하나다
   - **Design(폭 전파, D13)**: `RIGHT_GROUP_WIDTH`(const)를 `RIGHT_GROUP_BASE`로 바꾸고, `show_titlebar`가 `RIGHT_GROUP_BASE + update_badge_width(ui, badge)`를 계산해 ⓐ `drag_right`·`title_width`에 쓰고 ⓑ `TitlebarOutcome.right_group_width`에 실어 돌려준다. `ui::app`이 **같은 프레임에** 그 값을 `show_resize_handles(ctx, maximized, right_group_width)`로 넘기고, 그것이 `over_titlebar_button(x, window, right_group_width)`에 닿는다. 배지가 없으면 폭이 정확히 종전 174다.
@@ -368,7 +368,7 @@ MOA-Setup-0.1.0.exe
   - **Halt Forecast**: (i) `Sides` 레이아웃에서 오른쪽이 **오른쪽부터 채워진다**는 기존 규약(닫기를 먼저 추가) → 배지는 설정 버튼 **뒤에** 추가해야 왼쪽에 놓인다(`show_right` doc 주석이 그 순서를 이미 설명한다) — 사전 해소 / (ii-a) `Command` 열거형(공개 API) 변형 추가 — 사전 승인 항목
   - **Depends on**: T6
 
-- [ ] T8. 설치 스크립트 업데이트 모드 — `installer/moa.nsi`
+- [x] T8. 설치 스크립트 업데이트 모드 — `installer/moa.nsi`
   - **Type**: C
   - **Design**: ① `installer/moa.nsi` 한 파일 ② 신규 — `Var UpdateMode`, `.onInit`에서 `${GetParameters}`로 `/UPDATE` 판정, 페이지 넷(WELCOME·LICENSE·DIRECTORY·FINISH)에 `MUI_PAGE_CUSTOMFUNCTION_PRE` 콜백을 달아 업데이트 모드면 `Abort`(건너뛰기), `SetAutoClose`로 진행 화면 자동 닫기, `.onInstSuccess`에서 업데이트 모드면 `Exec`로 앱 실행 ③ 의존 — `FileFunc.nsh` 추가 include ④ **비추상화 선언** — 업데이트용 별도 스크립트를 만들지 않는다. 한 파일이 두 모드를 갖는다(설치 내용이 같은데 스크립트가 둘이면 한쪽만 고치는 사고가 난다)
   - **Acceptance(자동 — 빌드와 소스로 관측)**: Given `cargo run --example gen_installer`, When 돌리면, Then ① **makensis 경고 0**으로 `target/installer/MOA-Setup-<버전>.exe`가 만들어진다(문법·매크로 순서 오류가 여기서 잡힌다). Given `installer/moa.nsi`, When 읽으면, Then ② `Var UpdateMode`와 `${GetParameters}` 기반 `/UPDATE` 판정이 있고 ③ 페이지 넷(WELCOME·LICENSE·DIRECTORY·FINISH)에 각각 건너뛰기 `PRE` 콜백이 걸려 있으며 ④ `.onInstSuccess`에 업데이트 모드일 때의 `Exec`가 있고 ⑤ 제거 절에 `$INSTDIR\update` 삭제(`RMDir /r`)가 **`RMDir "$INSTDIR"`보다 앞에** 있다.
@@ -416,7 +416,7 @@ MOA-Setup-0.1.0.exe
   3. `/UPDATE` **없이** 설치 파일을 실행하면 지금과 똑같은 화면이 나온다 — 언어 선택 → 환영 → 라이선스 → 폴더(입력란 잠김) → 설치 → 마침(바탕화면 바로가기 체크박스) (**회귀 없음**)
   4. 설정 메뉴 → `릴리즈 노트`를 누르면 기본 브라우저에 GitHub 릴리즈 페이지가 열린다
   5. 설정 메뉴 → `업데이트`를 누르면(`MOA_UPDATE_DEV=1` — 가짜 주입 없이) 확인이 돌고 **`최신 버전입니다`** 안내가 뜬다 (릴리즈 0건이라 `Ok(None)` → `UpToDate`. 손으로 누른 확인의 결과 표시 경로가 여기서 덮인다)
-  6. `MOA_UPDATE_DEV` 없이 개발 빌드를 실행하면 배지가 없고 두 메뉴 항목이 비활성이다 (D4). `cargo build --release`로 만든 exe를 직접 실행해도 같다
+  6. `MOA_UPDATE_DEV` 없이 개발 빌드를 실행하면 배지가 없고 설정 메뉴의 **`업데이트`가 비활성**이다 (D4). **`릴리즈 노트`는 그때도 활성이다** — 브라우저를 여는 것뿐이라 설치본과 무관하고, FR-63에도 설치본 조건이 없다(D4의 「이 항목도 비활성」은 `업데이트`를 가리킨다). `cargo build --release`로 만든 exe를 직접 실행해도 같다
 - **HUMAN-VERIFY B** (첫 릴리즈 발행 뒤 — 별도 승인이 난 다음):
   7. 새 버전 릴리즈가 있을 때 설치본을 띄우면 **시작이 느려지지 않고**(체감) 잠시 뒤 배지가 뜬다
   8. 누르면 `다운로드 중...`으로 바뀌고, 설치 폴더에 `update\` 폴더와 설치 파일이 생긴다

@@ -163,8 +163,8 @@ strings! {
         / "The downloaded file was damaged, so the update was stopped";
     /// 설치 프로그램을 띄우지 못했을 때
     update_launch_failed
-        => "설치 프로그램을 실행하지 못했습니다"
-        / "Could not start the installer";
+        => "설치 프로그램을 실행하지 못했습니다. 잠시 후 다시 시도해 주세요"
+        / "Could not start the installer. Please try again later";
     /// 전송이 도는 중에 설치를 누르면 뜨는 확인 대화의 제목
     update_confirm_title => "지금 업데이트할까요?" / "Update now?";
     /// 그 대화의 실행 버튼

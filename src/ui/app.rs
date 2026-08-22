@@ -57,6 +57,7 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 mod autosave;
 mod remote;
 mod transfer_conflict;
+mod update;
 
 use remote::{RelistPending, RemoteOps};
 use transfer_conflict::ConflictCheck;
@@ -69,8 +70,6 @@ const APP_ICON_TEXTURE_PX: u32 = 48;
 
 /// 삭제 확인 대화 폭 — 문구 두 줄이 접히지 않을 만큼
 const REMOVE_DIALOG_WIDTH: f32 = 360.0;
-/// 업데이트 확인 대화 본문 폭 — 두 줄짜리 문장이 들어가 삭제 확인(360)보다 넓다
-const UPDATE_DIALOG_WIDTH: f32 = 420.0;
 
 /// 세션이 없을 때의 창 크기·위치 (첫 실행)
 const DEFAULT_WINDOW: WindowState = WindowState {
@@ -1505,166 +1504,6 @@ impl ExplorerApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
-        }
-    }
-
-    // ── 자동 업데이트 (FR-62) ──
-
-    /// 설정 메뉴의 `업데이트` — 지금 다시 확인하고 **결과를 알린다**.
-    ///
-    /// 앱이 뜰 때 도는 확인은 조용하지만(있으면 배지가 서고 없으면 아무 일도 없다),
-    /// 손으로 누른 것은 눌렸다는 것 자체를 알려야 한다
-    fn check_update_by_hand(&mut self) {
-        self.update_asked_by_hand = true;
-        self.update.start_check(self.repaint.clone());
-    }
-
-    /// 업데이트 배지를 눌렀을 때 — 아직 안 받았으면 받고, 다 받았으면 설치한다.
-    ///
-    /// **전송이 도는 중이면 먼저 묻는다**(D5) — 설치는 앱을 닫으므로 올리던 파일이 끊긴다
-    fn start_update(&mut self, ctx: &egui::Context) {
-        let active = self.pending_transfer_count();
-        if active > 0 {
-            self.update_confirm = Some(active);
-            return;
-        }
-        self.proceed_update(ctx);
-    }
-
-    /// 확인을 마친 뒤의 실제 진행 — 받기 또는 설치
-    fn proceed_update(&mut self, ctx: &egui::Context) {
-        use crate::app::update::UpdateStatus;
-        match self.update.status() {
-            UpdateStatus::Available(_) => self.update.start_download(self.repaint.clone()),
-            UpdateStatus::Ready(path) => {
-                let path = path.clone();
-                self.install_update(&path, ctx);
-            }
-            _ => {}
-        }
-    }
-
-    /// 설치 프로그램을 띄우고 앱을 닫는다.
-    ///
-    /// **띄우기에 성공했을 때만 닫는다** — 닫고 나서 실패하면 사용자는 앱도 업데이트도
-    /// 잃는다. 닫는 길은 트레이 `종료`와 같은 것을 쓴다(그 길에 세션 저장이 있다)
-    fn install_update(&mut self, installer: &std::path::Path, ctx: &egui::Context) {
-        if crate::app::update::install::launch_installer(installer) {
-            // 트레이 `종료`와 같은 길로 닫는다 — 그 길에 세션 저장이 있다.
-            // 설치 프로그램도 우리를 닫으려 하지만(`taskkill`), 스스로 정상 종료하는 편이
-            // 설정을 적을 틈을 확실히 얻는다
-            self.quitting = true;
-            self.hidden = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-        let now = ctx.input(|input| input.time);
-        self.toast.show(crate::i18n::update_launch_failed(), now);
-    }
-
-    /// 아직 끝나지 않은 전송 건수 — 대기·진행을 함께 센다
-    fn pending_transfer_count(&self) -> usize {
-        self.queue
-            .items()
-            .iter()
-            .filter(|item| item.state.is_pending())
-            .count()
-    }
-
-    /// 워커가 보내온 것을 거두고, 손으로 물은 확인이면 결과를 알린다
-    fn pump_update(&mut self, ctx: &egui::Context) {
-        use crate::app::update::{UpdateError, UpdateStatus};
-
-        let before = self.update.status().clone();
-        self.update.pump();
-        let after = self.update.status().clone();
-        if before == after {
-            return;
-        }
-
-        // 다 받았으면 곧바로 설치로 넘어간다 — 사용자는 이미 한 번 눌렀다
-        if let UpdateStatus::Ready(path) = &after {
-            let path = path.clone();
-            self.install_update(&path, ctx);
-            return;
-        }
-
-        let text = match &after {
-            // 손으로 물었을 때만 「최신입니다」를 알린다 — 저절로 도는 확인까지 알리면
-            // 앱을 켤 때마다 알림이 뜬다
-            UpdateStatus::UpToDate if self.update_asked_by_hand => {
-                Some(crate::i18n::update_latest())
-            }
-            UpdateStatus::Failed(error) => Some(match error {
-                UpdateError::ChecksumMismatch => crate::i18n::update_verify_failed(),
-                UpdateError::Download => crate::i18n::update_download_failed(),
-                // 그 밖의 사유는 「확인하지 못했다」로 묶는다 — 사용자가 할 수 있는 일이
-                // 같고(연결 확인·나중에 다시), 응답 형식 같은 말은 뜻이 닿지 않는다
-                _ => crate::i18n::update_check_failed(),
-            }),
-            _ => None,
-        };
-        if !matches!(after, UpdateStatus::Checking | UpdateStatus::Downloading) {
-            self.update_asked_by_hand = false;
-        }
-        if let Some(text) = text {
-            let now = ctx.input(|input| input.time);
-            self.toast.show(text, now);
-        }
-    }
-
-    /// 타이틀바에 넘길 배지 상태 — 상태 기계를 화면 값 둘로 옮긴다
-    fn update_badge(&self) -> titlebar::UpdateBadge {
-        use crate::app::update::UpdateStatus;
-        match self.update.status() {
-            UpdateStatus::Available(_) => titlebar::UpdateBadge {
-                visible: true,
-                downloading: false,
-            },
-            UpdateStatus::Downloading => titlebar::UpdateBadge {
-                visible: true,
-                downloading: true,
-            },
-            _ => titlebar::UpdateBadge::default(),
-        }
-    }
-
-    /// 전송이 도는 중에 업데이트를 누르면 뜨는 확인 대화 (D5)
-    fn show_update_confirm(&mut self, ctx: &egui::Context) {
-        let Some(active) = self.update_confirm else {
-            return;
-        };
-        let buttons = [
-            dialog::ButtonSpec::strong(crate::i18n::update_confirm_ok()),
-            dialog::ButtonSpec::plain(crate::i18n::cancel()),
-        ];
-        let shell = dialog::show(
-            ctx,
-            egui::Id::new("update_confirm"),
-            UPDATE_DIALOG_WIDTH,
-            &buttons,
-            |ui| {
-                ui.heading(crate::i18n::update_confirm_title());
-                ui.add_space(8.0);
-                ui.label(crate::i18n::dynamic::update_confirm_body(active));
-            },
-        );
-        let mut decided = match shell.clicked {
-            Some(0) => Some(true),
-            Some(_) => Some(false),
-            None => None,
-        };
-        // 배경 클릭·`Esc`는 셸이 판정한다 — 되돌릴 수 없는 쪽으로 기울지 않는다
-        if shell.should_close {
-            decided = Some(false);
-        }
-        match decided {
-            Some(true) => {
-                self.update_confirm = None;
-                self.proceed_update(ctx);
-            }
-            Some(false) => self.update_confirm = None,
-            None => {}
         }
     }
 

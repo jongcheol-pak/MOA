@@ -6,6 +6,12 @@
 ; **설치 폴더는 고정이고 대화 상자는 띄우지 않는다**(2026-08-21 사용자 요청) — 폴더 선택
 ; 페이지는 종전처럼 보이되 **경로 입력란과 「찾아보기」를 잠가** 바꿀 수 없게 한다.
 ;
+; **모드가 둘이다** — 사람이 직접 실행하는 보통 설치와, 앱이 자동 업데이트로 부르는
+; `/UPDATE` 모드(FR-62). 업데이트 모드에서는 언어 선택 대화와 앞의 세 페이지(환영·
+; 라이선스·폴더)를 건너뛰고 **설치 진행 화면만** 보인 뒤, 마침 페이지 없이 닫히며 앱을
+; 다시 띄운다. 스크립트를 둘로 나누지 않은 이유는 설치 내용이 같기 때문이다 —
+; 나누면 한쪽만 고치는 사고가 난다.
+;
 ; **경로는 모두 이 파일이 있는 폴더 기준**이다 — `gen_installer`가 makensis의 작업 디렉터리를
 ; `installer\`로 지정하고 부르므로, makensis가 스크립트 폴더로 옮기든 아니든 같은 자리를 가리킨다.
 
@@ -35,6 +41,11 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
 !include "MUI2.nsh"
+; `${GetParameters}`·`${GetOptions}` — 명령행에서 `/UPDATE`를 가려내는 데 쓴다
+!include "FileFunc.nsh"
+
+; 업데이트 모드인가 (`/UPDATE`로 불렸는가). 1이면 안내 페이지를 건너뛴다
+Var UpdateMode
 
 !define MUI_ICON "..\docs\AppIcon.ico"
 !define MUI_UNICON "..\docs\AppIcon.ico"
@@ -47,9 +58,19 @@ SetCompressor /SOLID lzma
 !define MUI_LANGDLL_WINDOWTITLE "$(LANGDLL_TITLE)"
 !define MUI_LANGDLL_INFO "$(LANGDLL_INFO)"
 
+; 안내 페이지를 건너뛰는 콜백 — 업데이트 모드에서 `Abort`하면 그 페이지가 표시되지 않는다.
+; **`MUI_PAGE_CUSTOMFUNCTION_PRE`는 페이지 매크로가 쓰고 나서 `!undef` 하므로**
+; (`Contrib\Modern UI 2\Pages.nsh`의 `MUI_PAGE_FUNCTION_CUSTOM`) 페이지마다 다시 정의한다
+Function SkipWhenUpdating
+  StrCmp $UpdateMode "1" 0 +2
+    Abort
+FunctionEnd
+
 ; 설치 페이지 — 라이선스는 레포의 MIT 원문을 그대로 보인다
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenUpdating
 !define MUI_WELCOMEPAGE_TEXT "$(WELCOME_TEXT)"
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenUpdating
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 
 ; 설치 위치를 보여 주는 페이지 — 고를 수는 없다. 페이지를 통째로 빼면 어디에 깔리는지
@@ -58,6 +79,7 @@ SetCompressor /SOLID lzma
 !define MUI_PAGE_HEADER_SUBTEXT "$(DIR_PAGE_SUBHEADER)"
 !define MUI_DIRECTORYPAGE_TEXT_TOP "$(DIR_PAGE_TOP)"
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW LockDirectoryPage
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenUpdating
 !insertmacro MUI_PAGE_DIRECTORY
 
 ; 그 잠금. **MUI2가 SHOW 콜백 직전에 컨트롤 핸들을 이 변수들에 담아 두므로**
@@ -88,6 +110,8 @@ FunctionEnd
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "$(DESKTOP_SHORTCUT_TEXT)"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateDesktopShortcut
+; 업데이트 모드는 이 페이지도 건너뛴다 — 대신 `.onInstSuccess`가 앱을 다시 띄운다
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipWhenUpdating
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -141,10 +165,36 @@ LangString CLOSING_APP ${LANG_KOREAN} "실행 중인 모아를 닫습니다..."
 LangString CLOSING_APP ${LANG_ENGLISH} "Closing MOA if it is running..."
 
 Function .onInit
+  ; 앱이 자동 업데이트로 부를 때 `/UPDATE`를 넘긴다 (`app::update::install`).
+  ; `GetOptions`는 대소문자를 가리지 않아 `/update`로 적어도 걸린다
+  StrCpy $UpdateMode "0"
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  IfErrors +2 0
+    StrCpy $UpdateMode "1"
+
+  ; 업데이트 모드에서는 언어를 묻지 않는다 — 사용자가 볼 것은 진행 막대뿐이라 고를 것이
+  ; 없고, 앱이 부른 설치에 대화가 뜨면 「자동으로 진행」이 아니게 된다. 그때 화면 문구는
+  ; 시스템 표시 언어를 따른다(`$LANGUAGE` 기본값)
+  StrCmp $UpdateMode "1" 0 +2
+    Return
   !insertmacro MUI_LANGDLL_DISPLAY
 FunctionEnd
 
+; 설치가 끝난 뒤 — 업데이트 모드는 마침 페이지가 없으므로 우리가 앱을 다시 띄운다.
+; 보통 설치는 마침 페이지의 실행 체크박스(`MUI_FINISHPAGE_RUN`)가 그 일을 한다
+Function .onInstSuccess
+  StrCmp $UpdateMode "1" 0 +2
+    Exec "$INSTDIR\${EXE_NAME}"
+FunctionEnd
+
 Section "Install"
+  ; 업데이트 모드는 마침 페이지를 건너뛰므로 진행 화면이 스스로 닫혀야 한다.
+  ; 보통 설치에서는 종전대로 「다음」을 눌러 마침 페이지로 간다
+  StrCmp $UpdateMode "1" 0 +2
+    SetAutoClose true
+
   ; 실행 중이면 파일을 덮어쓸 수 없다 — 「먼저 닫아 주세요」라고 청하는 대신 우리가 닫는다
   ; (2026-08-21 사용자 요청). `nsExec`는 NSIS에 딸린 플러그인이라 따로 받을 것이 없고
   ; 콘솔 창도 띄우지 않는다. 먼저 정상 종료를 청해 앱이 설정을 저장할 틈을 준다
@@ -202,6 +252,11 @@ Section "Uninstall"
   Delete "$INSTDIR\settings.json"
   Delete "$INSTDIR\known_hosts.json"
   Delete "$INSTDIR\uninstall.exe"
+  ; 자동 업데이트가 받아 둔 것 (FR-62) — 앱이 뜰 때마다 치우지만 받는 도중에 제거하면
+  ; 남아 있을 수 있다. **이 폴더가 남으면 아래 비재귀 RMDir이 실패해 설치 폴더가 통째로
+  ; 남는다** — 그래서 여기만 재귀로 지운다(우리가 만든 폴더이고 든 것도 우리가 받은 것뿐)
+  RMDir /r "$INSTDIR\update"
+
   ; 재귀로 지우지 않는다 — 사용자가 넣어 둔 파일이 있으면 그대로 남긴다
   RMDir "$INSTDIR"
 

@@ -98,6 +98,9 @@ pub struct UpdateBadge {
     pub visible: bool,
     /// 받는 중인가 — 문구가 갈리고 누를 수 없게 된다
     pub downloading: bool,
+    /// 이 실행에서 업데이트 기능을 쓰는가 — 설정 메뉴의 `업데이트` 항목 활성이 이것을 따른다.
+    /// 배지와 달리 **상태가 아니라 실행 환경**이라 확인 결과와 무관하게 고정이다 (D4)
+    pub update_enabled: bool,
 }
 
 /// 타이틀바가 이번 프레임에 낸 요청. 창 조작과 앱 명령은 서로 독립이다.
@@ -289,7 +292,7 @@ fn show_right(
     {
         request = Some(WindowRequest::Minimize);
     }
-    show_settings_menu(ui, &mut command);
+    show_settings_menu(ui, &mut command, badge.update_enabled);
     // 배지는 설정 버튼 **뒤에** 더한다 — 이 영역은 오른쪽부터 채워지므로 나중에 더한 것이
     // 화면에서 더 왼쪽에 선다
     if let Some(badge_command) = show_update_badge(ui, badge) {
@@ -313,7 +316,9 @@ fn show_update_badge(ui: &mut egui::Ui, badge: UpdateBadge) -> Option<Command> {
         egui::Sense::click()
     };
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TITLEBAR_HEIGHT), sense);
-    if response.hovered() {
+    // **받는 중에는 hover 배경을 칠하지 않는다** — 누를 수 없는데 눌릴 것처럼 보이면
+    // 반응이 없는 것이 고장으로 읽힌다(`Sense::hover()`도 hover 자체는 참이 된다)
+    if !badge.downloading && response.hovered() {
         crate::ui::widgets::hover_backdrop(ui.painter(), rect, theme::CONTROL_HOT);
     }
 
@@ -323,13 +328,18 @@ fn show_update_badge(ui: &mut egui::Ui, badge: UpdateBadge) -> Option<Command> {
     // 아이콘과 글자를 한 덩어리로 보고 그 덩어리를 가운데 놓는다
     let label_width = text_width(ui, label, &font);
     let content_left = rect.center().x - (icon_width + BADGE_ICON_GAP + label_width) / 2.0;
-    ui.painter().text(
-        egui::pos2(content_left, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        icon,
-        font.clone(),
-        theme::TEXT,
-    );
+    let icon_center = egui::pos2(content_left + icon_width / 2.0, rect.center().y);
+    if badge.downloading {
+        draw_spinner(ui, icon, icon_center, &font);
+    } else {
+        ui.painter().text(
+            icon_center,
+            egui::Align2::CENTER_CENTER,
+            icon,
+            font.clone(),
+            theme::TEXT,
+        );
+    }
     ui.painter().text(
         egui::pos2(content_left + icon_width + BADGE_ICON_GAP, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -339,6 +349,26 @@ fn show_update_badge(ui: &mut egui::Ui, badge: UpdateBadge) -> Option<Command> {
     );
 
     response.clicked().then_some(Command::StartUpdate)
+}
+
+/// 받는 중을 알리는 도는 아이콘 (시각 요소 분해 — `CIRCLE_NOTCH` + 회전).
+///
+/// **도는 것 자체가 「아직 끝나지 않았다」는 신호다** — 멈춰 있으면 굳은 화면으로 보인다.
+/// 시간으로 각도를 내고 다음 프레임을 청해 계속 돌게 한다(그 사이 다른 것이 화면을
+/// 갱신하지 않아도 이 아이콘은 움직여야 한다)
+fn draw_spinner(ui: &egui::Ui, icon: &str, center: egui::Pos2, font: &egui::FontId) {
+    // 한 바퀴에 1초 — 더 빠르면 어지럽고 더 느리면 멈춘 것처럼 보인다
+    const TURN_SECONDS: f64 = 1.0;
+    let time = ui.input(|input| input.time);
+    let angle = ((time % TURN_SECONDS) / TURN_SECONDS) as f32 * std::f32::consts::TAU;
+    let galley = ui
+        .painter()
+        .layout_no_wrap(icon.to_owned(), font.clone(), theme::TEXT);
+    ui.painter().add(
+        egui::epaint::TextShape::new(center, galley, theme::TEXT)
+            .with_angle_and_anchor(angle, egui::Align2::CENTER_CENTER),
+    );
+    ui.ctx().request_repaint();
 }
 
 /// 배지에 그릴 아이콘과 글자 — 받는 중인지에 따라 갈린다.
@@ -385,7 +415,7 @@ fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
 ///
 /// 다섯 항목을 배열+반복으로 묶지 않은 이유: 각 항목이 곧 서로 다른 화면·동작으로 갈라질
 /// 자리라, 지금 묶으면 채우는 순간 다시 풀어야 한다
-fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
+fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>, update_enabled: bool) {
     let response = icon_button(
         ui,
         egui_phosphor::regular::GEAR,
@@ -400,7 +430,16 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
             *out = Some(Command::OpenAppSettings);
             ui.close();
         }
-        if ui.button(crate::i18n::titlebar_updates()).clicked() {
+        // **설치본에서만 누를 수 있다** (D4·FR-62) — 개발 실행에서는 확인 자체를 하지
+        // 않으므로 눌러도 아무 일이 없다. 활성처럼 보이면서 반응이 없으면 고장으로 오인된다.
+        // `릴리즈 노트`는 이 조건이 없다 — 브라우저를 여는 것뿐이라 설치본과 무관하다(FR-63)
+        if ui
+            .add_enabled(
+                update_enabled,
+                egui::Button::new(crate::i18n::titlebar_updates()),
+            )
+            .clicked()
+        {
             *out = Some(Command::CheckUpdate);
             ui.close();
         }
@@ -620,12 +659,70 @@ mod tests {
     }
 
     #[test]
+    fn 받는_중에는_문구가_갈리고_눌리지_않는다() {
+        // 두 번 누르면 두 번 받는다 — 그래서 받는 동안에는 클릭 자체가 나오지 않아야 한다
+        let downloading = UpdateBadge {
+            visible: true,
+            downloading: true,
+            update_enabled: true,
+        };
+        let idle = UpdateBadge {
+            visible: true,
+            downloading: false,
+            update_enabled: true,
+        };
+        // 문구가 갈린다
+        assert_eq!(badge_parts(idle).1, crate::i18n::update_available());
+        assert_eq!(
+            badge_parts(downloading).1,
+            crate::i18n::update_downloading()
+        );
+        assert_ne!(
+            badge_parts(idle).0,
+            badge_parts(downloading).0,
+            "아이콘도 갈린다"
+        );
+
+        // 배지 자리를 눌러도 명령이 나오지 않는다
+        let ctx = egui::Context::default();
+        let first = run_frame_with(&ctx, 0.0, Vec::new(), downloading);
+        let badge_x = 800.0 - RIGHT_GROUP_BASE - 1.0;
+        assert!(first.right_group_width > RIGHT_GROUP_BASE);
+        let frames = [
+            run_frame_with(
+                &ctx,
+                0.05,
+                vec![egui::Event::PointerMoved(egui::pos2(badge_x, 18.0))],
+                downloading,
+            ),
+            run_frame_with(
+                &ctx,
+                0.10,
+                vec![press(egui::pos2(badge_x, 18.0), true)],
+                downloading,
+            ),
+            run_frame_with(
+                &ctx,
+                0.15,
+                vec![press(egui::pos2(badge_x, 18.0), false)],
+                downloading,
+            ),
+        ];
+        let commands: Vec<_> = frames.iter().map(|frame| frame.command).collect();
+        assert!(
+            !commands.contains(&Some(Command::StartUpdate)),
+            "받는 중에 눌려 명령이 나왔다: {commands:?}"
+        );
+    }
+
+    #[test]
     fn 배지_자리에서_눌러도_창이_끌리지_않는다() {
         // D13이 겨냥한 회귀의 나머지 절반 — 끌기 영역이 배지 폭을 셈하지 않으면
         // 배지를 누르는 순간 OS 창 이동 루프가 열려 그 클릭이 삼켜진다
         let badge = UpdateBadge {
             visible: true,
             downloading: false,
+            update_enabled: true,
         };
         let ctx = egui::Context::default();
         // 첫 프레임으로 그 프레임의 우측 폭을 얻는다(폭은 글꼴에 따라 달라 미리 알 수 없다)
@@ -660,6 +757,13 @@ mod tests {
         assert!(
             !windows.contains(&Some(WindowRequest::Drag)),
             "배지 위에서 끌기를 요청했다: {windows:?}"
+        );
+        // **같은 자리**에서 위쪽 변 크기 조절도 비켜야 한다 — 둘 중 하나만 지키면
+        // 그 자리를 누르는 클릭이 여전히 삼켜진다
+        let window = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        assert!(
+            over_titlebar_button(badge_x, window, first.right_group_width),
+            "배지가 놓인 x에서 크기 조절이 비켜주지 않는다"
         );
     }
 
