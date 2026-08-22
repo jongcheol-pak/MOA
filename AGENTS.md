@@ -23,10 +23,11 @@
 
 - **릴리즈 발행**: 아래 순서를 지킨다. **본문에 SHA256이 없으면 앱이 그 릴리즈를 받지 않는다**(FR-62의 무결성 대조가 그 값을 기대값으로 쓴다).
   1. `Cargo.toml`의 `version`을 올린다 (앱이 이 값으로 새 판인지 가린다)
-  2. `cargo build --release`
-  3. `cargo run --example gen_installer` → `target/installer/MOA-Setup-<버전>.exe`
-  4. `certutil -hashfile target\installer\MOA-Setup-<버전>.exe SHA256` — 나온 값을 본문에 적는다
-  5. 태그를 달고 GitHub 릴리즈를 만들어 그 설치 파일을 첨부한다
+  2. **`cargo run --example gen_licenses`** — 버전을 올리면 `Cargo.lock`이 바뀌고, 라이선스 자산에 담긴 그 **지문이 어긋나 `cargo test`가 실패한다**(`app::licenses`의 `자산이_현재_의존성과_같은_시점의_것이다`). 의존성을 건드리지 않았어도 **버전만 올려도 다시 만들어야 한다** — 2026-08-22에 이 단계를 빠뜨려 실제로 깨졌다
+  3. `cargo build --release` — 위 자산이 실행 파일에 담기므로 **반드시 재생성 뒤에** 돈다
+  4. `cargo run --example gen_installer` → `target/installer/MOA-Setup-<버전>.exe`
+  5. `certutil -hashfile target\installer\MOA-Setup-<버전>.exe SHA256` — 나온 값을 본문에 적는다
+  6. 태그를 달고 GitHub 릴리즈를 만들어 그 설치 파일을 첨부한다
 - **릴리즈 노트 작성 규약** (2026-08-22 사용자 요청 — *"일반 사용자들이 보기 때문에 내용이 너무 길거나 내용이 너무 어려우면 안됨"*): 노트는 **사용자가 읽는 글**이다.
   - **항목당 한두 줄**로, 사용자가 화면에서 겪는 변화를 적는다
   - **내부 사정은 빼거나 사용자 말로 옮긴다** — 모듈·함수 이름, 리팩토링, 시험 추가, 의존성 조정은 적지 않는다
