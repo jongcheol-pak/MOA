@@ -407,7 +407,10 @@ pub fn poll_shortcuts(ctx: &egui::Context, owner: KeyOwner) -> Option<Command> {
 }
 
 /// 단축키 → 명령 대응표 (현행 `app::menu::create_accels`와 같은 구성).
-/// 수식 키가 많은 조합을 앞에 두어 `Ctrl+Shift+\`가 `Ctrl+\`로 오인되지 않게 한다
+/// 수식 키가 많은 조합을 앞에 두어 `Ctrl+Shift+\`가 `Ctrl+\`로 오인되지 않게 한다.
+///
+/// **이 표가 유일한 대응이며 사용자가 바꿀 길을 두지 않는다** — 키 매핑 설정 화면도,
+/// 그것을 담을 설정 항목도 만들지 않았다(요청에 없다 — plan T10 Design ④)
 fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 21] {
     let ctrl_shift = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
     let ctrl_alt = egui::Modifiers::CTRL | egui::Modifiers::ALT;
