@@ -368,7 +368,7 @@
     - (i) egui가 그림자 크기를 노출하지 않을 수 있다 → 노출하지 않으면 그 항만 종전 어림값을 쓰고 **그 사실을 주석에 적는다**(전부 실측이라고 적어 두면 다음 사람이 오해한다). 그 경우에도 상수는 `menu_frame_pad` 안 한 곳에만 남으므로 acceptance의 0 hit는 만족한다
   - **Depends on**: T5, T6 (Design ③ⓒ — `ui::shell_context_menu`가 있어야 그 메뉴에 붙일 수 있다. ⓐ·ⓑ만 보면 독립이지만 셋을 한 task로 묶어 여백 정본이 한 번에 서게 한다)
 
-- [ ] T8. 목록에서 바로 이름을 고치고, 잘라낸 항목을 흐리게 보인다
+- [x] T8. 목록에서 바로 이름을 고치고, 잘라낸 항목을 흐리게 보인다
   - **Type**: D
   - **Design**: ① 상태 둘 다 `src/ui/file_list.rs`(`FileListView`)가 소유하고, 그리기는 `list_details`·`list_grid` 둘이 한다 ② **이름 편집** — `RenameEdit { index: usize, text: String, first_frame: bool }`. 이름 칸 자리에 `egui::TextEdit`을 얹는다. `Enter` 확정 → `FileListAction::Rename { index, new_name }` / `Esc`·포커스 상실 → 취소 ③ **잘라내기 표시** — `cut_marks: HashSet<PathBuf>`(경로 기준 — 목록이 갱신돼도 행 번호와 달리 어긋나지 않는다). 표시된 행은 라벨·아이콘을 `theme::TEXT_DIM`과 반투명(alpha 0.5)으로 그린다. **해제 조건 셋**: 붙여넣기 성공 / 다른 것을 클립보드에 담기(`put` 호출) / 다른 앱이 클립보드를 가져가 `fs::clipboard::take()`의 경로 집합이 달라짐(프레임마다 묻지 않고 **붙여넣기·담기 시점에만** 확인한다) ④ `ui::panel`이 `Rename` 액션을 받아 `fs::file_op::rename_item`을 걸고 결과 채널을 기존 `poll_create`와 같은 자리에서 거둔다 ⑤ **비추상화 선언**: 원격 목록의 이름 바꾸기(대화 — FR-39)와 합치지 않는다. 두 상태를 하나의 「행 상태」 타입으로 묶지 않는다 — 수명과 해제 조건이 전혀 다르다
   - **Acceptance**: Given `report.tar.gz`를 편집 시작, When 첫 프레임에 선택 범위를 잡으면, Then **마지막 점 앞**(`report.tar`)이 선택된다 — 확장자 판정은 마지막 점 기준이며 폴더는 이름 전체가 선택된다(순수 함수 시험). Given 편집 중 `Esc`, When 누르면, Then 이름이 원래대로 돌아가고 목록 선택이 유지된다. Given 경로 2개가 `cut_marks`에 있고, When 붙여넣기가 성공하면, Then 집합이 비고 그 행이 다시 정상 색으로 그려진다(상태 전이 시험 — FR-64의 *"붙여넣거나 다른 것을 담으면 그 표시가 풀린다"*)
@@ -473,6 +473,7 @@
 - T4: 리뷰 지적 수정 사이클 1/5 — 1라운드 MAJOR 2·MINOR 3 전건 반영
 - T6: 리뷰 지적 수정 사이클 4/5 · 재호출 2/2(상한 도달) — 1라운드 MAJOR 6·MINOR 4, 2라운드 BLOCKER 1·MINOR 3. **「창을 숨길 때 메뉴 닫기」가 2회 연속**(1라운드 반영이 같은 함수에 두 번 들어가고 정작 다른 경로가 빠졌다) — 3라운드에서 `hide_window` 단일 진입점으로 닫힘 확인
 - T7: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec PASS · 품질 MINOR 1(중복 호출)+SUGGEST 1(죽은 코드) 전건 반영, 증분 재리뷰 OK. **리뷰어 둘 다 첫 응답이 판정문 없이 골격만 도착**(recovery D 분기) — 같은 에이전트에 판정문만 재요청해 해소(재조사 없음)
+- T8: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec MAJOR 1·MINOR 2, 품질 MAJOR 2. 전건 반영 후 재리뷰 spec MINOR 2(문서 정합·경계 케이스, 되돌릴 사안 아님)
 - T5: 리뷰 지적 수정 사이클 3/5 · 재호출 2/2(상한 도달) — 1라운드 BLOCKER 3·MAJOR 5, 2라운드 BLOCKER 1(**B3 재발 — 라벨 말줄임**)·MINOR 1. **B3만 2회 연속**이며 3라운드에서 확인한다(3회면 Halt)
 
 ## Progress Log
@@ -505,6 +506,13 @@
   - **메인이 스스로 찾은 결함**: `menu_frame_pad`가 테두리를 `style.visuals.window_stroke()`에서 읽었는데 세 메뉴는 전부 그것을 무시하고 `Stroke::new(1.0, ...)`로 덮어쓰고 있었다 — **재는 값과 그리는 값의 출처가 달랐다**(둘 다 1.0이라 결과만 우연히 맞았다). `theme::MENU_FRAME_STROKE`를 정본으로 두고 그리는 3곳과 재는 1곳이 모두 그것을 읽게 했다.
   - **결정**: 그림자는 여백으로 세지 않는다 — `Frame::menu`의 그림자는 프레임 **밖에** 그려져 자리를 차지하지 않는다(egui 0.35 `frame.rs` 대조). 시험이 그림자를 크게 잡아 두고 계산에 섞이지 않음을 단언한다.
   - **정리**: 쓰이지 않던 `shell_context_menu::menu_size(ui, items)`를 지웠다(T5에서 만든 죽은 코드 — 실사용은 `menu_size_at` 하나다).
+
+- **T8 완료**: 목록에서 바로 이름을 고치고(`Enter` 확정·`Esc` 취소·확장자 앞까지 자동 선택), 잘라낸 항목을 흐리게 보인다. 메뉴 아이콘 줄의 `이름 바꾸기`가 이것을 연다(`can_rename`이 참이 됐다).
+  - **계획 정정 — Design ④**: 이름 바꾸기를 거는 자리를 `ui::panel`이 아니라 **`ui::app`**으로 했다. `rename_item`이 받는 셸 대화의 주인 창(HWND)을 아는 곳이 `ui::app`뿐이고, T6이 만든 파일 작업 채널(`file_op_tx`·`pump_file_op`)을 메뉴의 삭제·복사와 함께 쓸 수 있어서다. 그래서 `panel/workers.rs`는 손대지 않았고, 대신 `PanelOutcome`·`LayoutOutcome`에 `rename` 필드를 더해 **`splitter.rs`·`app.rs`가 T8 Files에 추가**됐다.
+  - **계획 정정 — Design ③의 세 번째 해제 조건**(다른 앱이 클립보드를 가져감)은 **T10 소관**이다. 그 판정은 `clipboard::take()`가 준 경로 집합을 견주는 것인데, 그 호출을 만드는 것이 붙여넣기(T10)다. T8 Acceptance·Edge Cases에는 이 조건이 없다.
+  - **결정**: 편집 취소의 정본을 `PanelState::reload_active_tab` 한 곳에 뒀다 — 탭 전환·탭 닫기·새 탭·표시 규칙 변경이 모두 이 길로 온다. 감시 갱신(FR-10)은 `start_load`를 곧바로 불러 이 길을 타지 않으므로 **편집이 유지된다**(plan Edge Case 그대로).
+  - **리뷰가 찾은 실제 결함 둘**: ① 같은 폴더를 보는 두 탭 사이 전환에서 편집이 살아남던 것 ② 내가 파이썬으로 파일을 써 넣으며 `\a`·`\b` 이스케이프가 소스에 제어 문자로 박힌 것(레포 전체 18건 중 이번 회차 13건을 되돌렸다).
+  - **남은 제어 문자 5건**은 이전 회차 문서다 — `docs/plans/deferred.md` 3건은 **T12**가 그 파일을 손대므로 함께 치우고, `2026-08-04-ftp-integration.md`·`2026-08-20-drag-copy-and-transfer-relist.md` 각 1건도 T12에서 같은 한 번의 훑기로 정리한다.
 
 ## Next Steps
 

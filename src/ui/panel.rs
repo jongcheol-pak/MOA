@@ -899,11 +899,16 @@ impl PanelState {
     /// **화면에 없는 경로**에 삭제·권한 변경을 걸 수 있다(로컬은 종전부터 다시 읽어 왔고,
     /// 원격만 빠져 있었다)
     fn reload_active_tab(&mut self, ctx: &egui::Context) {
-        // 탭을 옮기면 고치던 이름은 버린다 (FR-64 Edge Case).
+        // 활성 탭을 **다시 읽는 길**에서는 고치던 이름을 버린다 (FR-64 Edge Case).
+        // 여기로 오는 것은 탭 전환·탭 닫기·새 탭·사이트 탭 거두기, 그리고 표시 규칙(숨김·시스템)
+        // 변경이다 — 어느 쪽이든 보고 있던 것이 통째로 바뀐다.
         //
         // **폴더가 바뀌는지로 가릴 수 없다** — 두 탭이 같은 폴더를 보고 있으면
         // `FileListView::drop_rename_on_dir_change`가 아무 일도 하지 않아, 옮겨 간 탭에서
-        // 편집이 그대로 살아 있게 된다(spec 리뷰 N1). 탭 전환은 그 자체로 취소다
+        // 편집이 그대로 살아 있게 된다(spec 리뷰 N1).
+        //
+        // **감시 갱신(FR-10)은 이 길로 오지 않는다** — `poll_watch`가 `start_load`를 곧바로
+        // 불러, 폴더가 밖에서 바뀌어도 편집은 유지된다(그쪽이 plan의 Edge Case다)
         self.list.cancel_rename();
         match self.tabs.active().source.local_path() {
             Some(path) => {
