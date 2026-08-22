@@ -135,6 +135,15 @@ impl ExplorerApp {
                 downloading: true,
                 update_enabled: enabled,
             },
+            // **다 받아 둔 채로 머무는 자리** — 설치 프로그램을 띄우지 못했을 때 여기 남는다.
+            // 배지를 거두면 다시 눌러 볼 자리가 사라져, 「잠시 후 다시 시도해 주세요」라고
+            // 알려 놓고 정작 그 길을 없애는 꼴이 된다(설정 메뉴로 다시 확인하면 이미 받아
+            // 대조까지 마친 파일을 버리고 처음부터 받는다)
+            UpdateStatus::Ready(_) => titlebar::UpdateBadge {
+                visible: true,
+                downloading: false,
+                update_enabled: enabled,
+            },
             _ => titlebar::UpdateBadge {
                 update_enabled: enabled,
                 ..titlebar::UpdateBadge::default()
