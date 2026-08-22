@@ -31,10 +31,34 @@ use crate::remote::sites::SiteStore;
 use crate::remote::types::{LogonType, RemoteError, RemotePath, RemoteSession, SiteId};
 use crate::remote::url::RemoteUrl;
 use crate::ui::list_common::{DragItem, DropOutcome, DropTarget};
+use crate::ui::menu::Command;
 use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
+use crate::ui::tabs::TransferTargets;
 use eframe::egui;
 use std::path::PathBuf;
+
+/// 단축키 명령을 원격 기능으로 옮긴다 (FR-12·plan D5) — 대응이 없으면 `None`.
+///
+/// **`Refresh`는 여기 없다** — `ExplorerApp::refresh_panel`이 이미 원격 탭을 가려
+/// `request_remote_list`를 보낸다(`RemoteMenuAction::Refresh`가 하는 바로 그 일이다).
+/// 여기에도 넣으면 같은 일에 길이 둘이 된다(Design ③ — 새 실행 경로를 만들지 않는다).
+///
+/// **클립보드는 원격에 대응 개념이 없다** — 전송은 큐가 담당하며, 클립보드에 원격 경로를
+/// 담는 새 형식을 만들지 않는다(plan Out of Scope).
+///
+/// 그 밖의 명령이 `None`인 것은 "원격에서 안 된다"는 뜻이 아니라 **탭·분할·보기처럼
+/// 패널 층에서 이미 원격 탭에도 그대로 듣는다**는 뜻이다 — 그래서 새 명령이 늘어도
+/// 기본값(종전 경로)이 안전하다
+pub(super) fn remote_action_for(command: Command) -> Option<RemoteMenuAction> {
+    match command {
+        Command::Rename => Some(RemoteMenuAction::Rename),
+        Command::Delete { .. } => Some(RemoteMenuAction::Delete),
+        Command::NewFolder => Some(RemoteMenuAction::NewFolder),
+        Command::ClipboardCopy | Command::ClipboardCut | Command::ClipboardPaste => None,
+        _ => None,
+    }
+}
 
 impl ExplorerApp {
     /// 지금 연결이 열려 있는 사이트들 — 사이드바의 상태 점이 이것으로 갈린다.
@@ -153,6 +177,51 @@ impl ExplorerApp {
                 self.remote_ops.dialog = Some(RemoteDialog::Delete);
             }
         }
+    }
+
+    /// 원격 탭이면 이 명령을 원격 기능으로 보낸다 (FR-12·plan D5) — 보냈으면 참.
+    ///
+    /// 거짓이면 부르는 쪽이 **종전 로컬 처리를 그대로** 이어 간다. 원격 탭인데 조건이
+    /// 맞지 않는 경우(고른 것이 0개·이름 바꾸기에 2개 이상·연결이 끊김)도 거짓인데,
+    /// 그때 이어지는 로컬 처리는 원격 목록에서 아무 대상도 얻지 못해 결국 아무 일도
+    /// 일어나지 않는다 — 원격 메뉴에서 그 줄이 비활성인 것과 같은 결과다.
+    ///
+    /// **활성 판정을 여기서 새로 적지 않는다** — 원격 메뉴가 쓰는 `menu_rows`를 그대로
+    /// 물어본다(plan Halt Forecast). 두 곳에 적으면 메뉴에서는 흐린 줄이 단축키로는
+    /// 눌리는 일이 생긴다
+    pub(super) fn route_to_remote(&mut self, command: Command, target: Option<PanelId>) -> bool {
+        let Some(action) = remote_action_for(command) else {
+            return false;
+        };
+        self.ensure_active_view();
+        let view_id = self.workspaces.active().id;
+        let Some(view) = self.views.get(&view_id) else {
+            return false;
+        };
+        let panel_id = target.unwrap_or(view.active);
+        let Some(panel) = view.panels.get(&panel_id) else {
+            return false;
+        };
+        if !panel.is_remote() {
+            // 로컬 탭이다 — 종전 처리로 돌려보낸다
+            return false;
+        }
+        let targets = panel.selected_remote();
+        // 연결이 살아 있는가 — 끊긴 탭에서는 서버에 닿는 줄이 전부 비활성이다
+        let connected = panel
+            .active_conn()
+            .and_then(|conn| self.manager.get(conn))
+            .is_some_and(|connection| matches!(connection.phase(), ConnPhase::Ready));
+        // `TransferTargets`는 받기·올리기 줄만 가리므로 여기서는 기본값으로 둔다 —
+        // 이 함수가 옮기는 셋(이름 바꾸기·삭제·새 폴더)은 그 값을 보지 않는다
+        let allowed = remote_menu::menu_rows(targets.len(), connected, TransferTargets::default())
+            .into_iter()
+            .any(|row| row.action == action && row.enabled);
+        if !allowed {
+            return false;
+        }
+        self.apply_remote_menu(panel_id, action, targets);
+        true
     }
 
     /// 그 패널이 쓰는 연결
@@ -1143,6 +1212,90 @@ mod tests {
 
     use crate::remote::queue::{TransferItem, TransferState};
     use std::collections::HashSet;
+
+    #[test]
+    fn 원격_탭에서_잇는_것은_셋뿐이다() {
+        // plan D5 — 원격에 **이미 있는 기능만** 잇는다
+        assert_eq!(
+            remote_action_for(Command::Rename),
+            Some(RemoteMenuAction::Rename)
+        );
+        assert_eq!(
+            remote_action_for(Command::NewFolder),
+            Some(RemoteMenuAction::NewFolder)
+        );
+        for 영구 in [false, true] {
+            assert_eq!(
+                remote_action_for(Command::Delete { permanent: 영구 }),
+                Some(RemoteMenuAction::Delete),
+                "영구={영구} — 원격에는 휴지통이 없어 둘 다 같은 삭제다"
+            );
+        }
+    }
+
+    #[test]
+    fn 클립보드는_원격으로_가지_않는다() {
+        // 원격에는 대응 개념이 없다 — 전송은 큐가 담당한다 (plan Out of Scope)
+        for command in [
+            Command::ClipboardCopy,
+            Command::ClipboardCut,
+            Command::ClipboardPaste,
+        ] {
+            assert_eq!(remote_action_for(command), None, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn 새로_고침은_이_길로_오지_않는다() {
+        // `refresh_panel`이 이미 원격 탭을 가려 `request_remote_list`를 보낸다 —
+        // 여기에도 넣으면 같은 일에 길이 둘이 된다
+        assert_eq!(remote_action_for(Command::Refresh), None);
+    }
+
+    #[test]
+    fn 패널_층에서_이미_듣는_명령은_옮기지_않는다() {
+        // 탭·탐색·분할·보기는 원격 탭에서도 종전대로 동작한다 — 옮길 것이 없다
+        for command in [
+            Command::NewTab,
+            Command::CloseTab,
+            Command::Back,
+            Command::Forward,
+            Command::Up,
+            Command::ClosePanel,
+            Command::NewFile,
+            Command::ToggleSidebar,
+        ] {
+            assert_eq!(remote_action_for(command), None, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn 라우팅이_기대는_활성_규칙은_원격_메뉴의_것이다() {
+        // `route_to_remote`가 판정을 새로 적지 않고 `menu_rows`에 물어본다는 것이
+        // 이 시험이 지키는 계약이다 — 메뉴에서 흐린 줄이 단축키로는 눌리면 안 된다
+        let 열렸나 = |고른_수: usize, 연결: bool, action: RemoteMenuAction| {
+            remote_menu::menu_rows(고른_수, 연결, TransferTargets::default())
+                .into_iter()
+                .any(|row| row.action == action && row.enabled)
+        };
+        // 이름 바꾸기는 **정확히 하나**일 때만 — 새 이름은 하나뿐이다
+        assert!(열렸나(1, true, RemoteMenuAction::Rename));
+        assert!(!열렸나(0, true, RemoteMenuAction::Rename));
+        assert!(!열렸나(2, true, RemoteMenuAction::Rename));
+        // 삭제는 하나 이상
+        assert!(열렸나(1, true, RemoteMenuAction::Delete));
+        assert!(!열렸나(0, true, RemoteMenuAction::Delete));
+        // 새 폴더는 고른 것이 없어도 뜻이 있다 — 지금 폴더가 대상이다
+        assert!(열렸나(0, true, RemoteMenuAction::NewFolder));
+        // 연결이 끊기면 셋 다 닫힌다
+        for action in [
+            RemoteMenuAction::Rename,
+            RemoteMenuAction::Delete,
+            RemoteMenuAction::NewFolder,
+        ] {
+            assert!(!열렸나(1, false, action.clone()), "{action:?}");
+        }
+    }
 
     fn 올린_항목(site: u32, remote: &str, state: TransferState) -> TransferItem {
         TransferItem {

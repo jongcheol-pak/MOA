@@ -2868,3 +2868,11 @@ fn 원격_탭에서는_로컬_대상_목록이_비어_있다() {
     let panel = panel_with_remote_tab("/pub");
     assert!(panel.selected_local().is_empty());
 }
+
+#[test]
+fn 로컬_탭에서는_원격_대상_목록이_비어_있다() {
+    // 원격 라우팅(`route_to_remote`)이 이 값으로 대상을 고른다 — 로컬 탭에서 무엇이든
+    // 돌려주면 원격 명령이 엉뚱한 곳에 걸린다
+    let (panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    assert!(panel.selected_remote().is_empty());
+}

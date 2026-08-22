@@ -729,6 +729,17 @@ impl PanelState {
         self.list.selected_local()
     }
 
+    /// 원격 목록에서 고른 항목들 — 로컬 탭이면 빈 목록이다 (FR-39).
+    ///
+    /// 우클릭 메뉴가 쓰던 것과 **같은 경로**다(`show_remote_menu`) — 단축키가 그 메뉴와
+    /// 다른 대상을 고르면 두 길의 결과가 갈린다
+    pub fn selected_remote(&self) -> Vec<RemoteTarget> {
+        let Some(dir) = self.tabs.active().source.remote_path() else {
+            return Vec::new();
+        };
+        self.list.selected_remote(dir)
+    }
+
     /// 활성 탭이 보고 있는 원격 폴더 — 로컬 탭이면 `None`
     pub fn remote_dir(&self) -> Option<RemotePath> {
         self.tabs.active().source.remote_path().cloned()

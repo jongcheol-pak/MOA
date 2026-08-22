@@ -1801,13 +1801,24 @@ impl ExplorerApp {
                 // 하나도 없어도 그 페이지는 성립한다 (D10)
                 ctx.open_url(egui::OpenUrl::new_tab(crate::i18n::releases_url()));
             }
-            // 파일 대상 명령 — 셸에 걸려면 주인 창과 결과 채널이 필요해 여기서 따로 받는다
+            // 파일 대상 명령 — 셸에 걸려면 주인 창과 결과 채널이 필요해 여기서 따로 받는다.
+            //
+            // **원격 탭이면 원격 기능으로 간다** (FR-12·D5) — `route_to_remote`가 참을
+            // 돌려주면 이미 처리된 것이고, 거짓이면 아래 로컬 처리가 이어진다
             Command::Rename => {
+                if self.route_to_remote(command, target) {
+                    return;
+                }
                 if let Some(panel) = self.command_panel_mut(target) {
                     panel.begin_rename_selected();
                 }
             }
-            Command::Delete { permanent } => self.delete_selected(target, permanent),
+            Command::Delete { permanent } => {
+                if self.route_to_remote(command, target) {
+                    return;
+                }
+                self.delete_selected(target, permanent);
+            }
             Command::ClipboardCopy => self.clipboard_put(target, false),
             Command::ClipboardCut => self.clipboard_put(target, true),
             Command::ClipboardPaste => self.clipboard_paste(target),
@@ -1822,6 +1833,11 @@ impl ExplorerApp {
             | Command::NewFile
             | Command::NewFolder
             | Command::SetViewMode(_) => {
+                // 새 폴더만 원격 대응이 있다 (FR-12·D5) — 나머지 여섯은 패널 층에서
+                // 원격 탭에도 그대로 듣는다
+                if self.route_to_remote(command, target) {
+                    return;
+                }
                 let Some(panel) = self.command_panel_mut(target) else {
                     return;
                 };
