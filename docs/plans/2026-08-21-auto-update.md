@@ -183,6 +183,8 @@
 | 배지 (받는 중) | 상호작용 | 누를 수 없다(hover 없음) | 두 번 누르면 두 번 받는다 |
 | 확인 대화 | 셸 | `ui::dialog::show`, 본문 폭 420px | 모달 규약, 기존 확인 대화와 같은 폭대 |
 
+**F-8 대조 결과 (2026-08-22)** — 위 11행의 **정적 축은 전부 ✅**이고 `⏳ 미확인`은 0건이다. 각 값이 코드에서 확인된 자리: 높이 `TITLEBAR_HEIGHT`(titlebar.rs:17) · 여백 `BADGE_PAD_X`(:33) · 아이콘 간격 `BADGE_ICON_GAP`(:31) · 폭 `update_badge_width`(그 자리에서 잰다) · 자리 `show_right`가 설정 버튼 뒤에 더한다 · 아이콘 2종 `ARROW_CIRCLE_DOWN`(:385)·`CIRCLE_NOTCH`(:380) · 회전 `draw_spinner`(:354~) · 글자 크기 `TITLE_FONT_PX`(:44) · 색 `theme::TEXT`(:340·348) · hover `theme::CONTROL_HOT`(:322, **받는 중에는 칠하지 않는다**) · 받는 중 상호작용 `Sense::hover()` · 대화 폭 `UPDATE_DIALOG_WIDTH = 420`(app/update.rs:17). **화면으로만 확인되는 것**(실제로 그렇게 보이는가)은 HUMAN-VERIFY A-1·A-2로 넘긴다.
+
 ## Decisions
 
 ### D1. HTTP는 WinHTTP로 한다 (신규 패키지 0)
