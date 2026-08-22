@@ -1,4 +1,5 @@
 //! 파일시스템 연동 — 열거·생성·복사·아이콘·썸네일·감시·셸·드래그 내보내기
+pub mod bitmap;
 pub mod create;
 pub mod drag_image;
 pub mod drag_source;

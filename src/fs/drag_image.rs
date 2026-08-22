@@ -13,14 +13,13 @@
 use std::path::Path;
 
 use windows::Win32::Foundation::SIZE;
-use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDIBits, GetObjectW, HBITMAP, HDC,
-};
+use windows::Win32::Graphics::Gdi::{CreateDIBSection, DIB_RGB_COLORS, DeleteObject, HBITMAP};
 use windows::Win32::UI::Shell::{
     IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY, SIIGBF_INCACHEONLY,
 };
 use windows::core::HSTRING;
+
+use crate::fs::bitmap::{bgra_from_hbitmap, dib_header};
 
 /// 셸에 넘길 드래그 그림 — 비트맵 하나와 그 실제 크기.
 ///
@@ -69,7 +68,7 @@ pub fn build(path: &Path, px: i32) -> Option<DragImage> {
             .or_else(|_| factory.GetImage(size, SIIGBF_ICONONLY))
             .ok()?;
 
-        let read = read_bgra(shell_bitmap);
+        let read = bgra_from_hbitmap(shell_bitmap);
         let _ = DeleteObject(shell_bitmap.into());
         let (width, height, mut pixels) = read?;
 
@@ -80,47 +79,6 @@ pub fn build(path: &Path, px: i32) -> Option<DragImage> {
             width,
             height,
         })
-    }
-}
-
-/// 비트맵의 픽셀을 32bpp BGRA(top-down)로 읽는다 — `(폭, 높이, 픽셀)`.
-///
-/// 셸이 8·24bpp를 주더라도 `GetDIBits`에 32bpp를 청하므로 언제나 네 바이트로 온다.
-///
-/// 안전성: 유효한 HBITMAP에만 호출한다. 내부에서 만든 DC는 이 함수가 해제한다
-unsafe fn read_bgra(bitmap: HBITMAP) -> Option<(i32, i32, Vec<u8>)> {
-    unsafe {
-        let mut info = BITMAP::default();
-        let written = GetObjectW(
-            bitmap.into(),
-            size_of::<BITMAP>() as i32,
-            Some(&mut info as *mut BITMAP as *mut core::ffi::c_void),
-        );
-        if written == 0 || info.bmWidth <= 0 || info.bmHeight <= 0 {
-            return None;
-        }
-        let (width, height) = (info.bmWidth, info.bmHeight);
-
-        let mut header = dib_header(width, height);
-        let mut pixels = vec![0u8; (width as usize) * (height as usize) * 4];
-        let hdc: HDC = CreateCompatibleDC(None);
-        if hdc.is_invalid() {
-            return None;
-        }
-        let lines = GetDIBits(
-            hdc,
-            bitmap,
-            0,
-            height as u32,
-            Some(pixels.as_mut_ptr() as *mut core::ffi::c_void),
-            &mut header,
-            DIB_RGB_COLORS,
-        );
-        let _ = DeleteDC(hdc);
-        if lines == 0 {
-            return None;
-        }
-        Some((width, height, pixels))
     }
 }
 
@@ -140,19 +98,6 @@ unsafe fn new_dib(width: i32, height: i32, pixels: &[u8]) -> Option<HBITMAP> {
         std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits as *mut u8, pixels.len());
         Some(bitmap)
     }
-}
-
-/// 32bpp·무압축·**top-down**(첫 행이 그림 위쪽) 헤더. 읽을 때와 만들 때 같은 것을 쓴다
-fn dib_header(width: i32, height: i32) -> BITMAPINFO {
-    let mut header = BITMAPINFO::default();
-    header.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-    header.bmiHeader.biWidth = width;
-    // 음수 높이가 top-down — 뒤집기 없이 그대로 담고 그대로 읽는다
-    header.bmiHeader.biHeight = -height;
-    header.bmiHeader.biPlanes = 1;
-    header.bmiHeader.biBitCount = 32;
-    header.bmiHeader.biCompression = BI_RGB.0;
-    header
 }
 
 /// BGRA 버퍼를 제자리에서 스트레이트 알파로 되돌린다.

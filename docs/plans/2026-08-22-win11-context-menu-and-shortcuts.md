@@ -260,7 +260,7 @@
 
 <!-- T1~T3 (기반 계층) · T4~T7 (메뉴) · T8~T11 (편집·단축키) · T12 (문서) -->
 
-- [ ] T1. 32bpp 비트맵 → RGBA 읽기를 공용 모듈로 모은다
+- [x] T1. 32bpp 비트맵 → RGBA 읽기를 공용 모듈로 모은다
   - **Type**: C
   - **Design**: ① `src/fs/bitmap.rs` 신규(`fs` 계층 — `ui`를 모른다) ② `pub(crate) fn bgra_from_hbitmap(bitmap: HBITMAP) -> Option<(i32, i32, Vec<u8>)>` — GDI 32bpp DIB를 폭·높이·BGRA 바이트로 읽는다. `unsafe`는 이 함수 안에 격리하고 사유 주석을 단다 ③ `fs::thumbnail`·`fs::drag_image`·`ui::icon_tex`가 이 함수를 부른다(의존은 단방향 — 셋이 `fs::bitmap`을 참조) ④ **비추상화 선언**: 색 순서 변환(BGRA→RGBA)·알파 전처리는 부르는 쪽이 그대로 한다. 셋의 후처리가 서로 달라(썸네일은 `ThumbnailImage`, 아이콘은 마스크 합성, 드래그는 원본 BGRA) 그것까지 합치면 분기 인자가 늘어 읽기 어려워진다
   - **Acceptance**: Given 기존 세 경로, When `cargo test`·`cargo clippy --all-targets -- -D warnings`, Then 경고 0으로 통과하고 세 파일 어디에도 `GetDIBits` 직접 호출이 남지 않는다(`grep -c "GetDIBits" src/fs/thumbnail.rs src/fs/drag_image.rs src/ui/icon_tex.rs` → 각 0)
