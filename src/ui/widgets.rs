@@ -722,9 +722,10 @@ pub fn progress_bar(
 
 /// 팝업 목록의 한 줄 — 눌렸으면 `true`.
 ///
-/// **직접 그리는 메뉴는 모두 이 함수를 거친다** — 원격 목록 우클릭 메뉴·트리 즐겨찾기 메뉴·
-/// 드롭다운 목록이 같은 줄을 각자 그리던 것을 하나로 모았다(셋의 사본이 행 높이·여백·모서리를
-/// 조금씩 다르게 적고 있었다). 값은 `theme`의 메뉴 항목 토큰이 정한다.
+/// **직접 그리는 메뉴는 모두 이 함수나 아래 [`menu_row_rich`]를 거친다** — 원격 목록 우클릭
+/// 메뉴·트리 즐겨찾기 메뉴·드롭다운 목록이 같은 줄을 각자 그리던 것을 하나로 모았다(셋의
+/// 사본이 행 높이·여백·모서리를 조금씩 다르게 적고 있었다). 값은 `theme`의 메뉴 항목 토큰이
+/// 정한다.
 ///
 /// 비활성이면 hover를 그리지 않고 글자가 흐려지며 누름을 돌려주지 않는다 — 눌러도 되지 않는
 /// 것이 눌리면 사용자는 눌러 보고 아무 일이 없어 고장으로 읽는다.
@@ -732,6 +733,57 @@ pub fn progress_bar(
 /// 글꼴은 egui가 버튼 라벨에 쓰는 것과 같은 것을 고른다(`TextStyle::Body`) — 버튼으로 그리는
 /// 메뉴와 직접 그리는 메뉴의 글자 크기가 갈리지 않게 한다
 pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
+    // 아이콘도 단축키도 없는 줄이다 — 그리는 규칙은 하나뿐이라 확장판에 그대로 맡긴다
+    menu_row_rich(ui, MenuRowIcon::None, label, "", false, enabled)
+}
+
+/// 메뉴 줄 왼쪽에 놓일 그림 — 두 갈래다.
+///
+/// 셸이 준 항목은 **비트맵**(텍스처로 올려 둔 것)이고, 우리가 넣는 줄(`추가 옵션 표시`)은
+/// **phosphor 글리프**다. 하나로 묶지 않으면 그리는 함수가 둘로 갈리고, 그러면 아이콘 열
+/// 정렬이 두 곳에서 따로 정해져 어긋난다
+#[derive(Clone, Copy)]
+pub(crate) enum MenuRowIcon<'a> {
+    /// **아이콘 열 자체가 없다** — 아이콘을 쓰지 않는 메뉴(원격 목록·트리 즐겨찾기·드롭다운)가
+    /// 이것을 쓴다. 열을 만들면 그 메뉴들의 라벨이 통째로 오른쪽으로 밀린다
+    None,
+    /// 아이콘은 없지만 **열은 자리를 지킨다** — 같은 메뉴 안에 아이콘 있는 줄이 섞여 있을 때다.
+    /// 비우지 않으면 줄마다 라벨이 다른 x에서 시작해 목록이 들쭉날쭉해진다
+    Blank,
+    /// 셸이 준 비트맵
+    Texture(&'a egui::TextureHandle),
+    /// 아이콘 글꼴의 글리프 (프로젝트 아이콘 규약 — phosphor에서만 가져온다)
+    Glyph(&'a str),
+}
+
+impl MenuRowIcon<'_> {
+    /// 이 줄에서 아이콘 열이 차지하는 너비 — 열이 없으면 0이다
+    fn column_width(self) -> f32 {
+        match self {
+            MenuRowIcon::None => 0.0,
+            _ => MENU_ICON_COLUMN_PX,
+        }
+    }
+}
+
+/// Win11 모양 메뉴 한 줄 — 아이콘 열·라벨·우측 단축키·하위 메뉴 화살표를 함께 그린다 (FR-8).
+///
+/// [`menu_row`]의 확장판이며 **그쪽이 이것에 위임한다** — 그리는 규칙(행 높이·여백·hover 색·
+/// 모서리)이 한 곳에만 있어야 두 메뉴가 갈리지 않는다. 짧은 이름을 남겨 둔 것은 아이콘도
+/// 단축키도 없는 호출부(`remote_menu`·드롭다운)가 매번 쓰지 않는 인자를 채우지 않게 하기
+/// 위해서다.
+///
+/// `icon`은 이미 텍스처로 올라온 그림이다 — 만드는 것은 부르는 쪽의 몫이고 여기서는 그린다.
+/// 아이콘이 없어도 **열은 자리를 지킨다**: 그러지 않으면 아이콘 있는 줄과 없는 줄의 라벨이
+/// 서로 다른 x에서 시작해 목록이 들쭉날쭉해진다
+pub(crate) fn menu_row_rich(
+    ui: &mut egui::Ui,
+    icon: MenuRowIcon<'_>,
+    label: &str,
+    shortcut: &str,
+    has_submenu: bool,
+    enabled: bool,
+) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), theme::MENU_ITEM_HEIGHT),
         if enabled {
@@ -744,19 +796,109 @@ pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
         ui.painter()
             .rect_filled(rect, theme::MENU_ITEM_CORNER_RADIUS, theme::MENU_HOT);
     }
-    ui.painter().text(
-        egui::pos2(rect.left() + theme::MENU_ITEM_PAD_X, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::TextStyle::Body.resolve(ui.style()),
-        if enabled {
-            theme::TEXT
-        } else {
-            theme::TEXT_DIM
-        },
+    let painter = ui.painter();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let 글자색 = if enabled {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+
+    // 아이콘 열의 너비는 갈래가 정한다 — 아이콘을 쓰지 않는 메뉴는 0이라 라벨이 밀리지 않고,
+    // 섞여 있는 메뉴는 빈 줄도 자리를 지켜 라벨 x가 맞는다
+    let column_left = rect.left() + theme::MENU_ITEM_PAD_X;
+    let column_width = icon.column_width();
+    let icon_center = egui::pos2(column_left + column_width / 2.0, rect.center().y);
+    let 아이콘_알파 = MENU_ICON_ALPHA[enabled as usize];
+    match icon {
+        MenuRowIcon::None | MenuRowIcon::Blank => {}
+        MenuRowIcon::Texture(texture) => {
+            painter.image(
+                texture.id(),
+                egui::Rect::from_center_size(icon_center, egui::vec2(MENU_ICON_PX, MENU_ICON_PX)),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                // 비활성이면 아이콘도 함께 흐려진다 — 글자만 흐리면 그 줄이 반쯤 살아 보인다
+                egui::Color32::WHITE.gamma_multiply(아이콘_알파),
+            );
+        }
+        MenuRowIcon::Glyph(glyph) => {
+            painter.text(
+                icon_center,
+                egui::Align2::CENTER_CENTER,
+                glyph,
+                egui::FontId::proportional(MENU_ICON_PX),
+                글자색,
+            );
+        }
+    }
+
+    // 오른쪽 끝에서부터 화살표 → 단축키 순으로 자리를 잡는다. 라벨이 쓸 폭은 그 나머지다
+    let mut right = rect.right() - theme::MENU_ITEM_PAD_X;
+    if has_submenu {
+        painter.text(
+            egui::pos2(right, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            egui_phosphor::regular::CARET_RIGHT,
+            font.clone(),
+            글자색,
+        );
+        right -= MENU_SUBMENU_ARROW_PX;
+    }
+    if !shortcut.is_empty() {
+        painter.text(
+            egui::pos2(right, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            shortcut,
+            font.clone(),
+            // 단축키는 이름보다 흐리다 — 먼저 읽혀야 하는 것은 이름이다
+            theme::TEXT_MUTED,
+        );
+        // 단축키가 쓴 폭 + 라벨과의 사이 여백만큼 라벨 자리를 줄인다
+        right -= painter
+            .layout_no_wrap(shortcut.to_owned(), font.clone(), theme::TEXT_MUTED)
+            .size()
+            .x
+            + MENU_SHORTCUT_GAP_PX;
+    }
+
+    // **라벨은 남은 폭에서 한 줄로 잘린다** — 셸 확장이 주는 긴 이름이 단축키·화살표를 덮거나
+    // 메뉴 밖으로 흘러넘치지 않게 한다.
+    //
+    // `max_rows = 1`을 **반드시 적어야 한다** — 폭만 주면(`Painter::layout`) 말줄임이 아니라
+    // 다음 줄로 넘어가고, 행 높이는 28px로 고정이라 두 줄이 위아래 항목을 침범한다.
+    // `toggle_row`가 라벨을 자를 때 쓰는 것과 같은 관용구다
+    let text_left = column_left + column_width;
+    let mut job =
+        egui::text::LayoutJob::simple(label.to_owned(), font, 글자색, (right - text_left).max(0.0));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = painter.layout_job(job);
+    painter.galley(
+        egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
+        galley,
+        글자색,
     );
     enabled && response.clicked()
 }
+
+/// 단축키와 라벨 사이에 두는 최소 여백 — 붙어 있으면 한 낱말처럼 읽힌다
+const MENU_SHORTCUT_GAP_PX: f32 = 8.0;
+
+/// 메뉴 줄의 아이콘 한 변 (논리 px) — 목록 아이콘(16px)과 같은 크기다
+const MENU_ICON_PX: f32 = 16.0;
+
+/// 아이콘이 차지하는 열의 너비 — 시각 요소 분해 표의 값(20px, 아이콘 16px 중앙 정렬)
+const MENU_ICON_COLUMN_PX: f32 = 20.0;
+
+/// 하위 메뉴 화살표가 차지하는 너비 — 단축키는 이만큼 더 왼쪽에서 끝난다
+const MENU_SUBMENU_ARROW_PX: f32 = 16.0;
+
+/// 메뉴 줄 아이콘의 투명도 — `[비활성, 활성]` 차례로 고른다.
+///
+/// 흐린 값은 **`ui::tabs`의 `DIM_ICON_ALPHA`와 같은 0.45**다 — 그쪽도 「지금은 쓸 수 없다」를
+/// 나타내는 자리라 기준을 맞췄다. 숨김 파일(`ui::list_common::HIDDEN_ALPHA` 0.5)은 「있지만
+/// 감춰져 있다」라 뜻이 달라 따로 둔다
+const MENU_ICON_ALPHA: [f32; 2] = [0.45, 1.0];
 
 /// 필드 웰 — 채움 + 1px 테두리. 테두리는 **안쪽**으로 그려 높이가 28px를 넘지 않게 한다
 fn paint_well(ui: &egui::Ui, rect: egui::Rect, enabled: bool) {

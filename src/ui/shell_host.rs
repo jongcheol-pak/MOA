@@ -6,7 +6,7 @@
 //! ②가 필요한 이유: 셸 메뉴의 "보내기" 같은 서브메뉴는 `IContextMenu2/3`가
 //! `WM_INITMENUPOPUP` 등을 받아야 채워지는데, winit은 그 메시지를 우리 코드로 넘겨주지 않는다.
 //! 그래서 창을 서브클래싱해 `forward_menu_msg`로 전달한다(서브클래스가 없으면 서브메뉴가 빈다).
-use crate::fs::shell_menu::{forward_menu_msg, show_context_menu};
+use crate::fs::shell_menu::{ShellMenu, forward_menu_msg, show_context_menu};
 use eframe::egui;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::path::{Path, PathBuf};
@@ -49,11 +49,20 @@ impl ShellHost {
         self.hwnd
     }
 
-    /// 셸 컨텍스트 메뉴를 화면 좌표에 띄운다.
+    /// **종전 Windows 표준 메뉴**를 화면 좌표에 띄운다 — `추가 옵션 표시`가 여는 그것이다.
+    ///
     /// `items`가 비면 폴더 배경 메뉴("새로 만들기" 포함)가 나온다.
     /// 메뉴가 닫힐 때까지 이 호출은 반환하지 않는다(TrackPopupMenuEx 모달 루프)
     pub fn popup(&self, folder: &Path, items: &[PathBuf], screen_x: i32, screen_y: i32) {
         show_context_menu(self.hwnd, folder, items, screen_x, screen_y);
+    }
+
+    /// **우리가 그릴 메뉴**를 연다 (FR-8 개정) — 항목은 셸에서 읽고 그리기는 `ui`가 한다.
+    ///
+    /// 돌려준 값이 살아 있는 동안만 그 메뉴의 항목·하위 메뉴·실행이 뜻을 갖는다.
+    /// 열지 못하면 `None`이며 부르는 쪽은 메뉴를 띄우지 않는다
+    pub fn open_menu(&self, folder: &Path, items: &[PathBuf]) -> Option<ShellMenu> {
+        ShellMenu::open(self.hwnd, folder, items)
     }
 
     /// egui가 주는 클라이언트 좌표(물리 픽셀)를 셸 메뉴가 요구하는 화면 좌표로 바꾼다

@@ -47,23 +47,12 @@ use crate::fs::drag_image;
 /// `preview_px`는 끄는 동안 보일 그림의 한 변을 **물리 픽셀**로 청하는 값이다 — `fs`는 화면
 /// 배율을 모르므로 부르는 쪽이 정해 내려보낸다
 pub fn start_copy_drag(paths: &[PathBuf], preview_px: i32) -> bool {
-    if paths.is_empty() {
+    let Some(data) = data_object(paths) else {
         return false;
-    }
-    let pidls = Pidls::parse(paths);
-    if pidls.is_empty() {
-        return false;
-    }
+    };
     // 안전성: 아래 호출은 모두 COM이 STA로 초기화된 UI 스레드에서 돌고(`ui::app`이
-    // 그리기를 마친 뒤 부른다), 얻은 인터페이스는 이 함수 안에서만 살다 `Drop`으로
-    // 해제된다. PIDL은 `Pidls`가 소유해 함수를 벗어날 때 `CoTaskMemFree`로 되돌린다
+    // 그리기를 마친 뒤 부른다), 얻은 인터페이스는 이 함수 안에서만 살다 `Drop`으로 해제된다
     unsafe {
-        let Ok(items) = SHCreateShellItemArrayFromIDLists(pidls.as_slice()) else {
-            return false;
-        };
-        let Ok(data) = items.BindToHandler::<_, IDataObject>(None, &BHID_DataObject) else {
-            return false;
-        };
         // 끌기를 열기 전에 그림을 얹는다 — 실패해도 아래 흐름은 그대로다
         attach_drag_image(&data, paths, preview_px);
         let source: IDropSource = CopyDragSource.into();
@@ -72,6 +61,35 @@ pub fn start_copy_drag(paths: &[PathBuf], preview_px: i32) -> bool {
         // `DRAGDROP_S_DROP`만 실제로 놓인 것이다 — 취소(`DRAGDROP_S_CANCEL`)와
         // 오류는 아무 일도 일어나지 않은 것과 같다
         result == DRAGDROP_S_DROP
+    }
+}
+
+/// 경로 목록을 담은 **셸이 만든 데이터 객체**를 얻는다 (FR-61·FR-64).
+///
+/// 받는 쪽이 기대하는 형식(`CF_HDROP`·`CFSTR_SHELLIDLIST` 등)을 셸이 알아서 채우므로
+/// 우리가 `IDataObject`를 구현하지 않는다(이 모듈 첫머리의 그 판단이다).
+///
+/// **끌기(FR-61)와 클립보드(FR-64)가 함께 쓴다** — 두 경로가 같은 객체를 원하고, 각자
+/// 만들면 한쪽이 채우는 형식이 조용히 달라진다. 읽지 못하는 경로가 섞여 있으면 그것만
+/// 빠지고, 하나도 읽지 못했으면 `None`이다
+pub(crate) fn data_object(paths: &[PathBuf]) -> Option<IDataObject> {
+    if paths.is_empty() {
+        return None;
+    }
+    let pidls = Pidls::parse(paths);
+    if pidls.is_empty() {
+        return None;
+    }
+    // 안전성: COM이 STA로 초기화된 스레드에서만 부른다. PIDL은 `Pidls`가 소유해 **이 함수를
+    // 벗어날 때** 되돌리며, 셸이 만든 객체는 그것과 무관하게 산다 —
+    // `SHCreateShellItemArrayFromIDLists`가 PIDL을 자기 안으로 복제하기 때문이다.
+    // 근거는 실측이다: `fs::clipboard`의 왕복 시험이 이 함수가 돌아온 **뒤**(=PIDL 해제 뒤)
+    // 담고 읽어 경로 두 개를 그대로 받는다. 복제하지 않는다면 그 시험이 깨진다
+    unsafe {
+        let items = SHCreateShellItemArrayFromIDLists(pidls.as_slice()).ok()?;
+        items
+            .BindToHandler::<_, IDataObject>(None, &BHID_DataObject)
+            .ok()
     }
 }
 

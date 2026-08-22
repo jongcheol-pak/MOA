@@ -94,6 +94,26 @@ pub enum Command {
     /// 좌우로 나눠 열며(FR-35) 이 명령을 거치지 않는다.
     /// `SiteId`가 `Copy`라 이 열거형의 `Copy`도 유지된다
     OpenSiteTab(SiteId),
+    /// 고른 것 중 첫 항목의 이름을 목록에서 바로 고친다 (FR-12·FR-64) — `F2`.
+    ///
+    /// 여러 개를 골라 두어도 하나만 고친다(새 이름은 하나뿐이다 — 탐색기와 같다)
+    Rename,
+    /// 고른 것을 지운다 (FR-12·FR-64) — `Delete`는 휴지통, `Shift+Delete`는 곧바로.
+    ///
+    /// 확인 대화는 셸이 자기 정책대로 띄운다(우리가 묻지 않는다)
+    Delete {
+        permanent: bool,
+    },
+    /// 고른 것을 클립보드에 담는다 (FR-12·FR-64) — `Ctrl+C`
+    ClipboardCopy,
+    /// 고른 것을 잘라내기로 담는다 (FR-12·FR-64) — `Ctrl+X`.
+    ///
+    /// 담는 순간 원본이 사라지지는 않는다 — 붙여넣을 때 옮겨진다(탐색기와 같다)
+    ClipboardCut,
+    /// 클립보드에 담긴 것을 지금 폴더에 붙여넣는다 (FR-12·FR-64) — `Ctrl+V`.
+    ///
+    /// 복사로 담겼으면 복사하고 잘라내기로 담겼으면 옮긴다
+    ClipboardPaste,
 }
 
 /// 패널 메뉴 항목의 활성/비활성을 가르는 현재 상태
@@ -291,14 +311,81 @@ fn item(
     }
 }
 
+/// 무수식 키(`F2`·`Delete`)를 받는 영역 (FR-12).
+///
+/// **마지막으로 조작한 쪽이 갖는다** — 탐색기와 같은 방식이다. 지금 갈라야 하는 것은 두
+/// 영역뿐이라 일반 포커스 체계(위젯별 포커스 링·Tab 순회)를 만들지 않는다.
+///
+/// `ui::app`이 이 값을 들고 `ui::menu`·`ui::sidebar`에 내려 준다 — 타입을 `ui::app`이 아니라
+/// 여기 두는 이유는 사이드바가 `ui::app`을 참조하게 되면 의존이 거꾸로 서기 때문이다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyOwner {
+    /// 파일 목록 — 앱이 막 떴을 때의 기본값이다(아무것도 누르지 않은 상태)
+    #[default]
+    FileList,
+    /// 워크스페이스 사이드바
+    Sidebar,
+}
+
+/// 이번 프레임에 눌린 자리로 키 소유를 옮긴다 (FR-12).
+///
+/// **누른 곳이 없으면 그대로 둔다**(`pressed`가 `None`) — 마우스가 지나가기만 해도 대상이
+/// 바뀌면 `F2`가 어디로 갈지 예측할 수 없다(그래서 hover가 아니라 클릭으로 가른다).
+///
+/// 누른 영역을 `Option` 하나로 받는 이유: 부르는 쪽은 한 프레임에 **사이드바를 그린 뒤**와
+/// **패널을 그린 뒤** 두 번 부르는데, 각 시점에 아는 것은 자기 영역 하나뿐이다. 두 개의
+/// 불리언으로 받으면 한쪽은 늘 거짓이라, 있지도 않은 "동시에 눌렸을 때의 우선순위"를
+/// 시그니처가 약속하게 된다(품질 리뷰 S1)
+pub fn next_key_owner(current: KeyOwner, pressed: Option<KeyOwner>) -> KeyOwner {
+    pressed.unwrap_or(current)
+}
+
+/// 이 명령이 **파일 목록의 고른 항목**을 대상으로 하는가 (FR-12).
+///
+/// 그런 명령은 파일 목록이 키를 가질 때만 듣는다 — 사이드바를 누른 뒤 `Delete`를 눌렀는데
+/// 파일이 지워지면 안 된다. 나머지(탐색·분할·탭·보기)는 어느 쪽을 눌렀든 활성 패널에 간다.
+///
+/// **망라 `match`로 적는다** — 새 명령을 더할 때 컴파일러가 이 판정을 묻게 한다
+fn targets_file_list(command: Command) -> bool {
+    match command {
+        Command::NewTab
+        | Command::CloseTab
+        | Command::Back
+        | Command::Forward
+        | Command::Up
+        | Command::Refresh
+        | Command::Split(_)
+        | Command::ClosePanel
+        | Command::NewFile
+        | Command::NewFolder
+        | Command::SetViewMode(_)
+        | Command::ToggleSidebar
+        | Command::OpenAppSettings
+        | Command::OpenLicenses
+        | Command::OpenAbout
+        | Command::CheckUpdate
+        | Command::StartUpdate
+        | Command::OpenReleaseNotes
+        | Command::OpenSiteTab(_) => false,
+        // 고른 항목이 대상이다 — 파일 목록이 키를 쥔 때만 나간다
+        Command::Rename
+        | Command::Delete { .. }
+        | Command::ClipboardCopy
+        | Command::ClipboardCut
+        | Command::ClipboardPaste => true,
+    }
+}
+
 /// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
 ///
-/// 무수식 키는 F5 말고는 단축키로 두지 않는다 — 이름 편집 중 텍스트 입력을 가로챈다(현행 판의 같은 결정).
-/// 메뉴에 적힌 F2는 사이드바가 직접 처리한다. 삭제는 키를 배정하지 않았다 —
-/// 지금 구조에서는 사이드바가 키를 **전역으로** 보기 때문에, Delete를 받으면 파일 목록에서 누른
-/// Delete까지 워크스페이스를 지운다. 카드에 포커스를 주고 `has_focus()`일 때만 받으면 해결되지만
-/// 그 전환은 사이드바 입력 전반에 걸쳐 있어 별도 작업으로 미뤘다(Deferred)
-pub fn poll_shortcuts(ctx: &egui::Context) -> Option<Command> {
+/// 무수식 키(`F2`·`Delete`·`F5`)도 여기서 받는다 — 이름 편집 중에는 아래 `egui_wants_keyboard_input`이
+/// 먼저 걸러 텍스트 입력을 가로채지 않는다.
+///
+/// **어느 영역이 키를 갖는지는 `owner`가 정한다** (FR-12). 사이드바가 키를 **전역으로** 보던
+/// 종전 구조에서는 파일 목록에서 누른 `F2`까지 워크스페이스 이름 편집을 열었다
+/// (`docs/plans/deferred.md` 2026-07-28). 이제 마지막으로 누른 영역이 키를 가지며,
+/// 파일 목록을 대상으로 하는 명령은 그쪽이 키를 쥔 때만 나간다
+pub fn poll_shortcuts(ctx: &egui::Context, owner: KeyOwner) -> Option<Command> {
     // 포커스를 가진 위젯이 있으면 단축키를 보지 않는다 — 주소창·이름 편집이 키를 먼저 가져간다.
     // 이 검사는 텍스트 입력뿐 아니라 포커스를 받은 위젯 전부를 덮는다(가로채기를 막는 쪽으로 넉넉하게)
     if ctx.egui_wants_keyboard_input() {
@@ -308,6 +395,11 @@ pub fn poll_shortcuts(ctx: &egui::Context) -> Option<Command> {
         shortcut_table()
             .into_iter()
             .find_map(|(modifiers, key, command)| {
+                // 파일 목록이 키를 갖지 않으면 그 대상 명령은 **소비하지도 않는다** —
+                // 소비해 버리면 그 키를 기다리던 다른 곳(사이드바)이 받지 못한다
+                if targets_file_list(command) && owner != KeyOwner::FileList {
+                    return None;
+                }
                 let shortcut = egui::KeyboardShortcut::new(modifiers, key);
                 input.consume_shortcut(&shortcut).then_some(command)
             })
@@ -315,8 +407,11 @@ pub fn poll_shortcuts(ctx: &egui::Context) -> Option<Command> {
 }
 
 /// 단축키 → 명령 대응표 (현행 `app::menu::create_accels`와 같은 구성).
-/// 수식 키가 많은 조합을 앞에 두어 `Ctrl+Shift+\`가 `Ctrl+\`로 오인되지 않게 한다
-fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
+/// 수식 키가 많은 조합을 앞에 두어 `Ctrl+Shift+\`가 `Ctrl+\`로 오인되지 않게 한다.
+///
+/// **이 표가 유일한 대응이며 사용자가 바꿀 길을 두지 않는다** — 키 매핑 설정 화면도,
+/// 그것을 담을 설정 항목도 만들지 않았다(요청에 없다 — plan T10 Design ④)
+fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 21] {
     let ctrl_shift = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
     let ctrl_alt = egui::Modifiers::CTRL | egui::Modifiers::ALT;
     [
@@ -327,6 +422,15 @@ fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
             Command::Split(SplitTo::Down),
         ),
         (ctrl_shift, egui::Key::W, Command::ClosePanel),
+        // 탐색기와 같은 새 폴더 단축키 (FR-12) — `NewFolder`는 패널 메뉴에도 있다
+        (ctrl_shift, egui::Key::N, Command::NewFolder),
+        // **`Shift+Delete`가 `Delete`보다 앞이다** — 수식 키가 많은 조합을 먼저 본다는
+        // 이 표의 규칙 그대로다. 뒤집히면 영구 삭제가 휴지통 이동으로 읽힌다
+        (
+            egui::Modifiers::SHIFT,
+            egui::Key::Delete,
+            Command::Delete { permanent: true },
+        ),
         (
             egui::Modifiers::CTRL,
             egui::Key::Backslash,
@@ -358,7 +462,16 @@ fn shortcut_table() -> [(egui::Modifiers, egui::Key, Command); 14] {
             Command::Forward,
         ),
         (egui::Modifiers::ALT, egui::Key::ArrowUp, Command::Up),
+        (egui::Modifiers::CTRL, egui::Key::C, Command::ClipboardCopy),
+        (egui::Modifiers::CTRL, egui::Key::X, Command::ClipboardCut),
+        (egui::Modifiers::CTRL, egui::Key::V, Command::ClipboardPaste),
         (egui::Modifiers::NONE, egui::Key::F5, Command::Refresh),
+        (egui::Modifiers::NONE, egui::Key::F2, Command::Rename),
+        (
+            egui::Modifiers::NONE,
+            egui::Key::Delete,
+            Command::Delete { permanent: false },
+        ),
     ]
 }
 
@@ -375,9 +488,78 @@ pub(crate) fn clamp_menu_pos(screen: egui::Rect, at: egui::Pos2, size: egui::Vec
     )
 }
 
+/// 팝업 **프레임**이 안쪽 내용 밖에 더 차지하는 크기 — 화면 밖 보정에 더한다.
+///
+/// 안쪽 여백은 `Frame::menu`가 스타일에서 읽어 가는 그대로(`spacing.menu_margin`)를 읽는다.
+///
+/// **테두리 두께는 스타일이 아니라 `theme::MENU_FRAME_STROKE`다** — 세 메뉴가 `Frame::menu`의
+/// 테두리를 각자 그 값으로 덮어쓰기 때문이다(`.stroke(...)`). 스타일 쪽을 읽으면 지금은
+/// 우연히 같은 1px이라 맞지만, 한쪽만 바뀌는 날 조용히 어긋난다.
+///
+/// **그림자는 세지 않는다** — 그것은 프레임 **밖에** 번지는 그리기라 자리를 차지하지 않고,
+/// 화면 끝에서 잘려도 메뉴 내용이 가려지지 않는다.
+///
+/// 종전에는 두 메뉴가 각자 `8.0`이라는 어림값을 적고 있었다(`remote_menu::FRAME_PAD`·
+/// `tree::MENU_FRAME_PAD`). 값이 실제와 어긋나면 메뉴가 화면 끝에서 잘리거나 쓸데없이
+/// 안으로 당겨진다
+pub(crate) fn menu_frame_pad(style: &egui::Style) -> egui::Vec2 {
+    let margin = style.spacing.menu_margin;
+    let stroke = theme::MENU_FRAME_STROKE * 2.0;
+    egui::vec2(
+        (margin.left + margin.right) as f32 + stroke,
+        (margin.top + margin.bottom) as f32 + stroke,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 여백은_스타일에서_테두리는_앱_상수에서_읽는다() {
+        // 안쪽 여백은 `Frame::menu`가 스타일에서 읽어 가는 값이고, 테두리는 세 메뉴가
+        // 스타일을 덮어쓰며 쓰는 값이다 — 어느 한쪽이라도 어긋나면 메뉴가 화면 끝에서 잘린다
+        let mut style = egui::Style::default();
+        style.spacing.menu_margin = egui::Margin::same(7);
+        // 스타일 쪽 테두리는 **읽지 않는다** — 일부러 다른 값을 넣어 그것을 확인한다
+        style.visuals.window_stroke = egui::Stroke::new(9.0, egui::Color32::WHITE);
+        let 기대 = 7.0 * 2.0 + theme::MENU_FRAME_STROKE * 2.0;
+        let pad = menu_frame_pad(&style);
+        assert_eq!(pad.x, 기대, "좌우 여백 + 앱이 그리는 테두리 양쪽");
+        assert_eq!(pad.y, 기대, "위아래도 같은 규칙");
+    }
+
+    #[test]
+    fn 좌우와_위아래_여백이_다르면_따로_센다() {
+        // `Margin`은 네 변을 각각 가질 수 있다 — 한쪽만 보면 폭이나 높이가 어긋난다
+        let mut style = egui::Style::default();
+        style.spacing.menu_margin = egui::Margin {
+            left: 2,
+            right: 3,
+            top: 10,
+            bottom: 20,
+        };
+        let 테두리 = theme::MENU_FRAME_STROKE * 2.0;
+        let pad = menu_frame_pad(&style);
+        assert_eq!(pad.x, 5.0 + 테두리);
+        assert_eq!(pad.y, 30.0 + 테두리);
+    }
+
+    #[test]
+    fn 그림자는_자리로_세지_않는다() {
+        // 그림자는 프레임 **밖에** 번지는 그리기라 자리를 차지하지 않는다 —
+        // 세면 메뉴가 쓸데없이 화면 안쪽으로 당겨진다
+        let mut style = egui::Style::default();
+        style.spacing.menu_margin = egui::Margin::ZERO;
+        style.visuals.popup_shadow = egui::epaint::Shadow {
+            offset: [0, 0],
+            blur: 40,
+            spread: 40,
+            color: egui::Color32::BLACK,
+        };
+        let 테두리만 = theme::MENU_FRAME_STROKE * 2.0;
+        assert_eq!(menu_frame_pad(&style), egui::vec2(테두리만, 테두리만));
+    }
 
     #[test]
     fn 네_방향은_축과_배치로_정확히_갈린다() {
@@ -460,6 +642,108 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn 키_소유는_마지막으로_누른_영역이_갖는다() {
+        use KeyOwner::{FileList, Sidebar};
+        // 앱이 막 떴을 때는 파일 목록이다 — 아무것도 누르지 않았다
+        assert_eq!(KeyOwner::default(), FileList);
+        // 누른 자리로 옮겨 간다
+        assert_eq!(next_key_owner(FileList, Some(Sidebar)), Sidebar);
+        assert_eq!(next_key_owner(Sidebar, Some(FileList)), FileList);
+        // 누르지 않은 프레임에는 그대로다 — 마우스가 지나가기만 해서는 바뀌지 않는다
+        assert_eq!(next_key_owner(Sidebar, None), Sidebar);
+        assert_eq!(next_key_owner(FileList, None), FileList);
+    }
+
+    #[test]
+    fn 파일_대상_명령만_키_소유를_가린다() {
+        // 고른 항목을 건드리는 명령만 파일 목록이 키를 쥔 때 나간다 (FR-12) —
+        // 사이드바를 누른 뒤 `Delete`를 눌렀는데 파일이 지워지면 안 된다.
+        // 나머지(탐색·분할·탭·보기)는 어느 쪽을 눌렀든 활성 패널로 간다
+        let 파일_대상: Vec<Command> = shortcut_table()
+            .into_iter()
+            .map(|(_, _, command)| command)
+            .filter(|command| targets_file_list(*command))
+            .collect();
+        assert_eq!(
+            파일_대상,
+            vec![
+                Command::Delete { permanent: true },
+                Command::ClipboardCopy,
+                Command::ClipboardCut,
+                Command::ClipboardPaste,
+                Command::Rename,
+                Command::Delete { permanent: false },
+            ]
+        );
+        // 새 폴더는 **고른 것이 아니라 보고 있는 폴더**가 대상이라 여기 없다
+        assert!(!targets_file_list(Command::NewFolder));
+    }
+
+    #[test]
+    fn fr12_요청한_단축키_열하나가_모두_있다() {
+        // 사용자가 적어 준 목록 그대로다 (FR-12 — 2026-08-22 요청)
+        let table = shortcut_table();
+        let 찾기 = |modifiers, key| {
+            table
+                .iter()
+                .find(|(m, k, _)| *m == modifiers && *k == key)
+                .map(|(_, _, command)| *command)
+        };
+        let ctrl = egui::Modifiers::CTRL;
+        let ctrl_shift = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+        let none = egui::Modifiers::NONE;
+        assert_eq!(찾기(ctrl_shift, egui::Key::N), Some(Command::NewFolder));
+        assert_eq!(
+            찾기(egui::Modifiers::ALT, egui::Key::ArrowLeft),
+            Some(Command::Back)
+        );
+        assert_eq!(
+            찾기(egui::Modifiers::ALT, egui::Key::ArrowRight),
+            Some(Command::Forward)
+        );
+        assert_eq!(
+            찾기(egui::Modifiers::ALT, egui::Key::ArrowUp),
+            Some(Command::Up)
+        );
+        assert_eq!(찾기(none, egui::Key::F5), Some(Command::Refresh));
+        assert_eq!(찾기(none, egui::Key::F2), Some(Command::Rename));
+        assert_eq!(
+            찾기(none, egui::Key::Delete),
+            Some(Command::Delete { permanent: false })
+        );
+        assert_eq!(
+            찾기(egui::Modifiers::SHIFT, egui::Key::Delete),
+            Some(Command::Delete { permanent: true })
+        );
+        assert_eq!(찾기(ctrl, egui::Key::C), Some(Command::ClipboardCopy));
+        assert_eq!(찾기(ctrl, egui::Key::X), Some(Command::ClipboardCut));
+        assert_eq!(찾기(ctrl, egui::Key::V), Some(Command::ClipboardPaste));
+    }
+
+    #[test]
+    fn shift_delete가_delete보다_앞선다() {
+        // 수식 키가 많은 조합을 먼저 본다는 이 표의 규칙 그대로다 — 뒤집히면
+        // 영구 삭제가 휴지통 이동으로 읽힌다
+        let table = shortcut_table();
+        let 자리 = |modifiers, key| {
+            table
+                .iter()
+                .position(|(m, k, _)| *m == modifiers && *k == key)
+                .expect("표에 있어야 한다")
+        };
+        assert!(
+            자리(egui::Modifiers::SHIFT, egui::Key::Delete)
+                < 자리(egui::Modifiers::NONE, egui::Key::Delete)
+        );
+        // 새 폴더도 같은 규칙 — `Ctrl+Shift+N`이 있고 `Ctrl+N`은 두지 않았다
+        assert!(
+            !table
+                .iter()
+                .any(|(m, k, _)| *m == egui::Modifiers::CTRL && *k == egui::Key::N)
+        );
     }
 
     #[test]
@@ -629,13 +913,19 @@ mod tests {
     }
 
     #[test]
-    fn 무수식_키는_f5_외에_두지_않는다() {
-        // F2·Delete를 단축키로 두면 이름 편집 중 텍스트 입력을 가로챈다(현행과 같은 결정)
-        for (modifiers, key, _) in shortcut_table() {
-            if modifiers == egui::Modifiers::NONE {
-                assert_eq!(key, egui::Key::F5);
-            }
-        }
+    fn 무수식_키는_셋뿐이다() {
+        // `F5`·`F2`·`Delete` 셋만 수식 키 없이 받는다 (FR-12). 글자 키를 여기 더하면
+        // 이름 편집 중 텍스트 입력을 가로챈다 — `F2`·`Delete`는 글자가 아니고,
+        // 편집 중에는 `egui_wants_keyboard_input`이 먼저 걸러 낸다
+        let 무수식: Vec<egui::Key> = shortcut_table()
+            .into_iter()
+            .filter(|(modifiers, ..)| *modifiers == egui::Modifiers::NONE)
+            .map(|(_, key, _)| key)
+            .collect();
+        assert_eq!(
+            무수식,
+            vec![egui::Key::F5, egui::Key::F2, egui::Key::Delete]
+        );
     }
 
     #[test]

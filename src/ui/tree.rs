@@ -104,8 +104,6 @@ enum MenuTarget {
 /// 한 줄의 높이·여백·모서리는 여기서 정하지 않는다(`theme::MENU_ITEM_*`) —
 /// 줄 그리기 자체를 `widgets::menu_row`가 맡는다
 const MENU_WIDTH: f32 = 180.0;
-/// 메뉴 테두리와 안쪽 여백을 어림한 값 — 화면 밖으로 나가지 않게 당길 때 쓴다
-const MENU_FRAME_PAD: f32 = 8.0;
 
 /// 노드의 하위 폴더 상태. 열거 실패(접근 거부·삭제)도 빈 `Loaded`로 수렴한다 —
 /// 트리에서 사용자에게 알릴 것이 없고, 화살표만 사라지면 충분하다
@@ -283,10 +281,9 @@ impl FolderTreeView {
         let Some((at, target)) = self.menu_at.clone() else {
             return;
         };
-        let size = egui::vec2(
-            MENU_WIDTH + MENU_FRAME_PAD * 2.0,
-            theme::MENU_ITEM_HEIGHT + MENU_FRAME_PAD * 4.0,
-        );
+        // 이 메뉴는 한 줄뿐이라 줄 사이 간격이 없다
+        let size = egui::vec2(MENU_WIDTH, theme::MENU_ITEM_HEIGHT)
+            + crate::ui::menu::menu_frame_pad(ui.style());
         let viewport = ui.ctx().input(|input| input.viewport_rect());
         let at = clamp_menu_pos(viewport, at, size);
         let mut chosen = None;
@@ -298,7 +295,10 @@ impl FolderTreeView {
                 // (`theme::MENU_CORNER_RADIUS`)
                 egui::Frame::menu(ui.style())
                     .fill(theme::SURFACE_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                    .stroke(egui::Stroke::new(
+                        theme::MENU_FRAME_STROKE,
+                        theme::PANE_BORDER,
+                    ))
                     .show(ui, |ui| {
                         ui.set_width(MENU_WIDTH);
                         match &target {

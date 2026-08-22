@@ -129,10 +129,24 @@ type ContentOutcome = (
     Option<RemoteMenuPick>,
 );
 
+/// 목록에서 확정된 이름 바꾸기 한 건 (FR-64).
+///
+/// 경로와 새 이름만 담는다 — 어느 행이었는지는 여기서 쓸모가 없다(거는 쪽은 경로만 안다)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameRequest {
+    pub path: PathBuf,
+    pub new_name: String,
+}
+
 /// 패널이 상위(레이아웃)에 올려보내는 요청.
 /// 전부 이 패널을 그리는 도중에는 실행할 수 없어 값으로 돌려준다
 pub struct PanelOutcome {
     pub menu: Option<MenuRequest>,
+    /// 목록에서 고쳐 확정한 이름 (FR-64) — **거는 것은 앱의 몫이다**.
+    ///
+    /// 패널이 직접 걸지 않는 이유: 셸이 띄우는 오류 대화의 주인 창(HWND)을 아는 곳은
+    /// 앱뿐이고, 결과를 받을 채널도 앱이 이미 들고 있다(메뉴의 삭제·복사와 같은 채널)
+    pub rename: Option<RenameRequest>,
     /// 패널 메뉴에서 고른 명령 — 대상은 **이 패널**이다 (plan D16)
     pub command: Option<Command>,
     /// 원격 단계 화면에서 고른 조치 (FR-29·FR-32)
@@ -617,7 +631,7 @@ impl PanelState {
             let was_active = index == self.tabs.active_index();
             if let CloseOutcome::Removed(_) = self.tabs.close(index) {
                 if was_active {
-                    self.reload_active_tab(ctx);
+                    self.switch_active_tab(ctx);
                 }
             } else {
                 // 이 패널에 남은 탭이 그것 하나다 — 탭 목록은 비울 수 없다
@@ -713,6 +727,17 @@ impl PanelState {
             return Vec::new();
         }
         self.list.selected_local()
+    }
+
+    /// 원격 목록에서 고른 항목들 — 로컬 탭이면 빈 목록이다 (FR-39).
+    ///
+    /// **우클릭 메뉴(`show_remote_menu`)와 단축키 라우팅이 함께 부른다** — 각자 고르면
+    /// 메뉴와 단축키가 다른 항목에 명령을 걸 수 있다
+    pub fn selected_remote(&self) -> Vec<RemoteTarget> {
+        let Some(dir) = self.tabs.active().source.remote_path() else {
+            return Vec::new();
+        };
+        self.list.selected_remote(dir)
     }
 
     /// 활성 탭이 보고 있는 원격 폴더 — 로컬 탭이면 `None`
@@ -878,12 +903,35 @@ impl PanelState {
         self.set_remote_path(target);
     }
 
-    /// 활성 탭이 바뀌었으니 그 탭이 보는 곳을 다시 읽는다 (F-7 3라운드 B1).
+    /// 활성 탭이 **바뀌었을** 때 그 탭의 것을 다시 읽는다 (FR-64 Edge Case).
+    ///
+    /// `reload_active_tab`과 갈라 두는 이유는 하나다 — **고치던 이름을 접는 것은 탭이
+    /// 바뀔 때뿐**이다. 표시 규칙(숨김·시스템)이 바뀌어 같은 탭·같은 폴더를 다시 읽는 길은
+    /// 편집을 그대로 둬야 한다: 그 체크박스를 누르는 것은 마우스 조작이라 입력칸의 포커스를
+    /// 뺏지 않는데, 거기서 편집을 버리면 입력하던 이름이 예고 없이 사라진다(품질 리뷰 M1).
+    ///
+    /// **폴더가 바뀌는지로는 가릴 수 없다** — 두 탭이 같은 폴더를 보고 있으면
+    /// `FileListView::drop_rename_on_dir_change`가 아무 일도 하지 않아, 옮겨 간 탭에서
+    /// 편집이 그대로 살아 있게 된다(spec 리뷰 N1).
+    ///
+    /// **감시 갱신(FR-10)도 이 길로 오지 않는다** — `poll_watch`가 `start_load`를 곧바로
+    /// 불러, 폴더가 밖에서 바뀌어도 편집은 유지된다(plan Edge Case 그대로)
+    fn switch_active_tab(&mut self, ctx: &egui::Context) {
+        self.list.cancel_rename();
+        self.reload_active_tab(ctx);
+    }
+
+    /// 활성 탭이 보는 곳을 다시 읽는다 (F-7 3라운드 B1).
     ///
     /// **목록은 탭이 아니라 패널 하나가 든다** — 그래서 탭만 바꾸고 목록을 그대로 두면
     /// 주소창은 이 탭을, 목록은 저 탭의 폴더를 보이게 된다. 그 위에서 연 원격 메뉴는
     /// **화면에 없는 경로**에 삭제·권한 변경을 걸 수 있다(로컬은 종전부터 다시 읽어 왔고,
-    /// 원격만 빠져 있었다)
+    /// 원격만 빠져 있었다).
+    ///
+    /// **부르는 이유는 둘이며 그것이 편집 취소를 가른다** — 탭이 바뀌어 부르는 길은
+    /// `switch_active_tab`을 거쳐 고치던 이름을 접고, 표시 규칙(숨김·시스템)이 바뀌어
+    /// 같은 탭을 다시 읽는 `apply_display_rules`는 이 함수를 곧바로 불러 편집을 그대로 둔다.
+    /// **이 함수 자체는 편집을 건드리지 않는다** — 그 판정은 부르는 쪽에 있다
     fn reload_active_tab(&mut self, ctx: &egui::Context) {
         match self.tabs.active().source.local_path() {
             Some(path) => {
@@ -1026,7 +1074,7 @@ impl PanelState {
                 if self.tabs.switch(index) {
                     // 탭마다 소스가 다르므로 전환하면 그 탭의 것을 다시 읽는다.
                     // 히스토리는 이미 그 탭의 것이라 손대지 않는다
-                    self.reload_active_tab(ctx);
+                    self.switch_active_tab(ctx);
                 }
             }
             TabAction::Close(index) => {
@@ -1043,7 +1091,7 @@ impl PanelState {
                     });
                 if let CloseOutcome::Removed(_) = self.tabs.close(index) {
                     if was_active {
-                        self.reload_active_tab(ctx);
+                        self.switch_active_tab(ctx);
                     }
                     // 이 패널의 마지막 원격 탭이었으면 연결을 접는다 (FR-32·README §3)
                     if let Some(conn) = closing
@@ -1069,8 +1117,10 @@ impl PanelState {
                     TabSource::Local(path) => path,
                     TabSource::Remote { .. } => crate::ui::app::start_dir(),
                 };
-                self.tabs.add(TabState::new(path.clone()));
-                self.start_load(path, PendingNav::None, ctx);
+                self.tabs.add(TabState::new(path));
+                // `start_load`를 곧바로 부르지 않는다 — 새 탭도 **활성 탭이 바뀌는 길**이라
+                // 고치던 이름을 접어야 하고, 그 규칙은 이 함수 하나에 있다
+                self.switch_active_tab(ctx);
             }
         }
         None
@@ -1107,6 +1157,40 @@ impl PanelState {
             // 주소로 여는 일은 앱이 한다 — 여기서는 값만 받아 둔다
             NavAction::GotoRemote(url) => self.pending_remote_url = Some(url),
         }
+    }
+
+    /// 확정된 이름 바꾸기를 요청으로 바꾼다 (FR-64) — 대상이 아니면 `None`.
+    ///
+    /// 원격 목록에는 인라인 편집이 없어(FR-39는 대화로 묻는다) 로컬 탭에서만 성립한다.
+    /// 행 번호로 항목을 다시 찾는 이유: 확정과 폴더 갱신이 같은 프레임에 겹칠 수 있어,
+    /// 그때는 가리키던 항목이 없어져 아무것도 걸지 않는 편이 옳다
+    fn take_rename(&self, action: &FileListAction) -> Option<RenameRequest> {
+        let FileListAction::Rename { index, new_name } = action else {
+            return None;
+        };
+        let dir = self.tabs.active().source.local_path()?;
+        let entry = self.list.entry_at(*index)?;
+        Some(RenameRequest {
+            path: dir.join(entry.name_string()),
+            new_name: new_name.clone(),
+        })
+    }
+
+    /// 고른 것 중 첫 항목의 이름 편집을 연다 (FR-64) — 열지 못했으면 거짓.
+    ///
+    /// 메뉴의 아이콘 줄과 `F2`가 함께 쓰는 진입점이다
+    pub fn begin_rename_selected(&mut self) -> bool {
+        self.list.begin_rename_selected()
+    }
+
+    /// 잘라내기로 담긴 경로들을 이 패널의 목록에 표시한다 (FR-64)
+    pub fn set_cut_marks(&mut self, paths: &[PathBuf]) {
+        self.list.set_cut_marks(paths);
+    }
+
+    /// 잘라내기 표시를 푼다 — 붙여넣었거나 다른 것이 클립보드에 담겼을 때 (FR-64)
+    pub fn clear_cut_marks(&mut self) {
+        self.list.clear_cut_marks();
     }
 
     /// 목록에서 올라온 조작 처리. 셸 메뉴 요청은 **실행하지 않고 값으로 돌려준다**.
@@ -1161,6 +1245,9 @@ impl PanelState {
                 let folder = folder.to_path_buf();
                 Some(MenuRequest { folder, items, pos })
             }
+            // 이 갈래는 메뉴가 아니라 이름 바꾸기라 `handle_list_action`이 돌려주는 값에
+            // 실리지 않는다 — 아래 `show`가 목록에서 곧바로 받아 `PanelOutcome`에 담는다
+            FileListAction::Rename { .. } => None,
         }
     }
 
@@ -1301,7 +1388,11 @@ impl PanelState {
         if let Some(nav) = nav {
             self.handle_nav(nav, ctx);
         }
+        // 확정된 이름은 메뉴 요청과 갈래가 달라 먼저 꺼낸다 — 한 프레임에 둘이 함께
+        // 일어나지 않으므로(편집 중에는 우클릭 메뉴가 열리지 않는다) 순서는 문제되지 않는다
+        let rename = self.take_rename(&action);
         PanelOutcome {
+            rename,
             menu: self.handle_list_action(action, ctx),
             // 드롭다운·드롭존에서 고른 사이트는 명령으로 올려 보낸다 —
             // 새 탭 생성·연결은 앱이 한다 (T13 착지 규약).
@@ -1576,16 +1667,19 @@ impl PanelState {
         targets: TransferTargets,
     ) -> Option<RemoteMenuPick> {
         let at = self.remote_menu_at?;
-        let Some(dir) = self.tabs.active().source.remote_path().cloned() else {
+        if !self.is_remote() {
+            // 원격 탭이 아니면 열 메뉴가 없다 — 요청도 함께 지운다
             self.remote_menu_at = None;
             return None;
-        };
-        let picked = self.list.selected_remote(&dir);
+        }
+        // 단축키 라우팅(`ui::app::remote::route_to_remote`)과 **같은 함수**로 대상을 고른다 —
+        // 두 길이 각자 고르면 메뉴와 단축키가 다른 항목에 명령을 걸 수 있다(품질 리뷰 S1)
+        let picked = self.selected_remote();
         let mut chosen = None;
         // 창 가장자리에서 눌러도 메뉴가 밖으로 넘어가지 않게 안으로 당긴다 — 셸 메뉴는
         // OS가 해 주는 일이라(D21) 우리가 그리는 이쪽에서는 직접 해야 한다 (quality 리뷰 m1)
         let viewport = ui.ctx().input(|input| input.viewport_rect());
-        let at = clamp_menu_pos(viewport, at, remote_menu::menu_size());
+        let at = clamp_menu_pos(viewport, at, remote_menu::menu_size(ui.style()));
         let response = egui::Area::new(ui.id().with("원격 메뉴"))
             .order(egui::Order::Foreground)
             .fixed_pos(at)
@@ -1594,7 +1688,10 @@ impl PanelState {
                 // (`theme::MENU_CORNER_RADIUS`)
                 egui::Frame::menu(ui.style())
                     .fill(theme::SURFACE_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::PANE_BORDER))
+                    .stroke(egui::Stroke::new(
+                        theme::MENU_FRAME_STROKE,
+                        theme::PANE_BORDER,
+                    ))
                     .show(ui, |ui| {
                         chosen =
                             remote_menu::show_remote_menu(ui, picked.len(), connected, targets);

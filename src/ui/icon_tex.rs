@@ -3,14 +3,12 @@
 //! `IconCache`는 **시스템 이미지 리스트의 인덱스**만 들고 있다(ListView 전용 설계).
 //! egui는 이미지 리스트를 그릴 수 없으므로 인덱스를 HICON으로 꺼내 RGBA 픽셀로 바꾼 뒤
 //! 텍스처로 올린다. 변환·해제에 필요한 unsafe는 전부 이 파일에 격리한다.
+use crate::fs::bitmap::bgra_from_hbitmap;
 use crate::fs::thumbnail::{ThumbnailCache, ThumbnailImage};
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
-    DeleteObject, GetDIBits, GetObjectW, HBITMAP, HDC,
-};
+use windows::Win32::Graphics::Gdi::{DeleteObject, HBITMAP};
 use windows::Win32::UI::Controls::{HIMAGELIST, ILD_TRANSPARENT, ImageList_GetIcon};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 
@@ -250,117 +248,49 @@ unsafe fn hicon_to_image(hicon: HICON) -> Option<egui::ColorImage> {
     }
 }
 
-/// 32bpp 컬러 비트맵을 RGBA 이미지로 읽는다.
+/// 셸 아이콘의 컬러 비트맵을 egui 이미지로 바꾼다.
 ///
-/// 안전성 주의: 유효한 HBITMAP에만 호출한다
-unsafe fn color_bitmap_to_image(hbm: HBITMAP) -> Option<egui::ColorImage> {
-    unsafe {
-        if hbm.is_invalid() {
-            // 1bpp 마스크만 있는 흑백 아이콘 — 드물어 그리지 않는다(아이콘 없이 표시)
-            return None;
-        }
-        let mut bitmap = BITMAP::default();
-        let written = GetObjectW(
-            hbm.into(),
-            size_of::<BITMAP>() as i32,
-            Some(&mut bitmap as *mut BITMAP as *mut core::ffi::c_void),
-        );
-        if written == 0 || bitmap.bmWidth <= 0 || bitmap.bmHeight <= 0 {
-            return None;
-        }
-        let (width, height) = (bitmap.bmWidth as usize, bitmap.bmHeight as usize);
-
-        // biHeight 음수 = top-down (첫 행이 이미지 위쪽) — 뒤집기 없이 그대로 쓸 수 있다
-        let mut header = BITMAPINFO::default();
-        header.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-        header.bmiHeader.biWidth = bitmap.bmWidth;
-        header.bmiHeader.biHeight = -bitmap.bmHeight;
-        header.bmiHeader.biPlanes = 1;
-        header.bmiHeader.biBitCount = 32;
-        header.bmiHeader.biCompression = BI_RGB.0;
-
-        let mut pixels = vec![0u8; width * height * 4];
-        let hdc: HDC = CreateCompatibleDC(None);
-        if hdc.is_invalid() {
-            return None;
-        }
-        let lines = GetDIBits(
-            hdc,
-            hbm,
-            0,
-            height as u32,
-            Some(pixels.as_mut_ptr() as *mut core::ffi::c_void),
-            &mut header,
-            DIB_RGB_COLORS,
-        );
-        let _ = DeleteDC(hdc);
-        if lines == 0 {
-            return None;
-        }
-
-        // GDI는 BGRA 순서로 주고 알파는 프리멀티플라이일 수 있다.
-        // egui의 from_rgba_unmultiplied는 스트레이트 알파를 받으므로 되돌린다
-        for px in pixels.chunks_exact_mut(4) {
-            let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
-            if a == 0 {
-                px.copy_from_slice(&[0, 0, 0, 0]);
-                continue;
-            }
-            let unmul = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
-            px[0] = unmul(r);
-            px[1] = unmul(g);
-            px[2] = unmul(b);
-            px[3] = a;
-        }
-        // 알파가 전부 0이면 32bpp인데 알파 채널을 쓰지 않는 아이콘이다 — 불투명으로 되살린다
-        if pixels.chunks_exact(4).all(|px| px[3] == 0) {
-            let mut opaque = vec![0u8; width * height * 4];
-            let raw = read_raw_bgra(hbm, width, height)?;
-            for (dst, src) in opaque.chunks_exact_mut(4).zip(raw.chunks_exact(4)) {
-                dst.copy_from_slice(&[src[2], src[1], src[0], 255]);
-            }
-            return Some(egui::ColorImage::from_rgba_unmultiplied(
-                [width, height],
-                &opaque,
-            ));
-        }
-        Some(egui::ColorImage::from_rgba_unmultiplied(
-            [width, height],
-            &pixels,
-        ))
-    }
+/// GDI로 픽셀을 읽는 것은 `fs::bitmap`이 하고, 뒤집기·알파 되돌리기는 아래
+/// [`bgra_to_color_image`]가 한다
+fn color_bitmap_to_image(hbm: HBITMAP) -> Option<egui::ColorImage> {
+    let (width, height, pixels) = bgra_from_hbitmap(hbm)?;
+    Some(bgra_to_color_image(width as usize, height as usize, pixels))
 }
 
-/// 알파 없는 32bpp 아이콘을 위해 원본 BGRA를 한 번 더 읽는다.
+/// GDI가 준 BGRA를 egui 이미지로 바꾼다 — **뒤집기와 알파 되돌리기**.
 ///
-/// 안전성 주의: `color_bitmap_to_image`가 유효성을 확인한 뒤에만 호출한다
-unsafe fn read_raw_bgra(hbm: HBITMAP, width: usize, height: usize) -> Option<Vec<u8>> {
-    unsafe {
-        let mut header = BITMAPINFO::default();
-        header.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-        header.bmiHeader.biWidth = width as i32;
-        header.bmiHeader.biHeight = -(height as i32);
-        header.bmiHeader.biPlanes = 1;
-        header.bmiHeader.biBitCount = 32;
-        header.bmiHeader.biCompression = BI_RGB.0;
-
-        let mut raw = vec![0u8; width * height * 4];
-        let hdc = CreateCompatibleDC(None);
-        if hdc.is_invalid() {
-            return None;
+/// **셸 아이콘과 컨텍스트 메뉴 아이콘이 함께 쓴다**(`ui::shell_context_menu`) — 둘 다 셸이
+/// 준 32bpp 비트맵이라 후처리가 똑같고, 각자 하면 한쪽이 알파를 잘못 다뤄 가장자리가 달라진다.
+/// 이것을 `fs::bitmap`에 두지 않는 이유는 egui 타입을 돌려주기 때문이다(`fs`는 `ui`를 모른다).
+///
+/// **알파를 안 쓰는 비트맵은 통째로 불투명으로 되살린다** — 픽셀마다 판정하면 진짜 투명한
+/// 자리까지 메워 검은 테두리가 생긴다(`fs::thumbnail`의 같은 규칙)
+pub(crate) fn bgra_to_color_image(
+    width: usize,
+    height: usize,
+    mut pixels: Vec<u8>,
+) -> egui::ColorImage {
+    // 알파를 쓰지 않는 비트맵인지 **바꾸기 전에** 판정한다 — 되돌린 뒤에는 알 수 없다
+    let opaque_bitmap = pixels.chunks_exact(4).all(|px| px[3] == 0);
+    for px in pixels.chunks_exact_mut(4) {
+        let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
+        if opaque_bitmap {
+            // 알파를 안 쓰는 비트맵 — 색만 옮기고 불투명으로 둔다
+            px.copy_from_slice(&[r, g, b, 255]);
+            continue;
         }
-        let lines = GetDIBits(
-            hdc,
-            hbm,
-            0,
-            height as u32,
-            Some(raw.as_mut_ptr() as *mut core::ffi::c_void),
-            &mut header,
-            DIB_RGB_COLORS,
-        );
-        let _ = DeleteDC(hdc);
-        if lines == 0 { None } else { Some(raw) }
+        if a == 0 {
+            px.copy_from_slice(&[0, 0, 0, 0]);
+            continue;
+        }
+        // GDI는 프리멀티플라이 알파를 줄 수 있다 — 스트레이트 알파로 되돌린다
+        let unmul = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
+        px[0] = unmul(r);
+        px[1] = unmul(g);
+        px[2] = unmul(b);
+        px[3] = a;
     }
+    egui::ColorImage::from_rgba_unmultiplied([width, height], &pixels)
 }
 
 #[cfg(test)]

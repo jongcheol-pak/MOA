@@ -126,6 +126,14 @@ strings! {
     delete => "삭제" / "Delete";
     rename => "이름 바꾸기" / "Rename";
     connect => "연결" / "Connect";
+    /// 컨텍스트 메뉴 아이콘 줄의 툴팁 (FR-8) — 라벨이 없는 줄이라 이름이 여기서만 드러난다.
+    /// `삭제`·`이름 바꾸기`는 위의 것을 그대로 쓴다
+    menu_cut => "잘라내기" / "Cut";
+    menu_copy => "복사" / "Copy";
+    menu_share => "공유" / "Share";
+    /// 컨텍스트 메뉴 맨 아래 줄 (FR-8) — 종전 Windows 표준 메뉴를 연다.
+    /// 문구는 탐색기가 쓰는 것과 같게 맞춘다
+    menu_show_more => "추가 옵션 표시" / "Show more options";
 
     // ── 타이틀바 (FR-22) ──
     titlebar_show_workspaces => "워크스페이스 목록 보이기" / "Show workspace list";
@@ -315,6 +323,14 @@ strings! {
     /// 파일 쪽은 Windows 탐색기의 `새로 만들기 > 텍스트 문서`와 같은 이름이다 (사용자 확정)
     create_folder_base => "새 폴더" / "New folder";
     create_file_base => "새 텍스트 문서" / "New Text Document";
+    /// 고른 것을 하나도 삭제에 걸지 못했을 때 (FR-64) — 그 사이 전부 사라졌거나 셸이
+    /// 그 경로를 다루지 못하는 경우다
+    delete_no_source => "지울 파일을 찾지 못했습니다" / "Could not find the files to delete";
+    /// 바꿀 이름에 파일 이름으로 쓸 수 없는 글자가 있을 때 (FR-64) — 어떤 글자가 안 되는지
+    /// 함께 보여야 사용자가 고칠 수 있다. 셸에 걸기 전에 우리가 먼저 거른다
+    rename_invalid_chars
+        => r#"이름에 \ / : * ? " < > | 는 쓸 수 없습니다"#
+        / r#"A name cannot contain \ / : * ? " < > |"#;
     /// 끌어다 놓은 것을 하나도 복사에 걸지 못했을 때 (FR-60) — 원본이 그 사이 전부
     /// 사라졌거나 셸이 그 경로를 다루지 못하는 경우다
     copy_no_source => "복사할 파일을 찾지 못했습니다" / "Could not find the files to copy";

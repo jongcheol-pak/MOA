@@ -34,7 +34,7 @@
 
 - **원격 항목을 탐색기로 끌어내기** — T7은 로컬 항목만 OLE 드래그로 내보낸다. 원격 항목은 「끌기 시작 시점에는 아직 로컬에 파일이 없다」라 지연 렌더링(`CFSTR_FILEDESCRIPTOR`/`CFSTR_FILECONTENTS`)을 구현해야 하며, 이번 범위의 몇 배다.
 - **드래그 중 미리보기 그림**(끌고 있는 항목의 반투명 썸네일). `IDragSourceHelper`가 필요하다.
-- **기존 소스 세 곳에 BEL(0x07) 문자가 박혀 있다** — `src/app/settings.rs`·`src/remote/queue.rs`·`src/ui/tabs.rs`(그리고 `src/ui/queue_panel.rs`)의 시험 픽스처 경로에서 `r"C:"`가 실제 BEL 바이트로 들어가 있다. **master에도 있어 이번 변경과 인과가 없다**(이번 회차가 만든 같은 오류는 `app/remote.rs`에서 고쳤다). 시험 결과에는 영향이 없으나 소스에 제어 문자가 남아 있는 것은 정리 대상이다.
+- **기존 소스 세 곳에 BEL(0x07) 문자가 박혀 있다** — `src/app/settings.rs`·`src/remote/queue.rs`·`src/ui/tabs.rs`(그리고 `src/ui/queue_panel.rs`)의 시험 픽스처 경로에서 `r"C:\a"`가 실제 BEL 바이트로 들어가 있다. **master에도 있어 이번 변경과 인과가 없다**(이번 회차가 만든 같은 오류는 `app/remote.rs`에서 고쳤다). 시험 결과에는 영향이 없으나 소스에 제어 문자가 남아 있는 것은 정리 대상이다.
 - **`ExplorerApp`의 채널·상태 필드가 이번 회차에 더 늘었다** — `relist`(T2)·`copy_tx`/`copy_rx`(T4)·외부 드롭의 `is_dir` 측정 채널(T5). 대장의 `[SUGGEST] 충돌 상태 6개 필드를 ConflictState로 묶기`(2026-08-20)와 대상이 겹치지는 않지만(그 항목은 `conflict_*` 한정) **같은 범주가 커졌다**는 것을 다음 회차가 알아야 한다. 캡슐화를 다룰 때 이번에 는 것까지 함께 본다.
 - **[SUGGEST] `views → panels` 이중 순회가 세 곳에 반복**(`src/ui/app/remote.rs`의 `list_moved_panels`·`request_remote_list`·`pump_relist`) — 공통화 문턱 3회에 닿았다. 조건만 받는 순회 헬퍼로 묶을 수 있다(T2 quality 리뷰 S1).
 - 직전 회차에서 이월된 항목 셋(다음 회차 대상): 내보내기 진행 표시 · 내보내기 기본 파일 이름의 앱 이름 표기 · `remote::connection::tests::늦게_도착한_이전_세대의_목록은_버려진다`의 간헐 실패.

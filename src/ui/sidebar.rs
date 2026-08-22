@@ -127,6 +127,11 @@ pub struct WorkspaceSidebar {
     /// 새로 추가한 워크스페이스를 다음 프레임에 편집 상태로 만든다.
     /// 추가는 호출부가 처리하므로, 새 항목의 인덱스는 다음 프레임에야 알 수 있다 (FR-16)
     edit_added: bool,
+    /// 무수식 키(`F2`)를 지금 이 사이드바가 갖는가 (FR-12) — 호출부가 프레임마다 알려 준다.
+    ///
+    /// 이 값을 여기 드는 것은 상태를 늘리려는 것이 아니라 **인자 수 때문**이다
+    /// (`set_owns_keys` 주석)
+    owns_keys: bool,
     drag: Option<Drag>,
 }
 
@@ -143,6 +148,7 @@ impl WorkspaceSidebar {
             editing: None,
             focus_edit: false,
             edit_added: false,
+            owns_keys: false,
             drag: None,
         }
     }
@@ -153,6 +159,17 @@ impl WorkspaceSidebar {
     /// 이름을 고치다가 다른 항목을 클릭하면 커밋(`Rename`)과 전환(`Select`)이 함께 일어나고,
     /// 하나만 남기면 둘 중 하나가 조용히 사라진다. 각 조작이 대상 인덱스를 품고 있어
     /// 처리 순서가 뒤바뀌어도 결과는 같다
+    /// 무수식 키(`F2`)를 지금 이 사이드바가 갖는지 알린다 (FR-12) — **`show` 직전에 부른다**.
+    ///
+    /// `show`의 인자로 받지 않는 이유: 그 함수의 인자가 이미 일곱이라 하나만 더해도 clippy가
+    /// 막는다(`ui::panel::apply_display_rules`와 같은 처리).
+    ///
+    /// 사이드바가 스스로 판정하지 않는 이유: "마지막으로 누른 영역"은 사이드바와 패널을 함께
+    /// 보는 쪽(`ui::app`)만 알 수 있다
+    pub fn set_owns_keys(&mut self, owns: bool) {
+        self.owns_keys = owns;
+    }
+
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -269,8 +286,13 @@ impl WorkspaceSidebar {
         if resp.clicked() {
             actions.push(SidebarAction::Select(index));
         }
-        // 선택된 항목에서 F2를 누르면 이름 편집 — 입력 중에는 텍스트 입력이 우선이라 여기서만 본다
-        if index == list.active_index()
+        // 선택된 항목에서 F2를 누르면 이름 편집 — 입력 중에는 텍스트 입력이 우선이라 여기서만 본다.
+        //
+        // **`owns_keys`가 없으면 이 판정이 전역이 된다** (FR-12): `ui.input`은 창 전체의 입력이라
+        // 파일 목록에서 누른 F2까지 워크스페이스 이름 편집을 열었다
+        // (`docs/plans/deferred.md` 2026-07-28). 마지막으로 누른 영역이 사이드바일 때만 받는다
+        if self.owns_keys
+            && index == list.active_index()
             && ui.input(|i| i.key_pressed(egui::Key::F2))
             && self.editing.is_none()
         {
@@ -842,6 +864,46 @@ mod tests {
             collect(&clipped.shape, &mut found);
         }
         found
+    }
+
+    /// `F2`를 한 번 누른 프레임을 그린다 — 키 소유를 바꿔 가며 결과를 견준다
+    fn press_f2(owns_keys: bool) -> WorkspaceSidebar {
+        let ctx = egui::Context::default();
+        let mut sidebar = WorkspaceSidebar::new();
+        let list = WorkspaceList::new();
+        let sites = SiteStore::new();
+        let mut icons = IconCache::new();
+        let mut textures = IconTextures::new();
+        let mut input = egui::RawInput::default();
+        input.events.push(egui::Event::Key {
+            key: egui::Key::F2,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        // 그린 결과는 보지 않는다 — 이 시험이 견주는 것은 편집 상태다
+        let _ = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                sidebar.set_owns_keys(owns_keys);
+                sidebar.show(ui, &list, &sites, &[], &mut icons, &mut textures);
+            });
+        });
+        sidebar
+    }
+
+    #[test]
+    fn 키를_갖지_않으면_f2로_이름_편집이_열리지_않는다() {
+        // 파일 목록을 누른 뒤 F2를 누르면 파일 이름을 고쳐야 한다 (FR-12) —
+        // 종전에는 `ui.input`이 창 전체 입력이라 여기서도 편집이 열렸다
+        // (`docs/plans/deferred.md` 2026-07-28 항목의 바로 그 문제다)
+        assert!(press_f2(false).editing.is_none());
+    }
+
+    #[test]
+    fn 키를_가지면_f2로_이름_편집이_열린다() {
+        // 사이드바를 누른 뒤 F2를 누르면 워크스페이스 이름 편집이다
+        assert!(press_f2(true).editing.is_some());
     }
 
     #[test]

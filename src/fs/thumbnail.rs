@@ -10,15 +10,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use windows::Win32::Foundation::SIZE;
-use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
-    DeleteObject, GetDIBits, GetObjectW, HBITMAP, HDC,
-};
+use windows::Win32::Graphics::Gdi::{DeleteObject, HBITMAP};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Shell::{
     IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
 };
 use windows::core::HSTRING;
+
+use crate::fs::bitmap::bgra_from_hbitmap;
 
 /// 패널 하나가 들고 있을 썸네일 수 상한 (NFR-9 — 약 50MB).
 /// 넘으면 가장 오래 안 쓴 것부터 버린다
@@ -316,83 +315,43 @@ fn make_thumbnail(path: &Path) -> Option<ThumbnailImage> {
     }
 }
 
-/// 32bpp 비트맵을 RGBA로 읽는다.
+/// 셸이 준 비트맵을 이 모듈이 쓰는 RGBA 이미지로 바꾼다.
 ///
-/// `ui::icon_tex`의 아이콘 변환과 같은 GDI 절차지만 그쪽은 `ui` 계층이라 여기서 쓸 수 없다
-/// (`fs`는 `ui`를 모른다). **세 번째 사용처가 2026-08-21에 생겼다**(`fs::drag_image`) — 반환 형태가
-/// 서로 달라 그 회차에는 합치지 않고 Deferred 대장에 `[SUGGEST]`로 미뤘다.
-///
-/// 안전성: 유효한 HBITMAP에만 호출한다. 내부에서 만든 DC는 이 함수에서 해제한다
-unsafe fn bitmap_to_rgba(bitmap: HBITMAP) -> Option<ThumbnailImage> {
-    unsafe {
-        let mut info = BITMAP::default();
-        let written = GetObjectW(
-            bitmap.into(),
-            size_of::<BITMAP>() as i32,
-            Some(&mut info as *mut BITMAP as *mut core::ffi::c_void),
-        );
-        if written == 0 || info.bmWidth <= 0 || info.bmHeight <= 0 {
-            return None;
-        }
-        let (width, height) = (info.bmWidth as usize, info.bmHeight as usize);
+/// GDI로 픽셀을 읽는 것은 `fs::bitmap`이 하고(그 절차가 네 곳에서 같았다), 여기서는
+/// **BGRA → RGBA 뒤집기와 알파 되돌리기**만 한다 — 그 후처리가 사용처마다 달라 공용
+/// 모듈에 넣지 않았다.
+fn bitmap_to_rgba(bitmap: HBITMAP) -> Option<ThumbnailImage> {
+    let (width, height, mut pixels) = bgra_from_hbitmap(bitmap)?;
+    let (width, height) = (width as usize, height as usize);
 
-        // biHeight 음수 = top-down (첫 행이 이미지 위쪽) — 뒤집기 없이 그대로 쓴다
-        let mut header = BITMAPINFO::default();
-        header.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-        header.bmiHeader.biWidth = info.bmWidth;
-        header.bmiHeader.biHeight = -info.bmHeight;
-        header.bmiHeader.biPlanes = 1;
-        header.bmiHeader.biBitCount = 32;
-        header.bmiHeader.biCompression = BI_RGB.0;
-
-        let mut pixels = vec![0u8; width * height * 4];
-        let hdc: HDC = CreateCompatibleDC(None);
-        if hdc.is_invalid() {
-            return None;
+    // 알파 채널을 **쓰지 않는** 비트맵인지 먼저 판정한다 — 전부 0이면 그렇다.
+    // 픽셀마다 판정하면 진짜 투명한 부분(로고 주변 등)까지 불투명으로 메워
+    // 검은 테두리가 생긴다. `ui::icon_tex`의 아이콘 변환과 같은 규칙이다
+    let opaque_bitmap = pixels.chunks_exact(4).all(|px| px[3] == 0);
+    for px in pixels.chunks_exact_mut(4) {
+        let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
+        if opaque_bitmap {
+            // 알파를 안 쓰는 비트맵 — 색만 옮기고 불투명으로 둔다
+            px.copy_from_slice(&[r, g, b, 255]);
+            continue;
         }
-        let lines = GetDIBits(
-            hdc,
-            bitmap,
-            0,
-            height as u32,
-            Some(pixels.as_mut_ptr() as *mut core::ffi::c_void),
-            &mut header,
-            DIB_RGB_COLORS,
-        );
-        let _ = DeleteDC(hdc);
-        if lines == 0 {
-            return None;
+        if a == 0 {
+            // 실제로 투명한 픽셀이다 — 색까지 지워야 가장자리에 잔상이 남지 않는다
+            px.copy_from_slice(&[0, 0, 0, 0]);
+            continue;
         }
-
-        // 알파 채널을 **쓰지 않는** 비트맵인지 먼저 판정한다 — 전부 0이면 그렇다.
-        // 픽셀마다 판정하면 진짜 투명한 부분(로고 주변 등)까지 불투명으로 메워
-        // 검은 테두리가 생긴다. `ui::icon_tex`의 아이콘 변환과 같은 규칙이다
-        let opaque_bitmap = pixels.chunks_exact(4).all(|px| px[3] == 0);
-        for px in pixels.chunks_exact_mut(4) {
-            let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
-            if opaque_bitmap {
-                // 알파를 안 쓰는 비트맵 — 색만 옮기고 불투명으로 둔다
-                px.copy_from_slice(&[r, g, b, 255]);
-                continue;
-            }
-            if a == 0 {
-                // 실제로 투명한 픽셀이다 — 색까지 지워야 가장자리에 잔상이 남지 않는다
-                px.copy_from_slice(&[0, 0, 0, 0]);
-                continue;
-            }
-            // GDI는 프리멀티플라이 알파를 줄 수 있다 — 스트레이트 알파로 되돌린다
-            let unmul = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
-            px[0] = unmul(r);
-            px[1] = unmul(g);
-            px[2] = unmul(b);
-            px[3] = a;
-        }
-        Some(ThumbnailImage {
-            width,
-            height,
-            rgba: pixels,
-        })
+        // GDI는 프리멀티플라이 알파를 줄 수 있다 — 스트레이트 알파로 되돌린다
+        let unmul = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
+        px[0] = unmul(r);
+        px[1] = unmul(g);
+        px[2] = unmul(b);
+        px[3] = a;
     }
+    Some(ThumbnailImage {
+        width,
+        height,
+        rgba: pixels,
+    })
 }
 
 #[cfg(test)]

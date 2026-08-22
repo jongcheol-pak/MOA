@@ -56,6 +56,7 @@ use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUn
 
 mod autosave;
 mod remote;
+mod shell_menu;
 mod transfer_conflict;
 mod update;
 
@@ -474,6 +475,10 @@ pub struct ExplorerApp {
     /// 마지막으로 관측한 사이드바 폭 — 세션 저장용
     sidebar_width: f32,
     sidebar_collapsed: bool,
+    /// 무수식 키(`F2`·`Delete`)를 받는 영역 (FR-12) — 마지막으로 누른 쪽이 갖는다.
+    ///
+    /// 세션에 담지 않는다: 앱을 다시 띄우면 아무것도 누르지 않은 상태이므로 기본값이 옳다
+    key_owner: menu::KeyOwner,
     /// 마지막으로 관측한 창 위치·크기 (최대화가 아닐 때만 갱신 — 최대화 상태를 저장하면
     /// 다음 실행에서 창을 되돌릴 "일반 크기"가 사라진다)
     window: WindowState,
@@ -584,6 +589,14 @@ pub struct ExplorerApp {
     /// 받는 곳의 존재 확인 결과가 오는 통로 — `(확인 번호, 겹친 이름들)`
     conflict_tx: std::sync::mpsc::Sender<(u64, Vec<String>)>,
     conflict_rx: std::sync::mpsc::Receiver<(u64, Vec<String>)>,
+    /// 지금 열려 있는 Win11 모양 컨텍스트 메뉴 (FR-8) — 없으면 메뉴가 떠 있지 않다
+    shell_menu: Option<shell_menu::OpenShellMenu>,
+    /// 이번 프레임이 끝난 뒤 띄울 **종전 표준 메뉴** (`추가 옵션 표시`) — 그것은
+    /// `TrackPopupMenuEx`가 자체 메시지 루프를 돌려 그리기 도중에 부를 수 없다
+    pending_show_more: Option<(std::path::PathBuf, Vec<std::path::PathBuf>, egui::Pos2)>,
+    /// 이름 바꾸기·삭제의 결과를 받는 자리 (FR-64) — 복사와 같은 방식이다
+    file_op_tx: std::sync::mpsc::Sender<crate::fs::file_op::FileOpOutcome>,
+    file_op_rx: std::sync::mpsc::Receiver<crate::fs::file_op::FileOpOutcome>,
     /// 셸 복사의 결과를 받는 자리 (FR-60) — `pump_local_copy`가 프레임마다 거둔다.
     /// 워커가 여럿 돌 수 있어 채널 하나를 나눠 쓴다
     copy_tx: std::sync::mpsc::Sender<crate::fs::file_op::CopyOutcome>,
@@ -665,6 +678,7 @@ impl ExplorerApp {
         let (expand_tx, expand_rx) = std::sync::mpsc::channel();
         let (conflict_tx, conflict_rx) = std::sync::mpsc::channel();
         let (copy_tx, copy_rx) = std::sync::mpsc::channel();
+        let (file_op_tx, file_op_rx) = std::sync::mpsc::channel();
         let (os_drop_tx, os_drop_rx) = std::sync::mpsc::channel();
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = cc.egui_ctx.clone();
@@ -691,6 +705,7 @@ impl ExplorerApp {
             sidebar: WorkspaceSidebar::new(),
             sidebar_width: SIDEBAR_DEFAULT_WIDTH as f32,
             sidebar_collapsed: false,
+            key_owner: menu::KeyOwner::default(),
             window: DEFAULT_WINDOW,
             restore_window: None,
             restoring_maximized: 0,
@@ -741,6 +756,10 @@ impl ExplorerApp {
             expand_rx,
             pending_conflicts: Vec::new(),
             next_conflict: 0,
+            shell_menu: None,
+            file_op_tx,
+            file_op_rx,
+            pending_show_more: None,
             copy_tx,
             copy_rx,
             os_drop_tx,
@@ -1394,8 +1413,7 @@ impl ExplorerApp {
             return;
         }
         self.persist_session();
-        self.hidden = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.hide_window(ctx);
     }
 
     /// 닫기 요청을 가로채 창만 숨긴다 (FR-50).
@@ -1415,8 +1433,18 @@ impl ExplorerApp {
         }
         // **숨기기 전에 저장한다** — 종료 때 도는 `on_exit`가 이번에는 오지 않는다
         self.persist_session();
-        self.hidden = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.hide_window(ctx);
+    }
+
+    /// 창을 트레이로 숨긴다 — **숨는 길이 둘이라 그 뒷정리를 한 곳에 모은다** (FR-50).
+    ///
+    /// 열려 있던 컨텍스트 메뉴를 함께 닫는 것이 그 정리다 — 창이 다시 보일 때 그 사이
+    /// 사라졌을 수도 있는 대상을 쥔 메뉴가 남아 있으면 안 된다. 두 길에 각각 적으면
+    /// 한쪽을 빠뜨려도 아무도 모른다(실제로 그렇게 빠뜨렸다)
+    fn hide_window(&mut self, ctx: &egui::Context) {
+        self.hidden = true;
+        self.shell_menu = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
@@ -1773,6 +1801,27 @@ impl ExplorerApp {
                 // 하나도 없어도 그 페이지는 성립한다 (D10)
                 ctx.open_url(egui::OpenUrl::new_tab(crate::i18n::releases_url()));
             }
+            // 파일 대상 명령 — 셸에 걸려면 주인 창과 결과 채널이 필요해 여기서 따로 받는다.
+            //
+            // **원격 탭이면 원격 기능으로 간다** (FR-12·D5) — `route_to_remote`가 참을
+            // 돌려주면 이미 처리된 것이고, 거짓이면 아래 로컬 처리가 이어진다
+            Command::Rename => {
+                if self.route_to_remote(command, target) {
+                    return;
+                }
+                if let Some(panel) = self.command_panel_mut(target) {
+                    panel.begin_rename_selected();
+                }
+            }
+            Command::Delete { permanent } => {
+                if self.route_to_remote(command, target) {
+                    return;
+                }
+                self.delete_selected(target, permanent);
+            }
+            Command::ClipboardCopy => self.clipboard_put(target, false),
+            Command::ClipboardCut => self.clipboard_put(target, true),
+            Command::ClipboardPaste => self.clipboard_paste(target),
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -1784,6 +1833,11 @@ impl ExplorerApp {
             | Command::NewFile
             | Command::NewFolder
             | Command::SetViewMode(_) => {
+                // 새 폴더만 원격 대응이 있다 (FR-12·D5) — 나머지 여섯은 패널 층에서
+                // 원격 탭에도 그대로 듣는다
+                if self.route_to_remote(command, target) {
+                    return;
+                }
                 let Some(panel) = self.command_panel_mut(target) else {
                     return;
                 };
@@ -1991,12 +2045,7 @@ impl ExplorerApp {
         dest: std::path::PathBuf,
         sources: Vec<std::path::PathBuf>,
     ) {
-        // 창을 얻지 못했으면 소유자 없이 건다 — 셸 대화가 앱 위에 서지 않을 뿐 복사는 된다
-        let owner = self
-            .shell
-            .as_ref()
-            .map(|shell| shell.hwnd())
-            .unwrap_or_default();
+        let owner = self.owner_hwnd();
         crate::fs::file_op::copy_into(
             dest,
             sources,
@@ -2035,6 +2084,170 @@ impl ExplorerApp {
                 (None, false) => continue,
             };
             self.notice = Some((text, now + NOTICE_SECS));
+        }
+    }
+
+    /// 끝난 이름 바꾸기·삭제의 결과를 알린다 (FR-64).
+    ///
+    /// **성공도 취소도 알리지 않는다** — 셸이 자기 대화로 이미 알렸고, 목록에서 사라지거나
+    /// 이름이 바뀌는 것(또는 그대로 남는 것)이 곧 확인이라 여기서 또 띄우면 조작 하나에
+    /// 알림이 둘이 된다. 복사(`pump_local_copy`)가 취소를 알리는 것은 **여러 개를 끌어다
+    /// 놓은 뒤라 몇 개가 갔는지 목록만 보고는 알기 어렵기** 때문이며, 여기는 대상이 눈앞에
+    /// 그대로 있어 그 어려움이 없다
+    /// 고른 것을 지운다 (FR-12·FR-64) — 확인 대화는 셸이 띄운다.
+    ///
+    /// 고른 것이 없으면 아무 일도 하지 않는다 — `Delete`를 헛눌렀을 때 대화만 뜨는 것보다
+    /// 조용한 편이 낫다. 원격 탭은 여기 오지 않는다(`selected_local`이 빈 목록을 준다)
+    fn delete_selected(&mut self, target: Option<PanelId>, permanent: bool) {
+        let owner = self.owner_hwnd();
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        let paths: Vec<std::path::PathBuf> = panel
+            .selected_local()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        crate::fs::file_op::delete_items(
+            paths,
+            permanent,
+            owner,
+            self.file_op_tx.clone(),
+            self.repaint.clone(),
+        );
+    }
+
+    /// 고른 것을 클립보드에 담는다 (FR-12·FR-64) — `cut`이면 잘라내기다.
+    ///
+    /// 담긴 뒤에만 화면의 잘라내기 표시를 손댄다 — 담기지 못했으면 클립보드에는 종전 것이
+    /// 그대로 남아 있어, 표시를 바꾸면 화면과 클립보드가 어긋난다
+    fn clipboard_put(&mut self, target: Option<PanelId>, cut: bool) {
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        let paths: Vec<std::path::PathBuf> = panel
+            .selected_local()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        if paths.is_empty() || !crate::fs::clipboard::put(&paths, cut) {
+            return;
+        }
+        if cut {
+            self.set_cut_marks(&paths);
+        } else {
+            self.clear_cut_marks();
+        }
+    }
+
+    /// 클립보드에 담긴 것을 지금 폴더에 붙여넣는다 (FR-12·FR-64).
+    ///
+    /// 하는 일은 둘이다. **먼저 읽은 값으로 화면의 잘라내기 표시를 맞추고**(FR-64 —
+    /// 다른 앱이 그 사이 클립보드를 가져갔을 수 있다), 그다음 로컬 대상이면 옮기거나 복사한다.
+    ///
+    /// 복사로 담겼으면 복사하고 **잘라내기로 담겼으면 옮긴다** — 어느 쪽인지는 클립보드가
+    /// 함께 든 `Preferred DropEffect`가 말한다(탐색기가 담은 것도 같은 형식이라 그대로 읽힌다).
+    ///
+    /// 옮기기가 걸렸으면 잘라내기 표시를 푼다 — 셸이 실제로 옮기기를 마치기 전이지만,
+    /// 그 결과를 기다려 푸는 것은 워커가 돌아올 때까지 화면이 거짓을 보이게 한다
+    fn clipboard_paste(&mut self, target: Option<PanelId>) {
+        let files = crate::fs::clipboard::take();
+        // **읽은 값으로 화면의 잘라내기 표시부터 맞춘다** (FR-64 세 번째 해제 조건).
+        // 우리가 잘라낸 뒤 다른 앱이 클립보드를 가져갔으면 흐린 줄은 이미 클립보드에 없는
+        // 것을 가리킨다 — 여기서 풀지 않으면 영영 흐린 채 남는다. **붙여넣기에 성공했을
+        // 때가 아니라 눌렀을 때** 맞추는 것이 요점이라, 아래 되돌아가는 갈래보다 앞에 둔다
+        let marks = crate::fs::clipboard::cut_marks_for(files.as_ref());
+        if marks.is_empty() {
+            self.clear_cut_marks();
+        } else {
+            self.set_cut_marks(marks);
+        }
+        let Some(files) = files else {
+            return;
+        };
+        let owner = self.owner_hwnd();
+        let Some(panel) = self.command_panel_mut(target) else {
+            return;
+        };
+        // 원격 탭에는 붙여넣을 로컬 폴더가 없다 (plan Out of Scope — 전송은 큐가 담당한다)
+        if panel.is_remote() {
+            return;
+        }
+        let dest = panel.dir().to_path_buf();
+        let started = if files.cut {
+            crate::fs::file_op::move_into(
+                dest,
+                files.paths,
+                owner,
+                self.copy_tx.clone(),
+                self.repaint.clone(),
+            )
+        } else {
+            crate::fs::file_op::copy_into(
+                dest,
+                files.paths,
+                owner,
+                self.copy_tx.clone(),
+                self.repaint.clone(),
+            )
+        };
+        if started && files.cut {
+            self.clear_cut_marks();
+        }
+    }
+
+    /// 셸 대화·메뉴 실행의 **주인 창** — 창이 아직 없으면 주인 없이 띄운다.
+    ///
+    /// 창을 얻지 못했을 때 셸 대화가 앱 위에 서지 않을 뿐, 하려던 일은 그대로 된다.
+    /// 부르는 자리가 다섯이라 한 곳에 모았다(복사·이동·삭제·이름 바꾸기·메뉴 실행)
+    pub(super) fn owner_hwnd(&self) -> windows::Win32::Foundation::HWND {
+        self.shell
+            .as_ref()
+            .map(|shell| shell.hwnd())
+            .unwrap_or_default()
+    }
+
+    /// 잘라내기 표시를 이 워크스페이스의 **모든 패널**에 건다 (FR-64).
+    ///
+    /// 표시를 연 패널에만 두지 않는 이유: 한쪽에서 잘라내 다른 쪽에 붙여넣는 것이 보통이라,
+    /// 같은 폴더를 보고 있는 옆 패널에서 그 항목만 멀쩡해 보이면 어느 쪽이 맞는지 알 수 없다
+    fn set_cut_marks(&mut self, paths: &[std::path::PathBuf]) {
+        let view = self.ensure_active_view();
+        for panel in view.panels.values_mut() {
+            panel.set_cut_marks(paths);
+        }
+    }
+
+    /// 잘라내기 표시를 모두 푼다 — 다른 것이 클립보드에 담겼을 때 (FR-64)
+    fn clear_cut_marks(&mut self) {
+        let view = self.ensure_active_view();
+        for panel in view.panels.values_mut() {
+            panel.clear_cut_marks();
+        }
+    }
+
+    /// 목록에서 확정한 이름을 셸에 건다 (FR-64).
+    ///
+    /// 결과는 메뉴의 삭제·복사와 **같은 채널**로 온다 — 실패하면 `pump_file_op`가 알린다.
+    /// 성공했을 때 목록을 다시 읽지 않는 이유: 폴더 감시(FR-10)가 그 변화를 통지하며,
+    /// 이는 메뉴에서 지웠을 때와 같은 처리다
+    fn start_rename(&mut self, request: crate::ui::panel::RenameRequest) {
+        let owner = self.owner_hwnd();
+        crate::fs::file_op::rename_item(
+            request.path,
+            request.new_name,
+            owner,
+            self.file_op_tx.clone(),
+            self.repaint.clone(),
+        );
+    }
+
+    fn pump_file_op(&mut self, now: f64) {
+        while let Ok(outcome) = self.file_op_rx.try_recv() {
+            let Some(detail) = outcome.error else {
+                continue;
+            };
+            self.notice = Some((detail, now + NOTICE_SECS));
         }
     }
 
@@ -2130,6 +2343,7 @@ impl eframe::App for ExplorerApp {
         self.drain_conflict_checks();
         // 셸 복사가 끝났으면 그 사실을 알린다 (FR-60)
         self.pump_local_copy(now);
+        self.pump_file_op(now);
         // 폴더 여부를 다 잰 OS 드롭을 전송으로 보낸다 (FR-61)
         self.pump_os_drop_scan();
         // 자리가 나면 대기 중인 전송을 워커에 맡긴다 (FR-37)
@@ -2154,6 +2368,17 @@ impl eframe::App for ExplorerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut menu = None;
+        // 키 소유는 그리기 클로저 안에서 옮겨진다 — 그 안은 `self`가 통째로 빌려져 있어
+        // 지역 값으로 들고 나와 클로저가 끝난 뒤에 돌려놓는다
+        let mut key_owner = self.key_owner;
+        // **접힌 사이드바는 키를 쥐지 못한다** (FR-12) — 접힌 프레임에는 사이드바를 그리는
+        // 블록 자체가 돌지 않아 소유를 놓을 기회가 없고, 그대로 두면 파일 목록을 누르기
+        // 전까지 `F2`·`Delete`가 아무 데도 가지 않는다(품질 리뷰 m1)
+        if self.sidebar_collapsed {
+            key_owner = menu::KeyOwner::FileList;
+        }
+        // 목록에서 확정된 이름 (FR-64) — 셸에 거는 것은 그리기가 끝난 뒤다
+        let mut rename = None;
         let mut panel_command = None;
         let mut remote_action = None;
         let mut remote_url = None;
@@ -2205,6 +2430,10 @@ impl eframe::App for ExplorerApp {
                         ))
                         .frame(egui::Frame::NONE)
                         .show(ui, |ui| {
+                            // 이 프레임에 F2를 받을 자격을 먼저 알린다 (FR-12) —
+                            // 인자로 넘기지 않는 이유는 `set_owns_keys` 주석에 있다
+                            self.sidebar
+                                .set_owns_keys(key_owner == menu::KeyOwner::Sidebar);
                             self.sidebar.show(
                                 ui,
                                 &self.workspaces,
@@ -2215,6 +2444,22 @@ impl eframe::App for ExplorerApp {
                             )
                         });
                     self.sidebar_width = panel.response.rect.width();
+                    // 사이드바를 누른 프레임에는 무수식 키가 그쪽으로 간다 (FR-12).
+                    // 패널 쪽 전이는 아래 `show_layout`이 돌려주는 `pressed_panel`이 맡는다 —
+                    // 그 판정을 여기서 다시 하지 않는 이유는 분할 영역을 아직 모르기 때문이다
+                    let pressed_sidebar = ctx
+                        .input(|input| {
+                            input
+                                .pointer
+                                .any_pressed()
+                                .then(|| input.pointer.interact_pos())
+                        })
+                        .flatten()
+                        .is_some_and(|pos| panel.response.rect.contains(pos));
+                    key_owner = menu::next_key_owner(
+                        key_owner,
+                        pressed_sidebar.then_some(menu::KeyOwner::Sidebar),
+                    );
                     // 조작은 모아 두었다가 아래에서 처리한다 — 연결은 분할 영역을 알아야 하는데
                     // 그 영역은 **사이드바를 뺀 나머지**라 여기서는 아직 정해지지 않았다
                     sidebar_actions = panel.inner;
@@ -2237,7 +2482,7 @@ impl eframe::App for ExplorerApp {
                 {
                     None
                 } else {
-                    menu::poll_shortcuts(&ctx)
+                    menu::poll_shortcuts(&ctx, self.key_owner)
                 };
                 // 단축키·타이틀바 명령은 대상을 지정하지 않는다 — 활성 패널에 적용된다
                 for command in shortcut_command.into_iter().chain(titlebar_command) {
@@ -2283,7 +2528,13 @@ impl eframe::App for ExplorerApp {
                     if let Some(pressed) = outcome.pressed_panel {
                         view.note_pressed(pressed);
                     }
+                    // 패널을 누르면 무수식 키가 파일 목록으로 돌아온다 (FR-12)
+                    key_owner = menu::next_key_owner(
+                        key_owner,
+                        outcome.pressed_panel.map(|_| menu::KeyOwner::FileList),
+                    );
                     menu = outcome.menu;
+                    rename = outcome.rename;
                     panel_command = outcome.command;
                     remote_action = outcome.remote;
                     remote_url = outcome.remote_url;
@@ -2408,14 +2659,33 @@ impl eframe::App for ExplorerApp {
             ctx.copy_text(text);
         }
 
-        // 셸 메뉴는 그리기가 **모두 끝난 뒤** 띄운다 — TrackPopupMenuEx가 자체 메시지 루프를
-        // 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로 들어가면 안 된다
-        let shell_menu_pending = menu.is_some();
-        if let (Some(menu), Some(shell)) = (menu, self.shell.as_ref()) {
+        // 우클릭 요청이 왔으면 **이 프레임 안에서** 메뉴를 연다 — `ShellMenu::open`은
+        // 메시지 루프를 돌리지 않아(`TrackPopupMenuEx`와 다르다) 그리기 도중에 불러도 된다
+        self.key_owner = key_owner;
+        if let Some(request) = rename {
+            self.start_rename(request);
+        }
+        if let Some(request) = menu {
+            self.open_shell_menu(&ctx, request);
+        }
+        // 열려 있으면 그린다 — 모든 패널 위에 떠야 해서 그리기 맨 끝이다
+        self.show_shell_menu(&ctx);
+
+        // **종전 표준 메뉴만** 그리기가 모두 끝난 뒤에 띄운다 — `TrackPopupMenuEx`가 자체
+        // 메시지 루프를 돌려 이벤트 루프를 재진입시키므로, 위젯 트리가 절반만 구성된 상태로
+        // 들어가면 안 된다
+        // **우리가 그리는 메뉴는 세지 않는다** — 종전에는 우클릭 요청 자체를 셌지만
+        // (`TrackPopupMenuEx`가 그 프레임에서 바로 모달로 들어갔다), 지금 그 자리에서 뜨는
+        // 것은 egui 메뉴라 메시지 루프를 돌리지 않는다. 미뤄야 하는 것은 **자체 메시지 루프를
+        // 도는 것끼리**이고 그것은 아래 표준 메뉴 하나뿐이다
+        let shell_menu_pending = self.pending_show_more.is_some();
+        if let (Some((folder, items, pos)), Some(shell)) =
+            (self.pending_show_more.take(), self.shell.as_ref())
+        {
             // egui 좌표는 논리 포인트라 물리 픽셀로 되돌린 뒤 화면 좌표로 바꾼다
             let scale = ctx.pixels_per_point();
-            let (x, y) = shell.to_screen((menu.pos.x * scale) as i32, (menu.pos.y * scale) as i32);
-            shell.popup(&menu.folder, &menu.items, x, y);
+            let (x, y) = shell.to_screen((pos.x * scale) as i32, (pos.y * scale) as i32);
+            shell.popup(&folder, &items, x, y);
         }
         // 사이트 목록 파일 대화도 같은 제약이다 (FR-59). **셸 메뉴가 뜬 프레임에는 미룬다** —
         // 두 모달을 겹쳐 띄우면 어느 쪽이 답을 기다리는지 알 수 없다. 요청은 그대로 남아
