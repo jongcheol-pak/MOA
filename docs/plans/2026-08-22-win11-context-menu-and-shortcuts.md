@@ -408,13 +408,14 @@
     - (i) `Command`가 `Copy`를 파생하고 있어 새 variant도 `Copy`여야 한다 → 신규 variant는 전부 `Copy` 가능한 값만 담는다(`bool`)
   - **Depends on**: T9, T2, T3, T8
 
-- [ ] T11. 원격 탭에서는 원격 기능으로 잇는다
+- [x] T11. 원격 탭에서는 원격 기능으로 잇는다
   - **Type**: C
   - **Design**: ① `src/ui/app.rs`(`apply_command`의 분기) ② 활성 탭이 원격이면 `Rename`·`Delete`·`NewFolder`·`Refresh`를 `RemoteMenuAction::{Rename, Delete, NewFolder, Refresh}` 경로로 보내고, `Clipboard*`는 아무 일도 하지 않는다 ③ 기존 `handle_remote_menu_action`(`src/ui/app/remote.rs:129-145`)을 그대로 부른다 — 새 실행 경로를 만들지 않는다 ④ **비추상화 선언**: 로컬·원격 명령을 하나의 추상 「파일 작업」으로 묶지 않는다(대화 방식·비동기 성질이 다르다)
   - **Acceptance**: Given 원격 탭이 활성, When `F2`를 누르면, Then 원격 이름 바꾸기 대화가 뜬다(기존 메뉴 항목과 같은 대화). Given 원격 탭, When `Ctrl+C`, Then 아무 일도 일어나지 않는다(라우팅 판정의 단위 시험 + HUMAN-VERIFY 7)
   - **Files**:
     - 주: `src/ui/app.rs`, `src/ui/app/remote.rs`
-    - 테스트: `src/ui/app/remote.rs` 내 `mod tests`(탭 종류별 라우팅 판정)
+    - 동반: `src/ui/panel.rs`(**구현 중 추가** — `selected_remote()` 진입점. 우클릭 메뉴가 쓰던 대상 산출을 단축키도 같은 함수로 쓰게 한다)
+    - 테스트: `src/ui/app/remote.rs` 내 `mod tests`(탭 종류별 라우팅 판정), `src/ui/panel/tests.rs`(로컬 탭에서 원격 대상이 비는지)
   - **Edge Cases**: 연결이 끊긴 원격 탭 → 원격 메뉴와 같은 비활성 규칙(아무 일도 하지 않는다) / 원격 선택 0개에서 `F2`·`Delete` → 무시 / 원격 선택 2개 이상에서 `F2` → 무시(원격 메뉴와 같은 규칙 — 새 이름은 하나뿐)
   - **Halt Forecast**:
     - (i) 원격 메뉴의 활성 규칙이 이미 `menu_rows`에 있다 → 그 판정을 그대로 재사용한다(`remote_menu.rs:118-160`)
@@ -473,6 +474,7 @@
 - T4: 리뷰 지적 수정 사이클 1/5 — 1라운드 MAJOR 2·MINOR 3 전건 반영
 - T6: 리뷰 지적 수정 사이클 4/5 · 재호출 2/2(상한 도달) — 1라운드 MAJOR 6·MINOR 4, 2라운드 BLOCKER 1·MINOR 3. **「창을 숨길 때 메뉴 닫기」가 2회 연속**(1라운드 반영이 같은 함수에 두 번 들어가고 정작 다른 경로가 빠졌다) — 3라운드에서 `hide_window` 단일 진입점으로 닫힘 확인
 - T7: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec PASS · 품질 MINOR 1(중복 호출)+SUGGEST 1(죽은 코드) 전건 반영, 증분 재리뷰 OK. **리뷰어 둘 다 첫 응답이 판정문 없이 골격만 도착**(recovery D 분기) — 같은 에이전트에 판정문만 재요청해 해소(재조사 없음)
+- T11: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec MINOR 2(계획 문면 정정), 품질 OK+SUGGEST 1. 전건 반영
 - T10: 리뷰 지적 수정 사이클 1/5 — 1라운드 spec MINOR 2, 품질 OK. 둘 다 반영
 - T9: 리뷰 지적 수정 사이클 2/5 — 1라운드 spec MAJOR 1·MINOR 1, 품질 MAJOR 1·MINOR 1·SUGGEST 1 / 2라운드 품질 MINOR 1(빈 doc 줄). **양쪽이 같은 결함을 독립으로 잡았다**(사이드바 접힘 시 소유 고정 · doc 중복 줄)
 - T8: 리뷰 지적 수정 사이클 3/5 — 1라운드 spec MAJOR 1·MINOR 2, 품질 MAJOR 2 / 2라운드 spec MINOR 2, 품질 MAJOR 1(내 수정이 만든 회귀 — 표시 설정 토글에서 편집 유실). / 3라운드 품질 MAJOR 1(함수를 가르며 doc이 앞 함수로 쏠림). **동일 지적 반복 0**(매 라운드 새 지적)
@@ -529,6 +531,12 @@
   - **결정**: 붙여넣기는 클립보드를 **읽기만** 하고 비우지 않는다(`take`는 이름과 달리 소비하지 않는다) — 원격 탭이라 되돌아가도 담긴 것이 사라지지 않는다. 잘라내기 표시는 셸에 **걸린 뒤에만** 푼다.
   - **정리**: HWND 획득이 다섯 자리로 늘어 `ExplorerApp::owner_hwnd()`로 모았다(3회 이상 반복).
   - `tabs.rs`·`titlebar.rs`는 손대지 않았다 — `Command`를 생성만 하고 `match`하지 않는다(계획 4-A의 예측 그대로).
+
+- **T11 완료**: 원격 탭에서 `F2`·`Delete`·`Ctrl+Shift+N`이 원격 대화로 가고 `Ctrl+C/X/V`는 아무 일도 하지 않는다 (FR-12·D5).
+  - **계획 정정 — Design ②의 `Refresh`**: 이 경로에 넣지 않았다. `refresh_panel`이 이미 원격 탭을 가려 그 패널의 목록을 다시 청하고 있어, 넣으면 같은 뜻에 길이 둘이 되어 **Design ③(새 실행 경로를 만들지 않는다)과 정면으로 어긋난다**. 사양 리뷰도 *"plan Design②가 ③과 모순되는 항목을 포함한 경우"*로 판정했다. 덧붙여 둘의 범위가 정확히 같지도 않다 — `refresh_panel`은 **그 패널 하나**, `RemoteMenuAction::Refresh`는 **그 연결을 쓰는 모든 패널**을 다시 읽는다. 단축키는 활성 패널 하나에 거는 것이라 앞이 맞다.
+  - **계획 정정 — Files**: `src/ui/panel.rs`가 추가됐다(`selected_remote()` 진입점). 우클릭 메뉴가 쓰던 대상 산출을 단축키도 **같은 함수**로 쓰게 하려는 것이며, 품질 리뷰 SUGGEST를 받아 `show_remote_menu`도 그 함수를 부르도록 바꿔 산출 규칙이 실제로 한 곳에 있다.
+  - **결정**: 활성 판정을 새로 적지 않고 원격 메뉴의 `menu_rows`에 물어본다 — 두 곳에 적으면 메뉴에서는 흐린 줄이 단축키로는 눌린다. 시험 `라우팅이_기대는_활성_규칙은_원격_메뉴의_것이다`가 그 계약을 지킨다.
+  - **결정**: `remote_action_for`의 `_ => None`은 "원격에서 안 된다"가 아니라 "패널 층에서 이미 듣는다"는 뜻이다 — 새 명령이 늘어도 기본값(종전 경로)이 안전하다.
 
 ## Next Steps
 

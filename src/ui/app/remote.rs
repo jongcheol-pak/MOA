@@ -41,8 +41,14 @@ use std::path::PathBuf;
 /// 단축키 명령을 원격 기능으로 옮긴다 (FR-12·plan D5) — 대응이 없으면 `None`.
 ///
 /// **`Refresh`는 여기 없다** — `ExplorerApp::refresh_panel`이 이미 원격 탭을 가려
-/// `request_remote_list`를 보낸다(`RemoteMenuAction::Refresh`가 하는 바로 그 일이다).
-/// 여기에도 넣으면 같은 일에 길이 둘이 된다(Design ③ — 새 실행 경로를 만들지 않는다).
+/// 그 패널의 목록을 다시 청한다. 여기에도 넣으면 같은 뜻에 길이 둘이 된다
+/// (Design ③ — 새 실행 경로를 만들지 않는다).
+///
+/// **둘의 범위는 정확히 같지는 않다**: `refresh_panel`은 **그 패널 하나**를 다시 읽고
+/// (`PanelState::request_remote_list`), `RemoteMenuAction::Refresh`는 **그 연결을 쓰는
+/// 모든 패널**을 다시 읽는다(`ExplorerApp::request_remote_list`). 단축키는 활성 패널 하나에
+/// 거는 것이므로 앞의 범위가 맞다 — 옆 패널까지 흔드는 것은 사용자가 청한 일이 아니다
+/// (이 차이는 T11 이전부터 있던 것이며, 우클릭 메뉴의 `새로 고침`은 종전대로 뒤를 쓴다).
 ///
 /// **클립보드는 원격에 대응 개념이 없다** — 전송은 큐가 담당하며, 클립보드에 원격 경로를
 /// 담는 새 형식을 만들지 않는다(plan Out of Scope).
