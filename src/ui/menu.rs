@@ -352,7 +352,6 @@ fn targets_file_list(command: Command) -> bool {
 
 /// 이번 프레임에 눌린 단축키를 명령으로 바꾼다.
 ///
-///
 /// 무수식 키(`F2`·`Delete`·`F5`)도 여기서 받는다 — 이름 편집 중에는 아래 `egui_wants_keyboard_input`이
 /// 먼저 걸러 텍스트 입력을 가로채지 않는다.
 ///
