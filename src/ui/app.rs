@@ -2142,6 +2142,9 @@ impl ExplorerApp {
 
     /// 클립보드에 담긴 것을 지금 폴더에 붙여넣는다 (FR-12·FR-64).
     ///
+    /// 하는 일은 둘이다. **먼저 읽은 값으로 화면의 잘라내기 표시를 맞추고**(FR-64 —
+    /// 다른 앱이 그 사이 클립보드를 가져갔을 수 있다), 그다음 로컬 대상이면 옮기거나 복사한다.
+    ///
     /// 복사로 담겼으면 복사하고 **잘라내기로 담겼으면 옮긴다** — 어느 쪽인지는 클립보드가
     /// 함께 든 `Preferred DropEffect`가 말한다(탐색기가 담은 것도 같은 형식이라 그대로 읽힌다).
     ///
@@ -2153,11 +2156,11 @@ impl ExplorerApp {
         // 우리가 잘라낸 뒤 다른 앱이 클립보드를 가져갔으면 흐린 줄은 이미 클립보드에 없는
         // 것을 가리킨다 — 여기서 풀지 않으면 영영 흐린 채 남는다. **붙여넣기에 성공했을
         // 때가 아니라 눌렀을 때** 맞추는 것이 요점이라, 아래 되돌아가는 갈래보다 앞에 둔다
-        let marks = crate::fs::clipboard::cut_marks_for(files.as_ref()).to_vec();
+        let marks = crate::fs::clipboard::cut_marks_for(files.as_ref());
         if marks.is_empty() {
             self.clear_cut_marks();
         } else {
-            self.set_cut_marks(&marks);
+            self.set_cut_marks(marks);
         }
         let Some(files) = files else {
             return;
