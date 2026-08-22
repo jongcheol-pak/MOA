@@ -467,6 +467,12 @@ MOA-Setup-0.1.0.exe
 
 ## Next Steps
 
+- 권장 다음 액션: **HUMAN-VERIFY A(1~6)를 사람이 확인** → 통과하면 첫 릴리즈 발행 승인을 청하고 → 발행 뒤 HUMAN-VERIFY B(7~14).
+  - A 구간은 지금 바로 된다: `$env:MOA_UPDATE_DEV="fake"; cargo run` 으로 배지·다운로드 실패 표시를, `MOA_UPDATE_DEV=1`로 손수 확인의 「최신 버전입니다」를, 값 없이 실행해 비활성 상태를 본다.
+  - 설치 파일은 이미 만들어져 있다: `target/installer/MOA-Setup-0.1.0.exe` (A-3 회귀 확인용).
+- Suggested skills: `pjc:llm-wiki`(절차 B — 위키 ingest, 별도 세션), 공식 `/code-review`
+- 위키 갱신: `pending.md`에 `[DECISION]` 2건·`[PROJECT-FACT]` 1건·`[K-DRIFT]` 1건을 남겼다(F-6.5). 본문 반영은 별도 세션.
+
 ## Open Questions
 
 - [x] HTTP 수단 → **WinHTTP**(D1)
