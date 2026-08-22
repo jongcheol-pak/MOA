@@ -71,7 +71,8 @@
 | 5 | 요청 단축키 11종 중 Alt+←/→/↑·F5는 이미 동작한다 | `src/ui/menu.rs:319-363` `shortcut_table()`(그 넷은 `354-361`) | ✅ |
 | 6 | 사이드바가 F2를 전역으로 가로채 파일 목록의 F2와 충돌한다 | `src/ui/sidebar.rs:272-277` — 포커스 판정 없이 `ui.input(\|i\| i.key_pressed(F2))` | ✅ |
 | 7 | 로컬 목록 렌더러는 둘뿐이라 인라인 편집을 두 곳에만 넣으면 된다 | `src/ui/file_list.rs:626`(`list_details::show`)·`656`(`list_grid::show`) — 분기가 그 둘뿐 | ✅ |
-| 8 | 새 feature 플래그·새 crate 없이 구현할 수 있다 | 위 Investigation Log의 `windows` 심볼 전건이 기존 feature 목록(`Cargo.toml:8-58`) 안에 있다 | ✅ |
+| 8 | 새 crate 없이 구현할 수 있다 | 위 Investigation Log의 `windows` 심볼 전건이 이미 링크된 `windows` crate 안에 있다 | ✅ |
+| 8-1 | 새 feature 플래그 없이 구현할 수 있다 | **틀렸다** — T3 착수 시 실측: `RegisterClipboardFormatW`는 `Win32_System_DataExchange`, `GlobalAlloc`/`GlobalLock`은 `Win32_System_Memory`에 있고 둘 다 `Cargo.toml`에 없다 | ❌ 정정 — T3이 두 feature를 켠다(패키지 집합은 그대로라 라이선스 자산 재생성은 불요) |
 | 9 | 셸의 `rename` verb는 다른 호스트에서 부르면 동작하지 않는다 | 그 verb는 탐색기 자신의 뷰(`IShellView`)가 편집을 시작하는 통지로 처리한다 — 우리 앱에는 받을 뷰가 없다 | ⚠ 미확인(실행 확인 불가) — **성립을 좌우하지 않는다**: 설계가 `IFileOperation::RenameItem`을 쓰므로 verb 동작 여부와 무관하다 |
 
 ## Risks & Unknowns

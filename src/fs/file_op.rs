@@ -5,8 +5,9 @@
 //! 전부 OS가 처리한다. PRD의 「자체 파일 작업 UI는 셸에 위임」 원칙과 같은 방향이며,
 //! 그래서 로컬끼리의 복사에는 FR-55의 자체 확인 대화를 띄우지 않는다(셸이 자기 대화로 묻는다).
 //!
-//! **일은 워커 스레드에서 한다** — `PerformOperations`는 복사가 끝날 때까지 돌아오지 않아
-//! UI 스레드에서 부르면 대용량 복사 내내 앱이 굳는다(AGENTS: UI 스레드 블로킹 I/O 금지).
+//! **일은 워커 스레드에서 한다** — `PerformOperations`는 걸어 둔 작업이 끝날 때까지
+//! 돌아오지 않아, UI 스레드에서 부르면 대용량 복사·수백 항목 삭제 내내 앱이 굳는다
+//! (AGENTS: UI 스레드 블로킹 I/O 금지). 그 골격은 `spawn_shell_op` 한 곳에 있다.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -71,64 +72,38 @@ pub fn copy_into(
         return false;
     }
     let owner = HwndSend(owner.0 as isize);
-    std::thread::spawn(move || {
-        let requested = sources.len();
-        // 안전성: 이 스레드에서 초기화하고 **성공했을 때만** 같은 스레드에서 해제한다 —
-        // 실패한 초기화를 짝지어 해제하면 COM 참조 수가 어긋난다
-        // (`fs::thumbnail`·`fs::drives`의 워커와 같은 방식)
-        let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-        let outcome = run_copy(&dest, &sources, &owner, requested);
-        if initialized {
-            // 안전성: 위에서 성공한 초기화와 같은 스레드에서 1회 호출
-            unsafe {
-                CoUninitialize();
-            }
+    let requested = sources.len();
+    spawn_shell_op(done, wake, move || {
+        // 결과 타입이 `FileOpOutcome`과 달라 조립만 따로 한다 — 워커 껍데기는 같이 쓴다
+        match perform(&dest, &sources, &owner) {
+            Ok(cancelled) => CopyOutcome {
+                requested,
+                cancelled,
+                error: None,
+            },
+            Err(error) => CopyOutcome {
+                requested,
+                cancelled: false,
+                error: Some(error),
+            },
         }
-        // 받을 쪽이 사라졌으면(앱 종료) 조용히 끝난다
-        if done.send(outcome).is_ok() {
-            wake();
-        }
-    });
-    true
-}
-
-/// 셸에 복사를 걸고 결과를 읽는다 — COM이 초기화된 워커 스레드에서만 부른다.
-///
-/// 실패는 사유를 문자열로 담아 돌려준다. **여기서 화면 문구를 만들지 않는다** —
-/// 이 층은 `ui`를 모르고(AGENTS 계층 규약), 셸이 준 사유는 그대로 옮길 값이다
-fn run_copy(dest: &Path, sources: &[PathBuf], owner: &HwndSend, requested: usize) -> CopyOutcome {
-    match perform(dest, sources, owner) {
-        Ok(cancelled) => CopyOutcome {
-            requested,
-            cancelled,
-            error: None,
-        },
-        Err(err) => CopyOutcome {
-            requested,
-            cancelled: false,
-            error: Some(err),
-        },
-    }
+    })
 }
 
 /// 실제 COM 호출 — 성공하면 `사용자가 그만뒀는가`를 돌려준다.
 ///
 /// **읽지 못하는 원본은 그것만 건너뛴다** — 여러 개를 끌어다 놓았는데 그 사이 하나가
-/// 사라졌다고 나머지를 버릴 이유가 없다. 하나도 걸지 못했으면 실패로 본다
+/// 사라졌다고 나머지를 버릴 이유가 없다. 하나도 걸지 못했으면 실패로 본다.
+///
+/// **여기서 화면 문구를 만들지 않는다** — 이 층은 `ui`를 모르고(AGENTS 계층 규약), 셸이
+/// 준 사유는 그대로 옮길 값이다
 fn perform(dest: &Path, sources: &[PathBuf], owner: &HwndSend) -> Result<bool, String> {
     // 안전성: 아래 호출은 모두 COM이 STA로 초기화된 이 스레드에서만 돌고, 얻은 인터페이스는
     // 이 함수 안에서만 살다 `Drop`으로 해제된다. 경로 문자열은 호출이 끝날 때까지 지역 소유다
     unsafe {
-        let op: IFileOperation =
-            CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(|err| err.message())?;
         // `FOF_ALLOWUNDO`가 `Ctrl+Z`를 만든다. `FOF_NOCONFIRMMKDIR`는 대상 폴더를 만들 때만
         // 묻지 않는 것이라, 같은 이름 충돌 확인은 그대로 뜬다(FR-60이 셸에 맡긴 그 대화다)
-        op.SetOperationFlags(FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR)
-            .map_err(|err| err.message())?;
-        // 소유자를 주면 대화가 앱 창 위에 뜬다. 창이 없으면(headless·파괴됨) 주지 않는다
-        if owner.0 != 0 {
-            let _ = op.SetOwnerWindow(HWND(owner.0 as *mut core::ffi::c_void));
-        }
+        let op = new_operation(FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR, owner)?;
         let folder: IShellItem = shell_item(dest)?;
         let mut queued = 0usize;
         for source in sources {
@@ -239,33 +214,9 @@ pub fn rename_item(
         return true;
     }
     let owner = HwndSend(owner.0 as isize);
-    std::thread::spawn(move || {
-        // 안전성: 이 스레드에서 초기화하고 **성공했을 때만** 같은 스레드에서 해제한다
-        // (`copy_into`의 워커와 같은 방식)
-        let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-        let outcome = match perform_rename(&path, &new_name, &owner) {
-            Ok(cancelled) => FileOpOutcome {
-                requested: 1,
-                cancelled,
-                error: None,
-            },
-            Err(error) => FileOpOutcome {
-                requested: 1,
-                cancelled: false,
-                error: Some(error),
-            },
-        };
-        if initialized {
-            // 안전성: 위에서 성공한 초기화와 같은 스레드에서 1회 호출
-            unsafe {
-                CoUninitialize();
-            }
-        }
-        if done.send(outcome).is_ok() {
-            wake();
-        }
-    });
-    true
+    spawn_shell_op(done, wake, move || {
+        outcome_of(1, perform_rename(&path, &new_name, &owner))
+    })
 }
 
 /// `paths`를 지운다 — **곧바로 돌아오고** 결과는 `done`으로 온다 (FR-64).
@@ -284,33 +235,59 @@ pub fn delete_items(
         return false;
     }
     let owner = HwndSend(owner.0 as isize);
+    let requested = paths.len();
+    spawn_shell_op(done, wake, move || {
+        outcome_of(requested, perform_delete(&paths, permanent, &owner))
+    })
+}
+
+/// 셸 작업 하나를 COM이 잡힌 워커에서 돌리고 결과를 채널로 보낸다.
+///
+/// 세 진입점(`copy_into`·`rename_item`·`delete_items`)이 **똑같은 껍데기**를 쓰기 때문에
+/// 한 곳으로 모았다 — COM 초기화, **성공했을 때만** 짝지어 해제(실패한 초기화를 해제하면
+/// 참조 수가 어긋난다), 결과 송신과 다시 그리기 요청이 그것이다. 안에서 무엇을 하는지는
+/// `work`가 정하며 이 함수는 모른다.
+///
+/// 돌려주는 값은 언제나 `true`(=결과를 기다려야 한다)다 — 워커를 띄우지 않는 조건은
+/// 부르는 쪽이 먼저 걸러 낸다
+fn spawn_shell_op<T, F>(done: Sender<T>, wake: Wake, work: F) -> bool
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
     std::thread::spawn(move || {
-        let requested = paths.len();
-        // 안전성: 위 `rename_item`의 워커와 같다
+        // 안전성: 이 스레드에서 초기화하고 성공했을 때만 같은 스레드에서 1회 해제한다
+        // (`fs::thumbnail`·`fs::drives`의 워커와 같은 방식)
         let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-        let outcome = match perform_delete(&paths, permanent, &owner) {
-            Ok(cancelled) => FileOpOutcome {
-                requested,
-                cancelled,
-                error: None,
-            },
-            Err(error) => FileOpOutcome {
-                requested,
-                cancelled: false,
-                error: Some(error),
-            },
-        };
+        let outcome = work();
         if initialized {
-            // 안전성: 위에서 성공한 초기화와 같은 스레드에서 1회 호출
+            // 안전성: 위에서 성공한 초기화와 짝지은 1회 호출
             unsafe {
                 CoUninitialize();
             }
         }
+        // 받을 쪽이 사라졌으면(앱 종료) 조용히 끝난다
         if done.send(outcome).is_ok() {
             wake();
         }
     });
     true
+}
+
+/// 셸 호출 결과를 화면이 읽는 값으로 바꾼다 — 성공은 `그만뒀는가`, 실패는 사유다
+fn outcome_of(requested: usize, result: Result<bool, String>) -> FileOpOutcome {
+    match result {
+        Ok(cancelled) => FileOpOutcome {
+            requested,
+            cancelled,
+            error: None,
+        },
+        Err(error) => FileOpOutcome {
+            requested,
+            cancelled: false,
+            error: Some(error),
+        },
+    }
 }
 
 /// 이름 바꾸기 COM 호출 — 성공하면 `사용자가 그만뒀는가`를 돌려준다.
