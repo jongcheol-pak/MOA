@@ -315,6 +315,14 @@ strings! {
     /// 파일 쪽은 Windows 탐색기의 `새로 만들기 > 텍스트 문서`와 같은 이름이다 (사용자 확정)
     create_folder_base => "새 폴더" / "New folder";
     create_file_base => "새 텍스트 문서" / "New Text Document";
+    /// 고른 것을 하나도 삭제에 걸지 못했을 때 (FR-64) — 그 사이 전부 사라졌거나 셸이
+    /// 그 경로를 다루지 못하는 경우다
+    delete_no_source => "지울 파일을 찾지 못했습니다" / "Could not find the files to delete";
+    /// 바꿀 이름에 파일 이름으로 쓸 수 없는 글자가 있을 때 (FR-64) — 어떤 글자가 안 되는지
+    /// 함께 보여야 사용자가 고칠 수 있다. 셸에 걸기 전에 우리가 먼저 거른다
+    rename_invalid_chars
+        => r#"이름에 \ / : * ? " < > | 는 쓸 수 없습니다"#
+        / r#"A name cannot contain \ / : * ? " < > |"#;
     /// 끌어다 놓은 것을 하나도 복사에 걸지 못했을 때 (FR-60) — 원본이 그 사이 전부
     /// 사라졌거나 셸이 그 경로를 다루지 못하는 경우다
     copy_no_source => "복사할 파일을 찾지 못했습니다" / "Could not find the files to copy";
