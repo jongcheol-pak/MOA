@@ -21,6 +21,35 @@
 - **아이콘 자산 재생성**: `cargo run --example gen_app_icon` — `docs/AppIcon.png`를 바꾼 뒤에만 돌린다. `assets/app_icon_256.png`를 덮어쓰며, 그 자산은 정보 화면(FR-58)이 읽는다
 - **설치 파일 생성**: `cargo build --release` → `cargo run --example gen_installer` — `installer/moa.nsi`를 makensis에 넘겨 `target/installer/MOA-Setup-<버전>.exe`를 만든다. **NSIS가 선행 설치돼 있어야 한다**(`winget install NSIS.NSIS`) — 없으면 그 안내와 함께 실패로 끝난다(아무것도 만들지 않고 성공으로 끝나지 않는다). **릴리즈 빌드를 건너뛰어도 같은 방식으로 멈춘다** — `target/release/moa.exe`가 `src`·`assets`·`Cargo.toml`·`Cargo.lock`·`build.rs`·`app.manifest`보다 낡으면 안내와 함께 실패한다(2026-08-21에 낡은 exe가 담긴 설치 파일이 나가 설정이 옛 자리에 생긴 적이 있다)
 
+- **릴리즈 발행**: 아래 순서를 지킨다. **본문에 SHA256이 없으면 앱이 그 릴리즈를 받지 않는다**(FR-62의 무결성 대조가 그 값을 기대값으로 쓴다).
+  1. `Cargo.toml`의 `version`을 올린다 (앱이 이 값으로 새 판인지 가린다)
+  2. `cargo build --release`
+  3. `cargo run --example gen_installer` → `target/installer/MOA-Setup-<버전>.exe`
+  4. `certutil -hashfile target\installer\MOA-Setup-<버전>.exe SHA256` — 나온 값을 본문에 적는다
+  5. 태그를 달고 GitHub 릴리즈를 만들어 그 설치 파일을 첨부한다
+- **릴리즈 노트 작성 규약** (2026-08-22 사용자 요청 — *"일반 사용자들이 보기 때문에 내용이 너무 길거나 내용이 너무 어려우면 안됨"*): 노트는 **사용자가 읽는 글**이다.
+  - **항목당 한두 줄**로, 사용자가 화면에서 겪는 변화를 적는다
+  - **내부 사정은 빼거나 사용자 말로 옮긴다** — 모듈·함수 이름, 리팩토링, 시험 추가, 의존성 조정은 적지 않는다
+  - 절은 `새로워진 것`·`고친 것` 둘뿐이고 **빈 절은 통째로 뺀다**
+  - 커밋 목록·비교 링크를 붙이지 않는다 (GitHub이 자동으로 붙인다)
+  - 사용자가 **해야 할 일**이 있으면(설정이 초기화된다 등) 맨 위에 한 줄로 알린다
+  - **체크섬은 맨 아래 접어 둔다** — 앱이 읽어야 하지만 사람에게는 불필요하고 어려운 값이라, 접기 안에 두면 둘 다 만족한다(추출기는 본문 어디에 있든 64자 hex를 찾는다)
+
+  ```markdown
+  ### 새로워진 것
+  - 자동 업데이트 — 새 버전이 나오면 제목 줄에 알리고, 눌러 두면 알아서 받아 설치합니다.
+  - 릴리즈 노트 — 설정 메뉴에서 이 페이지를 바로 열 수 있습니다.
+
+  ### 고친 것
+  - 폴더를 빠르게 오갈 때 목록이 잠깐 비던 문제를 고쳤습니다.
+
+  <details><summary>파일 무결성 확인용 (SHA256)</summary>
+
+  MOA-Setup-0.2.0.exe
+  `<64자 hex>`
+  </details>
+  ```
+
 ## 데이터 접근
 - **DB/스토어**: 없음 (**실행 파일과 같은 폴더의** `settings.json` 하나에 **세션 + 앱 설정**을 함께 담는다 — 설치본이면 `%LOCALAPPDATA%\Programs\MOA\settings.json`, 개발 실행이면 `target/debug\settings.json`이다. 2026-08-21 결정으로 `%APPDATA%\MOA`에서 옮겼고 **옛 파일은 읽지 않는다**(마이그레이션 없음) — 스키마 v3, v2는 승격해 읽는다. 앱 설정(`settings` 객체 — 글꼴·자동 실행·트레이·파일 보기·언어)이 깨져 있어도 세션은 살린다: 그 자리만 기본값으로 되돌린다)
 - **레지스트리**: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`의 `MOA` 값이 **자동 실행 설정의 정본**이다 (설정 파일 값은 사본 — 다른 도구가 지웠을 수 있어 화면에 보일 때마다 다시 읽는다)
@@ -113,4 +142,4 @@ PRD Location:  docs/prd.md
 ## 추가 정보
 - MSRV: stable 최신 (rust-toolchain.toml 미사용, v1 기준)
 - CI/CD: 없음 (로컬 빌드)
-- 배포: 단일 exe (`cargo build --release`) 또는 그 exe를 담은 NSIS 설치 파일 (`cargo run --example gen_installer` — 사용자 단위 설치, 코드 서명·자동 업데이트는 없다)
+- 배포: 단일 exe (`cargo build --release`) 또는 그 exe를 담은 NSIS 설치 파일 (`cargo run --example gen_installer` — 사용자 단위 설치, 코드 서명은 없다). **설치본은 GitHub 릴리즈에서 스스로 새 판을 찾아 받아 설치한다**(FR-62 — 위 「릴리즈 발행」 절차를 지켜야 그 기능이 동작한다). 개발 실행(설치본이 아닌 exe)은 확인조차 하지 않는다
