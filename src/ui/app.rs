@@ -69,6 +69,8 @@ const APP_ICON_TEXTURE_PX: u32 = 48;
 
 /// 삭제 확인 대화 폭 — 문구 두 줄이 접히지 않을 만큼
 const REMOVE_DIALOG_WIDTH: f32 = 360.0;
+/// 업데이트 확인 대화 본문 폭 — 두 줄짜리 문장이 들어가 삭제 확인(360)보다 넓다
+const UPDATE_DIALOG_WIDTH: f32 = 420.0;
 
 /// 세션이 없을 때의 창 크기·위치 (첫 실행)
 const DEFAULT_WINDOW: WindowState = WindowState {
@@ -614,6 +616,16 @@ pub struct ExplorerApp {
     conflict_dialog: Option<(ConflictCheck, Vec<String>)>,
     /// 워커가 일을 마쳤을 때 화면을 깨우는 통로 — 연결 관리자에 준 것과 같다
     repaint: Arc<dyn Fn() + Send + Sync>,
+    /// 자동 업데이트 상태와 워커 (FR-62)
+    update: crate::app::update::UpdateService,
+    /// 이번 확인이 **손으로 누른 것**인가 — 그때만 결과를 알린다.
+    /// 앱이 뜰 때 도는 확인까지 알리면 켤 때마다 알림이 뜬다
+    update_asked_by_hand: bool,
+    /// 전송이 도는 중에 업데이트를 누르면 뜨는 확인 대화 — 그 시점의 건수를 담는다.
+    ///
+    /// 건수를 **대화를 띄운 시점의 값으로 굳힌다** — 대화가 떠 있는 동안 전송이 끝나면
+    /// 문장이 저 혼자 바뀌어 읽던 사람이 무엇에 동의하는지 흔들린다
+    update_confirm: Option<usize>,
     /// 세션이 바뀌었는지 지켜보다 곧 적는 관측기 (`app::autosave`)
     autosave: autosave::AutoSave<Session>,
 }
@@ -740,11 +752,25 @@ impl ExplorerApp {
             conflict_queue: Vec::new(),
             conflict_dialog: None,
             repaint,
+            // 설치본 판정은 이 자리에서 한 번만 한다 — 서비스는 그 결과를 받아 쥔다
+            update: crate::app::update::UpdateService::new(
+                crate::app::update::install::is_installed_build(),
+            ),
+            update_asked_by_hand: false,
+            update_confirm: None,
             autosave: autosave::AutoSave::default(),
         };
         if let Some(session) = session {
             app.apply_session(session);
         }
+        // 지난 회차에 받아 둔 설치 파일을 치운다 (FR-62) — 설치가 끝나는 시점에는 앱이
+        // 이미 죽어 있어 스스로 지울 수 없으므로, 새 판으로 다시 뜬 지금이 그 자리다.
+        // 설치가 중간에 취소돼 남은 것도 여기서 함께 사라진다 (D8)
+        crate::app::update::install::clear_update_dir();
+        // 새 판이 있는지 워커에서 한 번 묻는다 — 앱이 뜨는 길은 이 결과를 기다리지 않는다.
+        // 설치본이 아니면 서비스가 스스로 아무 일도 하지 않는다 (D4·D7)
+        app.update.start_check(app.repaint.clone());
+
         // 글꼴 목록은 만드는 데 1.5초쯤 걸린다 — 설정 대화를 열고 나서 시작하면 그 시간이
         // 그대로 「글꼴 목록을 읽는 중…」으로 보인다. 시작할 때 미리 띄워 두면 대화를
         // 열 때는 대개 이미 준비돼 있다. 워커 스레드가 하므로 시작 화면은 멈추지 않는다
@@ -1026,6 +1052,7 @@ impl ExplorerApp {
             sidebar_collapsed: self.sidebar_collapsed,
         };
         let title = self.workspaces.active().name.clone();
+        let badge = self.update_badge();
         let outcome = egui::Panel::top(egui::Id::new("titlebar"))
             .resizable(false)
             .exact_size(titlebar::TITLEBAR_HEIGHT)
@@ -1033,12 +1060,21 @@ impl ExplorerApp {
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| {
-                titlebar::show_titlebar(ui, &title, state, self.app_icon.as_ref().map(|t| t.id()))
+                titlebar::show_titlebar(
+                    ui,
+                    &title,
+                    state,
+                    self.app_icon.as_ref().map(|t| t.id()),
+                    badge,
+                )
             })
             .inner;
         // 창 가장자리 크기 조절 — 모서리는 크기 조절이 우선이고(버튼이 가져가면 대각선으로 창을
         // 잡을 자리가 사라진다), 버튼 위쪽 변은 버튼이 우선한다(`show_resize_handles`가 가른다)
-        let resize = titlebar::show_resize_handles(ctx, self.window.maximized);
+        // 같은 프레임에 잰 우측 폭을 그대로 넘긴다 — 배지가 선 만큼 위쪽 변 크기 조절이
+        // 비켜야 한다(D13). 직전 프레임 값을 기억해 넘기면 한 프레임 어긋난다
+        let resize =
+            titlebar::show_resize_handles(ctx, self.window.maximized, outcome.right_group_width);
         if let Some(request) = resize.or(outcome.window) {
             let command = match request {
                 WindowRequest::Minimize => egui::ViewportCommand::Minimized(true),
@@ -1472,6 +1508,166 @@ impl ExplorerApp {
         }
     }
 
+    // ── 자동 업데이트 (FR-62) ──
+
+    /// 설정 메뉴의 `업데이트` — 지금 다시 확인하고 **결과를 알린다**.
+    ///
+    /// 앱이 뜰 때 도는 확인은 조용하지만(있으면 배지가 서고 없으면 아무 일도 없다),
+    /// 손으로 누른 것은 눌렸다는 것 자체를 알려야 한다
+    fn check_update_by_hand(&mut self) {
+        self.update_asked_by_hand = true;
+        self.update.start_check(self.repaint.clone());
+    }
+
+    /// 업데이트 배지를 눌렀을 때 — 아직 안 받았으면 받고, 다 받았으면 설치한다.
+    ///
+    /// **전송이 도는 중이면 먼저 묻는다**(D5) — 설치는 앱을 닫으므로 올리던 파일이 끊긴다
+    fn start_update(&mut self, ctx: &egui::Context) {
+        let active = self.pending_transfer_count();
+        if active > 0 {
+            self.update_confirm = Some(active);
+            return;
+        }
+        self.proceed_update(ctx);
+    }
+
+    /// 확인을 마친 뒤의 실제 진행 — 받기 또는 설치
+    fn proceed_update(&mut self, ctx: &egui::Context) {
+        use crate::app::update::UpdateStatus;
+        match self.update.status() {
+            UpdateStatus::Available(_) => self.update.start_download(self.repaint.clone()),
+            UpdateStatus::Ready(path) => {
+                let path = path.clone();
+                self.install_update(&path, ctx);
+            }
+            _ => {}
+        }
+    }
+
+    /// 설치 프로그램을 띄우고 앱을 닫는다.
+    ///
+    /// **띄우기에 성공했을 때만 닫는다** — 닫고 나서 실패하면 사용자는 앱도 업데이트도
+    /// 잃는다. 닫는 길은 트레이 `종료`와 같은 것을 쓴다(그 길에 세션 저장이 있다)
+    fn install_update(&mut self, installer: &std::path::Path, ctx: &egui::Context) {
+        if crate::app::update::install::launch_installer(installer) {
+            // 트레이 `종료`와 같은 길로 닫는다 — 그 길에 세션 저장이 있다.
+            // 설치 프로그램도 우리를 닫으려 하지만(`taskkill`), 스스로 정상 종료하는 편이
+            // 설정을 적을 틈을 확실히 얻는다
+            self.quitting = true;
+            self.hidden = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        let now = ctx.input(|input| input.time);
+        self.toast.show(crate::i18n::update_launch_failed(), now);
+    }
+
+    /// 아직 끝나지 않은 전송 건수 — 대기·진행을 함께 센다
+    fn pending_transfer_count(&self) -> usize {
+        self.queue
+            .items()
+            .iter()
+            .filter(|item| item.state.is_pending())
+            .count()
+    }
+
+    /// 워커가 보내온 것을 거두고, 손으로 물은 확인이면 결과를 알린다
+    fn pump_update(&mut self, ctx: &egui::Context) {
+        use crate::app::update::{UpdateError, UpdateStatus};
+
+        let before = self.update.status().clone();
+        self.update.pump();
+        let after = self.update.status().clone();
+        if before == after {
+            return;
+        }
+
+        // 다 받았으면 곧바로 설치로 넘어간다 — 사용자는 이미 한 번 눌렀다
+        if let UpdateStatus::Ready(path) = &after {
+            let path = path.clone();
+            self.install_update(&path, ctx);
+            return;
+        }
+
+        let text = match &after {
+            // 손으로 물었을 때만 「최신입니다」를 알린다 — 저절로 도는 확인까지 알리면
+            // 앱을 켤 때마다 알림이 뜬다
+            UpdateStatus::UpToDate if self.update_asked_by_hand => {
+                Some(crate::i18n::update_latest())
+            }
+            UpdateStatus::Failed(error) => Some(match error {
+                UpdateError::ChecksumMismatch => crate::i18n::update_verify_failed(),
+                UpdateError::Download => crate::i18n::update_download_failed(),
+                // 그 밖의 사유는 「확인하지 못했다」로 묶는다 — 사용자가 할 수 있는 일이
+                // 같고(연결 확인·나중에 다시), 응답 형식 같은 말은 뜻이 닿지 않는다
+                _ => crate::i18n::update_check_failed(),
+            }),
+            _ => None,
+        };
+        if !matches!(after, UpdateStatus::Checking | UpdateStatus::Downloading) {
+            self.update_asked_by_hand = false;
+        }
+        if let Some(text) = text {
+            let now = ctx.input(|input| input.time);
+            self.toast.show(text, now);
+        }
+    }
+
+    /// 타이틀바에 넘길 배지 상태 — 상태 기계를 화면 값 둘로 옮긴다
+    fn update_badge(&self) -> titlebar::UpdateBadge {
+        use crate::app::update::UpdateStatus;
+        match self.update.status() {
+            UpdateStatus::Available(_) => titlebar::UpdateBadge {
+                visible: true,
+                downloading: false,
+            },
+            UpdateStatus::Downloading => titlebar::UpdateBadge {
+                visible: true,
+                downloading: true,
+            },
+            _ => titlebar::UpdateBadge::default(),
+        }
+    }
+
+    /// 전송이 도는 중에 업데이트를 누르면 뜨는 확인 대화 (D5)
+    fn show_update_confirm(&mut self, ctx: &egui::Context) {
+        let Some(active) = self.update_confirm else {
+            return;
+        };
+        let buttons = [
+            dialog::ButtonSpec::strong(crate::i18n::update_confirm_ok()),
+            dialog::ButtonSpec::plain(crate::i18n::cancel()),
+        ];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("update_confirm"),
+            UPDATE_DIALOG_WIDTH,
+            &buttons,
+            |ui| {
+                ui.heading(crate::i18n::update_confirm_title());
+                ui.add_space(8.0);
+                ui.label(crate::i18n::dynamic::update_confirm_body(active));
+            },
+        );
+        let mut decided = match shell.clicked {
+            Some(0) => Some(true),
+            Some(_) => Some(false),
+            None => None,
+        };
+        // 배경 클릭·`Esc`는 셸이 판정한다 — 되돌릴 수 없는 쪽으로 기울지 않는다
+        if shell.should_close {
+            decided = Some(false);
+        }
+        match decided {
+            Some(true) => {
+                self.update_confirm = None;
+                self.proceed_update(ctx);
+            }
+            Some(false) => self.update_confirm = None,
+            None => {}
+        }
+    }
+
     /// 앱 설정 대화 (FR-47) — 바뀐 값은 그 자리에서 저장한다.
     ///
     /// 즉시 저장인 이유는 이 화면에 `취소`가 없기 때문이다(사용자 결정) — 닫기만 있는
@@ -1731,6 +1927,13 @@ impl ExplorerApp {
             Command::OpenAppSettings => self.settings_dialog.open(),
             Command::OpenLicenses => self.license_dialog.open(),
             Command::OpenAbout => self.about_dialog.open(),
+            Command::CheckUpdate => self.check_update_by_hand(),
+            Command::StartUpdate => self.start_update(ctx),
+            Command::OpenReleaseNotes => {
+                // 특정 판이 아니라 목록을 연다 — 이력 전체가 릴리즈 노트이고, 릴리즈가
+                // 하나도 없어도 그 페이지는 성립한다 (D10)
+                ctx.open_url(egui::OpenUrl::new_tab(crate::i18n::releases_url()));
+            }
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -2355,6 +2558,10 @@ impl eframe::App for ExplorerApp {
         self.show_remote_dialogs(&ctx);
         // 같은 이름 확인 대화 (FR-55) — 이것이 닫히기 전에는 그 전송이 큐에 들어가지 않는다
         self.show_conflict_dialog(&ctx);
+        // 업데이트 워커가 보내온 것을 거둔다 (FR-62) — 상태가 바뀌면 배지·알림이 따라온다
+        self.pump_update(&ctx);
+        // 전송 중 업데이트 확인 대화 (D5)
+        self.show_update_confirm(&ctx);
         // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
         self.toast.show_ui(&ctx);
         // 로그 복사는 그리기가 끝난 뒤에 보낸다 (`⧉` — FR-40)

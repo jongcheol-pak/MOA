@@ -19,8 +19,18 @@ pub const TITLEBAR_HEIGHT: f32 = 36.0;
 const BUTTON_SIZE: f32 = 36.0;
 /// 최소화·최대화·닫기 버튼 폭 (Windows 캡션 버튼 관례)
 const CAPTION_WIDTH: f32 = 46.0;
-/// 우측 버튼군 전체 폭 — 설정 1개 + 캡션 3개
-const RIGHT_GROUP_WIDTH: f32 = BUTTON_SIZE + CAPTION_WIDTH * 3.0;
+/// 우측 버튼군의 **기본** 폭 — 설정 1개 + 캡션 3개.
+///
+/// **업데이트 배지(FR-62)가 서면 그만큼 넓어진다** — 배지 문구는 언어·글꼴에 따라 폭이
+/// 달라져 컴파일 시점에 정해지지 않으므로, 실제 폭은 매 프레임 재서 `TitlebarOutcome`에
+/// 실어 내보낸다. 이 값을 쓰는 세 자리(창 끌기 영역·제목 최대 폭·위쪽 변 크기 조절
+/// 비켜주기)가 모두 그 실측값을 받아야 한다 — 하나라도 빠뜨리면 배지 위에서 창이 끌리거나
+/// 배지 위쪽 4px에서 크기 조절 루프가 열려 클릭이 삼켜진다
+const RIGHT_GROUP_BASE: f32 = BUTTON_SIZE + CAPTION_WIDTH * 3.0;
+/// 배지 아이콘과 글자 사이
+const BADGE_ICON_GAP: f32 = 4.0;
+/// 배지 좌우 여백 — 캡션 버튼(46px)보다 좁게 두어 글자가 테두리에 붙지 않게만 한다
+const BADGE_PAD_X: f32 = 10.0;
 /// 좌측 토글 버튼 앞 여백
 const LEFT_MARGIN: f32 = 2.0;
 /// 앱 아이콘 한 변 — 36px 줄에서 위아래 여백이 남게 잡는다
@@ -78,11 +88,31 @@ pub struct TitlebarState {
     pub sidebar_collapsed: bool,
 }
 
-/// 타이틀바가 이번 프레임에 낸 요청. 창 조작과 앱 명령은 서로 독립이다
+/// 업데이트 표시에 필요한 최소 상태 (FR-62).
+///
+/// 타이틀바는 `app::update`를 모른다 — 무엇을 그릴지만 값으로 받는다(`ui::app`이 상태를
+/// 이 둘로 옮겨 준다). 그래야 화면 코드가 업데이트 상태 기계에 묶이지 않는다
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UpdateBadge {
+    /// 배지를 세우는가 — 새 판이 있거나 받는 중일 때만 참이다
+    pub visible: bool,
+    /// 받는 중인가 — 문구가 갈리고 누를 수 없게 된다
+    pub downloading: bool,
+}
+
+/// 타이틀바가 이번 프레임에 낸 요청. 창 조작과 앱 명령은 서로 독립이다.
+///
+/// **`Eq`를 파생하지 않는다** — 폭이 `f32`라 성립하지 않는다(부동소수는 자기 자신과
+/// 같지 않은 값이 있다). 이 타입을 같은지 견주는 곳은 없고 시험은 필드별로 단언한다
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TitlebarOutcome {
     pub command: Option<Command>,
     pub window: Option<WindowRequest>,
+    /// 이번 프레임에 우측 버튼군이 실제로 차지한 폭 — **배지가 있으면 그만큼 넓다**.
+    ///
+    /// `ui::app`이 이 값을 같은 프레임의 `show_resize_handles`에 넘긴다. 한 프레임 늦게
+    /// 넘기면(직전 값을 기억해 두면) 언어를 바꾼 첫 프레임에 판정이 어긋난다
+    pub right_group_width: f32,
 }
 
 /// 타이틀바 한 줄을 그리고 이번 프레임의 요청을 돌려준다.
@@ -94,16 +124,20 @@ pub fn show_titlebar(
     title: &str,
     state: TitlebarState,
     icon: Option<egui::TextureId>,
+    badge: UpdateBadge,
 ) -> TitlebarOutcome {
     let mut outcome = TitlebarOutcome::default();
     let bar = ui.max_rect();
+    // 배지 폭을 **먼저 재서** 아래 세 자리가 같은 값을 쓰게 한다 (D13)
+    let right_group = RIGHT_GROUP_BASE + update_badge_width(ui, badge);
+    outcome.right_group_width = right_group;
 
     // 끌기 판정은 버튼이 놓인 좌·우 끝을 **뺀 빈 영역**에서만 한다.
     // 바 전체를 잡으면 버튼 위에서 끌었을 때 끌기 신호가 함께 나간다 — egui는 클릭 위젯과
     // 끌기 위젯을 동시에 히트로 잡기 때문이다(`hit_test`). 그러면 OS 창 이동 루프가 열리면서
     // 그 프레임의 버튼 클릭이 삼켜진다
     let drag_left = bar.min.x + LEFT_GROUP_WIDTH;
-    let drag_right = (bar.max.x - RIGHT_GROUP_WIDTH).max(drag_left);
+    let drag_right = (bar.max.x - right_group).max(drag_left);
     let drag_area = egui::Rect::from_min_max(
         egui::pos2(drag_left, bar.min.y),
         egui::pos2(drag_right, bar.max.y),
@@ -128,7 +162,7 @@ pub fn show_titlebar(
     let (left_command, (window, right_command)) = egui::Sides::new().height(TITLEBAR_HEIGHT).show(
         ui,
         |ui| show_left(ui, state, icon),
-        |ui| show_right(ui, state),
+        |ui| show_right(ui, state, badge),
     );
     // 좌우에서 동시에 명령이 나올 수는 없다(한 프레임에 두 버튼을 누를 수 없다)
     outcome.command = left_command.or(right_command);
@@ -139,7 +173,7 @@ pub fn show_titlebar(
 
     // 제목은 좌우 버튼군 배치와 무관하게 **바 한가운데**에 둔다. 최대 폭은 좌우 중
     // 넓은 쪽(우측 버튼군)을 양쪽에서 뺀 값이라야 가운데 정렬과 버튼 비침범이 함께 성립한다 (D14)
-    let title_width = (bar.width() - 2.0 * RIGHT_GROUP_WIDTH).max(0.0);
+    let title_width = (bar.width() - 2.0 * right_group).max(0.0);
     let title_rect =
         egui::Rect::from_center_size(bar.center(), egui::vec2(title_width, TITLEBAR_HEIGHT));
     ui.put(
@@ -218,7 +252,11 @@ fn show_left(
 ///
 /// 창 조작과 명령을 함께 돌려주는 것은 설정 메뉴가 이쪽에 있기 때문이다 —
 /// 그 메뉴는 창을 건드리지 않고 `Command`를 낸다
-fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>, Option<Command>) {
+fn show_right(
+    ui: &mut egui::Ui,
+    state: TitlebarState,
+    badge: UpdateBadge,
+) -> (Option<WindowRequest>, Option<Command>) {
     let mut request = None;
     let mut command = None;
     if caption_button(ui, egui_phosphor::regular::X, theme::CLOSE_HOT)
@@ -252,11 +290,98 @@ fn show_right(ui: &mut egui::Ui, state: TitlebarState) -> (Option<WindowRequest>
         request = Some(WindowRequest::Minimize);
     }
     show_settings_menu(ui, &mut command);
+    // 배지는 설정 버튼 **뒤에** 더한다 — 이 영역은 오른쪽부터 채워지므로 나중에 더한 것이
+    // 화면에서 더 왼쪽에 선다
+    if let Some(badge_command) = show_update_badge(ui, badge) {
+        command = Some(badge_command);
+    }
     (request, command)
 }
 
-/// 설정 메뉴 — `설정`·`오픈소스 라이선스`·`정보`가 동작하고 나머지 둘(`업데이트`·
-/// `릴리즈 노트`)은 아직 표시만 한다 (FR-22·FR-57·FR-58).
+/// 업데이트 배지 (FR-62) — 새 판이 있으면 `↓ 업데이트`, 받는 중이면 도는 표시와
+/// `다운로드 중...`을 설정 버튼 왼쪽에 세운다.
+///
+/// **받는 중에는 누를 수 없다** — 두 번 누르면 두 번 받는다
+fn show_update_badge(ui: &mut egui::Ui, badge: UpdateBadge) -> Option<Command> {
+    if !badge.visible {
+        return None;
+    }
+    let width = update_badge_width(ui, badge);
+    let sense = if badge.downloading {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TITLEBAR_HEIGHT), sense);
+    if response.hovered() {
+        crate::ui::widgets::hover_backdrop(ui.painter(), rect, theme::CONTROL_HOT);
+    }
+
+    let (icon, label) = badge_parts(badge);
+    let font = egui::FontId::proportional(TITLE_FONT_PX);
+    let icon_width = text_width(ui, icon, &font);
+    // 아이콘과 글자를 한 덩어리로 보고 그 덩어리를 가운데 놓는다
+    let label_width = text_width(ui, label, &font);
+    let content_left = rect.center().x - (icon_width + BADGE_ICON_GAP + label_width) / 2.0;
+    ui.painter().text(
+        egui::pos2(content_left, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        icon,
+        font.clone(),
+        theme::TEXT,
+    );
+    ui.painter().text(
+        egui::pos2(content_left + icon_width + BADGE_ICON_GAP, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        font,
+        theme::TEXT,
+    );
+
+    response.clicked().then_some(Command::StartUpdate)
+}
+
+/// 배지에 그릴 아이콘과 글자 — 받는 중인지에 따라 갈린다.
+///
+/// 아이콘은 **phosphor에서만** 가져온다(AGENTS 규약 — 다른 글리프는 두부가 된다)
+fn badge_parts(badge: UpdateBadge) -> (&'static str, &'static str) {
+    if badge.downloading {
+        (
+            egui_phosphor::regular::CIRCLE_NOTCH,
+            crate::i18n::update_downloading(),
+        )
+    } else {
+        (
+            egui_phosphor::regular::ARROW_CIRCLE_DOWN,
+            crate::i18n::update_available(),
+        )
+    }
+}
+
+/// 배지가 차지하는 폭 — **그 자리에서 잰다**(설정 메뉴 폭과 같은 방식).
+///
+/// 배지가 없으면 0이라 우측 버튼군 폭이 종전 그대로가 된다.
+/// 고정 상수로 두지 않는 이유는 문구가 언어(`업데이트`/`Update`)와 사용자 글꼴(FR-48)에
+/// 따라 달라지기 때문이다 — 상수로 박으면 어느 조합에서 글자가 잘리는지 추정에 기대게 된다
+pub fn update_badge_width(ui: &egui::Ui, badge: UpdateBadge) -> f32 {
+    if !badge.visible {
+        return 0.0;
+    }
+    let (icon, label) = badge_parts(badge);
+    let font = egui::FontId::proportional(TITLE_FONT_PX);
+    text_width(ui, icon, &font) + BADGE_ICON_GAP + text_width(ui, label, &font) + BADGE_PAD_X * 2.0
+}
+
+/// 글자가 차지하는 가로 폭
+fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), theme::TEXT)
+        .size()
+        .x
+}
+
+/// 설정 메뉴 — 다섯 항목이 모두 동작한다
+/// (FR-22·FR-47·FR-57·FR-58·**FR-62·FR-63**).
 ///
 /// 다섯 항목을 배열+반복으로 묶지 않은 이유: 각 항목이 곧 서로 다른 화면·동작으로 갈라질
 /// 자리라, 지금 묶으면 채우는 순간 다시 풀어야 한다
@@ -275,8 +400,14 @@ fn show_settings_menu(ui: &mut egui::Ui, out: &mut Option<Command>) {
             *out = Some(Command::OpenAppSettings);
             ui.close();
         }
-        pending_item(ui, crate::i18n::titlebar_updates());
-        pending_item(ui, crate::i18n::titlebar_release_notes());
+        if ui.button(crate::i18n::titlebar_updates()).clicked() {
+            *out = Some(Command::CheckUpdate);
+            ui.close();
+        }
+        if ui.button(crate::i18n::titlebar_release_notes()).clicked() {
+            *out = Some(Command::OpenReleaseNotes);
+            ui.close();
+        }
         ui.separator();
         if ui.button(crate::i18n::titlebar_licenses()).clicked() {
             *out = Some(Command::OpenLicenses);
@@ -321,19 +452,17 @@ fn settings_menu_width(ui: &egui::Ui) -> f32 {
     (widest + SETTINGS_MENU_PADDING).max(SETTINGS_MENU_MIN_WIDTH)
 }
 
-/// 아직 기능이 없는 메뉴 항목 — 비활성으로 두어 준비 중임을 눈으로 알린다.
-/// 활성처럼 보이면서 눌러도 반응이 없으면 고장으로 오인된다
-fn pending_item(ui: &mut egui::Ui, label: &str) {
-    ui.add_enabled(false, egui::Button::new(label));
-}
-
 /// 창 가장자리 크기 조절 (FR-22) — 매 프레임 포인터 위치를 보고 커서를 바꾸며,
 /// 가장자리에서 왼쪽 버튼이 눌리면 OS에 크기 조절을 넘긴다.
 ///
 /// 최대화 상태에서는 아무것도 하지 않는다 — 그 상태의 창은 크기를 바꿀 수 없다.
 /// 가장자리 4px는 그 아래 위젯보다 크기 조절이 우선한다(그러지 않으면 창 끝에 닿는
 /// 목록·스플리터 때문에 크기를 잡을 자리가 사라진다)
-pub fn show_resize_handles(ctx: &egui::Context, maximized: bool) -> Option<WindowRequest> {
+pub fn show_resize_handles(
+    ctx: &egui::Context,
+    maximized: bool,
+    right_group_width: f32,
+) -> Option<WindowRequest> {
     if maximized {
         return None;
     }
@@ -343,7 +472,9 @@ pub fn show_resize_handles(ctx: &egui::Context, maximized: bool) -> Option<Windo
     // 위쪽 **변**이 타이틀바 버튼과 겹치는 구간은 버튼에 양보한다 — 그러지 않으면 버튼 위쪽
     // 4px를 누른 순간 크기 조절 루프가 열려 그 클릭이 삼켜진다(끌기 영역을 좁힌 것과 같은 이유).
     // 모서리는 양보하지 않는다: 거기까지 내주면 대각선으로 창을 잡을 자리가 사라진다
-    if direction == egui::ResizeDirection::North && over_titlebar_button(pointer.x, window) {
+    if direction == egui::ResizeDirection::North
+        && over_titlebar_button(pointer.x, window, right_group_width)
+    {
         return None;
     }
     ctx.set_cursor_icon(resize_cursor(direction));
@@ -383,8 +514,8 @@ fn resize_direction(
 }
 
 /// 타이틀바 버튼이 놓인 좌·우 구간인가 — 위쪽 변 크기 조절이 이 구간을 비켜준다
-fn over_titlebar_button(x: f32, window: egui::Rect) -> bool {
-    x - window.min.x < LEFT_GROUP_WIDTH || window.max.x - x < RIGHT_GROUP_WIDTH
+fn over_titlebar_button(x: f32, window: egui::Rect, right_group_width: f32) -> bool {
+    x - window.min.x < LEFT_GROUP_WIDTH || window.max.x - x < right_group_width
 }
 
 /// 방향에 맞는 마우스 커서
@@ -485,7 +616,80 @@ mod tests {
         // 최대화된 창은 크기를 바꿀 수 없다 — 가드가 빠지면 가장자리에서 커서만 바뀌고 동작하지 않는
         // 어정쩡한 상태가 된다. 이 분기는 `resize_direction`이 아니라 여기 있어 Context가 필요하다
         let ctx = egui::Context::default();
-        assert_eq!(show_resize_handles(&ctx, true), None);
+        assert_eq!(show_resize_handles(&ctx, true, RIGHT_GROUP_BASE), None);
+    }
+
+    #[test]
+    fn 배지_자리에서_눌러도_창이_끌리지_않는다() {
+        // D13이 겨냥한 회귀의 나머지 절반 — 끌기 영역이 배지 폭을 셈하지 않으면
+        // 배지를 누르는 순간 OS 창 이동 루프가 열려 그 클릭이 삼켜진다
+        let badge = UpdateBadge {
+            visible: true,
+            downloading: false,
+        };
+        let ctx = egui::Context::default();
+        // 첫 프레임으로 그 프레임의 우측 폭을 얻는다(폭은 글꼴에 따라 달라 미리 알 수 없다)
+        let first = run_frame_with(&ctx, 0.0, Vec::new(), badge);
+        assert!(
+            first.right_group_width > RIGHT_GROUP_BASE,
+            "배지가 서면 우측 폭이 넓어져야 한다"
+        );
+        // 배지가 놓인 자리 — 설정 버튼(36px) 왼쪽
+        let badge_x = 800.0 - RIGHT_GROUP_BASE - 1.0;
+        let frames = [
+            run_frame_with(
+                &ctx,
+                0.05,
+                vec![egui::Event::PointerMoved(egui::pos2(badge_x, 18.0))],
+                badge,
+            ),
+            run_frame_with(
+                &ctx,
+                0.10,
+                vec![press(egui::pos2(badge_x, 18.0), true)],
+                badge,
+            ),
+            run_frame_with(
+                &ctx,
+                0.15,
+                vec![egui::Event::PointerMoved(egui::pos2(badge_x - 30.0, 18.0))],
+                badge,
+            ),
+        ];
+        let windows: Vec<_> = frames.iter().map(|frame| frame.window).collect();
+        assert!(
+            !windows.contains(&Some(WindowRequest::Drag)),
+            "배지 위에서 끌기를 요청했다: {windows:?}"
+        );
+    }
+
+    #[test]
+    fn 배지가_없으면_우측_폭이_종전과_같다() {
+        // 기존 시험(`위쪽_변은_버튼_구간을_비켜준다`)이 174를 전제하므로 이 값이 흔들리면
+        // 그 시험이 조용히 다른 것을 재게 된다
+        let ctx = egui::Context::default();
+        let outcome = run_frame_with(&ctx, 0.0, Vec::new(), UpdateBadge::default());
+        assert_eq!(outcome.right_group_width, RIGHT_GROUP_BASE);
+    }
+
+    #[test]
+    fn 배지가_서면_비켜주는_구간도_함께_넓어진다() {
+        // D13이 겨냥한 회귀 — 배지가 우측 그룹을 넓혔는데 이 판정만 기본 폭에 머물면
+        // 배지 위쪽 4px에서 크기 조절 루프가 열려 그 클릭이 삼켜진다
+        let wide = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 100.0));
+        let badge_width = 100.0;
+        let with_badge = RIGHT_GROUP_BASE + badge_width;
+        // 배지가 놓이는 자리 — 기본 폭 밖이지만 넓어진 폭 안이다
+        let x = wide.max.x - RIGHT_GROUP_BASE - badge_width / 2.0;
+
+        assert!(
+            !over_titlebar_button(x, wide, RIGHT_GROUP_BASE),
+            "기본 폭만 보면 이 자리는 버튼 구간 밖이다"
+        );
+        assert!(
+            over_titlebar_button(x, wide, with_badge),
+            "배지 폭을 더한 값을 넘기면 비켜줘야 한다"
+        );
     }
 
     #[test]
@@ -493,9 +697,9 @@ mod tests {
         // 버튼 위쪽 4px가 크기 조절에 먹히면 그 버튼을 누를 수 없다.
         // 창 폭 100px에서 좌측 38px·우측 174px 구간이 버튼 자리이므로 여기서는 폭을 넉넉히 잡는다
         let wide = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 100.0));
-        assert!(over_titlebar_button(10.0, wide)); // 좌측 토글 자리
-        assert!(over_titlebar_button(590.0, wide)); // 우측 캡션 버튼 자리
-        assert!(!over_titlebar_button(300.0, wide)); // 가운데 — 제목 자리
+        assert!(over_titlebar_button(10.0, wide, RIGHT_GROUP_BASE)); // 좌측 토글 자리
+        assert!(over_titlebar_button(590.0, wide, RIGHT_GROUP_BASE)); // 우측 캡션 버튼 자리
+        assert!(!over_titlebar_button(300.0, wide, RIGHT_GROUP_BASE)); // 가운데 — 제목 자리
     }
 
     #[test]
@@ -521,6 +725,17 @@ mod tests {
         time: f64,
         events: Vec<egui::Event>,
     ) -> Option<WindowRequest> {
+        run_frame_with(ctx, time, events, UpdateBadge::default()).window
+    }
+
+    /// 배지를 세운 채 한 프레임 돌리고 **결과 전체**를 돌려준다 —
+    /// 배지가 놓인 x를 알려면 그 프레임의 우측 폭(`right_group_width`)이 필요하다
+    fn run_frame_with(
+        ctx: &egui::Context,
+        time: f64,
+        events: Vec<egui::Event>,
+        badge: UpdateBadge,
+    ) -> TitlebarOutcome {
         let input = egui::RawInput {
             time: Some(time),
             events,
@@ -530,9 +745,9 @@ mod tests {
             )),
             ..Default::default()
         };
-        let mut request = None;
+        let mut outcome = TitlebarOutcome::default();
         let _ = ctx.run_ui(input, |ui| {
-            request = show_titlebar(
+            outcome = show_titlebar(
                 ui,
                 "제목",
                 TitlebarState {
@@ -540,10 +755,10 @@ mod tests {
                     sidebar_collapsed: false,
                 },
                 None,
-            )
-            .window;
+                badge,
+            );
         });
-        request
+        outcome
     }
 
     fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {

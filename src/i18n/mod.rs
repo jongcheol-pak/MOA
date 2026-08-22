@@ -133,12 +133,42 @@ strings! {
     titlebar_restore => "이전 크기로" / "Restore";
     titlebar_maximize => "최대화" / "Maximize";
     titlebar_minimize => "최소화" / "Minimize";
-    /// 설정 메뉴의 나머지 둘(`업데이트`·`릴리즈 노트`)은 아직 비활성이다 —
-    /// `오픈소스 라이선스`는 FR-57, `정보`는 FR-58로 동작한다
+    /// 설정 메뉴 다섯 항목이 모두 동작한다 — `설정`은 FR-47, `업데이트`는 FR-62,
+    /// `릴리즈 노트`는 FR-63, `오픈소스 라이선스`는 FR-57, `정보`는 FR-58이다
     /// (`오픈소스 라이선스`는 그 대화의 제목으로도 쓰인다)
     titlebar_updates => "업데이트" / "Updates";
     titlebar_release_notes => "릴리즈 노트" / "Release notes";
     titlebar_licenses => "오픈소스 라이선스" / "Open source licenses";
+
+    // ── 자동 업데이트 (FR-62·FR-63) ──
+    /// 타이틀바 배지 — 새 판이 있을 때. 제목 줄에 서므로 짧게 둔다
+    update_available => "업데이트" / "Update";
+    /// 배지 — 받는 중. 말줄임표는 「아직 끝나지 않았다」는 뜻으로 화면 관례를 따른다
+    update_downloading => "다운로드 중..." / "Downloading...";
+    /// 손으로 확인했을 때, 이미 최신이면 알린다 (그냥 확인만 하고 아무 표시도 없으면
+    /// 눌린 것인지 알 수 없다)
+    update_latest => "최신 버전입니다" / "You are up to date";
+    /// 확인이 실패했을 때 — 사용자가 할 수 있는 일(연결 확인·나중에 다시)을 함께 적는다
+    update_check_failed
+        => "업데이트를 확인하지 못했습니다. 인터넷 연결을 확인해 주세요"
+        / "Could not check for updates. Please check your internet connection";
+    /// 내려받기가 실패했을 때
+    update_download_failed
+        => "업데이트를 받지 못했습니다. 잠시 후 다시 시도해 주세요"
+        / "Could not download the update. Please try again later";
+    /// 받은 파일이 릴리즈에 적힌 값과 다를 때 — 「손상」이라고만 적는다(체크섬·해시 같은
+    /// 말은 일반 사용자에게 뜻이 닿지 않는다)
+    update_verify_failed
+        => "받은 파일이 손상되어 설치를 멈췄습니다"
+        / "The downloaded file was damaged, so the update was stopped";
+    /// 설치 프로그램을 띄우지 못했을 때
+    update_launch_failed
+        => "설치 프로그램을 실행하지 못했습니다"
+        / "Could not start the installer";
+    /// 전송이 도는 중에 설치를 누르면 뜨는 확인 대화의 제목
+    update_confirm_title => "지금 업데이트할까요?" / "Update now?";
+    /// 그 대화의 실행 버튼
+    update_confirm_ok => "업데이트" / "Update";
     titlebar_about => "정보" / "About";
 
     // ── 앱 이름 (FR-53·FR-58) ──
@@ -181,6 +211,11 @@ strings! {
     about_repository_url
         => "https://github.com/jongcheol-pak/MOA"
         / "https://github.com/jongcheol-pak/MOA";
+    /// 릴리즈 노트 페이지 (FR-63) — **특정 판이 아니라 목록**이다. 두 언어에서 값이 같고
+    /// 카탈로그를 거치는 이유는 위 저장소 주소와 같다(화면 문구를 소스에 박지 않는다)
+    releases_url
+        => "https://github.com/jongcheol-pak/MOA/releases"
+        / "https://github.com/jongcheol-pak/MOA/releases";
 
     // ── 패널 메뉴 (FR-23) ──
     /// 열 메뉴 캡션 (인벤토리 #22)
@@ -633,6 +668,26 @@ strings! {
 /// 언어마다 문장을 통째로 다시 쓸 수 있어야 한다
 pub mod dynamic {
     use super::{Language, current};
+
+    /// 전송이 도는 중에 업데이트를 누르면 뜨는 확인 문구 (FR-62).
+    ///
+    /// 건수가 문장 안에 들어가고 영어는 단수·복수가 갈려 카탈로그 매크로로는 담을 수 없다.
+    /// **잃는 것을 먼저 말한다** — 사용자가 판단할 근거가 그것이다
+    pub fn update_confirm_body(active: usize) -> String {
+        match current() {
+            Language::Korean => format!(
+                "전송 {active}건이 진행 중입니다. 지금 업데이트하면 그 전송이 중단되고 앱이 다시 시작됩니다."
+            ),
+            Language::English => {
+                let count = if active == 1 {
+                    "1 transfer is".to_owned()
+                } else {
+                    format!("{active} transfers are")
+                };
+                format!("{count} still running. Updating now stops them and restarts the app.")
+            }
+        }
+    }
 
     /// 한국어 목적격 조사 — 앞 글자에 받침이 있으면 `을`, 없으면 `를`.
     ///
