@@ -95,6 +95,11 @@ pub struct MenuState {
     pub selected: usize,
     /// 셸이 `공유` verb를 주었는가 — 없으면 그 칸만 비활성이다
     pub can_share: bool,
+    /// 목록이 이름 편집을 받을 수 있는가 — **받을 곳이 없으면 그 칸이 비활성이다**.
+    ///
+    /// 이 값을 두는 이유는 「대응 기능이 없는 칸은 비활성」이라는 이 메뉴의 규칙을 그 칸에도
+    /// 그대로 적용하기 위해서다 — 눌러도 아무 일이 없는 것은 비활성보다 나쁘다
+    pub can_rename: bool,
 }
 
 impl MenuState {
@@ -107,7 +112,7 @@ impl MenuState {
             return false;
         }
         match action {
-            MenuAction::Rename => self.selected == 1,
+            MenuAction::Rename => self.selected == 1 && self.can_rename,
             MenuAction::Share => self.can_share,
             _ => true,
         }
@@ -223,7 +228,7 @@ impl MenuIcons {
     }
 
     /// 그 줄에 그릴 아이콘
-    pub(crate) fn row(&self, index: usize) -> MenuRowIcon<'_> {
+    fn row(&self, index: usize) -> MenuRowIcon<'_> {
         match self.textures.get(index).and_then(|slot| slot.as_ref()) {
             Some(texture) => MenuRowIcon::Texture(texture),
             // 아이콘이 없어도 **열은 남긴다** — 이 메뉴에는 아이콘 있는 줄이 섞여 있다
@@ -454,6 +459,7 @@ mod tests {
         let state = MenuState {
             selected: 0,
             can_share: true,
+            can_rename: true,
         };
         for action in MenuAction::ALL {
             assert!(!state.enabled(action), "{action:?} 는 열리면 안 된다");
@@ -466,10 +472,12 @@ mod tests {
         let 하나 = MenuState {
             selected: 1,
             can_share: true,
+            can_rename: true,
         };
         let 여럿 = MenuState {
             selected: 3,
             can_share: true,
+            can_rename: true,
         };
         assert!(하나.enabled(MenuAction::Rename));
         assert!(!여럿.enabled(MenuAction::Rename));
@@ -481,9 +489,22 @@ mod tests {
         let state = MenuState {
             selected: 1,
             can_share: false,
+            can_rename: true,
         };
         assert!(!state.enabled(MenuAction::Share));
         assert!(state.enabled(MenuAction::Cut), "나머지는 그대로 열린다");
+    }
+
+    #[test]
+    fn 이름_편집을_받을_곳이_없으면_그_칸도_비활성이다() {
+        // 「대응 기능이 없는 칸은 비활성」 — 눌러도 아무 일이 없는 것은 비활성보다 나쁘다
+        let state = MenuState {
+            selected: 1,
+            can_share: true,
+            can_rename: false,
+        };
+        assert!(!state.enabled(MenuAction::Rename));
+        assert!(state.enabled(MenuAction::Delete), "삭제는 그대로 열린다");
     }
 
     #[test]
