@@ -300,7 +300,7 @@
     - (i) 셸 `IDataObject`가 `SetData`를 거부할 수 있다 → 거부하면 `Preferred DropEffect` 없이 올리고 **복사로 간주**한다(붙여넣기 기본값). 데이터가 사라지지 않는 안전한 폴백
   - **Depends on**: - (Design ③대로 `fs::clipboard`는 `fs::file_op`을 부르지 않는다 — 둘을 잇는 것은 `ui`다)
 
-- [ ] T4. 셸 컨텍스트 메뉴를 읽어 모델로 바꾼다
+- [x] T4. 셸 컨텍스트 메뉴를 읽어 모델로 바꾼다
   - **Type**: D
   - **Design**: ① `src/fs/shell_menu.rs`(기존 모듈 — PIDL·COM 수명 규약이 이미 격리돼 있다) ② `pub struct ShellMenu` — `IContextMenu`(+ `IContextMenu2/3` 캐스트)와 HMENU를 함께 쥐는 핸들. `Drop`에서 `DestroyMenu`. `pub fn open(owner, folder, items) -> Option<ShellMenu>` / `pub fn model(&self) -> Vec<ShellMenuItem>` / `pub fn submenu(&self, id) -> Vec<ShellMenuItem>`(펼칠 때 `HandleMenuMsg(WM_INITMENUPOPUP)` 후 다시 읽는다) / `pub fn invoke(&self, id, owner)` / `pub fn verb(&self, id) -> Option<String>`. `ShellMenuItem { id, label, icon: Option<(i32,i32,Vec<u8>)>, enabled, checked, separator, has_submenu }` ③ `fs` 계층 — `ui`를 모르고 egui 타입을 쓰지 않는다(아이콘은 픽셀 바이트로 넘긴다). 아이콘 읽기는 T1의 `fs::bitmap` ④ **비추상화 선언**: 「메뉴 공급자」 추상 trait을 만들지 않는다 — 원격 메뉴(`ui::remote_menu`)와 합치지 않는다는 기존 선언(`remote_menu.rs:1-6`)을 그대로 잇는다
   - **Acceptance**: Given `&` 액셀러레이터·탭 단축키가 섞인 메뉴 문자열, When 라벨 정규화 함수를 통과시키면, Then `&`가 제거되고 탭 뒤 단축키가 별도 필드로 갈린다(순수 함수 단위 시험). Given 로컬 파일 하나, When 메뉴를 열면, Then 모델에 항목이 1개 이상 담긴다(HUMAN-VERIFY 1 — HWND가 필요해 자동 시험 비대상). Given `grep -n "QueryContextMenu" -A 2 src/fs/shell_menu.rs`, When 그 **호출부 전건**을 보면, Then 넘기는 플래그가 `CMF_NORMAL`뿐이다(D9 — `CMF_CANRENAME`을 넣지 않는다. **주석에 그 이름이 근거로 적히는 것은 무방하다** — 재는 것은 실제로 넘기는 값이다)
@@ -469,6 +469,12 @@
   - **결정**: 그 시험은 **전용 스레드**에서 돈다. COM 아파트는 스레드마다 하나라, 다른 시험이 먼저 그 스레드를 잡으면 `OleInitialize`가 실패한다 — 단독 실행은 통과하는데 전체 실행에서만 깨지는 형태로 **실제 관측됐다**.
   - **결정**: `GetData`가 준 매체의 `tymed`를 `hGlobal`로 읽기 **전에** 검사한다(`is_global_medium`). 클립보드는 외부 입력이라 규격을 지키지 않는 앱이 다른 매체를 줄 수 있고, 그것을 핸들로 오독하면 임의 포인터를 Win32에 넘기게 된다.
   - **T3의 신규 심볼도 미연결**(`put`·`take`·`ClipboardFiles`) — **T8**(잘라내기 표시)과 **T10**(단축키)이 잇는다.
+- **T4 완료** (진행 중): `fs::shell_menu`에 `ShellMenu` 핸들과 읽기 API(`open`/`model`/`expand`/`invoke`/`verb`)를 더했다. 셸이 채운 HMENU를 `ShellMenuItem` 목록으로 바꾼다.
+  - **결정**: `CMF_CANRENAME`을 주지 않는다(D9 그대로) — 셸의 `rename` verb는 탐색기 자신의 뷰가 처리하는 것이라 눌러도 반응 없는 줄이 된다.
+  - **결정**: `SubmenuHandle`에 **부모 안 자리**를 함께 싣는다 — `WM_INITMENUPOPUP`의 `lParam` 하위 워드가 그 값을 요구한다. 0으로 뭉개면 같은 항목이 여러 하위 메뉴에 걸린 확장이 엉뚱한 쪽을 채운다(품질 리뷰 지적).
+  - **결정**: `SubmenuHandle`을 라이프타임으로 `ShellMenu`에 묶지 **않는다** — 그리는 쪽이 프레임 사이에 들고 있어야 해서다. 대신 어겨도 빈 목록으로 안전하게 실패한다.
+  - **정정**: T4 acceptance의 측정 명령을 `grep "CMF_"` → `grep "QueryContextMenu" -A 2`로 고쳤다. 앞의 것은 근거를 적은 **주석까지** 잡아 좋은 관행을 벌했다.
+  - **T4의 신규 심볼도 미연결**(`ShellMenu`·`ShellMenuItem`·`SubmenuHandle`·`ShellHost::open_menu`) — **T5**(그리기)와 **T6**(배선)이 잇는다.
   - **T2의 신규 심볼은 아직 미연결**(`rename_item`·`delete_items`·`invalid_name_reason`·`FileOpOutcome`) — **T8**(인라인 이름 편집)과 **T10**(단축키)이 실행 경로에 잇는다.
 
 ## Next Steps

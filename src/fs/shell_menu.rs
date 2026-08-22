@@ -365,6 +365,8 @@ unsafe fn verb_of(cm: &IContextMenu, id: u32) -> Option<String> {
     if id < ID_FIRST {
         return None;
     }
+    // verb는 `copy`·`delete`·`Windows.Share`처럼 짧은 식별자라 64면 넉넉하다 — 넘치면
+    // `GetCommandString`이 실패하고 그 줄은 이름 없이 빠진다(아이콘 줄이 표준 동작을 못 찾을 뿐)
     let mut buffer = [0u16; 64];
     // 안전성: 위 주석 참조
     unsafe {
