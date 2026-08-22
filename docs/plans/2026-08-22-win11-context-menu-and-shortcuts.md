@@ -463,6 +463,11 @@
   - **결정**: 결과 타입 이름을 plan의 `OpOutcome` 대신 **`FileOpOutcome`**으로 했다 — `ui::app::remote::OpOutcome`(원격 명령 뒤 재조회 여부를 정하는 열거형)이 이미 있어 뜻이 겹친다. impact-warn hook이 이 충돌을 잡았다.
   - **결정**: `CopyOutcome`과 `FileOpOutcome`을 합치지 않는다(필드는 같다) — 바뀌는 이유가 다르다(드래그 복사 FR-60·61 / 메뉴·단축키 FR-64). 대신 **워커 껍데기**(COM 초기화·해제·송신)는 `spawn_shell_op<T, F>`로 공통화했다(3회 반복 확인 — 품질 리뷰 SUGGEST 수용).
   - **계획 정정**: 전제 검증 8을 8·8-1로 갈랐다 — T3의 `RegisterClipboardFormatW`·`GlobalAlloc`이 아직 켜지지 않은 feature(`Win32_System_DataExchange`·`Win32_System_Memory`)에 있어 「새 feature 없이 가능」이 틀렸다. T3이 두 feature를 켠다(새 crate는 없으므로 라이선스 자산 재생성은 불요).
+- **T3 완료** (진행 중): `fs::clipboard` 신규 — 셸 표준 형식(`CF_HDROP` + `Preferred DropEffect`)으로 담고 읽는다. `fs::drag_source`의 데이터 객체 획득을 `data_object`로 뽑아 끌기와 공유.
+  - **결정**: 진짜 클립보드를 쓰는 시험은 **환경변수 `MOA_TEST_CLIPBOARD`로 연다**(기본 꺼짐). AGENTS 「원격 기능 테스트」의 실서버 게이트와 같은 관례 — `cargo test`마다 사용자 클립보드를 덮으면 안 된다. 이 회차에 게이트를 켜고 돌려 통과를 확인했다(전체 1020건).
+  - **결정**: 그 시험은 **전용 스레드**에서 돈다. COM 아파트는 스레드마다 하나라, 다른 시험이 먼저 그 스레드를 잡으면 `OleInitialize`가 실패한다 — 단독 실행은 통과하는데 전체 실행에서만 깨지는 형태로 **실제 관측됐다**.
+  - **결정**: `GetData`가 준 매체의 `tymed`를 `hGlobal`로 읽기 **전에** 검사한다(`is_global_medium`). 클립보드는 외부 입력이라 규격을 지키지 않는 앱이 다른 매체를 줄 수 있고, 그것을 핸들로 오독하면 임의 포인터를 Win32에 넘기게 된다.
+  - **T3의 신규 심볼도 미연결**(`put`·`take`·`ClipboardFiles`) — **T8**(잘라내기 표시)과 **T10**(단축키)이 잇는다.
   - **T2의 신규 심볼은 아직 미연결**(`rename_item`·`delete_items`·`invalid_name_reason`·`FileOpOutcome`) — **T8**(인라인 이름 편집)과 **T10**(단축키)이 실행 경로에 잇는다.
 
 ## Next Steps

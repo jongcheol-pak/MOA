@@ -242,6 +242,9 @@ mod tests {
     /// ```
     const 클립보드_시험_스위치: &str = "MOA_TEST_CLIPBOARD";
 
+    /// 클립보드를 만지는 시험을 한 번에 하나씩 돌리는 잠금 (`i18n`의 시험 잠금과 같은 방식)
+    static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// 클립보드를 만지는 시험 본문을 **자기 스레드에서** 돌린다.
     ///
     /// 스레드를 새로 여는 이유는 COM **아파트**가 스레드마다 하나이기 때문이다 — 같은
@@ -254,17 +257,29 @@ mod tests {
         if std::env::var_os(클립보드_시험_스위치).is_none() {
             return;
         }
+        // 클립보드는 **OS에 하나뿐인 자원**이라 이것을 만지는 시험은 서로 배제해야 한다 —
+        // 한쪽이 담고 읽는 사이에 다른 쪽이 비우면 간헐적으로 깨진다. 아래의 전용 스레드는
+        // COM 아파트를 가르는 장치일 뿐 이 다툼은 막지 못하므로 **둘 다** 필요하다.
+        // 앞 시험이 단언에 실패해 잠금이 오염됐어도 이어서 돈다(각 시험이 클립보드를 새로 세운다)
+        let _순서 = CLIPBOARD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let worker = std::thread::spawn(move || {
             // 안전성: 방금 만든 스레드라 아파트가 비어 있다. 초기화에 성공했을 때만
             // 같은 스레드에서 1회 되돌린다
             let ready = unsafe { OleInitialize(None) }.is_ok();
             assert!(ready, "새 스레드인데도 OLE를 초기화하지 못했다");
-            body();
+            // **단언이 깨져도 정리는 반드시 한다** — 그러지 않으면 시험이 실패한 그 순간의
+            // 클립보드(임시 경로 목록)가 사용자 PC에 그대로 남는다. 실패는 아래에서 다시 던진다
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
             // 담아 둔 것을 남기지 않는다 — 시험이 끝나면 클립보드는 비어 있다
             let _ = 클립보드를_비운다();
             // 안전성: 위에서 성공한 초기화와 짝지은 1회 호출
             unsafe {
                 OleUninitialize();
+            }
+            if let Err(panic) = result {
+                std::panic::resume_unwind(panic);
             }
         });
         // 시험 스레드의 단언 실패를 이쪽으로 옮긴다 — 그러지 않으면 조용히 통과한다
