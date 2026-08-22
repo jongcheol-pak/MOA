@@ -287,7 +287,7 @@
     - (i) 이름 검증 규칙이 어디까지인가 → Edge Cases가 금지 문자 집합과 처리를 확정했다
   - **Depends on**: -
 
-- [ ] T3. 클립보드 계층을 만든다
+- [x] T3. 클립보드 계층을 만든다
   - **Type**: D
   - **Design**: ① `src/fs/clipboard.rs` 신규 + `src/fs/drag_source.rs`에서 `IDataObject` 획득 경로를 `pub(crate) fn data_object(paths) -> Option<IDataObject>`로 뽑아 공유 ② `pub fn put(paths: &[PathBuf], cut: bool) -> bool` — 셸 `IDataObject`에 `CFSTR_PREFERREDDROPEFFECT`(`DROPEFFECT_MOVE`/`COPY`)를 `SetData`로 얹고 `OleSetClipboard` / `pub fn take() -> Option<ClipboardFiles>` — `OleGetClipboard` → `CF_HDROP`(`DragQueryFileW`)로 경로를, `Preferred DropEffect`로 이동 여부를 읽는다 ③ `fs` 계층 — `ui`를 모른다. 붙여넣기 실행은 `ui`가 이 모듈로 읽어 `fs::file_op`에 넘긴다(두 모듈을 서로 참조시키지 않는다) ④ **비추상화 선언**: 텍스트·이미지 등 파일 아닌 클립보드 형식은 다루지 않는다. `arboard`(egui의 텍스트 클립보드)와 합치지 않는다 — 그쪽은 OLE를 쓰지 않아 데이터 객체를 얹을 수 없다
   - **Acceptance**: Given 경로 2개를 `put(paths, cut = true)`로 담고, When 곧바로 `take()`를 부르면, Then 같은 경로 2개와 `cut = true`가 돌아온다(왕복 시험 — 실제 클립보드를 쓰므로 `#[ignore]`가 아닌 직렬 시험 1건). Given 파일이 담기지 않은 클립보드, When `take()`, Then `None`
@@ -456,6 +456,7 @@
 ## Retry Ledger
 
 - T2: 리뷰 지적 수정 사이클 1/5 (품질 MINOR 1 + SUGGEST 2 반영 — 구조 변경이라 전량 재리뷰)
+- T3: 리뷰 지적 수정 사이클 2/5 · 재호출 2/2(상한 도달) — 1라운드 BLOCKER 1·MAJOR 3·MINOR 3, 2라운드 MAJOR 2. **동일 지적 반복 0** (매 라운드 새 지적이라 3회 연속 조건에 닿지 않았다)
 
 ## Progress Log
 
