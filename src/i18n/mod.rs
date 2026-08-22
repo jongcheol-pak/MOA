@@ -126,6 +126,14 @@ strings! {
     delete => "삭제" / "Delete";
     rename => "이름 바꾸기" / "Rename";
     connect => "연결" / "Connect";
+    /// 컨텍스트 메뉴 아이콘 줄의 툴팁 (FR-8) — 라벨이 없는 줄이라 이름이 여기서만 드러난다.
+    /// `삭제`·`이름 바꾸기`는 위의 것을 그대로 쓴다
+    menu_cut => "잘라내기" / "Cut";
+    menu_copy => "복사" / "Copy";
+    menu_share => "공유" / "Share";
+    /// 컨텍스트 메뉴 맨 아래 줄 (FR-8) — 종전 Windows 표준 메뉴를 연다.
+    /// 문구는 탐색기가 쓰는 것과 같게 맞춘다
+    menu_show_more => "추가 옵션 표시" / "Show more options";
 
     // ── 타이틀바 (FR-22) ──
     titlebar_show_workspaces => "워크스페이스 목록 보이기" / "Show workspace list";

@@ -723,6 +723,103 @@ pub fn progress_bar(
 /// 팝업 목록의 한 줄 — 눌렸으면 `true`.
 ///
 /// **직접 그리는 메뉴는 모두 이 함수를 거친다** — 원격 목록 우클릭 메뉴·트리 즐겨찾기 메뉴·
+/// Win11 모양 메뉴 한 줄 — 아이콘 열·라벨·우측 단축키·하위 메뉴 화살표를 함께 그린다 (FR-8).
+///
+/// [`menu_row`]의 확장판이며 **값의 정본은 그쪽과 같다**(`theme`의 메뉴 항목 토큰) — 두 함수를
+/// 한 모듈에 둔 이유가 그것이다. 기존 `menu_row`를 고치지 않은 것은 그것을 쓰는 두 곳
+/// (`remote_menu`·드롭다운)이 아이콘도 단축키도 없어, 시그니처만 넓히면 그쪽이 쓰지 않는
+/// 인자를 매번 채우게 되기 때문이다.
+///
+/// `icon`은 이미 텍스처로 올라온 그림이다 — 만드는 것은 부르는 쪽의 몫이고 여기서는 그린다.
+/// 아이콘이 없어도 **열은 자리를 지킨다**: 그러지 않으면 아이콘 있는 줄과 없는 줄의 라벨이
+/// 서로 다른 x에서 시작해 목록이 들쭉날쭉해진다
+pub(crate) fn menu_row_rich(
+    ui: &mut egui::Ui,
+    icon: Option<&egui::TextureHandle>,
+    label: &str,
+    shortcut: &str,
+    has_submenu: bool,
+    enabled: bool,
+) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::MENU_ITEM_HEIGHT),
+        if enabled {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
+    );
+    if enabled && response.hovered() {
+        ui.painter()
+            .rect_filled(rect, theme::MENU_ITEM_CORNER_RADIUS, theme::MENU_HOT);
+    }
+    let painter = ui.painter();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let 글자색 = if enabled {
+        theme::TEXT
+    } else {
+        theme::TEXT_DIM
+    };
+
+    // 아이콘은 열 한가운데에 놓는다 — 없으면 그리지 않되 열은 그대로 비워 둔다
+    let icon_left = rect.left() + theme::MENU_ITEM_PAD_X;
+    if let Some(texture) = icon {
+        let 자리 = egui::Rect::from_center_size(
+            egui::pos2(icon_left + MENU_ICON_PX / 2.0, rect.center().y),
+            egui::vec2(MENU_ICON_PX, MENU_ICON_PX),
+        );
+        painter.image(
+            texture.id(),
+            자리,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            // 비활성이면 아이콘도 함께 흐려진다 — 글자만 흐리면 그 줄이 반쯤 살아 보인다
+            egui::Color32::WHITE.gamma_multiply(if enabled { 1.0 } else { 0.4 }),
+        );
+    }
+
+    painter.text(
+        egui::pos2(icon_left + MENU_ICON_COLUMN_PX, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        font.clone(),
+        글자색,
+    );
+
+    // 오른쪽 끝에서부터 화살표 → 단축키 순으로 채운다
+    let mut right = rect.right() - theme::MENU_ITEM_PAD_X;
+    if has_submenu {
+        painter.text(
+            egui::pos2(right, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            egui_phosphor::regular::CARET_RIGHT,
+            font.clone(),
+            글자색,
+        );
+        right -= MENU_SUBMENU_ARROW_PX;
+    }
+    if !shortcut.is_empty() {
+        painter.text(
+            egui::pos2(right, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            shortcut,
+            font,
+            // 단축키는 이름보다 흐리다 — 먼저 읽혀야 하는 것은 이름이다
+            theme::TEXT_MUTED,
+        );
+    }
+    enabled && response.clicked()
+}
+
+/// 메뉴 줄의 아이콘 한 변 (논리 px)
+const MENU_ICON_PX: f32 = 16.0;
+
+/// 아이콘이 차지하는 열의 너비 — 아이콘과 라벨 사이 여백을 포함한다.
+/// 아이콘이 없는 줄도 이만큼 밀려 라벨이 같은 x에서 시작한다
+const MENU_ICON_COLUMN_PX: f32 = 24.0;
+
+/// 하위 메뉴 화살표가 차지하는 너비 — 단축키는 이만큼 더 왼쪽에서 끝난다
+const MENU_SUBMENU_ARROW_PX: f32 = 16.0;
+
 /// 드롭다운 목록이 같은 줄을 각자 그리던 것을 하나로 모았다(셋의 사본이 행 높이·여백·모서리를
 /// 조금씩 다르게 적고 있었다). 값은 `theme`의 메뉴 항목 토큰이 정한다.
 ///
