@@ -54,8 +54,10 @@ use std::sync::Arc;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 
+mod autosave;
 mod remote;
 mod transfer_conflict;
+mod update;
 
 use remote::{RelistPending, RemoteOps};
 use transfer_conflict::ConflictCheck;
@@ -613,6 +615,18 @@ pub struct ExplorerApp {
     conflict_dialog: Option<(ConflictCheck, Vec<String>)>,
     /// 워커가 일을 마쳤을 때 화면을 깨우는 통로 — 연결 관리자에 준 것과 같다
     repaint: Arc<dyn Fn() + Send + Sync>,
+    /// 자동 업데이트 상태와 워커 (FR-62)
+    update: crate::app::update::UpdateService,
+    /// 이번 확인이 **손으로 누른 것**인가 — 그때만 결과를 알린다.
+    /// 앱이 뜰 때 도는 확인까지 알리면 켤 때마다 알림이 뜬다
+    update_asked_by_hand: bool,
+    /// 전송이 도는 중에 업데이트를 누르면 뜨는 확인 대화 — 그 시점의 건수를 담는다.
+    ///
+    /// 건수를 **대화를 띄운 시점의 값으로 굳힌다** — 대화가 떠 있는 동안 전송이 끝나면
+    /// 문장이 저 혼자 바뀌어 읽던 사람이 무엇에 동의하는지 흔들린다
+    update_confirm: Option<usize>,
+    /// 세션이 바뀌었는지 지켜보다 곧 적는 관측기 (`app::autosave`)
+    autosave: autosave::AutoSave<Session>,
 }
 
 impl ExplorerApp {
@@ -737,10 +751,25 @@ impl ExplorerApp {
             conflict_queue: Vec::new(),
             conflict_dialog: None,
             repaint,
+            // 설치본 판정은 이 자리에서 한 번만 한다 — 서비스는 그 결과를 받아 쥔다
+            update: crate::app::update::UpdateService::new(
+                crate::app::update::install::is_installed_build(),
+            ),
+            update_asked_by_hand: false,
+            update_confirm: None,
+            autosave: autosave::AutoSave::default(),
         };
         if let Some(session) = session {
             app.apply_session(session);
         }
+        // 지난 회차에 받아 둔 설치 파일을 치운다 (FR-62) — 설치가 끝나는 시점에는 앱이
+        // 이미 죽어 있어 스스로 지울 수 없으므로, 새 판으로 다시 뜬 지금이 그 자리다.
+        // 설치가 중간에 취소돼 남은 것도 여기서 함께 사라진다 (D8)
+        crate::app::update::install::clear_update_dir();
+        // 새 판이 있는지 워커에서 한 번 묻는다 — 앱이 뜨는 길은 이 결과를 기다리지 않는다.
+        // 설치본이 아니면 서비스가 스스로 아무 일도 하지 않는다 (D4·D7)
+        app.update.start_check(app.repaint.clone());
+
         // 글꼴 목록은 만드는 데 1.5초쯤 걸린다 — 설정 대화를 열고 나서 시작하면 그 시간이
         // 그대로 「글꼴 목록을 읽는 중…」으로 보인다. 시작할 때 미리 띄워 두면 대화를
         // 열 때는 대개 이미 준비돼 있다. 워커 스레드가 하므로 시작 화면은 멈추지 않는다
@@ -1022,6 +1051,7 @@ impl ExplorerApp {
             sidebar_collapsed: self.sidebar_collapsed,
         };
         let title = self.workspaces.active().name.clone();
+        let badge = self.update_badge();
         let outcome = egui::Panel::top(egui::Id::new("titlebar"))
             .resizable(false)
             .exact_size(titlebar::TITLEBAR_HEIGHT)
@@ -1029,12 +1059,21 @@ impl ExplorerApp {
             .show_separator_line(false)
             .frame(egui::Frame::NONE.fill(theme::WINDOW_BG))
             .show(ui, |ui| {
-                titlebar::show_titlebar(ui, &title, state, self.app_icon.as_ref().map(|t| t.id()))
+                titlebar::show_titlebar(
+                    ui,
+                    &title,
+                    state,
+                    self.app_icon.as_ref().map(|t| t.id()),
+                    badge,
+                )
             })
             .inner;
         // 창 가장자리 크기 조절 — 모서리는 크기 조절이 우선이고(버튼이 가져가면 대각선으로 창을
         // 잡을 자리가 사라진다), 버튼 위쪽 변은 버튼이 우선한다(`show_resize_handles`가 가른다)
-        let resize = titlebar::show_resize_handles(ctx, self.window.maximized);
+        // 같은 프레임에 잰 우측 폭을 그대로 넘긴다 — 배지가 선 만큼 위쪽 변 크기 조절이
+        // 비켜야 한다(D13). 직전 프레임 값을 기억해 넘기면 한 프레임 어긋난다
+        let resize =
+            titlebar::show_resize_handles(ctx, self.window.maximized, outcome.right_group_width);
         if let Some(request) = resize.or(outcome.window) {
             let command = match request {
                 WindowRequest::Minimize => egui::ViewportCommand::Minimized(true),
@@ -1727,6 +1766,13 @@ impl ExplorerApp {
             Command::OpenAppSettings => self.settings_dialog.open(),
             Command::OpenLicenses => self.license_dialog.open(),
             Command::OpenAbout => self.about_dialog.open(),
+            Command::CheckUpdate => self.check_update_by_hand(),
+            Command::StartUpdate => self.start_update(ctx),
+            Command::OpenReleaseNotes => {
+                // 특정 판이 아니라 목록을 연다 — 이력 전체가 릴리즈 노트이고, 릴리즈가
+                // 하나도 없어도 그 페이지는 성립한다 (D10)
+                ctx.open_url(egui::OpenUrl::new_tab(crate::i18n::releases_url()));
+            }
             // 이 셋은 연결(`manager`)에 닿아야 해서 패널만 빌리는 아래 묶음에 들어갈 수 없다
             Command::OpenSiteTab(site) => self.open_site_tab_here(site, target),
             Command::Refresh => self.refresh_panel(target, ctx),
@@ -1997,8 +2043,29 @@ impl ExplorerApp {
     /// **사이트 목록이 바뀌면 그 자리에서 적는다** — 종료 때만 적으면 그 사이에 앱이
     /// 비정상 종료됐을 때(패닉·강제 종료·전원 차단) 등록한 사이트가 통째로 사라진다.
     /// 파일이 작고 사이트 등록은 드문 일이라 그때마다 적어도 부담이 없다
-    fn persist_session(&self) {
-        save_session(&self.collect_session());
+    fn persist_session(&mut self) {
+        let session = self.collect_session();
+        save_session(&session);
+        // 방금 적은 것을 기준으로 삼는다 — 알리지 않으면 자동 저장이 같은 내용을 한 번 더 적는다
+        self.autosave.mark(session);
+    }
+
+    /// 바뀐 것이 있으면 곧 세션 파일에 적는다 (`app::autosave`).
+    ///
+    /// **탭·분할·창 크기·즐겨찾기처럼 저장을 부르지 않던 것까지 여기서 담긴다** —
+    /// 상태를 바꾸는 자리마다 저장을 심는 대신 바뀐 결과를 지켜본다 (2026-08-21 사용자 요청)
+    fn pump_autosave(&mut self, ctx: &egui::Context, now: f64) {
+        if self.autosave.due(now) {
+            let snapshot = self.collect_session();
+            if let Some(session) = self.autosave.observe(now, snapshot) {
+                save_session(session);
+            }
+        }
+        // 아직 적지 못한 변화가 있으면 화면을 깨워 둔다 — egui는 할 일이 없으면 프레임을
+        // 그리지 않아, 그러지 않으면 마지막 변화가 다음 조작 때까지 파일에 닿지 못한다
+        if self.autosave.pending() {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(autosave::QUIET_SECS));
+        }
     }
 }
 
@@ -2019,7 +2086,7 @@ impl eframe::App for ExplorerApp {
         theme::WINDOW_BG.to_normalized_gamma_f32()
     }
 
-    /// 종료 직전 — 지금 상태를 `%APPDATA%\FileExplorer\settings.json`에 저장한다 (FR-11·NFR-7).
+    /// 종료 직전 — 지금 상태를 **실행 파일 옆의 `settings.json`**에 저장한다 (FR-11·NFR-7).
     /// 저장 실패(디스크 풀·권한)는 조용히 넘어간다 — 종료를 막을 이유가 없다
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // 진행 중이던 전송을 대기로 되돌린다 — 저장된 큐가 "전송 중"이라 주장하면
@@ -2081,6 +2148,7 @@ impl eframe::App for ExplorerApp {
             }
         }
         self.sync_subtitle();
+        self.pump_autosave(ctx, now);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -2329,6 +2397,10 @@ impl eframe::App for ExplorerApp {
         self.show_remote_dialogs(&ctx);
         // 같은 이름 확인 대화 (FR-55) — 이것이 닫히기 전에는 그 전송이 큐에 들어가지 않는다
         self.show_conflict_dialog(&ctx);
+        // 업데이트 워커가 보내온 것을 거둔다 (FR-62) — 상태가 바뀌면 배지·알림이 따라온다
+        self.pump_update(&ctx);
+        // 전송 중 업데이트 확인 대화 (D5)
+        self.show_update_confirm(&ctx);
         // 알림은 모든 것 위에 뜬다 — 대화가 닫힌 뒤에도 남아 있어야 한다 (FR-43)
         self.toast.show_ui(&ctx);
         // 로그 복사는 그리기가 끝난 뒤에 보낸다 (`⧉` — FR-40)

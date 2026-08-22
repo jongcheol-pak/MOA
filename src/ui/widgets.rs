@@ -40,14 +40,22 @@ pub fn is_icon_font(glyph: &str) -> bool {
     chars.next().is_none() && ('\u{E000}'..='\u{F8FF}').contains(&first)
 }
 
-/// 아이콘 버튼 hover 배경의 모서리 반경
-const HOVER_CORNER_RADIUS: u8 = 4;
+/// 아이콘 버튼 hover 배경의 모서리 반경.
+///
+/// **폭이 넓어 정사각형 배경이 맞지 않는 요소**(타이틀바 업데이트 배지)는 아래
+/// `hover_backdrop`을 쓰지 않고 자기 자리를 직접 칠하는데, 그때도 모서리는 이 값을
+/// 따라야 같은 표식으로 보인다 — 그래서 값을 밖으로 연다
+pub(crate) const HOVER_CORNER_RADIUS: u8 = 4;
 
 /// 아이콘 버튼에 마우스가 올라갔을 때 까는 배경 — **정사각형에 둥근 모서리**다 (사용자 결정).
 ///
 /// 버튼이 차지한 자리는 스트립 높이에 맞춰 세로로 길쭉한 경우가 많은데(탭 닫기·타이틀바 버튼),
 /// 그대로 칠하면 버튼마다 배경 모양이 달라 보인다. 자리의 **짧은 변**을 한 변으로 삼아
-/// 가운데에 정사각형을 그리면 어느 자리에서든 같은 표식이 된다
+/// 가운데에 정사각형을 그리면 어느 자리에서든 같은 표식이 된다.
+///
+/// **가로로 긴 요소에는 쓰지 않는다** — 짧은 변이 높이라 폭의 일부만 칠해져 글자가
+/// 배경 밖으로 삐져나온다(2026-08-22 사용자 보고 — 업데이트 배지가 그랬다).
+/// 그런 자리는 자기 rect를 직접 칠하되 모서리는 `HOVER_CORNER_RADIUS`를 쓴다
 pub fn hover_backdrop(painter: &egui::Painter, rect: egui::Rect, fill: egui::Color32) {
     let side = rect.width().min(rect.height());
     let square = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(side));

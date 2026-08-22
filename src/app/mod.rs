@@ -11,5 +11,6 @@ pub mod settings;
 pub mod sidebar;
 pub mod single_instance;
 pub mod theme;
+pub mod update;
 pub mod window;
 pub mod workspace;

@@ -15,6 +15,11 @@ windows = { version = "0.62.2", features = [
     "Win32_Security_Cryptography",
     # DwmSetWindowAttribute — 다크 타이틀바(DWMWA_USE_IMMERSIVE_DARK_MODE)
     "Win32_Graphics_Dwm",
+    # WinHttp* — 자동 업데이트의 릴리즈 조회·설치 파일 내려받기 (FR-62).
+    # HTTP 크레이트를 새로 들이지 않으려고 플랫폼 기본 기능을 쓴다 — 이 크레이트는
+    # 이미 링크돼 있어 feature만 켜면 되고, 패키지 집합이 그대로라 라이선스 자산도
+    # 다시 만들 필요가 없다
+    "Win32_Networking_WinHttp",
     "Win32_Graphics_Gdi",
     # SECURITY_ATTRIBUTES 정의 — CreateFileW/CreateEventW(변경 감시)가 요구
     "Win32_Security",
