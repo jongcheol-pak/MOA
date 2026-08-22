@@ -458,6 +458,11 @@ MOA-Setup-0.1.0.exe
   - **결정(T6)**: 상태 기계를 `mod.rs`가 아니라 `service.rs`에 뒀다 — 모듈 구성과 상태 흐름은 변경 이유가 달라 한 파일에 섞으면 하위 모듈을 더할 때마다 300줄을 지나야 한다(AGENTS 분할 판정 ①②). `mod.rs`에서 재수출해 **밖에서 보는 이름은 `app::update::UpdateService` 그대로**다.
   - **결정(T6)**: 게이트(`enabled`)뿐 아니라 **작업 자체도 주입**한다(`start_check_with`·`start_download_with`). 게이트만 주입하면 `new(true)`로 부른 시험이 진짜 `api.github.com`을 두드려 4-C의 「네트워크 경로는 시험 대상이 아니다」와 어긋난다. 개발용 가짜 릴리즈(D14)도 같은 자리를 재사용해 길을 둘 만들지 않았다.
 
+- T7~T9 완료 (커밋 59ad302·이후): UI 배선 → NSIS 업데이트 모드 → 문서.
+  - **T7 spec MAJOR 3 → 전건 수용.** ⓐ 시각 표의 「회전」이 미구현이라 `draw_spinner`로 실제 회전을 넣었다(`epaint::TextShape::with_angle_and_anchor`, 1초 1바퀴, 받는 중에만 `request_repaint`) ⓑ `downloading:true` 분기 시험이 없어 추가 ⓒ **D4(설치본 아니면 메뉴 비활성)가 미구현**이었다 — `UpdateBadge.update_enabled`를 더해 `업데이트` 항목을 `add_enabled`로 그린다. **`릴리즈 노트`는 활성으로 남겼다**(PRD FR-63에 설치본 조건이 없다 — 브라우저를 여는 것뿐) 그에 맞춰 HUMAN-VERIFY A-6을 정정.
+  - **T7 quality MINOR 2 → 전건 수용.** `ui/app.rs`가 3100줄이 되어 업데이트 배선을 `src/ui/app/update.rs` 자식 모듈로 옮겼다(`app::remote`·`app::transfer_conflict` 선례와 같은 패턴 — 부모의 private 필드를 가시성 확대 없이 만진다). 실행 실패 문구에 다음 행동을 덧붙였다.
+  - **T8 실측**: `cargo run --example gen_installer`가 makensis 경고 0으로 `MOA-Setup-0.1.0.exe`(2,999,381B)를 만들었다. `MUI_PAGE_CUSTOMFUNCTION_PRE`는 페이지 매크로가 쓰고 `!undef` 하므로 네 페이지에 **각각** 다시 정의했다.
+
 ## Next Steps
 
 ## Open Questions
