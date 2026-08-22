@@ -447,6 +447,10 @@ MOA-Setup-0.1.0.exe
 
 ## Phase Ledger
 
+- **Phase F 통과 (2026-08-22, HEAD 425c631)** — F-1~F-2: 릴리즈 빌드 OK · `cargo test` 1017/1017 · clippy 0 · fmt OK · `gen_installer` makensis 경고 0(3,001,207B). F-7(Opus): MAJOR 2 → 전건 반영(대장 이관 2건·체크박스 3건), MINOR 3 → m1·m2 반영(Ready 배지 유지·청소 실패 근거 주석), m3은 대장 등재. F-8: 시각 속성 11행 정적 축 전부 ✅, `⏳ 미확인` 0건.
+- **Phase G 통과 (Must 100%)** — F-7이 PRD를 교차 확인했다: FR-62·FR-63 충족, FR-22 개정 문면 일치, Out of Scope 재한정 반영, 성공 기준 갱신, **NFR-1·NFR-6·NFR-7·NFR-10~13을 거짓으로 만든 것 없음**(확인이 워커라 시작 경로를 막지 않는다). PRD 미충족 0건이라 재루프 사유 없음.
+- **HUMAN-VERIFY 미완** — A(1~6)는 지금 확인 가능, B(7~14)는 첫 릴리즈 발행 뒤.
+
 ## Retry Ledger
 
 ## Progress Log
