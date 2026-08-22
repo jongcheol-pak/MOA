@@ -2738,3 +2738,96 @@ fn 즐겨찾기와_하위_폴더에는_배지가_붙지_않는다() {
         );
     }
 }
+
+/// 목록을 채워 둔 로컬 패널 — 이름 바꾸기 시험들이 함께 쓴다
+fn panel_with_local_rows(dir: &str, rows: Vec<FileEntry>) -> (PanelState, egui::Context) {
+    let ctx = egui::Context::default();
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(dir));
+    // 열거 결과가 도착한 것처럼 커밋시킨다 — 목록을 채우는 실제 경로를 그대로 지난다
+    panel.start_load(std::path::PathBuf::from(dir), PendingNav::None, &ctx);
+    panel.apply_enumerated(EnumOutcome::Ok(rows), &mut icons);
+    (panel, ctx)
+}
+
+#[test]
+fn 확정된_이름은_폴더_경로와_함께_올라간다() {
+    // 셸에 거는 쪽(`ui::app`)은 전체 경로만 안다 — 행 번호를 경로로 바꾸는 것이 이 함수다
+    let (panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("보고서.txt", false)]);
+    // 첫 줄은 상위 이동(`..`)이라 실제 항목은 1번이다
+    let request = panel
+        .take_rename(&FileListAction::Rename {
+            index: 1,
+            new_name: "새 이름.txt".to_owned(),
+        })
+        .expect("로컬 탭에서는 요청이 만들어져야 한다");
+    assert_eq!(
+        request.path,
+        std::path::PathBuf::from(r"C:\테스트\보고서.txt")
+    );
+    assert_eq!(request.new_name, "새 이름.txt");
+}
+
+#[test]
+fn 없는_행을_가리키면_이름을_걸지_않는다() {
+    // 확정과 폴더 갱신이 같은 프레임에 겹치면 가리키던 항목이 이미 사라져 있을 수 있다 —
+    // 그때는 아무것도 걸지 않는 편이 옳다(엉뚱한 항목의 이름을 바꾸는 것보다)
+    let (panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    assert!(
+        panel
+            .take_rename(&FileListAction::Rename {
+                index: 99,
+                new_name: "b.txt".to_owned(),
+            })
+            .is_none()
+    );
+}
+
+#[test]
+fn 원격_탭에서는_인라인_이름_바꾸기가_올라가지_않는다() {
+    // 원격은 대화로 이름을 묻는다 (FR-39) — 목록에 입력칸이 열리지도 않지만,
+    // 열렸다 해도 셸에 로컬 경로로 걸리는 일이 없어야 한다
+    let panel = panel_with_remote_tab("/pub");
+    assert!(panel.is_remote(), "원격 탭이 활성이어야 한다");
+    assert!(
+        panel
+            .take_rename(&FileListAction::Rename {
+                index: 0,
+                new_name: "b.txt".to_owned(),
+            })
+            .is_none()
+    );
+}
+
+#[test]
+fn 이름_바꾸기가_아닌_조작은_요청이_되지_않는다() {
+    let (panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    assert!(panel.take_rename(&FileListAction::None).is_none());
+    assert!(panel.take_rename(&FileListAction::Open(1)).is_none());
+}
+
+#[test]
+fn 탭을_옮기면_고치던_이름은_버린다() {
+    // 두 탭이 **같은 폴더**를 보고 있으면 폴더 판정으로는 가릴 수 없다 —
+    // 탭 전환 자체가 취소여야 한다 (FR-64 Edge Case)
+    let (mut panel, ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    assert!(
+        !panel.begin_rename_selected(),
+        "고른 것이 없으면 열리지 않는다"
+    );
+    // 실제 항목은 1번이다(0번은 상위 이동 줄) — 그것으로 편집을 연다
+    assert!(panel.list.begin_rename(1), "편집이 열려야 한다");
+    // 같은 폴더를 보는 탭을 하나 더 만들어 옮겨 간다
+    panel.new_tab(&ctx);
+    assert!(!panel.list.is_renaming(), "탭을 옮겼는데 편집이 남아 있다");
+}
+
+#[test]
+fn 잘라내기_표시는_패널을_거쳐_목록에_닿는다() {
+    let (mut panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
+    let 담은것 = [std::path::PathBuf::from(r"C:\테스트\a.txt")];
+    panel.set_cut_marks(&담은것);
+    assert!(panel.list.is_cut(std::path::Path::new(r"C:\테스트\a.txt")));
+    panel.clear_cut_marks();
+    assert!(!panel.list.is_cut(std::path::Path::new(r"C:\테스트\a.txt")));
+}

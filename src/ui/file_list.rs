@@ -498,8 +498,14 @@ impl FileListView {
         self.begin_rename(index)
     }
 
-    /// 지금 이름을 고치는 중인가 — 단축키가 목록에 갈지 가르는 데 쓴다
-    pub fn is_renaming(&self) -> bool {
+    /// 지금 이름을 고치는 중인가.
+    ///
+    /// **시험 전용이다** — 생산 코드는 이것을 묻지 않는다(편집 중에는 egui가 키보드를
+    /// 가져가므로 `poll_shortcuts`가 먼저 걸러진다). 편집이 실제로 접혔는지는 화면으로만
+    /// 드러나므로, 그 규칙을 시험이 볼 수 있게 이 창구 하나를 둔다
+    /// (`panel::workers::CreateOp::is_running`과 같은 관례)
+    #[cfg(test)]
+    pub(crate) fn is_renaming(&self) -> bool {
         self.rename.is_some()
     }
 
@@ -994,14 +1000,14 @@ mod tests {
     fn 잘라내기_표시는_붙여넣으면_풀린다() {
         // FR-64 — "붙여넣거나 다른 것을 담으면 그 표시가 풀린다"
         let mut v = FileListView::new();
-        let 담은것 = [PathBuf::from(r"C:\일.txt"), PathBuf::from(r"C:\일.txt")];
+        let 담은것 = [PathBuf::from(r"C:\일\a.txt"), PathBuf::from(r"C:\일\b.txt")];
         v.set_cut_marks(&담은것);
-        assert!(v.is_cut(Path::new(r"C:\일.txt")));
-        assert!(v.is_cut(Path::new(r"C:\일.txt")));
+        assert!(v.is_cut(Path::new(r"C:\일\a.txt")));
+        assert!(v.is_cut(Path::new(r"C:\일\b.txt")));
         assert!(!v.is_cut(Path::new(r"C:\일\c.txt")));
         // 붙여넣기가 성공한 뒤 — 집합이 비고 그 행은 다시 정상 색으로 그려진다
         v.clear_cut_marks();
-        assert!(!v.is_cut(Path::new(r"C:\일.txt")));
+        assert!(!v.is_cut(Path::new(r"C:\일\a.txt")));
         assert!(crate::ui::list_common::cut_text_color(false).is_none());
         assert!(crate::ui::list_common::cut_icon_tint(false).is_none());
     }
@@ -1011,10 +1017,10 @@ mod tests {
         // 두 번째 잘라내기가 첫 번째 표시를 덮는다 — 두 벌이 함께 흐려지면 어느 것이
         // 클립보드에 있는지 화면으로 알 수 없다
         let mut v = FileListView::new();
-        v.set_cut_marks(&[PathBuf::from(r"C:\일.txt")]);
-        v.set_cut_marks(&[PathBuf::from(r"C:\일.txt")]);
-        assert!(!v.is_cut(Path::new(r"C:\일.txt")));
-        assert!(v.is_cut(Path::new(r"C:\일.txt")));
+        v.set_cut_marks(&[PathBuf::from(r"C:\일\a.txt")]);
+        v.set_cut_marks(&[PathBuf::from(r"C:\일\b.txt")]);
+        assert!(!v.is_cut(Path::new(r"C:\일\a.txt")));
+        assert!(v.is_cut(Path::new(r"C:\일\b.txt")));
     }
 
     #[test]

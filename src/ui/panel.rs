@@ -899,6 +899,12 @@ impl PanelState {
     /// **화면에 없는 경로**에 삭제·권한 변경을 걸 수 있다(로컬은 종전부터 다시 읽어 왔고,
     /// 원격만 빠져 있었다)
     fn reload_active_tab(&mut self, ctx: &egui::Context) {
+        // 탭을 옮기면 고치던 이름은 버린다 (FR-64 Edge Case).
+        //
+        // **폴더가 바뀌는지로 가릴 수 없다** — 두 탭이 같은 폴더를 보고 있으면
+        // `FileListView::drop_rename_on_dir_change`가 아무 일도 하지 않아, 옮겨 간 탭에서
+        // 편집이 그대로 살아 있게 된다(spec 리뷰 N1). 탭 전환은 그 자체로 취소다
+        self.list.cancel_rename();
         match self.tabs.active().source.local_path() {
             Some(path) => {
                 let path = path.to_path_buf();
@@ -1083,8 +1089,10 @@ impl PanelState {
                     TabSource::Local(path) => path,
                     TabSource::Remote { .. } => crate::ui::app::start_dir(),
                 };
-                self.tabs.add(TabState::new(path.clone()));
-                self.start_load(path, PendingNav::None, ctx);
+                self.tabs.add(TabState::new(path));
+                // `start_load`를 곧바로 부르지 않는다 — 새 탭도 **활성 탭이 바뀌는 길**이라
+                // 고치던 이름을 접어야 하고, 그 규칙은 이 함수 하나에 있다
+                self.reload_active_tab(ctx);
             }
         }
         None
@@ -1155,11 +1163,6 @@ impl PanelState {
     /// 잘라내기 표시를 푼다 — 붙여넣었거나 다른 것이 클립보드에 담겼을 때 (FR-64)
     pub fn clear_cut_marks(&mut self) {
         self.list.clear_cut_marks();
-    }
-
-    /// 목록에서 이름을 고치는 중인가 — 단축키가 목록에 갈지 가르는 데 쓴다 (FR-64)
-    pub fn is_renaming(&self) -> bool {
-        self.list.is_renaming()
     }
 
     /// 목록에서 올라온 조작 처리. 셸 메뉴 요청은 **실행하지 않고 값으로 돌려준다**.
