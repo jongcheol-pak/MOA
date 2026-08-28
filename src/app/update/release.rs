@@ -8,7 +8,7 @@ use super::http::{self, HttpError};
 use serde::Deserialize;
 
 /// 최신 릴리즈를 묻는 주소. 저장소가 하나라 상수로 둔다
-const LATEST_URL: &str = "https://api.github.com/repos/jongcheol-pak/MOA/releases/latest";
+const LATEST_URL: &str = "https://api.github.com/repos/jongcheol-pak/Moa/releases/latest";
 
 /// GitHub API가 판을 가르는 데 쓰는 값
 const ACCEPT: &str = "application/vnd.github+json";

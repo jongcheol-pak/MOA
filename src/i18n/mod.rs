@@ -244,13 +244,13 @@ strings! {
         / "Copyright (c) 2026 jongcheol-pak";
     about_license => "MIT License" / "MIT License";
     about_repository_url
-        => "https://github.com/jongcheol-pak/MOA"
-        / "https://github.com/jongcheol-pak/MOA";
+        => "https://github.com/jongcheol-pak/Moa"
+        / "https://github.com/jongcheol-pak/Moa";
     /// 릴리즈 노트 페이지 (FR-63) — **특정 판이 아니라 목록**이다. 두 언어에서 값이 같고
     /// 카탈로그를 거치는 이유는 위 저장소 주소와 같다(화면 문구를 소스에 박지 않는다)
     releases_url
-        => "https://github.com/jongcheol-pak/MOA/releases"
-        / "https://github.com/jongcheol-pak/MOA/releases";
+        => "https://github.com/jongcheol-pak/Moa/releases"
+        / "https://github.com/jongcheol-pak/Moa/releases";
 
     // ── 패널 메뉴 (FR-23) ──
     /// 열 메뉴 캡션 (인벤토리 #22)

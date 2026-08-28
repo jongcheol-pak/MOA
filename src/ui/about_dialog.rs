@@ -287,7 +287,7 @@ mod tests {
             assert_eq!(i18n::about_license(), "MIT License");
             assert_eq!(
                 i18n::about_repository_url(),
-                "https://github.com/jongcheol-pak/MOA"
+                "https://github.com/jongcheol-pak/Moa"
             );
         }
     }
