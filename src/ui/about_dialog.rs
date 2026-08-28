@@ -1,0 +1,408 @@
+//! 정보 대화 (FR-58).
+//!
+//! 타이틀바 설정 메뉴의 `정보`가 연다. 가운데에 앱 아이콘, 그 아래로 이름·버전 한 줄과
+//! 저작권·라이선스·저장소 세 줄이 선다. 담는 것이 이것뿐이라 높이를 본문이 정한다 —
+//! 그래서 `dialog::show_fixed`가 아니라 `dialog::show`를 쓴다.
+//!
+//! **아이콘은 표시할 물리 픽셀 크기로 CPU에서 줄여 올린다.** 256px 자산을 그대로 텍스처로
+//! 올리고 96px 자리에 그리면 축소를 GPU가 하는데, 선형 필터는 인접 네 텍셀만 보므로 크게
+//! 줄일 때 가장자리가 자글거린다(2026-08-19 사용자 지적). 화면 배율이 바뀌면 필요한 물리
+//! 크기도 달라지므로 만든 크기를 함께 들고 다르면 다시 만든다.
+use crate::i18n;
+use crate::ui::dialog;
+use crate::ui::theme;
+use eframe::egui;
+
+/// 아이콘 원본 — 생성기(`examples/gen_app_icon.rs`)가 만든 256×256 PNG
+const ICON_ASSET: &[u8] = include_bytes!("../../assets/app_icon_256.png");
+
+/// 아이콘을 그릴 크기(논리 px) — 2026-08-19 사용자 결정
+const ICON_PX: f32 = 96.0;
+/// 아이콘과 이름·버전 줄 사이 (D12)
+const ICON_TEXT_GAP: f32 = 16.0;
+/// 이름·버전 줄의 글자 크기 (D12) — 설정·라이선스 대화의 제목과 같은 값이라
+/// 이 앱에 새 치수를 만들지 않는다
+const NAME_FONT_PX: f32 = 16.0;
+/// 이름·버전 줄과 그 아래 세 줄 사이
+const META_GAP: f32 = 8.0;
+/// 저작권·라이선스·저장소 줄의 글자 크기 — 이름·버전보다 작게 두어 그쪽이 먼저 읽힌다
+const META_FONT_PX: f32 = 12.0;
+/// 본문 폭 (D5) — 96px 아이콘 좌우로 여백이 남는다. 프레임 폭은 여기에 셸의 여백이 더해진다
+const BODY_WIDTH: f32 = 248.0;
+
+/// 정보 대화 — 열림 상태와 아이콘 텍스처만 든다.
+///
+/// 텍스처를 `close()`에서 버리지 않는 이유: 다시 열 때 같은 배율이면 그대로 쓴다
+#[derive(Default)]
+pub struct AboutDialog {
+    open: bool,
+    /// 올려 둔 텍스처와 **그것을 만든 물리 픽셀 크기**
+    icon: Option<(egui::TextureHandle, u32)>,
+}
+
+impl AboutDialog {
+    pub fn new() -> AboutDialog {
+        AboutDialog::default()
+    }
+
+    pub fn open(&mut self) {
+        self.open = true;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+    }
+
+    /// 대화를 그린다. 닫혀 있으면 아무것도 그리지 않는다
+    pub fn show(&mut self, ctx: &egui::Context) {
+        if !self.open {
+            return;
+        }
+        let pixels_per_point = ctx.pixels_per_point();
+        let icon = self.icon_texture(ctx, physical_icon_px(pixels_per_point));
+
+        let buttons = [dialog::ButtonSpec::strong(i18n::close())];
+        let shell = dialog::show(
+            ctx,
+            egui::Id::new("정보 대화"),
+            BODY_WIDTH,
+            &buttons,
+            |ui| {
+                show_body(ui, icon, pixels_per_point);
+            },
+        );
+        if shell.clicked.is_some() || shell.should_close {
+            self.close();
+        }
+    }
+
+    /// 지금 배율에 맞는 텍스처를 돌려준다. 들고 있는 것이 다른 크기면 다시 만든다.
+    ///
+    /// 자산을 읽지 못하면 `None` — 아이콘 자리만 비우고 글자 줄은 그대로 그린다(타이틀바가
+    /// 아이콘 없이도 자리를 잡는 것과 같은 처리)
+    fn icon_texture(&mut self, ctx: &egui::Context, physical: u32) -> Option<egui::TextureId> {
+        if !cache_hit(self.icon.as_ref().map(|(_, size)| *size), physical) {
+            let image = decode_icon(physical)?;
+            let handle = ctx.load_texture("about_icon", image, egui::TextureOptions::LINEAR);
+            self.icon = Some((handle, physical));
+        }
+        self.icon.as_ref().map(|(handle, _)| handle.id())
+    }
+}
+
+/// 본문 — 아이콘과 그 아래 네 줄(이름·버전 / 저작권 / 라이선스 / 저장소)을 가운데에 세운다
+fn show_body(ui: &mut egui::Ui, icon: Option<egui::TextureId>, pixels_per_point: f32) {
+    let line = ui.painter().layout_no_wrap(
+        i18n::dynamic::about_version_line(),
+        egui::FontId::proportional(NAME_FONT_PX),
+        theme::TEXT,
+    );
+    // 아이콘이 없으면 그 자리도 간격도 두지 않는다 — 빈 96px이 남으면 대화가 비어 보인다
+    let icon_block = if icon.is_some() {
+        ICON_PX + ICON_TEXT_GAP
+    } else {
+        0.0
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), icon_block + line.size().y),
+        egui::Sense::hover(),
+    );
+    if let Some(icon) = icon {
+        let placed = egui::Rect::from_center_size(
+            egui::pos2(rect.center().x, rect.top() + ICON_PX / 2.0),
+            egui::Vec2::splat(ICON_PX),
+        );
+        ui.painter().image(
+            icon,
+            snap_to_pixels(placed, pixels_per_point),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+    let line_left = rect.center().x - line.size().x / 2.0;
+    ui.painter().galley(
+        egui::pos2(line_left, rect.top() + icon_block),
+        line,
+        theme::TEXT,
+    );
+    show_meta_lines(ui);
+}
+
+/// 이름·버전 아래의 저작권·라이선스·저장소 세 줄 (FR-58).
+///
+/// 위의 둘과 달리 위젯으로 그린다 — 저장소 줄이 누를 수 있는 링크라 클릭을 받아야 하고,
+/// 그것만 위젯으로 두면 나머지 두 줄과 줄 간격이 어긋난다.
+///
+/// 링크 색·밑줄은 egui 기본값을 그대로 쓴다 — 링크 하나를 위해 팔레트(`ui::theme`)에
+/// 새 색을 만들지 않는다
+fn show_meta_lines(ui: &mut egui::Ui) {
+    ui.add_space(META_GAP);
+    ui.vertical_centered(|ui| {
+        for text in [i18n::about_copyright(), i18n::about_license()] {
+            ui.label(
+                egui::RichText::new(text)
+                    .size(META_FONT_PX)
+                    .color(theme::TEXT_MUTED),
+            );
+        }
+        let url = i18n::about_repository_url();
+        // 스킴은 떼고 보인다 — 좁은 팝업에서 `https://`가 차지하는 자리가 아깝다
+        let label = url.strip_prefix("https://").unwrap_or(url);
+        ui.hyperlink_to(egui::RichText::new(label).size(META_FONT_PX), url);
+    });
+}
+
+/// 들고 있는 텍스처를 그대로 쓸 수 있는가 — 만든 물리 크기가 요청과 같을 때만이다
+fn cache_hit(cached: Option<u32>, requested: u32) -> bool {
+    cached == Some(requested)
+}
+
+/// 아이콘을 올릴 텍스처의 물리 픽셀 크기 — 표시 크기 × 화면 배율.
+///
+/// 1을 하한으로 두는 것은 비정상 배율(0 이하·NaN)에서 빈 텍스처를 만들지 않기 위해서다
+fn physical_icon_px(pixels_per_point: f32) -> u32 {
+    let physical = ICON_PX * pixels_per_point;
+    if physical >= 1.0 {
+        // 원본(256)보다 큰 값도 그대로 쓴다 — 배율 267% 이상에서는 확대가 되지만
+        // 자글거림은 축소에서 생기므로 화질이 완만하게 무뎌질 뿐이다
+        physical.round() as u32
+    } else {
+        1
+    }
+}
+
+/// 자산을 `size`×`size` RGBA로 줄인다. 읽지 못하면 `None`
+fn decode_icon(size: u32) -> Option<egui::ColorImage> {
+    let original = image::load_from_memory(ICON_ASSET).ok()?;
+    let resized = original.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
+    let rgba = resized.to_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [size as usize, size as usize],
+        rgba.as_raw(),
+    ))
+}
+
+/// 사각형의 좌상단을 물리 픽셀 격자에 맞춘다 (D13).
+///
+/// 텍스처를 표시 크기와 같은 물리 크기로 만들어도 좌상단이 반픽셀 어긋난 자리에 놓이면
+/// GPU가 이웃 픽셀에 걸쳐 섞어 그려, 애써 CPU에서 곱게 줄인 것이 다시 흐려진다
+fn snap_to_pixels(rect: egui::Rect, pixels_per_point: f32) -> egui::Rect {
+    // NaN을 따로 거른다 — `<= 0.0`만 두면 NaN이 그 비교에서 거짓이 되어 가드를 통과하고,
+    // 좌표가 통째로 NaN인 사각형이 나온다(`physical_icon_px`와 같은 방어)
+    if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 {
+        return rect;
+    }
+    let snap = |value: f32| (value * pixels_per_point).round() / pixels_per_point;
+    egui::Rect::from_min_size(egui::pos2(snap(rect.left()), snap(rect.top())), rect.size())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::settings::LanguageSetting;
+    use crate::i18n::LanguageGuard;
+
+    #[test]
+    fn 닫힌_대화는_열림_상태가_아니다() {
+        let dialog = AboutDialog::new();
+        assert!(!dialog.is_open());
+    }
+
+    #[test]
+    fn 열고_닫으면_상태가_따라온다() {
+        let mut dialog = AboutDialog::new();
+        dialog.open();
+        assert!(dialog.is_open());
+        dialog.close();
+        assert!(!dialog.is_open());
+    }
+
+    /// 닫힌 대화가 아무것도 그리지 않는지 — `show`의 첫 줄이 그 가드다.
+    ///
+    /// `egui::Context`를 만들어 한 프레임 돌려 셰이프가 하나도 나오지 않는 것으로 잰다
+    /// (라이선스·설정 대화가 쓰는 것과 같은 기법)
+    #[test]
+    fn 닫혀_있으면_아무것도_그리지_않는다() {
+        let ctx = egui::Context::default();
+        let mut dialog = AboutDialog::new();
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        assert!(!dialog.is_open());
+        let shapes: usize = output
+            .shapes
+            .iter()
+            .filter(|shape| !matches!(shape.shape, egui::epaint::Shape::Noop))
+            .count();
+        assert_eq!(shapes, 0, "닫힌 대화가 무언가를 그렸다");
+    }
+
+    /// 열린 대화는 실제로 그린다 — 위 시험이 "그리지 않는다"만 재면 `show` 전체가
+    /// 죽어 있어도 통과한다. 아이콘 텍스처를 올리는 경로도 여기서 함께 돈다.
+    ///
+    /// **두 프레임을 돌린다** — egui의 떠 있는 영역은 첫 프레임에 크기를 재고 그 다음
+    /// 프레임에 자리를 잡아 그린다(첫 프레임만 재면 셰이프가 0으로 나온다)
+    #[test]
+    fn 열려_있으면_그린다() {
+        let ctx = egui::Context::default();
+        let mut dialog = AboutDialog::new();
+        dialog.open();
+        let _first = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        assert!(dialog.is_open(), "그리는 것만으로 닫히지 않는다");
+        let shapes: usize = output
+            .shapes
+            .iter()
+            .filter(|shape| !matches!(shape.shape, egui::epaint::Shape::Noop))
+            .count();
+        assert!(shapes > 0, "열린 대화가 아무것도 그리지 않았다");
+        // 아이콘 텍스처가 실제로 올라갔는가 — 이 경로가 죽으면 이름만 뜬다
+        assert!(dialog.icon.is_some(), "아이콘 텍스처가 만들어지지 않았다");
+    }
+
+    #[test]
+    fn 이름과_버전을_한_줄로_잇는다() {
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        let line = i18n::dynamic::about_version_line();
+        // 한국어 화면이므로 이름도 한국어다 — 언어를 잠갔으니 기대값은 원문 리터럴로 적는다
+        assert!(line.starts_with("모아 "), "이름이 앞에 선다: {line}");
+        assert!(
+            line.ends_with(env!("CARGO_PKG_VERSION")),
+            "버전이 뒤에 붙는다: {line}"
+        );
+    }
+
+    /// 세 줄이 카탈로그를 거치는가 — **소스 훑기 시험은 이것을 잡지 못한다**.
+    ///
+    /// `i18n`의 `화면_문구가_카탈로그를_거치지_않은_곳이_없다`는 한글이 든 리터럴만 보는데
+    /// 이 셋은 전부 ASCII라, 이 파일에 그대로 박아도 그 시험은 통과한다. 그래서 값 자체를
+    /// 두 언어에서 단언한다(둘이 같은 값인 것도 함께 지킨다)
+    #[test]
+    fn 저작권_라이선스_저장소_줄이_카탈로그에_있다() {
+        for language in [LanguageSetting::Korean, LanguageSetting::English] {
+            let _guard = LanguageGuard::lock(language);
+            assert_eq!(i18n::about_copyright(), "Copyright (c) 2026 jongcheol-pak");
+            assert_eq!(i18n::about_license(), "MIT License");
+            assert_eq!(
+                i18n::about_repository_url(),
+                "https://github.com/jongcheol-pak/MOA"
+            );
+        }
+    }
+
+    /// 열린 대화에 네 줄이 모두 그려지는가.
+    ///
+    /// 셰이프 **개수**가 아니라 그려진 **글자**를 본다 — 개수만 세면 무엇이 빠졌는지 모른다
+    #[test]
+    fn 열면_이름_저작권_라이선스_저장소가_모두_그려진다() {
+        let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+        let ctx = egui::Context::default();
+        let mut dialog = AboutDialog::new();
+        dialog.open();
+        // 떠 있는 영역은 첫 프레임에 크기를 재고 다음 프레임에 그린다
+        let _first = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+        let output = ctx.run_ui(Default::default(), |ctx| dialog.show(ctx));
+
+        let mut drawn = String::new();
+        for shape in &output.shapes {
+            collect_text(&shape.shape, &mut drawn);
+        }
+        let url = i18n::about_repository_url();
+        let link_label = url
+            .strip_prefix("https://")
+            .expect("주소는 https로 시작한다");
+        for expected in [
+            i18n::dynamic::about_version_line().as_str(),
+            i18n::about_copyright(),
+            i18n::about_license(),
+            link_label,
+        ] {
+            assert!(drawn.contains(expected), "{expected:?}가 그려지지 않았다");
+        }
+    }
+
+    /// 그려진 셰이프에서 글자만 모은다 — 중첩된 `Shape::Vec`도 훑는다
+    fn collect_text(shape: &egui::epaint::Shape, out: &mut String) {
+        match shape {
+            egui::epaint::Shape::Text(text) => out.push_str(text.galley.text()),
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect_text(shape, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn 앱_이름은_언어를_따라_갈린다() {
+        let korean = {
+            let _guard = LanguageGuard::lock(LanguageSetting::Korean);
+            i18n::app_name()
+        };
+        let english = {
+            let _guard = LanguageGuard::lock(LanguageSetting::English);
+            i18n::app_name()
+        };
+        assert_eq!(korean, "모아");
+        assert_eq!(english, "MOA");
+    }
+
+    #[test]
+    fn 자산은_256px_정사각이다() {
+        let image = image::load_from_memory(ICON_ASSET).expect("자산을 읽지 못했다");
+        assert_eq!((image.width(), image.height()), (256, 256));
+    }
+
+    #[test]
+    fn 요청한_크기로_줄여_준다() {
+        for size in [96, 192] {
+            let image = decode_icon(size).expect("자산을 줄이지 못했다");
+            assert_eq!(image.size, [size as usize, size as usize]);
+            // RGBA 네 채널이 모두 담겼는가 — 크기만 맞고 내용이 비면 화면이 투명해진다
+            assert_eq!(image.pixels.len(), (size * size) as usize);
+        }
+    }
+
+    #[test]
+    fn 같은_크기는_다시_만들지_않는다() {
+        assert!(cache_hit(Some(96), 96));
+        assert!(!cache_hit(Some(96), 192), "배율이 바뀌면 다시 만든다");
+        assert!(!cache_hit(None, 96), "아직 만든 적이 없으면 만든다");
+    }
+
+    #[test]
+    fn 물리_크기는_배율을_따른다() {
+        assert_eq!(physical_icon_px(1.0), 96);
+        assert_eq!(physical_icon_px(1.5), 144);
+        assert_eq!(physical_icon_px(2.0), 192);
+    }
+
+    #[test]
+    fn 비정상_배율에도_크기가_1_이상이다() {
+        assert_eq!(physical_icon_px(0.0), 1);
+        assert_eq!(physical_icon_px(-1.0), 1);
+        assert_eq!(physical_icon_px(f32::NAN), 1);
+    }
+
+    #[test]
+    fn 격자에_맞추면_좌상단이_정수_물리_픽셀에_선다() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.3, 20.6), egui::Vec2::splat(96.0));
+        let snapped = snap_to_pixels(rect, 2.0);
+        assert_eq!(snapped.left() * 2.0, (snapped.left() * 2.0).round());
+        assert_eq!(snapped.top() * 2.0, (snapped.top() * 2.0).round());
+        // 크기는 건드리지 않는다 — 텍스처와 같은 크기를 유지해야 확대·축소가 없다
+        assert_eq!(snapped.size(), rect.size());
+    }
+
+    #[test]
+    fn 비정상_배율이면_그대로_둔다() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.3, 20.6), egui::Vec2::splat(96.0));
+        assert_eq!(snap_to_pixels(rect, 0.0), rect);
+        assert_eq!(snap_to_pixels(rect, -1.0), rect);
+        // NaN은 어떤 비교에서도 거짓이라 가드를 잘못 쓰면 좌표가 통째로 NaN이 된다
+        assert_eq!(snap_to_pixels(rect, f32::NAN), rect);
+    }
+}

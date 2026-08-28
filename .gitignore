@@ -1,0 +1,12 @@
+/target
+
+# 작업 문서는 GitHub에 올리지 않는다 (로컬에는 그대로 남는다).
+# 다만 아이콘 원본 둘은 빌드가 읽으므로 예외다 —
+# `build.rs`·`src/ui/app_icon.rs`·`installer/moa.nsi`가 `AppIcon.ico`를,
+# `examples/gen_app_icon.rs`가 `AppIcon.png`를 쓴다.
+/docs/*
+!/docs/AppIcon.ico
+!/docs/AppIcon.png
+/plan.md
+/notes.md
+/notes-archive/

@@ -1,0 +1,110 @@
+[package]
+name = "moa"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    # MultiByteToWideChar/WideCharToMultiByte — 원격 파일명의 CP949 변환 (FR-46).
+    # 표가 1만 7천 자를 넘어 손으로 담을 것이 못 되므로 OS 코드 페이지에 맡긴다
+    "Win32_Globalization",
+    # CryptProtectData/CryptUnprotectData — 사이트 비밀번호 DPAPI 봉인 (FR-28)
+    "Win32_Security_Cryptography",
+    # DwmSetWindowAttribute — 다크 타이틀바(DWMWA_USE_IMMERSIVE_DARK_MODE)
+    "Win32_Graphics_Dwm",
+    # WinHttp* — 자동 업데이트의 릴리즈 조회·설치 파일 내려받기 (FR-62).
+    # HTTP 크레이트를 새로 들이지 않으려고 플랫폼 기본 기능을 쓴다 — 이 크레이트는
+    # 이미 링크돼 있어 feature만 켜면 되고, 패키지 집합이 그대로라 라이선스 자산도
+    # 다시 만들 필요가 없다
+    "Win32_Networking_WinHttp",
+    "Win32_Graphics_Gdi",
+    # SECURITY_ATTRIBUTES 정의 — CreateFileW/CreateEventW(변경 감시)가 요구
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    # STGMEDIUM/ReleaseStgMedium — 클립보드에 값을 얹고 읽는 매체 (FR-64).
+    # IDataObject의 SetData/GetData가 이 타입을 요구해 Com만으로는 그 메서드가 보이지 않는다
+    "Win32_System_Com_StructuredStorage",
+    # RegisterClipboardFormatW — 클립보드의 "Preferred DropEffect" 형식 등록 (FR-64).
+    # 그 형식이 복사와 잘라내기를 가르며, 이름이 문자열이라 등록을 거쳐야 번호를 얻는다
+    "Win32_System_DataExchange",
+    # GlobalAlloc/GlobalLock — 위 형식에 실을 4바이트를 담을 전역 메모리 (FR-64).
+    # 셸이 만든 데이터 객체에 얹는 값이라 HGLOBAL 말고 다른 매체를 쓸 수 없다
+    "Win32_System_Memory",
+    # OVERLAPPED·GetOverlappedResult — ReadDirectoryChangesW(변경 감시)가 요구
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    # DoDragDrop·IDropSource — 앱에서 탐색기로 끌어내기 (FR-61 내보내기).
+    # 그 인터페이스의 vtable 생성이 MODIFIERKEYS_FLAGS를 요구해 SystemServices도 함께 켠다
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
+    # GetProcessMemoryInfo — 전송 중 작업 집합 실측 (NFR-12 임계 D27 판정)
+    "Win32_System_ProcessStatus",
+    # Registry는 직접 사용 안 함 — SHELLEXECUTEINFOW(hkeyClass: HKEY) 구조체 정의가 요구 (없으면 E0432)
+    "Win32_System_Registry",
+    # 이벤트·대기 (CreateEventW·WaitForMultipleObjects) — 변경 감시 정지 신호
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    # DRIVE_REMOTE — 네트워크 드라이브를 가려내 그 줄에만 연결 끊김 표식을 붙인다
+    # (`fs::drives`). `GetDriveTypeW`는 Storage_FileSystem에 있는데 그 반환값을 견줄
+    # 상수만 이 모듈에 있다
+    "Win32_System_WindowsProgramming",
+    "Win32_UI_Controls",
+    # GetDpiForMonitor — 창을 만들기 전 그 모니터의 배율을 알아야 작업 영역(물리 픽셀)을
+    # 논리 픽셀로 옮길 수 있다 (`ui::window_start`)
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    # ITEMIDLIST(PIDL) 정의 — 셸 컨텍스트 메뉴(IContextMenu)가 요구
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# `windows::core::implement` 매크로가 만들어 내는 코드가 `windows_core::` 경로를 그대로 쓴다 —
+# 그 이름이 crate 루트에 있어야 하므로 전이 의존성을 **명시로 올린다**(FR-61의 `IDropSource` 구현).
+# `windows` crate가 이미 같은 버전을 링크하고 있어 패키지 집합이 그대로라 라이선스 자산은 다시
+# 만들 필요가 없다 — `image`를 명시로 올렸을 때와 같은 판단이다
+windows-core = "0.62.2"
+
+# egui UI 계층 (src/ui) — 이식 후 이 앱의 주 렌더링 경로다.
+# default-features를 끄고 glow(OpenGL)만 쓴다: PoC 실측에서 wgpu가 359MB, glow가 131MB로
+# 백엔드가 메모리를 2.7배 갈랐다(NFR-2). wgpu를 빌드에 포함하지 않아 exe도 함께 줄인다.
+eframe = { version = "0.35", default-features = false, features = ["glow"] }
+# 타이틀바·버튼 아이콘 글꼴 (FR-22). 글꼴이 exe에 정적으로 담기므로 시스템 글꼴에
+# 해당 글리프가 없어 두부(□)로 깨지는 일이 없다. 기본 기능(regular)만 쓴다
+egui-phosphor = "0.13"
+# eframe이 재수출하지 않아 직접 의존 — 창 HWND 추출(셸 컨텍스트 메뉴)에 필요
+raw-window-handle = "0.6"
+
+# 정보 화면의 앱 아이콘 (FR-58) — `assets/app_icon_256.png`를 읽어 **표시할 물리 크기로
+# CPU에서 줄인 뒤** 텍스처로 올린다. GPU 선형 필터는 인접 네 텍셀만 보므로 크게 줄이면
+# 가장자리가 자글거린다. 생성기(`examples/gen_app_icon.rs`)도 같은 크레이트를 쓴다.
+#
+# eframe·arboard가 이미 이것을 링크하고 `png` feature까지 켜 두지만(2026-08-19 `cargo tree
+# -e features` 실측), 전이 의존에 기대면 상위가 그것을 끊는 순간 조용히 깨진다. 명시로
+# 올려도 패키지·feature 집합이 그대로라 **라이선스 자산 재생성은 불요**하다. 다만 우리가 새로 부르는
+# 디코드·리샘플 경로가 링크되므로 exe는 약 60KB 는다(2026-08-19 실측: 자산 76KB를 더해 +136KB)
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# 원격 연결 (FR-27~FR-46). 둘 다 **동기(blocking) API**라 이 앱의 std::thread + 채널 구조에
+# 그대로 맞는다 — async 런타임(tokio)을 들이지 않는다(AGENTS 동시성 규약).
+# 대안 `russh-sftp`는 tokio를 강제해 기각했다.
+#
+# FTP/FTPS. native-tls는 Windows에서 schannel 백엔드를 써 OpenSSL·perl이 필요 없다.
+# LIST 파서(`suppaftp::list::File`)가 권한·소유자까지 줘서 원격 열의 원천이 된다.
+#
+# `deprecated`는 묵시적 TLS 연결(`connect_secure_implicit`)을 여는 기능 플래그다.
+# 크레이트가 "명시적 TLS를 권한다"는 뜻으로 붙여 둔 이름이며, 사이트 관리자의 암호화 항목이
+# 묵시적 TLS를 선택지로 두는 이상(FR-27) 그 경로가 없으면 고를 수 없는 값이 된다.
+suppaftp = { version = "10.0.1", features = ["native-tls", "deprecated"] }
+# SFTP. libssh2가 Windows에서 WinCNG 백엔드로 빌드돼 역시 OpenSSL이 필요 없다.
+# 전송이 std::io::Read/Write 스트림이라 진행률·버퍼 크기·취소를 우리가 직접 통제한다.
+ssh2 = "0.9.6"
+
+[profile.release]
+# 경량 배포 목표(NFR-2) — 크기 최적화·심볼 제거
+opt-level = "s"
+lto = true
+strip = true
