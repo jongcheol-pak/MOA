@@ -263,6 +263,22 @@ struct SiteDrag {
     active: bool,
 }
 
+/// 목록 영역이 한 프레임에 낸 조작 한 벌.
+///
+/// 줄 클릭·더블클릭·끌어 놓기에 더해 **우클릭 메뉴 두 벌**(줄 메뉴·빈 자리 메뉴)이 같은
+/// 자리에서 조작을 내므로, 튜플로 늘리는 대신 값 하나에 담는다. `BottomOutcome`과 합치지
+/// 않는 것은 생산자(목록 ↔ 아랫줄 버튼)와 담는 칸이 다르기 때문이다
+#[derive(Debug, Clone, Copy, Default)]
+struct ListOutcome {
+    /// 목록에서 새로 고른 사이트
+    picked: Option<SiteId>,
+    /// 이름 바꾸기가 끝났는가(Enter 또는 포커스 잃음)
+    rename_done: bool,
+    action: Option<ListAction>,
+    /// 빈 자리 메뉴의 `내보내기`·`가져오기` (FR-59)
+    exchange: Option<ExchangeAction>,
+}
+
 /// 아랫줄 한 줄에서 나온 조작 — 성격이 다른 둘이 같은 줄에 선다.
 ///
 /// `새 사이트`는 목록을 고치고 `내보내기`·`가져오기`는 파일을 주고받는다. 한 줄이 둘을
@@ -863,7 +879,7 @@ impl SiteManager {
             egui::pos2(left.right() + BODY_GAP, content.top()),
             content.max,
         );
-        let (picked, rename_done, dragged) = self.show_list(ui, left, store, connected);
+        let list = self.show_list(ui, left, store, connected);
         // **두 줄을 모두 그린 뒤에 고른다** — 즉시 모드라 그리기를 건너뛰면 그 줄이
         // 화면에서 사라진다. `ListAction`의 생산자가 둘이 되므로 뒤에 그린 아랫줄이
         // 이긴다: 포인터가 하나라 한 프레임에 두 칸이 함께 눌릴 일은 없고, 그래도
@@ -871,8 +887,8 @@ impl SiteManager {
         let top_action = self.show_list_buttons(ui, left);
         let bottom = self.show_bottom_buttons(ui, left, store);
         // 끌어 놓기가 가장 먼저 그려졌으므로 버튼 줄이 그것을 덮는다
-        let action = bottom.list.or(top_action).or(dragged);
-        let exchange = bottom.exchange;
+        let action = bottom.list.or(top_action).or(list.action);
+        let exchange = bottom.exchange.or(list.exchange);
         self.show_tabs(ui, right);
         // 이미 연결된 사이트의 전송 모드를 바꿨으면 그 사실을 알린다 (plan Edge Case)
         let transfer_hint = self.selected.is_some_and(|id| {
@@ -883,10 +899,10 @@ impl SiteManager {
         });
         self.show_tab_body(ui, right, transfer_hint);
         BodyOutcome {
-            picked,
+            picked: list.picked,
             action,
             exchange,
-            rename_done,
+            rename_done: list.rename_done,
         }
     }
 
@@ -904,14 +920,14 @@ impl SiteManager {
         )
     }
 
-    /// 좌측 목록 — 라벨 + 웰. 고른 사이트를 돌려준다 (`:393-406`)
+    /// 좌측 목록 — 라벨 + 웰. 이 영역이 낸 조작을 한 벌로 돌려준다 (`:393-406`)
     fn show_list(
         &mut self,
         ui: &mut egui::Ui,
         column: egui::Rect,
         store: &SiteStore,
         connected: &[SiteId],
-    ) -> (Option<SiteId>, bool, Option<ListAction>) {
+    ) -> ListOutcome {
         ui.painter().text(
             egui::pos2(column.left(), column.top() + LIST_LABEL_HEIGHT / 2.0),
             egui::Align2::LEFT_CENTER,
@@ -940,6 +956,8 @@ impl SiteManager {
         child.spacing_mut().item_spacing.y = 0.0;
         let mut picked = None;
         let mut rename_done = false;
+        // 줄에서 나온 조작 — 더블클릭 이름 바꾸기가 첫 생산자다
+        let mut row_action = None;
         // **레코드마다 반드시 한 칸을 넣는다** — 이름 바꾸는 중인 줄도 자리를 차지하므로,
         // 한 칸이라도 건너뛰면 그 아래가 전부 밀려 엉뚱한 자리로 옮겨진다
         let mut row_rects = Vec::with_capacity(store.sites().len());
@@ -973,6 +991,12 @@ impl SiteManager {
                     if response.clicked() {
                         picked = Some(record.id);
                     }
+                    // **더블클릭으로 이름을 바꾼다** (FR-27) — 첫 클릭이 위에서 이미 `picked`를
+                    // 세웠고, `show`가 `picked`(→`select`)를 `action`보다 먼저 적용하므로
+                    // 방금 고른 그 줄의 이름이 편집기로 열린다
+                    if response.double_clicked() {
+                        row_action = Some(ListAction::StartRename);
+                    }
                     // 끌기 시작 — 임계를 넘기 전에는 아직 클릭일 수 있다
                     if response.drag_started()
                         && let Some(at) = response.interact_pointer_pos()
@@ -994,8 +1018,15 @@ impl SiteManager {
             });
         // **삽입선은 웰 안쪽(`rows`)에 긋는다** — 스크롤 영역의 콘텐츠 사각형은 줄 수만큼
         // 길어져 있어 그것을 폭으로 쓰면 선이 웰 밖으로 뻗는다
-        let action = self.finish_site_drag(&child, rows, &row_rects);
-        (picked, rename_done, action)
+        let dragged = self.finish_site_drag(&child, rows, &row_rects);
+        ListOutcome {
+            picked,
+            rename_done,
+            // 줄에서 나온 조작이 끌어 놓기를 이긴다 — 더블클릭은 임계를 못 넘어
+            // 재정렬이 서지 않으므로 둘이 한 프레임에 함께 날 일은 없다
+            action: row_action.or(dragged),
+            exchange: None,
+        }
     }
 
     /// 끌던 줄을 놓은 자리를 계산해 조작을 올린다. 끄는 중이면 놓일 자리에 선을 긋는다.
@@ -1995,6 +2026,24 @@ mod tests {
         manager.apply_list_action(ListAction::Delete, &mut store);
         assert_eq!(manager.pending_delete, Some(copy));
         assert!(store.get(copy).is_some(), "묻기도 전에 지워졌다");
+    }
+
+    #[test]
+    fn 이름_편집은_방금_고른_줄을_따라간다() {
+        // FR-27 더블클릭 — 첫 클릭이 `picked`를 세우고 그 뒤 `StartRename`이 온다.
+        // `show`가 `picked`(→`select`) → `action`(→`apply_list_action`) 차례로 적용하는
+        // 전제를 값으로 고정한다: 고르지 않았던 줄을 더블클릭해도 그 줄이 편집기가 된다
+        let mut store = SiteStore::new();
+        let 첫째 = store.add("첫째");
+        let 둘째 = store.add("둘째");
+        let mut manager = SiteManager::new();
+        manager.open(&store, Some(첫째));
+        assert_eq!(manager.selected, Some(첫째));
+
+        manager.select(&store, 둘째);
+        manager.apply_list_action(ListAction::StartRename, &mut store);
+        assert_eq!(manager.selected, Some(둘째));
+        assert_eq!(manager.renaming.as_deref(), Some("둘째"));
     }
 
     #[test]
