@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use super::{GRID_BUTTON_HEIGHT, GRID_GAP, GRID_PAD_BOTTOM, GRID_PAD_X, SiteManager};
+use super::SiteManager;
 use crate::remote::site_export::{self, ImportPlan, ImportSummary, SiteExport};
 use crate::remote::sites::SiteStore;
 use crate::ui::dialog;
@@ -375,66 +375,6 @@ impl SiteManager {
             }
         }
     }
-
-    /// 아랫줄 버튼이 시작하는 y
-    fn export_buttons_top(&self, column: egui::Rect) -> f32 {
-        column.bottom() - GRID_PAD_BOTTOM - GRID_BUTTON_HEIGHT
-    }
-
-    /// 좌측 버튼 아랫줄 — `내보내기`·`가져오기` 두 칸 (FR-59, plan D10).
-    ///
-    /// 윗줄 셋과 좌우 끝을 맞추고 폭만 둘로 나눈다. **`내보내기`는 등록된 사이트가 없으면
-    /// 비활성**이다(내보낼 것이 없다). `가져오기`는 목록이 비어 있어도 할 일이 있으므로 늘 활성이다
-    pub(super) fn show_exchange_buttons(
-        &mut self,
-        ui: &mut egui::Ui,
-        column: egui::Rect,
-        store: &SiteStore,
-    ) -> Option<ExchangeAction> {
-        let top = self.export_buttons_top(column);
-        let grid = egui::Rect::from_min_max(
-            egui::pos2(column.left() + GRID_PAD_X, top),
-            egui::pos2(column.right() - GRID_PAD_X, top + GRID_BUTTON_HEIGHT),
-        );
-        let button_width = (grid.width() - GRID_GAP) / 2.0;
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(grid)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        child.spacing_mut().item_spacing.x = GRID_GAP;
-
-        let mut action = None;
-        for (label, candidate, enabled) in [
-            (
-                crate::i18n::site_export(),
-                ExchangeAction::Export,
-                !store.is_empty(),
-            ),
-            (crate::i18n::site_import(), ExchangeAction::Import, true),
-        ] {
-            let clicked = child
-                .add_enabled_ui(enabled, |ui| {
-                    widgets::design_button(
-                        ui,
-                        label,
-                        if enabled {
-                            theme::TEXT_BUTTON
-                        } else {
-                            theme::TEXT_DIM
-                        },
-                        0.0,
-                        egui::vec2(button_width, GRID_BUTTON_HEIGHT),
-                    )
-                })
-                .inner
-                .clicked();
-            if clicked {
-                action = Some(candidate);
-            }
-        }
-        action
-    }
 }
 
 /// 암호 한 줄 — 라벨과 가려진 입력칸. 내보내기·가져오기 대화가 함께 쓴다 (FR-59).
@@ -732,7 +672,7 @@ mod tests {
 
     #[test]
     fn 내보내기는_사이트가_있을_때만_누를_수_있다() {
-        // 활성 판정은 `show_exchange_buttons`가 `store.is_empty()`로 한다 —
+        // 활성 판정은 `SiteManager::show_bottom_buttons`가 `store.is_empty()`로 한다 —
         // 그리기 없이 그 조건만 견준다
         let store = SiteStore::new();
         assert!(store.is_empty(), "빈 목록이면 내보낼 것이 없다");

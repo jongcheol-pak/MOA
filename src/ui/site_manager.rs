@@ -2,8 +2,8 @@
 //!
 //! 원본 `FileExplorer-FTP.dc.html:384-499`. 대화는 1080×680 고정이고 헤더(40px)·본문(574px)·
 //! 오류 줄(22px)·바닥 버튼 줄(44px, 공통 셸이 그린다) 네 층으로 나뉜다. 본문은 좌측
-//! 400px(사이트 목록 + 버튼 3개 + 그 아래 줄의 `내보내기`·`가져오기` 둘)과 우측
-//! 가변(탭 + 폼)이다.
+//! 400px(사이트 목록 + 버튼 두 줄 — 윗줄 `이름 바꾸기`·`삭제`·`복제`, 아랫줄
+//! `새 사이트`·`내보내기`·`가져오기`)과 우측 가변(탭 + 폼)이다.
 //!
 //! **조작은 값으로 돌려주고 연결·토스트는 여기서 하지 않는다** — 기존 화면 규약과 같다.
 //! 다만 사이트 목록 자체의 변경(이름 바꾸기·삭제·복제·등록)은 `SiteStore`를 직접 고친다:
@@ -79,12 +79,16 @@ const LIST_NAME_PAD_X: f32 = 5.0;
 const SELECTED_BG: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x5F, 0xA8);
 const SELECTED_FG: egui::Color32 = egui::Color32::WHITE;
 
-/// 좌측 버튼 3열 — `grid 1fr 1fr 1fr` gap 8px · `padding 2px 30px 6px` · 28px (`:407-409`)
+/// 좌측 버튼 3열 — `grid 1fr 1fr 1fr` gap 8px · 28px (`:407-409`).
+///
+/// **원본의 좌우 여백 30px(`padding 2px 30px 6px`)은 걷어냈다** — 그만큼 버튼 줄이 위
+/// 목록 웰보다 좁아, 웰의 테두리와 버튼 줄의 좌우 선이 어긋나 보였다(2026-09-01 사용자
+/// 요청). 지금은 두 줄 다 웰과 같은 `column.left()`~`column.right()`를 쓴다
 const GRID_GAP: f32 = 8.0;
-/// 버튼 줄이 둘이다 — 윗줄 `이름 바꾸기·삭제·복제`(원본), 아랫줄 `내보내기·가져오기`(FR-59).
-/// 아랫줄은 좌우 끝을 윗줄에 맞춰 **두 칸 균등**으로 나눈다 (plan D10)
+/// 버튼 줄이 둘이다 — 윗줄 `이름 바꾸기·삭제·복제`(원본), 아랫줄
+/// `새 사이트`(FR-27)·`내보내기`·`가져오기`(FR-59). **두 줄 다 세 칸 균등**이고
+/// 좌우 끝은 목록 웰에 맞춘다
 const GRID_ROWS: f32 = 2.0;
-const GRID_PAD_X: f32 = 30.0;
 const GRID_PAD_TOP: f32 = 2.0;
 const GRID_PAD_BOTTOM: f32 = 6.0;
 const GRID_BUTTON_HEIGHT: f32 = 28.0;
@@ -245,12 +249,26 @@ struct BodyOutcome {
     rename_done: bool,
 }
 
-/// 좌측 버튼 3개가 목록에 가하는 변경
+/// 아랫줄 한 줄에서 나온 조작 — 성격이 다른 둘이 같은 줄에 선다.
+///
+/// `새 사이트`는 목록을 고치고 `내보내기`·`가져오기`는 파일을 주고받는다. 한 줄이 둘을
+/// 함께 내므로 값 하나에 담아 돌려준다(`BodyOutcome`이 이미 같은 형태다)
+#[derive(Debug, Clone, Copy, Default)]
+struct BottomOutcome {
+    list: Option<ListAction>,
+    exchange: Option<ExchangeAction>,
+}
+
+/// 좌측 버튼들이 목록에 가하는 변경
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ListAction {
     StartRename,
     Delete,
     Duplicate,
+    /// `새 사이트` — 기본 이름의 빈 사이트를 목록에 곧바로 더하고 그것을 고른다 (FR-27).
+    /// **고른 사이트가 없어도 되는 유일한 조작**이라 `apply_list_action`의 선택 가드보다
+    /// 앞에서 갈린다
+    New,
 }
 
 /// 편집 중인 사이트 설정 한 벌.
@@ -481,8 +499,12 @@ impl SiteManager {
 
     /// 연결 메뉴의 `사이트 관리자`(인벤토리 #8) — **빈 초안**으로 연다.
     ///
-    /// 이 진입점만 첫 항목을 고르지 않는다. 여기서 기존 사이트를 골라 두면 `확인(O)`이 그것을
-    /// 덮어쓰게 되어, 디자인이 `새 사이트` 버튼을 없앤 뒤(README §9) 남은 유일한 추가 경로가 사라진다
+    /// 이 진입점만 첫 항목을 고르지 않는다. 여기서 기존 사이트를 골라 두면 `확인(O)`이
+    /// 그것을 덮어쓰게 되어, 이 경로로는 사이트를 새로 만들 수 없게 된다.
+    ///
+    /// **추가 경로는 둘이다** — 이 진입점과 좌측 아랫줄의 `새 사이트` 버튼(FR-27).
+    /// 둘은 하는 일이 다르다: 여기는 목록을 건드리지 않고 빈 초안만 띄우고(주소를 적어
+    /// `확인(O)`을 눌러야 기록이 생긴다), 그 버튼은 **기록을 먼저 만들고** 그것을 고른다
     pub fn open_new(&mut self) {
         self.open = true;
         self.tab = ManagerTab::default();
@@ -590,8 +612,16 @@ impl SiteManager {
         Some(id)
     }
 
-    /// 좌측 버튼 3개를 목록에 반영한다 (Acceptance ⑤)
+    /// 좌측 버튼들을 목록에 반영한다 (Acceptance ⑤)
     fn apply_list_action(&mut self, action: ListAction, store: &mut SiteStore) {
+        // `새 사이트`만은 고른 것이 없어도 할 일이 있다 — 아래 가드보다 앞에서 갈린다.
+        // 호스트가 빈 채로 만들어지므로 사이드바·연결 메뉴·새 탭 메뉴에는 서지 않고
+        // (`SiteStore::visible`), 사용자가 주소를 적어 `확인(O)`을 눌러야 등록이 끝난다
+        if action == ListAction::New {
+            let id = store.add(crate::i18n::site_default_name());
+            self.select(store, id);
+            return;
+        }
         let Some(id) = self.selected else {
             // 고른 사이트가 없으면 할 것이 없다 (plan Edge Case: 사이트 0개에서 `삭제(D)`)
             return;
@@ -608,6 +638,8 @@ impl SiteManager {
                     self.select(store, copy);
                 }
             }
+            // 위에서 이미 갈라져 여기 닿지 않는다
+            ListAction::New => {}
         }
     }
 
@@ -802,8 +834,14 @@ impl SiteManager {
             content.max,
         );
         let (picked, rename_done) = self.show_list(ui, left, store, connected);
-        let action = self.show_list_buttons(ui, left);
-        let exchange = self.show_exchange_buttons(ui, left, store);
+        // **두 줄을 모두 그린 뒤에 고른다** — 즉시 모드라 그리기를 건너뛰면 그 줄이
+        // 화면에서 사라진다. `ListAction`의 생산자가 둘이 되므로 뒤에 그린 아랫줄이
+        // 이긴다: 포인터가 하나라 한 프레임에 두 칸이 함께 눌릴 일은 없고, 그래도
+        // 겹치면 사용자가 마지막으로 누른 것을 택한다
+        let top_action = self.show_list_buttons(ui, left);
+        let bottom = self.show_bottom_buttons(ui, left, store);
+        let action = bottom.list.or(top_action);
+        let exchange = bottom.exchange;
         self.show_tabs(ui, right);
         // 이미 연결된 사이트의 전송 모드를 바꿨으면 그 사실을 알린다 (plan Edge Case)
         let transfer_hint = self.selected.is_some_and(|id| {
@@ -821,6 +859,20 @@ impl SiteManager {
         }
     }
 
+    /// 사이트 목록을 두르는 웰 — 라벨 아래부터 윗줄 버튼 바로 위까지.
+    ///
+    /// **버튼 두 줄이 이 사각형과 좌우를 맞춘다**(`button_grid`) — 그리기와 따로 값으로
+    /// 낼 수 있어야 시험이 화면 없이 그 정합을 잰다
+    fn well_rect(&self, column: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(column.left(), column.top() + LIST_LABEL_HEIGHT + LEFT_GAP),
+            egui::pos2(
+                column.right(),
+                self.buttons_top(column) - GRID_PAD_TOP - LEFT_GAP,
+            ),
+        )
+    }
+
     /// 좌측 목록 — 라벨 + 웰. 고른 사이트를 돌려준다 (`:393-406`)
     fn show_list(
         &mut self,
@@ -836,13 +888,7 @@ impl SiteManager {
             egui::FontId::proportional(widgets::FORM_FONT_PX),
             theme::HEADER_TEXT,
         );
-        let well = egui::Rect::from_min_max(
-            egui::pos2(column.left(), column.top() + LIST_LABEL_HEIGHT + LEFT_GAP),
-            egui::pos2(
-                column.right(),
-                self.buttons_top(column) - GRID_PAD_TOP - LEFT_GAP,
-            ),
-        );
+        let well = self.well_rect(column);
         ui.painter().rect(
             well,
             0.0,
@@ -896,14 +942,26 @@ impl SiteManager {
             - GRID_GAP * (GRID_ROWS - 1.0)
     }
 
-    /// 좌측 버튼 3열 (`:407-409`, 인벤토리 #63~65)
+    /// 버튼 한 줄이 앉을 자리 — 좌우 끝은 **목록 웰과 같다**(`show_list`의 `well`).
+    ///
+    /// 원본의 좌우 여백 30px을 걷어낸 것이 요구 ④다(`GRID_GAP` 주석) — 이 함수 하나가
+    /// 두 줄의 좌우를 정하므로 둘이 어긋날 길이 없다
+    fn button_grid(&self, column: egui::Rect, top: f32) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(column.left(), top),
+            egui::pos2(column.right(), top + GRID_BUTTON_HEIGHT),
+        )
+    }
+
+    /// 한 줄에 세 칸을 균등하게 나눈 폭
+    fn button_width(grid: egui::Rect) -> f32 {
+        (grid.width() - GRID_GAP * 2.0) / 3.0
+    }
+
+    /// 좌측 버튼 **윗줄** — `이름 바꾸기(R)`·`삭제(D)`·`복제(I)` (`:407-409`, 인벤토리 #63~65)
     fn show_list_buttons(&mut self, ui: &mut egui::Ui, column: egui::Rect) -> Option<ListAction> {
-        let top = self.buttons_top(column);
-        let grid = egui::Rect::from_min_max(
-            egui::pos2(column.left() + GRID_PAD_X, top),
-            egui::pos2(column.right() - GRID_PAD_X, top + GRID_BUTTON_HEIGHT),
-        );
-        let button_width = (grid.width() - GRID_GAP * 2.0) / 3.0;
+        let grid = self.button_grid(column, self.buttons_top(column));
+        let width = Self::button_width(grid);
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(grid)
@@ -918,27 +976,56 @@ impl SiteManager {
             (crate::i18n::site_delete(), ListAction::Delete),
             (crate::i18n::site_duplicate(), ListAction::Duplicate),
         ] {
-            let clicked = child
-                .add_enabled_ui(enabled, |ui| {
-                    widgets::design_button(
-                        ui,
-                        label,
-                        if enabled {
-                            theme::TEXT_BUTTON
-                        } else {
-                            theme::TEXT_DIM
-                        },
-                        0.0,
-                        egui::vec2(button_width, GRID_BUTTON_HEIGHT),
-                    )
-                })
-                .inner
-                .clicked();
-            if clicked {
+            if button_cell(&mut child, label, enabled, width) {
                 action = Some(candidate);
             }
         }
         action
+    }
+
+    /// 아랫줄 버튼이 시작하는 y
+    fn bottom_buttons_top(&self, column: egui::Rect) -> f32 {
+        column.bottom() - GRID_PAD_BOTTOM - GRID_BUTTON_HEIGHT
+    }
+
+    /// 좌측 버튼 **아랫줄** — `새 사이트`(FR-27)·`내보내기`·`가져오기`(FR-59).
+    ///
+    /// 이 줄이 종전에는 `exchange` 자식 모듈에 있었다 — `새 사이트`가 들어오면서 더는
+    /// 파일을 주고받는 줄이 아니라 여기로 옮겨 왔다. 활성 조건이 칸마다 다르다:
+    /// `새 사이트`는 늘 누를 수 있고, **`내보내기`는 등록된 사이트가 없으면 비활성**이며
+    /// (내보낼 것이 없다), `가져오기`는 목록이 비어 있어도 할 일이 있어 늘 활성이다
+    fn show_bottom_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        column: egui::Rect,
+        store: &SiteStore,
+    ) -> BottomOutcome {
+        let grid = self.button_grid(column, self.bottom_buttons_top(column));
+        let width = Self::button_width(grid);
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(grid)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.spacing_mut().item_spacing.x = GRID_GAP;
+
+        let mut outcome = BottomOutcome::default();
+        if button_cell(&mut child, crate::i18n::site_new(), true, width) {
+            outcome.list = Some(ListAction::New);
+        }
+        for (label, candidate, enabled) in [
+            (
+                crate::i18n::site_export(),
+                ExchangeAction::Export,
+                !store.is_empty(),
+            ),
+            (crate::i18n::site_import(), ExchangeAction::Import, true),
+        ] {
+            if button_cell(&mut child, label, enabled, width) {
+                outcome.exchange = Some(candidate);
+            }
+        }
+        outcome
     }
 
     /// 우측 탭 줄 (`:415-417`, 인벤토리 #66~68)
@@ -1399,6 +1486,28 @@ impl SiteManager {
     }
 }
 
+/// 버튼 줄의 한 칸 — 비활성이면 글자가 흐려지고 눌리지 않는다. 눌렸으면 `true`.
+///
+/// 두 줄이 활성 조건만 다르고 그리는 방식이 같아 여기 모았다(윗줄 셋 · 아랫줄의
+/// `새 사이트` · 아랫줄 나머지 둘 — 같은 여섯 줄이 세 자리에 되풀이되던 것이다)
+fn button_cell(ui: &mut egui::Ui, label: &str, enabled: bool, width: f32) -> bool {
+    ui.add_enabled_ui(enabled, |ui| {
+        widgets::design_button(
+            ui,
+            label,
+            if enabled {
+                theme::TEXT_BUTTON
+            } else {
+                theme::TEXT_DIM
+            },
+            0.0,
+            egui::vec2(width, GRID_BUTTON_HEIGHT),
+        )
+    })
+    .inner
+    .clicked()
+}
+
 /// 목록의 한 줄 — 아이콘·이름. 눌렸으면 `true` (`:396-404`)
 fn show_site_row(ui: &mut egui::Ui, name: &str, dot: egui::Color32, selected: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(
@@ -1534,10 +1643,12 @@ mod tests {
         assert_eq!(crate::i18n::site_rename(), "이름 바꾸기(R)");
         assert_eq!(crate::i18n::site_delete(), "삭제(D)");
         assert_eq!(crate::i18n::site_duplicate(), "복제(I)");
-        // 아래 둘은 **원본 인벤토리에 없는 항목**이다 — 사용자 요청(2026-08-20)으로 더한
-        // 내보내기·가져오기 버튼이며, 원본과 갈린 사실을 여기 적어 둔다 (FR-59)
+        // 아래 셋은 **원본 인벤토리에 없는 항목**이다 — 앞 둘은 사용자 요청(2026-08-20)으로
+        // 더한 내보내기·가져오기 버튼이고(FR-59), `새 사이트`는 원본이 **뺐던** 버튼을
+        // 사용자 요청(2026-09-01)으로 되살린 것이다(FR-27). 원본과 갈린 사실을 여기 적어 둔다
         assert_eq!(crate::i18n::site_export(), "내보내기");
         assert_eq!(crate::i18n::site_import(), "가져오기");
+        assert_eq!(crate::i18n::site_new(), "새 사이트");
         assert_eq!(crate::i18n::site_tab_general(), "일반");
         assert_eq!(crate::i18n::site_tab_transfer(), "전송 설정");
         assert_eq!(crate::i18n::site_tab_charset(), "문자셋");
@@ -1814,6 +1925,74 @@ mod tests {
         }
         assert!(store.is_empty());
         assert_eq!(manager.renaming, None);
+    }
+
+    #[test]
+    fn 새_사이트는_고른_것이_없어도_목록에_항목을_더한다() {
+        // FR-27 — 세 버튼과 달리 `새 사이트`만은 선택 가드보다 앞에서 갈린다.
+        // 이름이 겹치면 `SiteStore`가 `(2)`를 붙인다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let mut store = SiteStore::new();
+        let mut manager = SiteManager::new();
+        manager.open_new();
+        assert_eq!(manager.selected, None, "빈 초안으로 열린다");
+
+        manager.apply_list_action(ListAction::New, &mut store);
+        assert_eq!(store.sites().len(), 1);
+        assert_eq!(store.sites()[0].name, "새 사이트");
+        assert_eq!(
+            manager.selected,
+            Some(store.sites()[0].id),
+            "그것이 골라진다"
+        );
+
+        manager.apply_list_action(ListAction::New, &mut store);
+        assert_eq!(store.sites().len(), 2);
+        assert_eq!(store.sites()[1].name, "새 사이트 (2)");
+        assert_eq!(
+            manager.selected,
+            Some(store.sites()[1].id),
+            "나중 것이 골라진다"
+        );
+
+        // **그 경로가 실제로 빈 호스트를 낳는다** — 주소를 적어야 등록이 끝난다.
+        // 고르는 자리(사이드바·연결 메뉴·새 탭 메뉴)에도 서지 않는다
+        assert!(manager.draft.host.is_empty());
+        assert_eq!(manager.commit(&mut store), None, "호스트가 비어 거부된다");
+        assert_eq!(
+            manager.error.as_deref(),
+            Some(crate::i18n::site_error_no_host())
+        );
+        assert_eq!(store.visible().count(), 0);
+    }
+
+    #[test]
+    fn 버튼_두_줄은_목록_웰과_좌우가_같다() {
+        // 요구 ④ — 원본의 좌우 여백 30px을 걷어냈다. 화면 없이 사각형 값으로 잰다
+        let manager = SiteManager::new();
+        let column = egui::Rect::from_min_size(
+            egui::pos2(18.0, 46.0),
+            egui::vec2(LEFT_WIDTH, 574.0 - BODY_PAD_TOP),
+        );
+        let well = manager.well_rect(column);
+        for (이름, grid) in [
+            (
+                "윗줄",
+                manager.button_grid(column, manager.buttons_top(column)),
+            ),
+            (
+                "아랫줄",
+                manager.button_grid(column, manager.bottom_buttons_top(column)),
+            ),
+        ] {
+            assert_eq!(grid.left(), well.left(), "{이름} 왼쪽이 웰과 어긋난다");
+            assert_eq!(grid.right(), well.right(), "{이름} 오른쪽이 웰과 어긋난다");
+        }
+        // 세 칸이 간격 둘을 빼고 균등하게 나눠 갖는다
+        let grid = manager.button_grid(column, manager.buttons_top(column));
+        let width = SiteManager::button_width(grid);
+        assert!((width * 3.0 + GRID_GAP * 2.0 - grid.width()).abs() < 0.01);
     }
 
     #[test]
