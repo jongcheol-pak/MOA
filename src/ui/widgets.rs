@@ -3,6 +3,10 @@
 //! 아이콘 버튼은 타이틀바·탭 스트립·주소창이, 디자인 버튼은 원격 단계 화면과 사이트 관리자가,
 //! 폼 조각(라벨 96px + 필드 28px)은 사이트 관리자의 세 탭이 같은 규칙으로 쓴다.
 //! 이 규칙을 화면마다 각자 구현하면 hover 색·여백·테두리가 조금씩 갈린다.
+//!
+//! **그리지 않는 공용 판정·치수도 여기 둔다** — `is_icon_font`(글리프 판정)와 끌어 정렬의
+//! 세 조각(`reorder_target`·`DRAG_THRESHOLD`·`INSERT_LINE_HEIGHT`)이 그것이다. 화면마다
+//! 사본을 두면 같은 조작이 자리마다 다른 값으로 동작한다.
 use std::sync::Arc;
 
 use crate::remote::connection::TransferDirection;
@@ -11,6 +15,34 @@ use eframe::egui;
 
 /// 아이콘 글꼴 기본 크기 — 타이틀바 캡션 버튼이 쓰던 값이 기준이다
 const DEFAULT_ICON_PX: f32 = 16.0;
+
+// ── 끌어 정렬 공용 조각 — 워크스페이스 카드·즐겨찾기·사이트 목록 셋이 함께 쓴다 ──
+/// 클릭을 재정렬로 보기 시작하는 이동 거리.
+///
+/// 이보다 덜 움직이면 그 자리의 클릭(폴더 이동·선택)으로 처리한다. 세 화면이 같은 값을
+/// 써야 「끌어서 옮긴다」가 자리마다 다른 손맛이 되지 않는다
+pub const DRAG_THRESHOLD: f32 = 8.0;
+/// 놓일 자리에 긋는 가로선 굵기
+pub const INSERT_LINE_HEIGHT: f32 = 2.0;
+
+/// 삽입 자리를 `reorder`의 목적지 자리로 바꾼다.
+///
+/// `reorder`는 항목을 **꺼낸 뒤** 넣으므로 자기보다 뒤에 놓을 때는 한 칸 당겨야 한다.
+/// 제자리로 놓는 경우(자기 앞·자기 뒤)는 바꿀 것이 없어 `None`이다.
+///
+/// **좌표를 다루지 않는 순수 인덱스 산술**이라 좌표계가 다른 세 화면이 그대로 함께 쓴다.
+/// 자리를 세는 쪽(`insert_index_at`)은 화면마다 다르다 — 사이드바는 고정 피치로,
+/// 트리·사이트 목록은 실제 줄 사각형으로 재기 때문에 그쪽은 합치지 않았다
+pub fn reorder_target(from: usize, insert_at: usize) -> Option<usize> {
+    if insert_at == from || insert_at == from + 1 {
+        return None;
+    }
+    Some(if insert_at > from {
+        insert_at - 1
+    } else {
+        insert_at
+    })
+}
 
 /// 전송 방향 글리프 (인벤토리 #44) — 아이콘 글꼴에서 가져온다 (프로젝트 규약)
 pub const UPLOAD_GLYPH: &str = egui_phosphor::regular::ARROW_UP;
@@ -964,6 +996,21 @@ fn display_text(value: &str, masked: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 제자리에_놓으면_재정렬하지_않는다() {
+        // 자기 앞·자기 뒤 어느 쪽으로 놓아도 결과 목록이 같다
+        assert_eq!(reorder_target(1, 1), None, "자기 앞");
+        assert_eq!(reorder_target(1, 2), None, "자기 뒤");
+    }
+
+    #[test]
+    fn 뒤로_옮길_때는_한_칸_당겨진다() {
+        // 0번을 3번 자리(2번 뒤)에 놓으면 자기가 빠진 목록에서는 인덱스 2다
+        assert_eq!(reorder_target(0, 3), Some(2), "아래로 옮긴다");
+        // 앞으로 옮길 때는 자기가 뒤에 있어 당길 것이 없다
+        assert_eq!(reorder_target(2, 0), Some(0), "위로 옮긴다");
+    }
 
     #[test]
     fn 토글_손잡이는_켜짐_꺼짐에_따라_트랙_양끝에_붙는다() {

@@ -37,10 +37,6 @@ const SUBTITLE_GAP: f32 = 6.0;
 const SUBTITLE_FONT_PX: f32 = 13.0;
 /// 텍스트 우측 여백 — 이름·부제가 카드 오른쪽 끝에 닿지 않게 한다(현행과 같은 값)
 const TEXT_RIGHT_PAD: f32 = 8.0;
-/// 드래그 정렬 시작 임계 — 이만큼 움직여야 재정렬로 본다 (단순 클릭과 구분)
-const DRAG_THRESHOLD: f32 = 8.0;
-/// 드롭 위치 삽입선 두께
-const INSERT_LINE_HEIGHT: f32 = 2.0;
 
 // ── 연결 섹션 시각 토큰 (원본 `FileExplorer-FTP.dc.html:57-69`) ──
 /// 연결 헤더가 워크스페이스 목록과 떨어지는 간격 (`margin-top:14px`)
@@ -325,7 +321,7 @@ impl WorkspaceSidebar {
         // 임계를 넘어야 재정렬로 본다 — 그 전에는 클릭 제스처와 구분되지 않는다
         if resp.dragged()
             && let (Some(drag), Some(pos)) = (self.drag.as_mut(), resp.interact_pointer_pos())
-            && (pos - drag.start).length() >= DRAG_THRESHOLD
+            && (pos - drag.start).length() >= crate::ui::widgets::DRAG_THRESHOLD
         {
             drag.active = true;
         }
@@ -360,18 +356,18 @@ impl WorkspaceSidebar {
             egui::Rect::from_min_size(
                 egui::pos2(
                     full.left() + ITEM_MARGIN_X,
-                    line_y - INSERT_LINE_HEIGHT / 2.0,
+                    line_y - crate::ui::widgets::INSERT_LINE_HEIGHT / 2.0,
                 ),
                 egui::vec2(
                     (full.width() - ITEM_MARGIN_X * 2.0).max(0.0),
-                    INSERT_LINE_HEIGHT,
+                    crate::ui::widgets::INSERT_LINE_HEIGHT,
                 ),
             ),
             0.0,
             theme::ACCENT,
         );
         if ui.input(|i| !i.pointer.any_down()) {
-            if let Some(to) = reorder_target(drag.from, insert_at) {
+            if let Some(to) = crate::ui::widgets::reorder_target(drag.from, insert_at) {
                 actions.push(SidebarAction::Reorder(drag.from, to));
             }
             self.drag = None;
@@ -818,20 +814,6 @@ fn insert_index_at(y: f32, first_top: f32, count: usize) -> usize {
     if y > center { index + 1 } else { index }
 }
 
-/// 삽입 위치를 `WorkspaceList::reorder`의 목적지 인덱스로 바꾼다.
-/// reorder는 항목을 **꺼낸 뒤** 넣으므로, 자기보다 뒤에 놓을 때는 한 칸 당겨야 한다.
-/// 제자리로 놓는 경우(자기 앞·자기 뒤)는 바꿀 것이 없어 None
-fn reorder_target(from: usize, insert_at: usize) -> Option<usize> {
-    if insert_at == from || insert_at == from + 1 {
-        return None;
-    }
-    Some(if insert_at > from {
-        insert_at - 1
-    } else {
-        insert_at
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1023,19 +1005,5 @@ mod tests {
         assert_eq!(insert_index_at(top + 5000.0, top, 3), 3);
         // 빈 목록은 항상 0
         assert_eq!(insert_index_at(top, top, 0), 0);
-    }
-
-    #[test]
-    fn 제자리에_놓으면_재정렬하지_않는다() {
-        assert_eq!(reorder_target(1, 1), None);
-        assert_eq!(reorder_target(1, 2), None);
-    }
-
-    #[test]
-    fn 뒤로_옮길_때는_한_칸_당겨진다() {
-        // 0번을 3번 자리(2번 뒤)에 놓으면 결과 목록에서는 인덱스 2다
-        assert_eq!(reorder_target(0, 3), Some(2));
-        // 앞으로 옮길 때는 그대로
-        assert_eq!(reorder_target(2, 0), Some(0));
     }
 }

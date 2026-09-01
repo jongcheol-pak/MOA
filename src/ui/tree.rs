@@ -112,12 +112,6 @@ struct FavoriteDrag {
     active: bool,
 }
 
-/// 클릭을 재정렬로 보기 시작하는 이동 거리 — 사이드바와 같은 값이다.
-/// 이보다 덜 움직이면 폴더 이동(클릭)으로 처리한다
-const DRAG_THRESHOLD: f32 = 8.0;
-/// 놓일 자리에 긋는 가로선 굵기 — 사이드바의 삽입선과 같은 값이다
-const INSERT_LINE_HEIGHT: f32 = 2.0;
-
 /// 트리 메뉴 폭 — 원격 목록 메뉴와 같은 값으로 맞춘다.
 /// 한 줄의 높이·여백·모서리는 여기서 정하지 않는다(`theme::MENU_ITEM_*`) —
 /// 줄 그리기 자체를 `widgets::menu_row`가 맡는다
@@ -447,7 +441,7 @@ impl FolderTreeView {
                 if response.dragged()
                     && let (Some(drag), Some(at)) =
                         (self.favorite_drag.as_mut(), response.interact_pointer_pos())
-                    && (at - drag.start).length() >= DRAG_THRESHOLD
+                    && (at - drag.start).length() >= widgets::DRAG_THRESHOLD
                 {
                     drag.active = true;
                 }
@@ -494,15 +488,15 @@ impl FolderTreeView {
             let full = ui.max_rect();
             ui.painter().rect_filled(
                 egui::Rect::from_min_size(
-                    egui::pos2(full.left(), line_y - INSERT_LINE_HEIGHT / 2.0),
-                    egui::vec2(full.width(), INSERT_LINE_HEIGHT),
+                    egui::pos2(full.left(), line_y - widgets::INSERT_LINE_HEIGHT / 2.0),
+                    egui::vec2(full.width(), widgets::INSERT_LINE_HEIGHT),
                 ),
                 0.0,
                 theme::ACCENT,
             );
         }
         if ui.input(|input| !input.pointer.any_down()) {
-            if let Some(to) = reorder_target(from, insert_at) {
+            if let Some(to) = widgets::reorder_target(from, insert_at) {
                 outcome.favorite = Some(FavoriteAction::Reorder { from, to });
             }
             self.favorite_drag = None;
@@ -977,24 +971,6 @@ fn insert_line_y(insert_at: usize, rects: &[egui::Rect]) -> Option<f32> {
     }
 }
 
-/// 삽입 자리를 `FavoriteStore::reorder`의 목적지 자리로 바꾼다.
-///
-/// `reorder`는 항목을 **꺼낸 뒤** 넣으므로 자기보다 뒤에 놓을 때는 한 칸 당겨야 한다.
-/// 제자리로 놓는 경우(자기 앞·자기 뒤)는 바꿀 것이 없어 `None`이다.
-/// **사이드바에도 글자 그대로 같은 함수가 있다**(`ui::sidebar`) — 좌표를 다루지 않는 순수
-/// 인덱스 산술이라 좌표계 차이는 이 함수의 이유가 못 된다. **아직 2회째라 두는 것**이며
-/// 3회째가 나오면 합친다(AGENTS 3회 문턱). 좌표계가 갈리는 것은 위 두 함수 쪽이다
-fn reorder_target(from: usize, insert_at: usize) -> Option<usize> {
-    if insert_at == from || insert_at == from + 1 {
-        return None;
-    }
-    Some(if insert_at > from {
-        insert_at - 1
-    } else {
-        insert_at
-    })
-}
-
 /// 배지 지름 — 아이콘 한 변에 대한 비율.
 ///
 /// 탐색기 스크린샷 실측: 배지 높이 10px ÷ 아이콘 높이 18px. 그 상자는 23×18로 정사각이
@@ -1209,15 +1185,6 @@ mod tests {
         assert_eq!(insert_line_y(1, &rects), Some(20.0));
         assert_eq!(insert_line_y(3, &rects), Some(60.0));
         assert_eq!(insert_line_y(0, &[]), None, "줄이 없으면 그을 것도 없다");
-    }
-
-    #[test]
-    fn 제자리에_놓으면_재정렬을_청하지_않는다() {
-        // 꺼낸 뒤 넣는 방식이라 자기보다 뒤에 놓을 때는 한 칸 당겨야 한다
-        assert_eq!(reorder_target(1, 1), None, "자기 앞");
-        assert_eq!(reorder_target(1, 2), None, "자기 뒤");
-        assert_eq!(reorder_target(2, 0), Some(0), "위로 옮긴다");
-        assert_eq!(reorder_target(0, 3), Some(2), "아래로 옮긴다");
     }
 
     #[test]
