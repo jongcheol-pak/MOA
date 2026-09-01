@@ -63,11 +63,12 @@ impl SiteStore {
 
     /// 목록의 차례를 바꾼다 (`from`을 **꺼낸 뒤** `to`에 넣는다).
     ///
-    /// 즐겨찾기·워크스페이스의 `reorder`와 같은 규약이라 부르는 쪽이 목적지를 미리
-    /// 당겨서 준다(`ui::widgets::reorder_target`이 그 변환을 한다). 자리가 범위 밖이면
-    /// 아무것도 하지 않고 `false`
+    /// 즐겨찾기(`FavoriteStore::reorder`)·워크스페이스(`WorkspaceList::reorder`)와 **같은
+    /// 규약**이다 — 꺼낸 뒤 넣으므로 부르는 쪽이 목적지를 미리 당겨서 주고, **자리가 범위
+    /// 밖이거나 제자리면 아무것도 하지 않고 `false`**다. 셋의 반환값이 같은 뜻이어야
+    /// 「바뀌었으니 저장한다」 같은 판정을 화면마다 다르게 쓰지 않는다
     pub fn reorder(&mut self, from: usize, to: usize) -> bool {
-        if from >= self.sites.len() || to >= self.sites.len() {
+        if from >= self.sites.len() || to >= self.sites.len() || from == to {
             return false;
         }
         let record = self.sites.remove(from);
@@ -236,6 +237,19 @@ mod tests {
     use super::*;
     use crate::remote::types::{LogonType, Protocol};
 
+    /// 주소까지 적은 「진짜」 사이트를 하나 만든다.
+    ///
+    /// `add`만 하면 호스트가 비어 `visible()`에서 빠지므로(FR-29), 고르는 자리에 서는지
+    /// 보는 시험은 이 헬퍼를 쓴다 — 그 보정을 시험마다 되풀이하면 무엇을 재는 시험인지가
+    /// 사전 준비에 묻힌다
+    fn add_site(store: &mut SiteStore, name: &str) -> SiteId {
+        let id = store.add(name);
+        if let Some(site) = store.get_mut(id) {
+            site.host = "example.test".to_owned();
+        }
+        id
+    }
+
     #[test]
     fn 같은_이름은_번호를_붙여_피한다() {
         let mut store = SiteStore::new();
@@ -308,15 +322,10 @@ mod tests {
         // `hide`는 표시만 세운다 — 저장소에서 지우는 것은 `remove`뿐이다.
         // (사이드바 `삭제`가 함께 걷어내는 연결·탭·큐는 이 저장소 밖의 일이다)
         let mut store = SiteStore::new();
-        let kept = store.add("보이는 사이트");
-        let hidden = store.add("숨긴 사이트");
         // **호스트를 채워야 「숨김」만이 사라진 사유가 된다** — 비워 두면 호스트 필터로도
         // 사라져 이 시험이 무엇을 재는지 흐려진다 (FR-29)
-        for id in [kept, hidden] {
-            if let Some(site) = store.get_mut(id) {
-                site.host = "example.test".to_owned();
-            }
-        }
+        let kept = add_site(&mut store, "보이는 사이트");
+        let hidden = add_site(&mut store, "숨긴 사이트");
         store.hide(hidden);
 
         assert!(store.is_hidden(hidden));
@@ -341,12 +350,9 @@ mod tests {
         let mut store = SiteStore::new();
         let 빈칸 = store.add("아직 안 적은 사이트");
         let 공백만 = store.add("공백만 적은 사이트");
-        let 제대로 = store.add("주소를 적은 사이트");
+        add_site(&mut store, "주소를 적은 사이트");
         if let Some(site) = store.get_mut(공백만) {
             site.host = "   ".to_owned();
-        }
-        if let Some(site) = store.get_mut(제대로) {
-            site.host = "example.test".to_owned();
         }
 
         let visible: Vec<&str> = store.visible().map(|site| site.name.as_str()).collect();
@@ -360,10 +366,7 @@ mod tests {
     fn 차례를_바꾸면_그_차례로_보인다() {
         let mut store = SiteStore::new();
         for name in ["첫째", "둘째", "셋째"] {
-            let id = store.add(name);
-            if let Some(site) = store.get_mut(id) {
-                site.host = "example.test".to_owned();
-            }
+            add_site(&mut store, name);
         }
         let names = |store: &SiteStore| -> Vec<String> {
             store.sites().iter().map(|site| site.name.clone()).collect()
@@ -375,8 +378,9 @@ mod tests {
         // 뒤의 것을 앞으로
         assert!(store.reorder(2, 0));
         assert_eq!(names(&store), vec!["첫째", "둘째", "셋째"]);
-        // 제자리
-        assert!(store.reorder(1, 1));
+        // 제자리는 바꿀 것이 없어 `false`다 — 즐겨찾기·워크스페이스와 같은 규약이라
+        // 부르는 쪽이 이 값으로 「바뀌었으니 저장한다」를 판정할 수 있다
+        assert!(!store.reorder(1, 1));
         assert_eq!(names(&store), vec!["첫째", "둘째", "셋째"]);
         // 그 차례가 곧 고르는 자리에 서는 차례다
         let visible: Vec<&str> = store.visible().map(|site| site.name.as_str()).collect();
