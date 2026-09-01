@@ -80,6 +80,16 @@ const LIST_NAME_PAD_X: f32 = 5.0;
 const SELECTED_BG: egui::Color32 = egui::Color32::from_rgb(0x2A, 0x5F, 0xA8);
 const SELECTED_FG: egui::Color32 = egui::Color32::WHITE;
 
+/// 우클릭 메뉴 팝업의 좌우 여백 — 항목 좌우 패딩 두 몫에 숨 쉴 자리 8px.
+///
+/// **폭을 상수로 박지 않고 라벨을 재는 이유**: `egui::Area`는 직전 프레임 크기를 기억해
+/// 다음 프레임의 `max_rect`로 쓰므로, 언어를 바꾸면 기억된 옛 폭 안에서 더 긴 라벨이
+/// 줄바꿈된 채 굳는다(`Popup::width`는 저장된 크기가 있으면 무시된다).
+/// `titlebar::settings_menu_width`가 같은 이유로 같은 셈을 한다
+const MENU_PAD_X: f32 = theme::MENU_ITEM_PAD_X * 2.0 + 8.0;
+/// 라벨이 짧은 언어에서 메뉴가 옹색해지지 않게 하는 하한
+const MENU_MIN_WIDTH: f32 = 140.0;
+
 /// 좌측 버튼 3열 — `grid 1fr 1fr 1fr` gap 8px · 28px (`:407-409`).
 ///
 /// **원본의 좌우 여백 30px(`padding 2px 30px 6px`)은 걷어냈다** — 그만큼 버튼 줄이 위
@@ -997,6 +1007,15 @@ impl SiteManager {
                     if response.double_clicked() {
                         row_action = Some(ListAction::StartRename);
                     }
+                    // **우클릭한 줄을 함께 고른다** — 메뉴의 셋은 `apply_list_action`이
+                    // `self.selected`로 처리하는데, `show`가 `picked`를 `action`보다 먼저
+                    // 적용하므로 고르지 않았던 줄을 우클릭해도 그 줄이 대상이 된다
+                    if response.secondary_clicked() {
+                        picked = Some(record.id);
+                    }
+                    if let Some(action) = show_row_menu(&response) {
+                        row_action = Some(action);
+                    }
                     // 끌기 시작 — 임계를 넘기 전에는 아직 클릭일 수 있다
                     if response.drag_started()
                         && let Some(at) = response.interact_pointer_pos()
@@ -1669,6 +1688,63 @@ fn insert_line_y(insert_at: usize, rows: &[egui::Rect]) -> Option<f32> {
     }
 }
 
+/// 우클릭 메뉴 팝업의 폭 — 가장 긴 라벨을 실제 글꼴로 재어 정한다 (`MENU_PAD_X` 주석)
+fn menu_width(ui: &egui::Ui, labels: &[&str]) -> f32 {
+    let font = egui::FontId::proportional(widgets::FORM_FONT_PX);
+    let widest = labels
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), theme::TEXT)
+                .size()
+                .x
+        })
+        .fold(0.0_f32, f32::max);
+    (widest + MENU_PAD_X).max(MENU_MIN_WIDTH)
+}
+
+/// 줄 우클릭 메뉴에 설 항목 — **윗줄 버튼 세 칸과 같은 조작**이다 (FR-27).
+///
+/// 그리기와 나눠 두어 화면 없이 시험한다(`queue_panel::row_menu_items`와 같은 형태).
+/// 문구에 `(R)`·`(D)`·`(I)` 같은 표기를 붙이지 않는다 — 그 표기는 **그 버튼**을 가리키는
+/// 것이라 메뉴에서는 가리킬 대상이 없다(2026-09-02 사용자 결정)
+fn row_menu_items() -> [(&'static str, ListAction); 3] {
+    [
+        (crate::i18n::rename(), ListAction::StartRename),
+        (crate::i18n::delete(), ListAction::Delete),
+        // `복사`는 윗줄의 `복제(I)`와 같은 일이다 — 사이트를 하나 더 만든다.
+        // 클립보드로 설정을 꺼내는 새 기능이 아니다(2026-09-02 사용자 결정 — 그 통로를
+        // 열면 비밀번호를 평문으로 내보내는 자리가 하나 더 생긴다)
+        (crate::i18n::menu_copy(), ListAction::Duplicate),
+    ]
+}
+
+/// 줄 우클릭 메뉴를 그린다 — 고른 조작을 돌려준다 (FR-27).
+///
+/// `SiteManager`·`SiteStore`를 모르고 응답 하나만 받는다 — 목록을 빌려 읽는 루프 안에서
+/// 불리므로 빌림이 겹치지 않아야 한다
+fn show_row_menu(response: &egui::Response) -> Option<ListAction> {
+    let mut picked = None;
+    egui::Popup::context_menu(response).show(|ui| {
+        theme::menu_style(ui);
+        let items = row_menu_items();
+        let labels: Vec<&str> = items.iter().map(|(label, _)| *label).collect();
+        ui.set_width(menu_width(ui, &labels));
+        for (label, action) in items {
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new(label).color(theme::TEXT),
+                ))
+                .clicked()
+            {
+                picked = Some(action);
+                ui.close();
+            }
+        }
+    });
+    picked
+}
+
 /// 목록의 한 줄 — 아이콘·이름. 클릭과 끌기를 함께 보므로 응답을 그대로 돌려준다 (`:396-404`)
 fn show_site_row(
     ui: &mut egui::Ui,
@@ -1821,6 +1897,12 @@ mod tests {
         assert_eq!(crate::i18n::site_export(), "내보내기");
         assert_eq!(crate::i18n::site_import(), "가져오기");
         assert_eq!(crate::i18n::site_new(), "새 사이트");
+        // 우클릭 메뉴 두 벌의 문구도 **원본 인벤토리에 없는 항목**이다 — 사용자 요청
+        // (2026-09-02)으로 더한 것이며, 버튼과 달리 `(R)`·`(D)`·`(I)` 표기를 붙이지 않는다
+        // (그 표기는 그 버튼을 가리키는 것이라 메뉴에서는 가리킬 대상이 없다)
+        assert_eq!(crate::i18n::rename(), "이름 바꾸기");
+        assert_eq!(crate::i18n::delete(), "삭제");
+        assert_eq!(crate::i18n::menu_copy(), "복사");
         assert_eq!(crate::i18n::site_tab_general(), "일반");
         assert_eq!(crate::i18n::site_tab_transfer(), "전송 설정");
         assert_eq!(crate::i18n::site_tab_charset(), "문자셋");
@@ -2155,6 +2237,29 @@ mod tests {
             Some(crate::i18n::site_error_no_host())
         );
         assert_eq!(store.visible().count(), 0);
+    }
+
+    #[test]
+    fn 항목_메뉴_세_줄은_윗줄_버튼과_같은_조작이다() {
+        // FR-27 — 메뉴는 같은 조작에 이르는 두 번째 길이지 새 조작이 아니다.
+        // 윗줄 버튼(`show_list_buttons`)이 내는 셋과 같은 `ListAction`이어야 한다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let items = row_menu_items();
+        assert_eq!(
+            items.map(|(label, _)| label),
+            ["이름 바꾸기", "삭제", "복사"],
+            "문구에 단축키 표기를 붙이지 않는다"
+        );
+        assert_eq!(
+            items.map(|(_, action)| action),
+            [
+                ListAction::StartRename,
+                ListAction::Delete,
+                ListAction::Duplicate
+            ],
+            "윗줄 버튼 세 칸과 같은 조작이다"
+        );
     }
 
     #[test]
