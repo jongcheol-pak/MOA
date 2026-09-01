@@ -938,8 +938,6 @@ impl SiteManager {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         child.spacing_mut().item_spacing.y = 0.0;
-        // 웰 밖으로 흘러넘치지 않게 자른다 — 사이트가 많으면 아래쪽이 잘린다
-        child.set_clip_rect(rows);
         let mut picked = None;
         let mut rename_done = false;
         // **레코드마다 반드시 한 칸을 넣는다** — 이름 바꾸는 중인 줄도 자리를 차지하므로,
@@ -947,44 +945,56 @@ impl SiteManager {
         let mut row_rects = Vec::with_capacity(store.sites().len());
         // 편집기를 그리기 전에 빼 둔다 — 루프 안에서는 `renaming`을 빌리고 있어 함께 못 읽는다
         let focus = std::mem::take(&mut self.rename_focus);
-        for (index, record) in store.sites().iter().enumerate() {
-            let selected = self.selected == Some(record.id);
-            let dot = if connected.contains(&record.id) {
-                theme::OK_DOT
-            } else {
-                theme::TEXT_DIM
-            };
-            // 이름 바꾸는 중인 줄만 편집기로 바뀐다 — 그 줄은 끌 수 없다(글자를 고르는 중이다)
-            if selected && let Some(name) = &mut self.renaming {
-                let (rect, done) = show_rename_row(&mut child, name, dot, focus);
-                row_rects.push(rect);
-                rename_done = done;
-                continue;
-            }
-            let response = show_site_row(&mut child, &record.name, dot, selected);
-            row_rects.push(response.rect);
-            if response.clicked() {
-                picked = Some(record.id);
-            }
-            // 끌기 시작 — 임계를 넘기 전에는 아직 클릭일 수 있다
-            if response.drag_started()
-                && let Some(at) = response.interact_pointer_pos()
-            {
-                self.drag = Some(SiteDrag {
-                    from: index,
-                    start: at,
-                    active: false,
-                });
-            }
-            if response.dragged()
-                && let (Some(drag), Some(at)) =
-                    (self.drag.as_mut(), response.interact_pointer_pos())
-                && (at - drag.start).length() >= widgets::DRAG_THRESHOLD
-            {
-                drag.active = true;
-            }
-        }
-        let action = self.finish_site_drag(&child, &row_rects);
+        // **웰을 넘치면 스크롤한다** — 종전에는 `set_clip_rect`로 자르기만 해 넘친 사이트가
+        // 아예 닿을 수 없었다(고를 수도, 끌어 옮길 수도 없었다). 사이드바와 같은 부품이다.
+        //
+        // `show`는 **모든 줄을 레이아웃한 뒤 잘라 보이므로** 화면 밖 줄의 사각형도 그대로
+        // 잡힌다 — 위 「레코드마다 한 칸」이 스크롤 뒤에도 성립하는 근거다(줄만 그리는
+        // `show_rows`를 쓰면 그 전제가 깨진다)
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(&mut child, |ui| {
+                for (index, record) in store.sites().iter().enumerate() {
+                    let selected = self.selected == Some(record.id);
+                    let dot = if connected.contains(&record.id) {
+                        theme::OK_DOT
+                    } else {
+                        theme::TEXT_DIM
+                    };
+                    // 이름 바꾸는 중인 줄만 편집기로 바뀐다 — 그 줄은 끌 수 없다(글자를 고르는 중이다)
+                    if selected && let Some(name) = &mut self.renaming {
+                        let (rect, done) = show_rename_row(ui, name, dot, focus);
+                        row_rects.push(rect);
+                        rename_done = done;
+                        continue;
+                    }
+                    let response = show_site_row(ui, &record.name, dot, selected);
+                    row_rects.push(response.rect);
+                    if response.clicked() {
+                        picked = Some(record.id);
+                    }
+                    // 끌기 시작 — 임계를 넘기 전에는 아직 클릭일 수 있다
+                    if response.drag_started()
+                        && let Some(at) = response.interact_pointer_pos()
+                    {
+                        self.drag = Some(SiteDrag {
+                            from: index,
+                            start: at,
+                            active: false,
+                        });
+                    }
+                    if response.dragged()
+                        && let (Some(drag), Some(at)) =
+                            (self.drag.as_mut(), response.interact_pointer_pos())
+                        && (at - drag.start).length() >= widgets::DRAG_THRESHOLD
+                    {
+                        drag.active = true;
+                    }
+                }
+            });
+        // **삽입선은 웰 안쪽(`rows`)에 긋는다** — 스크롤 영역의 콘텐츠 사각형은 줄 수만큼
+        // 길어져 있어 그것을 폭으로 쓰면 선이 웰 밖으로 뻗는다
+        let action = self.finish_site_drag(&child, rows, &row_rects);
         (picked, rename_done, action)
     }
 
@@ -992,7 +1002,12 @@ impl SiteManager {
     ///
     /// 워크스페이스·즐겨찾기와 같은 얼개다 — 임계를 못 넘은 제스처는 클릭으로 이미
     /// 처리됐으므로 버튼을 떼는 순간 상태만 비운다
-    fn finish_site_drag(&mut self, ui: &egui::Ui, rows: &[egui::Rect]) -> Option<ListAction> {
+    fn finish_site_drag(
+        &mut self,
+        ui: &egui::Ui,
+        well: egui::Rect,
+        rows: &[egui::Rect],
+    ) -> Option<ListAction> {
         let drag = self.drag.as_ref()?;
         if !drag.active {
             if ui.input(|i| !i.pointer.any_down()) {
@@ -1010,10 +1025,13 @@ impl SiteManager {
         let insert_at = insert_index_at(at.y, rows);
         if let Some(y) = insert_line_y(insert_at, rows) {
             let line = egui::Rect::from_min_size(
-                egui::pos2(ui.max_rect().left(), y - widgets::INSERT_LINE_HEIGHT / 2.0),
-                egui::vec2(ui.max_rect().width(), widgets::INSERT_LINE_HEIGHT),
+                egui::pos2(well.left(), y - widgets::INSERT_LINE_HEIGHT / 2.0),
+                egui::vec2(well.width(), widgets::INSERT_LINE_HEIGHT),
             );
-            ui.painter().rect_filled(line, 0.0, theme::ACCENT);
+            // 스크롤로 밀려 웰 밖에 놓일 자리가 잡히면 그 선은 그리지 않는다
+            if well.intersects(line) {
+                ui.painter().rect_filled(line, 0.0, theme::ACCENT);
+            }
         }
         if ui.input(|i| !i.pointer.any_down()) {
             self.drag = None;
@@ -2175,7 +2193,9 @@ mod tests {
         let mut action = None;
         let _ = ctx.run_ui(Default::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                action = manager.finish_site_drag(ui, &rows);
+                let well =
+                    egui::Rect::from_min_size(egui::pos2(0.0, 90.0), egui::vec2(200.0, 100.0));
+                action = manager.finish_site_drag(ui, well, &rows);
             });
         });
         assert_eq!(action, None, "임계를 못 넘었으면 조작이 없다");
@@ -2526,6 +2546,37 @@ mod tests {
         assert_eq!(draft.transfer_mode, TransferMode::Active);
         assert!(draft.encoding_enabled());
         assert_eq!(draft.encoding, "EUC-KR");
+    }
+
+    #[test]
+    fn 웰을_넘치는_사이트도_전부_자리를_갖는다() {
+        // 목록에 스크롤을 넣으면서 「레코드마다 한 칸」이 깨질 수 있었다 — `ScrollArea::show`는
+        // 모든 줄을 레이아웃한 뒤 잘라 보이므로 화면 밖 줄의 사각형도 그대로 잡힌다.
+        // 그 전제가 무너지면 끌어 옮길 때 인덱스가 밀려 엉뚱한 자리로 간다.
+        //
+        // 웰 높이는 본문 574px에서 버튼 두 줄 몫을 뺀 자리라 24px 줄로 20개면 확실히 넘친다
+        let mut store = SiteStore::new();
+        for i in 0..20 {
+            let id = store.add(&format!("사이트 {i}"));
+            if let Some(site) = store.get_mut(id) {
+                site.host = "example.test".to_owned();
+            }
+        }
+        let 마지막 = store.sites()[19].id;
+        let mut manager = SiteManager::new();
+        manager.open(&store, Some(마지막));
+
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            manager.show(ui.ctx(), &mut store, &[]);
+        });
+
+        // 맨 끝 사이트를 맨 앞으로 옮겨도 자리가 밀리지 않는다
+        let to = widgets::reorder_target(19, 0).expect("자리가 바뀐다");
+        manager.apply_list_action(ListAction::Reorder(19, to), &mut store);
+        assert_eq!(store.sites()[0].name, "사이트 19");
+        assert_eq!(store.sites()[1].name, "사이트 0");
+        assert_eq!(manager.selected, Some(마지막), "고른 사이트는 그대로다");
     }
 
     #[test]
