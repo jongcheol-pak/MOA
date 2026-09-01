@@ -249,6 +249,19 @@ struct BodyOutcome {
     rename_done: bool,
 }
 
+/// 목록을 끌어 차례를 바꾸는 중인 상태 (FR-27).
+///
+/// 워크스페이스 카드(`ui::sidebar`)·즐겨찾기(`ui::tree`)와 같은 벌이다 — 임계를 넘어야
+/// 재정렬로 보고, 그 전에는 클릭이라 선택이 그대로 일어난다
+#[derive(Debug)]
+struct SiteDrag {
+    /// 끌기 시작한 줄의 자리 — `store.sites()`의 인덱스와 같다
+    from: usize,
+    start: egui::Pos2,
+    /// 임계를 넘어 실제 재정렬로 전환됐는가
+    active: bool,
+}
+
 /// 아랫줄 한 줄에서 나온 조작 — 성격이 다른 둘이 같은 줄에 선다.
 ///
 /// `새 사이트`는 목록을 고치고 `내보내기`·`가져오기`는 파일을 주고받는다. 한 줄이 둘을
@@ -266,9 +279,12 @@ enum ListAction {
     Delete,
     Duplicate,
     /// `새 사이트` — 기본 이름의 빈 사이트를 목록에 곧바로 더하고 그것을 고른다 (FR-27).
-    /// **고른 사이트가 없어도 되는 유일한 조작**이라 `apply_list_action`의 선택 가드보다
+    /// **고른 사이트가 없어도 되는 조작**이라 `apply_list_action`의 선택 가드보다
     /// 앞에서 갈린다
     New,
+    /// 끌어 놓아 차례를 바꾼다 — `from` 줄을 목록의 `to` 자리로 옮긴다 (FR-27).
+    /// 끄는 줄과 고른 줄이 다를 수 있어 이것도 선택 가드보다 앞에서 갈린다
+    Reorder(usize, usize),
 }
 
 /// 편집 중인 사이트 설정 한 벌.
@@ -471,6 +487,8 @@ pub struct SiteManager {
     pending_file: Option<FileRequest>,
     /// 앱이 알림으로 띄울 결과 문구 — 마찬가지로 한 번만 꺼내 간다
     notice: Option<String>,
+    /// 목록을 끌어 차례를 바꾸는 중인 상태 (FR-27) — 대화가 열려 있는 동안만 산다
+    drag: Option<SiteDrag>,
 }
 
 impl SiteManager {
@@ -530,6 +548,8 @@ impl SiteManager {
         // 그만두겠다는 뜻이라, 닫은 뒤에 파일 창이 뒤늦게 뜨는 편이 오히려 놀랍다
         self.exchange = Exchange::Idle;
         self.pending_file = None;
+        // 끌던 것도 접는다 — 다음에 열 때 끌던 상태로 시작하면 안 된다
+        self.drag = None;
         self.renaming = None;
         self.rename_focus = false;
         self.error = None;
@@ -614,13 +634,22 @@ impl SiteManager {
 
     /// 좌측 버튼들을 목록에 반영한다 (Acceptance ⑤)
     fn apply_list_action(&mut self, action: ListAction, store: &mut SiteStore) {
-        // `새 사이트`만은 고른 것이 없어도 할 일이 있다 — 아래 가드보다 앞에서 갈린다.
-        // 호스트가 빈 채로 만들어지므로 사이드바·연결 메뉴·새 탭 메뉴에는 서지 않고
-        // (`SiteStore::visible`), 사용자가 주소를 적어 `확인(O)`을 눌러야 등록이 끝난다
-        if action == ListAction::New {
-            let id = store.add(crate::i18n::site_default_name());
-            self.select(store, id);
-            return;
+        // 아래 둘은 고른 것이 없어도 할 일이 있어 선택 가드보다 앞에서 갈린다
+        match action {
+            // 호스트가 빈 채로 만들어지므로 사이드바·연결 메뉴·새 탭 메뉴에는 서지 않고
+            // (`SiteStore::visible`), 사용자가 주소를 적어 `확인(O)`을 눌러야 등록이 끝난다
+            ListAction::New => {
+                let id = store.add(crate::i18n::site_default_name());
+                self.select(store, id);
+                return;
+            }
+            // 끄는 줄과 고른 줄이 다를 수 있다. **고른 사이트는 그대로다** —
+            // `selected`가 `SiteId`라 자리가 바뀌어도 가리키는 곳이 흔들리지 않는다
+            ListAction::Reorder(from, to) => {
+                store.reorder(from, to);
+                return;
+            }
+            _ => {}
         }
         let Some(id) = self.selected else {
             // 고른 사이트가 없으면 할 것이 없다 (plan Edge Case: 사이트 0개에서 `삭제(D)`)
@@ -639,7 +668,7 @@ impl SiteManager {
                 }
             }
             // 위에서 이미 갈라져 여기 닿지 않는다
-            ListAction::New => {}
+            ListAction::New | ListAction::Reorder(..) => {}
         }
     }
 
@@ -833,14 +862,15 @@ impl SiteManager {
             egui::pos2(left.right() + BODY_GAP, content.top()),
             content.max,
         );
-        let (picked, rename_done) = self.show_list(ui, left, store, connected);
+        let (picked, rename_done, dragged) = self.show_list(ui, left, store, connected);
         // **두 줄을 모두 그린 뒤에 고른다** — 즉시 모드라 그리기를 건너뛰면 그 줄이
         // 화면에서 사라진다. `ListAction`의 생산자가 둘이 되므로 뒤에 그린 아랫줄이
         // 이긴다: 포인터가 하나라 한 프레임에 두 칸이 함께 눌릴 일은 없고, 그래도
         // 겹치면 사용자가 마지막으로 누른 것을 택한다
         let top_action = self.show_list_buttons(ui, left);
         let bottom = self.show_bottom_buttons(ui, left, store);
-        let action = bottom.list.or(top_action);
+        // 끌어 놓기가 가장 먼저 그려졌으므로 버튼 줄이 그것을 덮는다
+        let action = bottom.list.or(top_action).or(dragged);
         let exchange = bottom.exchange;
         self.show_tabs(ui, right);
         // 이미 연결된 사이트의 전송 모드를 바꿨으면 그 사실을 알린다 (plan Edge Case)
@@ -880,7 +910,7 @@ impl SiteManager {
         column: egui::Rect,
         store: &SiteStore,
         connected: &[SiteId],
-    ) -> (Option<SiteId>, bool) {
+    ) -> (Option<SiteId>, bool, Option<ListAction>) {
         ui.painter().text(
             egui::pos2(column.left(), column.top() + LIST_LABEL_HEIGHT / 2.0),
             egui::Align2::LEFT_CENTER,
@@ -911,25 +941,84 @@ impl SiteManager {
         child.set_clip_rect(rows);
         let mut picked = None;
         let mut rename_done = false;
+        // **레코드마다 반드시 한 칸을 넣는다** — 이름 바꾸는 중인 줄도 자리를 차지하므로,
+        // 한 칸이라도 건너뛰면 그 아래가 전부 밀려 엉뚱한 자리로 옮겨진다
+        let mut row_rects = Vec::with_capacity(store.sites().len());
         // 편집기를 그리기 전에 빼 둔다 — 루프 안에서는 `renaming`을 빌리고 있어 함께 못 읽는다
         let focus = std::mem::take(&mut self.rename_focus);
-        for record in store.sites() {
+        let mut started = None;
+        for (index, record) in store.sites().iter().enumerate() {
             let selected = self.selected == Some(record.id);
             let dot = if connected.contains(&record.id) {
                 theme::OK_DOT
             } else {
                 theme::TEXT_DIM
             };
-            // 이름 바꾸는 중인 줄만 편집기로 바뀐다
+            // 이름 바꾸는 중인 줄만 편집기로 바뀐다 — 그 줄은 끌 수 없다(글자를 고르는 중이다)
             if selected && let Some(name) = &mut self.renaming {
-                rename_done = show_rename_row(&mut child, name, dot, focus);
+                let (rect, done) = show_rename_row(&mut child, name, dot, focus);
+                row_rects.push(rect);
+                rename_done = done;
                 continue;
             }
-            if show_site_row(&mut child, &record.name, dot, selected) {
+            let response = show_site_row(&mut child, &record.name, dot, selected);
+            row_rects.push(response.rect);
+            if response.clicked() {
                 picked = Some(record.id);
             }
+            // 끌기 시작 — 임계를 넘기 전에는 아직 클릭일 수 있다
+            if response.drag_started()
+                && let Some(at) = response.interact_pointer_pos()
+            {
+                started = Some(SiteDrag {
+                    from: index,
+                    start: at,
+                    active: false,
+                });
+            }
+            if response.dragged()
+                && let (Some(drag), Some(at)) =
+                    (self.drag.as_mut(), response.interact_pointer_pos())
+                && (at - drag.start).length() >= widgets::DRAG_THRESHOLD
+            {
+                drag.active = true;
+            }
         }
-        (picked, rename_done)
+        if let Some(drag) = started {
+            self.drag = Some(drag);
+        }
+        let action = self.finish_site_drag(&child, &row_rects);
+        (picked, rename_done, action)
+    }
+
+    /// 끌던 줄을 놓은 자리를 계산해 조작을 올린다. 끄는 중이면 놓일 자리에 선을 긋는다.
+    ///
+    /// 워크스페이스·즐겨찾기와 같은 얼개다 — 임계를 못 넘은 제스처는 클릭으로 이미
+    /// 처리됐으므로 버튼을 떼는 순간 상태만 비운다
+    fn finish_site_drag(&mut self, ui: &egui::Ui, rows: &[egui::Rect]) -> Option<ListAction> {
+        let drag = self.drag.as_ref()?;
+        if !drag.active {
+            if ui.input(|i| !i.pointer.any_down()) {
+                self.drag = None;
+            }
+            return None;
+        }
+        let from = drag.from;
+        let at = ui.input(|i| i.pointer.interact_pos())?;
+        let insert_at = insert_index_at(at.y, rows);
+        if let Some(y) = insert_line_y(insert_at, rows) {
+            let line = egui::Rect::from_min_size(
+                egui::pos2(ui.max_rect().left(), y - widgets::INSERT_LINE_HEIGHT / 2.0),
+                egui::vec2(ui.max_rect().width(), widgets::INSERT_LINE_HEIGHT),
+            );
+            ui.painter().rect_filled(line, 0.0, theme::ACCENT);
+        }
+        if ui.input(|i| !i.pointer.any_down()) {
+            self.drag = None;
+            return widgets::reorder_target(from, insert_at)
+                .map(|to| ListAction::Reorder(from, to));
+        }
+        None
     }
 
     /// **윗줄** 버튼이 시작하는 y — 목록 웰의 아래끝을 정하는 데도 쓴다.
@@ -1508,11 +1597,33 @@ fn button_cell(ui: &mut egui::Ui, label: &str, enabled: bool, width: f32) -> boo
     .clicked()
 }
 
-/// 목록의 한 줄 — 아이콘·이름. 눌렸으면 `true` (`:396-404`)
-fn show_site_row(ui: &mut egui::Ui, name: &str, dot: egui::Color32, selected: bool) -> bool {
+/// 마우스 y가 줄들 사이 어디에 놓이는가 — `0..=rows.len()`.
+/// 줄 가운데를 지났으면 그 줄 아래로 본다.
+///
+/// **`ui::tree`의 즐겨찾기 정렬과 같은 셈**이다 — 이름 바꾸는 중인 줄이 편집기로 바뀌어
+/// 높이가 갈릴 수 있어, 고정 피치로 나누는 사이드바 방식이 아니라 실제 사각형으로 잰다
+fn insert_index_at(y: f32, rows: &[egui::Rect]) -> usize {
+    rows.iter().filter(|rect| y > rect.center().y).count()
+}
+
+/// 그 삽입 자리에 그을 가로선의 y — 줄이 하나도 없으면 `None`
+fn insert_line_y(insert_at: usize, rows: &[egui::Rect]) -> Option<f32> {
+    match insert_at {
+        0 => Some(rows.first()?.top()),
+        _ => Some(rows.get(insert_at - 1)?.bottom()),
+    }
+}
+
+/// 목록의 한 줄 — 아이콘·이름. 클릭과 끌기를 함께 보므로 응답을 그대로 돌려준다 (`:396-404`)
+fn show_site_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    dot: egui::Color32,
+    selected: bool,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), LIST_ROW_HEIGHT),
-        egui::Sense::click(),
+        egui::Sense::click_and_drag(),
     );
     let text_left = paint_row_icon(ui, rect, dot);
     let text = ui.painter().layout(
@@ -1543,12 +1654,17 @@ fn show_site_row(ui: &mut egui::Ui, name: &str, dot: egui::Color32, selected: bo
         text,
         color,
     );
-    response.clicked()
+    response
 }
 
 /// 이름 바꾸는 중인 줄 — 편집이 끝났으면 `true` (Enter 또는 포커스를 잃었을 때).
 /// `focus`는 편집기가 처음 뜬 프레임에만 참이다
-fn show_rename_row(ui: &mut egui::Ui, name: &mut String, dot: egui::Color32, focus: bool) -> bool {
+fn show_rename_row(
+    ui: &mut egui::Ui,
+    name: &mut String,
+    dot: egui::Color32,
+    focus: bool,
+) -> (egui::Rect, bool) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), LIST_ROW_HEIGHT),
         egui::Sense::hover(),
@@ -1571,9 +1687,10 @@ fn show_rename_row(ui: &mut egui::Ui, name: &mut String, dot: egui::Color32, foc
     // 편집을 마치는 길이 통째로 막힌다
     if focus {
         response.request_focus();
-        return false;
+        return (rect, false);
     }
-    response.lost_focus() || child.input(|input| input.key_pressed(egui::Key::Enter))
+    let done = response.lost_focus() || child.input(|input| input.key_pressed(egui::Key::Enter));
+    (rect, done)
 }
 
 /// 행 왼쪽의 문서 아이콘 — 원본은 작은 사각형 조각으로 그린다 (`:397-402`).
@@ -1965,6 +2082,101 @@ mod tests {
             Some(crate::i18n::site_error_no_host())
         );
         assert_eq!(store.visible().count(), 0);
+    }
+
+    #[test]
+    fn 삽입_자리는_줄_가운데를_기준으로_갈린다() {
+        // 줄 셋을 20px 높이로 세운다 (`ui::tree`의 즐겨찾기 정렬과 같은 셈)
+        let rows: Vec<egui::Rect> = (0..3)
+            .map(|i| {
+                egui::Rect::from_min_size(
+                    egui::pos2(0.0, 100.0 + i as f32 * 20.0),
+                    egui::vec2(200.0, 20.0),
+                )
+            })
+            .collect();
+
+        assert_eq!(insert_index_at(105.0, &rows), 0, "첫 줄 위쪽 절반 → 맨 앞");
+        assert_eq!(
+            insert_index_at(115.0, &rows),
+            1,
+            "첫 줄 가운데를 지나면 그 아래"
+        );
+        assert_eq!(insert_index_at(135.0, &rows), 2, "가운데 줄 아래쪽 절반");
+        assert_eq!(insert_index_at(9999.0, &rows), 3, "마지막 줄 아래 → 맨 끝");
+        assert_eq!(
+            insert_index_at(0.0, &rows),
+            0,
+            "웰 위로 벗어나도 맨 앞으로 잘린다"
+        );
+        // 줄이 없으면 그을 선도 없다
+        assert_eq!(insert_index_at(100.0, &[]), 0);
+        assert_eq!(insert_line_y(0, &[]), None);
+        // 선은 그 자리 앞줄의 아래끝(또는 첫 줄의 위끝)에 그어진다
+        assert_eq!(insert_line_y(0, &rows), Some(100.0));
+        assert_eq!(insert_line_y(3, &rows), Some(160.0));
+    }
+
+    #[test]
+    fn 끌어_놓으면_차례가_바뀌고_고른_사이트는_그대로다() {
+        // FR-27 — 자리가 바뀌어도 `selected`는 `SiteId`라 가리키는 곳이 흔들리지 않는다
+        let mut store = SiteStore::new();
+        let ids: Vec<SiteId> = ["첫째", "둘째", "셋째"]
+            .into_iter()
+            .map(|name| {
+                let id = store.add(name);
+                if let Some(site) = store.get_mut(id) {
+                    site.host = "example.test".to_owned();
+                }
+                id
+            })
+            .collect();
+        let mut manager = SiteManager::new();
+        manager.open(&store, Some(ids[0]));
+        assert_eq!(manager.selected, Some(ids[0]));
+
+        // 첫째를 맨 끝으로 끈다 — 삽입 자리 3 → 목적지 2
+        let to = widgets::reorder_target(0, 3).expect("자리가 바뀐다");
+        manager.apply_list_action(ListAction::Reorder(0, to), &mut store);
+        let names: Vec<&str> = store.sites().iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["둘째", "셋째", "첫째"]);
+        assert_eq!(manager.selected, Some(ids[0]), "고른 사이트는 그대로다");
+        // 그 차례가 곧 고르는 자리에 서는 차례다
+        let visible: Vec<&str> = store.visible().map(|s| s.name.as_str()).collect();
+        assert_eq!(visible, vec!["둘째", "셋째", "첫째"]);
+    }
+
+    #[test]
+    fn 제자리에_놓거나_사이트가_하나뿐이면_차례가_그대로다() {
+        // 자기 앞·자기 뒤로 놓는 것은 바꿀 것이 없다
+        assert_eq!(widgets::reorder_target(1, 1), None, "자기 앞");
+        assert_eq!(widgets::reorder_target(1, 2), None, "자기 뒤");
+        // 사이트가 하나면 어디에 놓아도 제자리다
+        assert_eq!(widgets::reorder_target(0, 0), None);
+        assert_eq!(widgets::reorder_target(0, 1), None);
+    }
+
+    #[test]
+    fn 임계를_못_넘은_끌기는_차례를_바꾸지_않는다() {
+        // 그 전에는 클릭이라 선택만 일어난다. 임계 값은 `ui::widgets`가 하나로 갖는다
+        let mut manager = SiteManager::new();
+        manager.drag = Some(SiteDrag {
+            from: 0,
+            start: egui::pos2(10.0, 10.0),
+            active: false,
+        });
+        let ctx = egui::Context::default();
+        let rows = vec![egui::Rect::from_min_size(
+            egui::pos2(0.0, 100.0),
+            egui::vec2(200.0, 20.0),
+        )];
+        let mut action = None;
+        let _ = ctx.run_ui(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                action = manager.finish_site_drag(ui, &rows);
+            });
+        });
+        assert_eq!(action, None, "임계를 못 넘었으면 조작이 없다");
     }
 
     #[test]
