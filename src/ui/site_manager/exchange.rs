@@ -1,7 +1,9 @@
 //! 사이트 목록 내보내기·가져오기 흐름 (FR-59) — `ui::site_manager`의 자식 모듈.
 //!
-//! 좌측 아랫줄 버튼 둘과 그 뒤에 이어지는 대화 둘(가져오기 암호 · 겹치는 사이트 확인)이
-//! 여기 있다. **내보내기 쪽에는 대화가 없다** — 봉인을 앱 내장 키로 하므로 물을 것이 없고,
+//! 좌측 아랫줄의 `내보내기`·`가져오기`를 누른 뒤에 이어지는 흐름이 여기 있다 — 상태 기계와
+//! 대화 둘(가져오기 암호 · 겹치는 사이트 확인)이다. **그 줄을 그리는 것은 부모**다
+//! (`SiteManager::show_bottom_buttons`) — `새 사이트`가 같은 줄에 들어오면서 그 줄이 더는
+//! 파일을 주고받는 줄이 아니게 됐다. **내보내기 쪽에는 대화가 없다** — 봉인을 앱 내장 키로 하므로 물을 것이 없고,
 //! 버튼을 누르면 곧바로 저장할 자리를 청한다. 부모(`SiteManager`)의 private 필드를 그대로
 //! 만지므로 가시성을 넓히지 않는다 — 모듈을 나눈 까닭은 부모 파일의 모듈 주석에 있다.
 //!
@@ -28,7 +30,7 @@ const DIALOG_TITLE_PX: f32 = 16.0;
 /// 미리 보기가 잘렸음을 알리는 표식 — 같은 이름 확인 대화와 같은 글자다
 const OVERFLOW_MARK: &str = "\u{2026}";
 
-/// 좌측 아랫줄 버튼 둘 (FR-59)
+/// 아랫줄 세 칸 중 파일을 주고받는 둘 (FR-59) — 나머지 한 칸은 `ListAction::New`다
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExchangeAction {
     Export,
@@ -129,7 +131,7 @@ impl SiteManager {
         self.exchange = Exchange::KeyWaitFile;
     }
 
-    /// 좌측 아랫줄 버튼을 흐름으로 잇는다 (FR-59)
+    /// 그 두 칸이 누른 것을 흐름으로 잇는다 (FR-59)
     pub(super) fn apply_exchange_action(&mut self, action: ExchangeAction) {
         self.error = None;
         self.exchange = match action {

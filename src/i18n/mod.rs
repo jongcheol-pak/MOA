@@ -613,7 +613,7 @@ strings! {
         / "MOA site list (*.moasites)";
     /// 내보내기 대화에 미리 채워 두는 파일 이름
     file_dialog_export_name => "MOA 사이트.moasites" / "MOA sites.moasites";
-    /// 사이트 관리자 좌측 아랫줄 버튼 둘
+    /// 아랫줄 세 칸 중 뒤의 둘 (앞 칸은 `site_new`)
     site_export => "내보내기" / "Export";
     site_import => "가져오기" / "Import";
     /// 가져오기 암호 대화 — **내보내기 쪽에는 대화가 없다**(앱 내장 키로 봉하므로 물을 것이 없다)

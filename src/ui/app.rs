@@ -1781,7 +1781,7 @@ impl ExplorerApp {
         let outcome = self.site_manager.show(ctx, &mut self.sites, &connected);
         match outcome {
             SiteManagerOutcome::None => {}
-            // 대화 안에서 이름 바꾸기·삭제·복제로 목록이 바뀌었을 수 있다 — 닫을 때 함께 적는다
+            // 대화 안에서 목록이 바뀌었을 수 있다(이름·삭제·복제·추가·차례) — 닫을 때 함께 적는다
             SiteManagerOutcome::Close => self.persist_session(),
             // 등록만 했으면 그 사실을 짧게 알린다 (인벤토리 #89·#91)
             SiteManagerOutcome::Register(site) => {
