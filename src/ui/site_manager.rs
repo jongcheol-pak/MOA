@@ -1001,12 +1001,16 @@ impl SiteManager {
     /// 끌던 줄을 놓은 자리를 계산해 조작을 올린다. 끄는 중이면 놓일 자리에 선을 긋는다.
     ///
     /// 워크스페이스·즐겨찾기와 같은 얼개다 — 임계를 못 넘은 제스처는 클릭으로 이미
-    /// 처리됐으므로 버튼을 떼는 순간 상태만 비운다
+    /// 처리됐으므로 버튼을 떼는 순간 상태만 비운다.
+    ///
+    /// `bounds`는 **줄들이 보이는 자리**(웰 안쪽 패딩까지 들어간 사각형)다 — 삽입선의 폭과
+    /// 잘림 판정에 쓴다. 스크롤 영역의 콘텐츠 사각형은 줄 수만큼 길어져 있어 그것을 쓰면
+    /// 선이 웰 밖으로 뻗는다
     fn finish_site_drag(
         &mut self,
         ui: &egui::Ui,
-        well: egui::Rect,
-        rows: &[egui::Rect],
+        bounds: egui::Rect,
+        row_rects: &[egui::Rect],
     ) -> Option<ListAction> {
         let drag = self.drag.as_ref()?;
         if !drag.active {
@@ -1022,14 +1026,14 @@ impl SiteManager {
             self.drag = None;
             return None;
         };
-        let insert_at = insert_index_at(at.y, rows);
-        if let Some(y) = insert_line_y(insert_at, rows) {
+        let insert_at = insert_index_at(at.y, row_rects);
+        if let Some(y) = insert_line_y(insert_at, row_rects) {
             let line = egui::Rect::from_min_size(
-                egui::pos2(well.left(), y - widgets::INSERT_LINE_HEIGHT / 2.0),
-                egui::vec2(well.width(), widgets::INSERT_LINE_HEIGHT),
+                egui::pos2(bounds.left(), y - widgets::INSERT_LINE_HEIGHT / 2.0),
+                egui::vec2(bounds.width(), widgets::INSERT_LINE_HEIGHT),
             );
-            // 스크롤로 밀려 웰 밖에 놓일 자리가 잡히면 그 선은 그리지 않는다
-            if well.intersects(line) {
+            // 스크롤로 밀려 보이는 자리 밖에 놓일 곳이 잡히면 그 선은 그리지 않는다
+            if bounds.intersects(line) {
                 ui.painter().rect_filled(line, 0.0, theme::ACCENT);
             }
         }
