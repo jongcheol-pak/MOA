@@ -955,7 +955,11 @@ mod tests {
             crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         // Acceptance ① — 등록된 사이트가 헤더 아래에 줄로 선다
         let mut sites = SiteStore::new();
-        sites.add("배포 서버");
+        let id = sites.add("배포 서버");
+        // 호스트가 있어야 고르는 자리에 선다 (FR-29)
+        if let Some(site) = sites.get_mut(id) {
+            site.host = "example.test".to_owned();
+        }
         let texts = draw_sidebar(&sites, &[]);
         assert!(texts.iter().any(|t| t == "연결"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "배포 서버"), "{texts:?}");
@@ -977,6 +981,10 @@ mod tests {
         // Acceptance ③ · README §1 — 사이트 관리자 목록에는 그대로 남아야 한다
         let mut sites = SiteStore::new();
         let id = sites.add("배포 서버");
+        // **호스트를 채워야 「숨김」만이 사라진 사유가 된다** (FR-29)
+        if let Some(site) = sites.get_mut(id) {
+            site.host = "example.test".to_owned();
+        }
         sites.hide(id);
 
         assert!(sites.get(id).is_some(), "사이트가 저장소에서 지워졌다");

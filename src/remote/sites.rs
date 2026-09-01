@@ -48,11 +48,31 @@ impl SiteStore {
         self.sites.iter_mut().find(|site| site.id == id)
     }
 
-    /// 사이드바에 보일 사이트들 — 숨긴 것은 빠진다
+    /// 사이트를 고르는 자리에 보일 사이트들 — **빠지는 사유가 둘이다**.
+    ///
+    /// ① 사이드바에서 **숨긴 것**(`hide` — 기록은 관리자 목록에 남는다).
+    /// ② **호스트가 빈 것**(FR-29) — 붙을 곳이 없어 골라도 연결이 서지 않는다.
+    /// `새 사이트`로 갓 만들어 아직 주소를 적지 않은 항목이 그것이며, 그대로 두면
+    /// 누를 수 없는 줄이 목록에 눌러앉는다. 이 판정을 화면마다 두지 않고 여기 하나로
+    /// 모은 덕에 사이드바 연결 섹션·`+` 연결 메뉴·새 탭 메뉴가 함께 걸린다
     pub fn visible(&self) -> impl Iterator<Item = &SiteRecord> {
         self.sites
             .iter()
-            .filter(|site| !self.hidden.contains(&site.id))
+            .filter(|site| !self.hidden.contains(&site.id) && !site.host.trim().is_empty())
+    }
+
+    /// 목록의 차례를 바꾼다 (`from`을 **꺼낸 뒤** `to`에 넣는다).
+    ///
+    /// 즐겨찾기·워크스페이스의 `reorder`와 같은 규약이라 부르는 쪽이 목적지를 미리
+    /// 당겨서 준다(`ui::widgets::reorder_target`이 그 변환을 한다). 자리가 범위 밖이면
+    /// 아무것도 하지 않고 `false`
+    pub fn reorder(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.sites.len() || to >= self.sites.len() {
+            return false;
+        }
+        let record = self.sites.remove(from);
+        self.sites.insert(to, record);
+        true
     }
 
     /// 새 사이트를 만든다. 같은 이름이 이미 있으면 `(2)`·`(3)`을 붙여 피한다
@@ -290,6 +310,13 @@ mod tests {
         let mut store = SiteStore::new();
         let kept = store.add("보이는 사이트");
         let hidden = store.add("숨긴 사이트");
+        // **호스트를 채워야 「숨김」만이 사라진 사유가 된다** — 비워 두면 호스트 필터로도
+        // 사라져 이 시험이 무엇을 재는지 흐려진다 (FR-29)
+        for id in [kept, hidden] {
+            if let Some(site) = store.get_mut(id) {
+                site.host = "example.test".to_owned();
+            }
+        }
         store.hide(hidden);
 
         assert!(store.is_hidden(hidden));
@@ -305,6 +332,67 @@ mod tests {
         assert!(!store.is_hidden(hidden));
         assert_eq!(store.sites().len(), 1);
         assert_eq!(store.get(kept).expect("남은 사이트").name, "보이는 사이트");
+    }
+
+    #[test]
+    fn 호스트가_비면_고르는_자리에서_빠진다() {
+        // FR-29 — `새 사이트`로 갓 만들어 주소를 적지 않은 항목이 그것이다.
+        // **숨김과는 다르다**: 기록은 관리자 목록에 그대로 있고 숨김 표시도 서지 않는다
+        let mut store = SiteStore::new();
+        let 빈칸 = store.add("아직 안 적은 사이트");
+        let 공백만 = store.add("공백만 적은 사이트");
+        let 제대로 = store.add("주소를 적은 사이트");
+        if let Some(site) = store.get_mut(공백만) {
+            site.host = "   ".to_owned();
+        }
+        if let Some(site) = store.get_mut(제대로) {
+            site.host = "example.test".to_owned();
+        }
+
+        let visible: Vec<&str> = store.visible().map(|site| site.name.as_str()).collect();
+        assert_eq!(visible, vec!["주소를 적은 사이트"]);
+        assert_eq!(store.sites().len(), 3, "관리자 목록에는 셋 다 있다");
+        assert!(!store.is_hidden(빈칸), "감춘 것이지 숨긴 것이 아니다");
+        assert!(!store.is_hidden(공백만));
+    }
+
+    #[test]
+    fn 차례를_바꾸면_그_차례로_보인다() {
+        let mut store = SiteStore::new();
+        for name in ["첫째", "둘째", "셋째"] {
+            let id = store.add(name);
+            if let Some(site) = store.get_mut(id) {
+                site.host = "example.test".to_owned();
+            }
+        }
+        let names = |store: &SiteStore| -> Vec<String> {
+            store.sites().iter().map(|site| site.name.clone()).collect()
+        };
+
+        // 앞의 것을 뒤로
+        assert!(store.reorder(0, 2));
+        assert_eq!(names(&store), vec!["둘째", "셋째", "첫째"]);
+        // 뒤의 것을 앞으로
+        assert!(store.reorder(2, 0));
+        assert_eq!(names(&store), vec!["첫째", "둘째", "셋째"]);
+        // 제자리
+        assert!(store.reorder(1, 1));
+        assert_eq!(names(&store), vec!["첫째", "둘째", "셋째"]);
+        // 그 차례가 곧 고르는 자리에 서는 차례다
+        let visible: Vec<&str> = store.visible().map(|site| site.name.as_str()).collect();
+        assert_eq!(visible, vec!["첫째", "둘째", "셋째"]);
+    }
+
+    #[test]
+    fn 범위를_벗어난_차례_바꾸기는_아무것도_하지_않는다() {
+        let mut store = SiteStore::new();
+        store.add("하나뿐");
+        assert!(!store.reorder(0, 1), "목적지가 범위 밖이다");
+        assert!(!store.reorder(1, 0), "출발지가 범위 밖이다");
+        assert_eq!(store.sites().len(), 1);
+        // 빈 목록도 마찬가지다
+        let mut empty = SiteStore::new();
+        assert!(!empty.reorder(0, 0));
     }
 
     #[test]

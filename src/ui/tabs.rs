@@ -824,7 +824,11 @@ mod tests {
         let _guard =
             crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
         let mut sites = crate::remote::sites::SiteStore::new();
-        sites.add("배포 서버");
+        let id = sites.add("배포 서버");
+        // 호스트가 있어야 고르는 자리에 선다 (FR-29)
+        if let Some(site) = sites.get_mut(id) {
+            site.host = "example.test".to_owned();
+        }
         let labels = menu_labels(&sites);
         assert!(
             labels.iter().any(|label| label == "새 탭"),
@@ -847,6 +851,10 @@ mod tests {
         // 숨긴 사이트만 남아도 같다 — 목록이 비는 것과 구분되지 않는다
         let mut hidden = crate::remote::sites::SiteStore::new();
         let id = hidden.add("배포 서버");
+        // **호스트를 채워야 「숨김」만이 사라진 사유가 된다** (FR-29)
+        if let Some(site) = hidden.get_mut(id) {
+            site.host = "example.test".to_owned();
+        }
         hidden.hide(id);
         assert_eq!(menu_labels(&hidden), vec!["새 탭".to_owned()]);
     }
