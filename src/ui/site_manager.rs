@@ -946,7 +946,6 @@ impl SiteManager {
         let mut row_rects = Vec::with_capacity(store.sites().len());
         // 편집기를 그리기 전에 빼 둔다 — 루프 안에서는 `renaming`을 빌리고 있어 함께 못 읽는다
         let focus = std::mem::take(&mut self.rename_focus);
-        let mut started = None;
         for (index, record) in store.sites().iter().enumerate() {
             let selected = self.selected == Some(record.id);
             let dot = if connected.contains(&record.id) {
@@ -970,7 +969,7 @@ impl SiteManager {
             if response.drag_started()
                 && let Some(at) = response.interact_pointer_pos()
             {
-                started = Some(SiteDrag {
+                self.drag = Some(SiteDrag {
                     from: index,
                     start: at,
                     active: false,
@@ -983,9 +982,6 @@ impl SiteManager {
             {
                 drag.active = true;
             }
-        }
-        if let Some(drag) = started {
-            self.drag = Some(drag);
         }
         let action = self.finish_site_drag(&child, &row_rects);
         (picked, rename_done, action)
@@ -1004,7 +1000,12 @@ impl SiteManager {
             return None;
         }
         let from = drag.from;
-        let at = ui.input(|i| i.pointer.interact_pos())?;
+        // **위치를 못 얻으면 끌기를 접는다** — `?`로 빠져나가면 놓기 판정도 건너뛰어,
+        // 그 프레임에 버튼을 뗐어도 `active`가 남아 선이 그대로 보인다 (`ui::tree`도 같다)
+        let Some(at) = ui.input(|i| i.pointer.interact_pos()) else {
+            self.drag = None;
+            return None;
+        };
         let insert_at = insert_index_at(at.y, rows);
         if let Some(y) = insert_line_y(insert_at, rows) {
             let line = egui::Rect::from_min_size(
