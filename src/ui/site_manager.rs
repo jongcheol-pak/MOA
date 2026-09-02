@@ -1063,7 +1063,8 @@ impl SiteManager {
     /// 끌던 줄을 놓은 자리를 계산해 조작을 올린다. 끄는 중이면 놓일 자리에 선을 긋는다.
     ///
     /// 워크스페이스·즐겨찾기와 같은 얼개다 — 임계를 못 넘은 제스처는 클릭으로 이미
-    /// 처리됐으므로 버튼을 떼는 순간 상태만 비운다.
+    /// 처리됐으므로 버튼을 떼는 순간 상태만 비운다. **다만 「떼었는가」의 판정 하나가
+    /// 갈렸다** — 이 화면만 1차 버튼을 보고 그쪽 둘은 아직 모든 버튼을 본다(아래 가드 주석).
     ///
     /// `bounds`는 **줄들이 보이는 자리**(웰 안쪽 패딩까지 들어간 사각형)다 — 삽입선의 폭과
     /// 잘림 판정에 쓴다. 스크롤 영역의 콘텐츠 사각형은 줄 수만큼 길어져 있어 그것을 쓰면
@@ -1877,9 +1878,13 @@ fn show_rename_row(
     dot: egui::Color32,
     focus: bool,
 ) -> (egui::Rect, bool) {
+    // **클릭을 감지한다** — 그리기에는 쓰지 않지만, 이 줄이 빈 자리 메뉴의 바탕보다
+    // 위에 서서 2차 클릭을 삼켜야 한다(바탕은 `ScrollArea` 앞에 깔려 있다). `hover()`로
+    // 두면 아이콘 자리처럼 편집기가 덮지 않는 좁은 구간의 우클릭이 바탕에 닿아,
+    // 편집 중인 줄 위에 `새 사이트`·`내보내기`·`가져오기`가 뜬다
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), LIST_ROW_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
     let text_left = paint_row_icon(ui, rect, dot);
     let edit_rect = egui::Rect::from_min_max(egui::pos2(text_left, rect.top()), rect.max);
