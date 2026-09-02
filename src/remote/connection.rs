@@ -111,26 +111,50 @@ pub struct TransferRequest {
     pub remote_size: u64,
 }
 
+/// 목록 조회를 청한 곳 — **요청이 자기 출처를 들고 다닌다**.
+///
+/// 종전에는 `u64` 세대 번호 하나에 **번호 공간을 잘라** 용도를 구분했다(패널은 1부터,
+/// 트리는 `1<<40`, 같은 이름 확인은 `2<<40`). 그 방식은 종류가 늘 때마다 기준값을 하나씩
+/// 더 만들어야 했고, 등록·발송 양쪽에서 손으로 기준값을 더하다 한쪽만 고쳐지면 답이 와도
+/// 찾지 못했다. 출처를 타입으로 실으면 그 왕복 자체가 사라진다.
+///
+/// **`Panel`이 `PanelId`가 아니라 `u32` 둘을 담는 이유**: `remote` 계층은 `app`·`ui`를
+/// 참조하지 않는다(단방향 의존). 워커에게 이 값은 **되돌려줄 꼬리표**일 뿐이라 뜻을 알
+/// 필요가 없고, `PanelId`↔`u32` 변환은 그 뜻을 아는 `ui` 쪽이 한다.
+///
+/// **패널을 가리키는 데 `panel` 하나로는 모자란다** — `PanelId`는 워크스페이스마다
+/// `0`부터 다시 매겨져 전역 유일하지 않은데 응답 라우팅은 모든 워크스페이스를 훑는다.
+/// 셋(`workspace`·`panel`·`seq`)이 모두 맞아야 그 요청이다
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ListSource {
+    /// 패널 목록 — 두 `u32`는 `ui` 계층의 워크스페이스·패널 식별자다
+    Panel {
+        workspace: u32,
+        panel: u32,
+        seq: u64,
+    },
+    /// 원격 폴더 트리의 지연 확장
+    Tree { seq: u64 },
+    /// 같은 이름 확인 (FR-55) — `id`가 그 확인 번호다
+    Conflict { id: u64 },
+}
+
 /// 워커에게 보내는 명령
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnCommand {
     Connect,
-    /// 목록 조회. `generation`은 **늦게 도착한 이전 요청의 결과를 버리기 위한** 번호다
-    List {
-        generation: u64,
-        path: RemotePath,
-    },
-    /// 목록 조회 — **성공 기록을 서버 로그에 남기지 않는다** (FR-67 자동 재조회).
+    /// 목록 조회. `source`는 **어느 요청의 답인지**를 가리며, 그 안의 일련번호가
+    /// 늦게 도착한 이전 요청의 결과를 버리는 데 쓰인다.
     ///
-    /// 30초마다 도는 재조회가 `List`를 그대로 타면 조회마다 두 줄(`시작`·`완료`)이 쌓여
+    /// `quiet`면 **성공 기록을 서버 로그에 남기지 않는다** (FR-67 자동 재조회).
+    /// 30초마다 도는 재조회가 기록을 남기면 조회마다 두 줄(`시작`·`완료`)이 쌓여
     /// **보이는 원격 탭 하나당 시간당 240줄**이 되고, 사용자가 실제로 한 조작의 기록이
-    /// 그만큼 밀려난다. 실패는 남긴다 — 자동 재조회가 조용히 죽는 것을 알 수 없게 되기 때문이다.
-    ///
-    /// **`List`에 필드를 더하지 않고 갈래를 나눈 이유**: `List`는 struct variant라 필드를
-    /// 하나 더하면 그것을 짓는 곳 스물세 군데가 모두 컴파일 실패한다(D9)
-    ListQuiet {
-        generation: u64,
+    /// 그만큼 밀려난다. 실패는 `quiet`와 무관하게 남긴다 — 자동 재조회가 조용히 죽는 것을
+    /// 알 수 없게 되기 때문이다
+    List {
+        source: ListSource,
         path: RemotePath,
+        quiet: bool,
     },
     /// 폴더 하나를 **재귀로 훑어** 그 아래 파일을 모두 찾는다 (FR-38 — 폴더 드래그).
     ///
@@ -192,7 +216,7 @@ pub enum ConnPhase {
 pub enum ConnEvent {
     Phase(ConnPhase),
     Listed {
-        generation: u64,
+        source: ListSource,
         path: RemotePath,
         entries: Vec<RemoteEntry>,
     },
@@ -216,7 +240,7 @@ pub enum ConnEvent {
     ///
     /// 실패를 로그에만 남기면, 답을 기다리던 쪽(원격 트리)이 영영 `읽는 중…`에 머문다
     ListFailed {
-        generation: u64,
+        source: ListSource,
         detail: String,
     },
     /// `ListTree`의 답 — 찾은 **파일**들의 전체 경로와 크기다(폴더는 담지 않는다).
@@ -411,7 +435,7 @@ impl Drop for Connection {
 ///
 /// `loud`면 시작·완료를 서버 로그에 남긴다. **실패는 `loud`와 무관하게 언제나 남긴다** —
 /// 자동 재조회(FR-67)가 조용히 죽는 것을 사용자가 알 길이 없어지기 때문이다 (D9)
-fn run_list(worker: &mut Worker, generation: u64, path: RemotePath, loud: bool) -> bool {
+fn run_list(worker: &mut Worker, source: ListSource, path: RemotePath, loud: bool) -> bool {
     if loud
         && !worker.log(
             LogKind::Status,
@@ -431,7 +455,7 @@ fn run_list(worker: &mut Worker, generation: u64, path: RemotePath, loud: bool) 
                 return false;
             }
             worker.emit(ConnEvent::Listed {
-                generation,
+                source,
                 path,
                 entries,
             })
@@ -439,7 +463,7 @@ fn run_list(worker: &mut Worker, generation: u64, path: RemotePath, loud: bool) 
         Err(err) => {
             let detail = err.to_string();
             worker.log(LogKind::Error, detail.clone())
-                && worker.emit(ConnEvent::ListFailed { generation, detail })
+                && worker.emit(ConnEvent::ListFailed { source, detail })
         }
     }
 }
@@ -485,13 +509,12 @@ fn worker(mut worker: Worker) {
                     break;
                 }
             }
-            ConnCommand::List { generation, path } => {
-                if !run_list(&mut worker, generation, path, true) {
-                    break;
-                }
-            }
-            ConnCommand::ListQuiet { generation, path } => {
-                if !run_list(&mut worker, generation, path, false) {
+            ConnCommand::List {
+                source,
+                path,
+                quiet,
+            } => {
+                if !run_list(&mut worker, source, path, !quiet) {
                     break;
                 }
             }
@@ -953,8 +976,9 @@ mod tests {
 
         // 다시 세운 연결로 보낸 명령이 통해야 한다 — 이것이 사용자가 겪던 그 자리다
         connection.send(ConnCommand::List {
-            generation: 7,
+            source: ListSource::Tree { seq: 7 },
             path: RemotePath::root(),
+            quiet: false,
         });
         let after = wait_for(&mut connection, Duration::from_secs(3), |events| {
             events
@@ -964,7 +988,7 @@ mod tests {
         assert!(
             after
                 .iter()
-                .any(|event| matches!(event, ConnEvent::Listed { generation: 7, .. })),
+                .any(|event| matches!(event, ConnEvent::Listed { source, .. } if *source == ListSource::Tree { seq: 7 })),
             "다시 세운 연결로 목록을 읽지 못했다: {after:?}"
         );
 
@@ -1250,8 +1274,9 @@ mod tests {
 
         connection.send(ConnCommand::Connect);
         connection.send(ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::new("/pub"),
+            quiet: false,
         });
         let events = wait_events(&mut connection, 3, Duration::from_secs(2));
 
@@ -1261,14 +1286,12 @@ mod tests {
             .iter()
             .find_map(|event| match event {
                 ConnEvent::Listed {
-                    generation,
-                    entries,
-                    ..
-                } => Some((*generation, entries.len())),
+                    source, entries, ..
+                } => Some((*source, entries.len())),
                 _ => None,
             })
             .expect("목록 이벤트가 없다");
-        assert_eq!(listed, (1, 1));
+        assert_eq!(listed, (ListSource::Tree { seq: 1 }, 1));
         assert_eq!(*connection.phase(), ConnPhase::Ready);
     }
 
@@ -1298,30 +1321,28 @@ mod tests {
         let mut connection = spawn(&server, fast_retry());
         connection.send(ConnCommand::Connect);
         connection.send(ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::new("/old"),
+            quiet: false,
         });
         connection.send(ConnCommand::List {
-            generation: 2,
+            source: ListSource::Tree { seq: 2 },
             path: RemotePath::new("/new"),
+            quiet: false,
         });
         let events = wait_events(&mut connection, 4, Duration::from_secs(2));
 
-        let current = 2;
+        let current = ListSource::Tree { seq: 2 };
         let kept: Vec<&RemotePath> = events
             .iter()
             .filter_map(|event| match event {
-                ConnEvent::Listed {
-                    generation, path, ..
-                } if *generation == current => Some(path),
+                ConnEvent::Listed { source, path, .. } if *source == current => Some(path),
                 _ => None,
             })
             .collect();
         let dropped = events
             .iter()
-            .filter(|event| {
-                matches!(event, ConnEvent::Listed { generation, .. } if *generation != current)
-            })
+            .filter(|event| matches!(event, ConnEvent::Listed { source, .. } if *source != current))
             .count();
         assert_eq!(kept.len(), 1, "지금 세대의 결과만 남아야 한다");
         assert_eq!(kept[0].as_str(), "/new");
@@ -1354,8 +1375,9 @@ mod tests {
         blocked_server.set_hang(true);
         blocked.send(ConnCommand::Connect);
         blocked.send(ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::root(),
+            quiet: false,
         });
         std::thread::sleep(Duration::from_millis(30));
         assert!(
@@ -1368,8 +1390,9 @@ mod tests {
 
         // 그 사이에도 다른 연결은 정상 처리된다
         live.send(ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::root(),
+            quiet: false,
         });
         let events = wait_events(&mut live, 1, Duration::from_secs(2));
         assert!(
@@ -1455,14 +1478,16 @@ mod tests {
             let mut connection = spawn(server, fast_retry());
             connection.send(ConnCommand::Connect);
             let command = if quiet {
-                ConnCommand::ListQuiet {
-                    generation: 1,
+                ConnCommand::List {
+                    source: ListSource::Tree { seq: 1 },
                     path: RemotePath::root(),
+                    quiet: true,
                 }
             } else {
                 ConnCommand::List {
-                    generation: 1,
+                    source: ListSource::Tree { seq: 1 },
                     path: RemotePath::root(),
+                    quiet: false,
                 }
             };
             connection.send(command);
@@ -1499,8 +1524,9 @@ mod tests {
 
         connection.send(ConnCommand::Connect);
         connection.send(ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::root(),
+            quiet: false,
         });
         connection.send(ConnCommand::Transfer(TransferRequest {
             id: TransferId(7),
@@ -1511,8 +1537,9 @@ mod tests {
             remote_size: 0,
         }));
         connection.send(ConnCommand::List {
-            generation: 2,
+            source: ListSource::Tree { seq: 2 },
             path: RemotePath::root(),
+            quiet: false,
         });
         let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
             events
@@ -1727,21 +1754,26 @@ mod tests {
         let mut connection = spawn(&server, fast_retry());
         connection.send(ConnCommand::Connect);
         connection.send(ConnCommand::List {
-            generation: 77,
+            source: ListSource::Tree { seq: 77 },
             path: RemotePath::new("/없는곳"),
+            quiet: false,
         });
 
         let mut failed = None;
         wait_until(Duration::from_secs(3), || {
             for event in connection.poll() {
-                if let ConnEvent::ListFailed { generation, detail } = event {
-                    failed = Some((generation, detail));
+                if let ConnEvent::ListFailed { source, detail } = event {
+                    failed = Some((source, detail));
                 }
             }
             failed.is_some()
         });
-        let (generation, detail) = failed.expect("실패 알림이 오지 않았다");
-        assert_eq!(generation, 77, "어느 요청이 실패했는지 알 수 없다");
+        let (source, detail) = failed.expect("실패 알림이 오지 않았다");
+        assert_eq!(
+            source,
+            ListSource::Tree { seq: 77 },
+            "어느 요청이 실패했는지 알 수 없다"
+        );
         assert!(!detail.is_empty(), "사유가 비어 있다");
     }
 
@@ -1805,8 +1837,9 @@ mod tests {
         let mut connection = spawn(&server, fast_retry());
         connection.send(ConnCommand::Connect);
         connection.send(ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::root(),
+            quiet: false,
         });
         let events = wait_for(&mut connection, Duration::from_secs(3), |events| {
             events

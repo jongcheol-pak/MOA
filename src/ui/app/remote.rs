@@ -16,13 +16,14 @@
 //! OS에서 끌어온 것을 원격 탭에 놓는 것(FR-61). 셋 다 `start_transfer` 한 앞문을 지나며,
 //! 앞의 둘은 `ui::app`이 여기로 보내고 마지막은 `ui::app`의 `pump_os_drop`이 조립한다.
 
-use super::transfer_conflict::{conflict_id, conflict_names};
-use super::{ExplorerApp, NOTICE_SECS};
+use super::transfer_conflict::conflict_names;
+use super::{ExplorerApp, NOTICE_SECS, WorkspaceView};
 use crate::app::layout::{PanelId, Rect as LayoutRect, SplitDir, SplitPlace};
+use crate::app::workspace::WorkspaceId;
 use crate::panel::tabs::TabPhase;
 use crate::remote::connection::TransferDirection;
 use crate::remote::connection::{
-    ConnCommand, ConnEvent, ConnPhase, ConnectionId, OpKind, TransferId,
+    ConnCommand, ConnEvent, ConnPhase, ConnectionId, ListSource, OpKind, TransferId,
 };
 use crate::remote::ftp::FtpSession;
 use crate::remote::log::LogKind;
@@ -36,6 +37,7 @@ use crate::ui::panel::{PanelState, RemoteAction};
 use crate::ui::remote_menu::{self, DialogOutcome, Permissions, RemoteMenuAction, RemoteTarget};
 use crate::ui::tabs::TransferTargets;
 use eframe::egui;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// 단축키 명령을 원격 기능으로 옮긴다 (FR-12·plan D5) — 대응이 없으면 `None`.
@@ -352,14 +354,20 @@ impl ExplorerApp {
         let Some(cache_generation) = self.tree_cache.begin(conn, &path) else {
             return;
         };
-        // 목록 조회(패널)와 **번호 공간을 나눈다** — 같은 번호가 겹치면 한쪽의 답을 다른 쪽이
-        // 가져가 서로 영영 기다린다. 트리 쪽은 높은 자리에서 센다
+        // 번호 공간을 나눌 필요가 없다 — 출처를 `ListSource::Tree`가 실어 나르므로 패널
+        // 조회와 번호가 겹쳐도 답이 뒤바뀌지 않는다
         self.next_tree_list += 1;
-        let generation = TREE_LIST_BASE + self.next_tree_list;
+        let seq = self.next_tree_list;
         self.pending_tree_lists
-            .insert(generation, (conn, path.clone(), cache_generation));
-        self.manager
-            .send(conn, ConnCommand::List { generation, path });
+            .insert(seq, (conn, path.clone(), cache_generation));
+        self.manager.send(
+            conn,
+            ConnCommand::List {
+                source: ListSource::Tree { seq },
+                path,
+                quiet: false,
+            },
+        );
     }
 
     /// 원격 폴더를 훑어 달라고 워커에 청한다 (FR-38).
@@ -577,46 +585,45 @@ impl ExplorerApp {
                         self.abandon_conflict_lists(conn);
                     }
                 }
+                // 출처가 갈래를 정한다 — 종전에는 세 갈래를 **차례로** 걷어냈고 그 순서가
+                // 곧 정확성이었다(확인 조회를 먼저 빼지 않으면 엉뚱한 패널이 그 목록을 자기
+                // 것으로 그렸다). 이제는 타입이 그 일을 하므로 순서에 기대지 않는다
                 ConnEvent::Listed {
-                    generation,
+                    source,
                     path,
                     entries,
-                } => {
-                    // 같은 이름 확인이 청한 답이면 여기서 끝난다 — 목록 화면·트리는 모른다.
-                    // **가장 먼저** 본다: 아래 패널 매칭까지 흘러가면 엉뚱한 패널이 이 목록을
-                    // 자기 것으로 그린다
-                    if let Some((_, names)) = self.conflict_lists.remove(&generation) {
-                        let existing: Vec<String> =
-                            entries.into_iter().map(|entry| entry.name).collect();
-                        // 올리는 곳은 대개 POSIX라 대소문자를 가린다 — 가리지 않으면 헛경고다 (D5)
-                        self.settle_conflict(
-                            conflict_id(generation),
-                            conflict_names(&names, &existing, false),
-                        );
-                        continue;
+                } => match source {
+                    // 같은 이름 확인이 청한 답이면 여기서 끝난다 — 목록 화면·트리는 모른다
+                    ListSource::Conflict { id } => {
+                        if let Some((_, names)) = self.conflict_lists.remove(&id) {
+                            let existing: Vec<String> =
+                                entries.into_iter().map(|entry| entry.name).collect();
+                            // 올리는 곳은 대개 POSIX라 대소문자를 가린다 — 가리지 않으면 헛경고다 (D5)
+                            self.settle_conflict(id, conflict_names(&names, &existing, false));
+                        }
                     }
                     // 트리가 청한 답이면 캐시로 간다 — 목록 화면은 이것을 모른다
-                    if let Some((conn, path, cache_generation)) =
-                        self.pending_tree_lists.remove(&generation)
-                    {
-                        let mut entries = entries;
-                        sort_tree_children(&mut entries);
-                        self.tree_cache.fill(conn, cache_generation, &path, entries);
-                        continue;
+                    ListSource::Tree { seq } => {
+                        if let Some((conn, path, cache_generation)) =
+                            self.pending_tree_lists.remove(&seq)
+                        {
+                            let mut entries = entries;
+                            sort_tree_children(&mut entries);
+                            self.tree_cache.fill(conn, cache_generation, &path, entries);
+                        }
                     }
-                    let ExplorerApp { views, icons, .. } = self;
-                    // 요청 하나에 답 하나다 — 받을 패널을 먼저 고르고 목록은 **복사 없이** 한 번만 넘긴다
-                    let target = views
-                        .values_mut()
-                        .flat_map(|view| view.panels.values_mut())
-                        .find(|panel| {
-                            panel.active_conn() == Some(conn)
-                                && panel.awaits_remote_list(generation, &path)
-                        });
-                    if let Some(panel) = target {
-                        panel.apply_remote_listed(generation, &path, entries, icons);
+                    ListSource::Panel {
+                        workspace,
+                        panel,
+                        seq,
+                    } => {
+                        let ExplorerApp { views, icons, .. } = self;
+                        // 요청 하나에 답 하나다 — 받을 패널을 먼저 고르고 목록은 **복사 없이** 한 번만 넘긴다
+                        if let Some(target) = list_target(views, workspace, panel, conn) {
+                            target.apply_remote_listed(seq, &path, entries, icons);
+                        }
                     }
-                }
+                },
                 // 훑기 결과 — 찾은 파일을 통째로 큐에 넣는다 (FR-38)
                 ConnEvent::TreeListed {
                     generation,
@@ -667,20 +674,27 @@ impl ExplorerApp {
                 // 조회 실패 — 트리가 청한 것이면 그 노드에만 사유를 남기고(T24 Edge Case),
                 // 패널이 청한 것이면 **옮기기를 무르고** 사유를 상태 줄에 남긴다 (F-7 리뷰 B2).
                 // 무르지 않으면 주소창은 새 폴더를, 목록은 이전 폴더를 가리킨 채 갈라진다
-                ConnEvent::ListFailed { generation, detail } => {
+                ConnEvent::ListFailed { source, detail } => match source {
                     // 확인은 안전장치이지 관문이 아니다 — 물어보지 못했다고 전송을 막지
                     // 않는다. 사유는 서버 로그에 남는다 (D10)
-                    if self.conflict_lists.remove(&generation).is_some() {
-                        self.settle_conflict(conflict_id(generation), Vec::new());
-                        continue;
+                    ListSource::Conflict { id } => {
+                        if self.conflict_lists.remove(&id).is_some() {
+                            self.settle_conflict(id, Vec::new());
+                        }
                     }
-                    match self.pending_tree_lists.remove(&generation) {
-                        Some((conn, path, cache_generation)) => {
+                    ListSource::Tree { seq } => {
+                        if let Some((conn, path, cache_generation)) =
+                            self.pending_tree_lists.remove(&seq)
+                        {
                             self.tree_cache.fail(conn, cache_generation, &path, detail);
                         }
-                        None => self.revert_remote_move(conn, generation, detail, now),
                     }
-                }
+                    ListSource::Panel {
+                        workspace,
+                        panel,
+                        seq,
+                    } => self.revert_remote_move(conn, workspace, panel, seq, detail, now),
+                },
                 // 파일 작업의 답 — 성공하면 목록을 다시 읽고, 실패하면 사유를 남긴다 (FR-39)
                 ConnEvent::OpDone { op, result } => self.on_op_done(conn, op, result, now),
                 // 서버 로그는 `Connection`이 자기 버퍼에 이미 쌓는다(화면은 T20이 만든다)
@@ -718,29 +732,20 @@ impl ExplorerApp {
     pub(super) fn revert_remote_move(
         &mut self,
         conn: ConnectionId,
-        generation: u64,
+        workspace: u32,
+        panel: u32,
+        seq: u64,
         detail: String,
         now: f64,
     ) {
-        // `any`로 쓰지 않는다 — 짧게 끊기면 같은 연결을 보는 다른 패널이 어긋난 채 남는다.
-        // 되돌릴지는 패널이 스스로 판정한다(그 세대의 이동이었고 아직 그 자리에 있는가)
+        // **청한 패널 하나만** 본다 — 종전에는 그 연결을 쓰는 패널을 전부 훑었고, 같은
+        // 사이트를 두 패널에 나란히 열면 한쪽의 실패가 다른 쪽까지 되돌렸다
         let mut reverted = false;
         // **자동 재조회의 실패인가** (FR-67) — 그렇다면 알림을 띄우지 않는다
         let mut quiet = false;
-        for panel in self
-            .views
-            .values_mut()
-            .flat_map(|view| view.panels.values_mut())
-        {
-            if panel.active_conn() != Some(conn) {
-                continue;
-            }
-            if panel.is_quiet_request(generation) {
-                quiet = true;
-            }
-            if panel.revert_remote_path(generation) {
-                reverted = true;
-            }
+        if let Some(target) = list_target(&mut self.views, workspace, panel, conn) {
+            quiet = target.is_quiet_request(seq);
+            reverted = target.revert_remote_path(seq);
         }
         let text = if reverted {
             crate::i18n::dynamic::remote_open_failed(&detail)
@@ -774,10 +779,12 @@ impl ExplorerApp {
     /// **거두는** 조작이라 불변 참조로는 표현할 수 없다
     fn relist_panels(&mut self, mut wants: impl FnMut(&mut PanelState) -> bool) {
         let ExplorerApp { views, manager, .. } = self;
-        for view in views.values_mut() {
-            for panel in view.panels.values_mut() {
+        // 요청에 자리를 실어야 해 `values_mut` 대신 `iter_mut`로 돈다 — 패널은 자기 키를
+        // 들고 있지 않으므로 여기서 꺼내 넘긴다
+        for (workspace, view) in views.iter_mut() {
+            for (id, panel) in view.panels.iter_mut() {
                 if wants(panel) {
-                    panel.request_remote_list(manager);
+                    panel.request_remote_list(*workspace, *id, manager);
                 }
             }
         }
@@ -1126,7 +1133,29 @@ pub(super) struct RemoteOps {
 ///
 /// 패널의 목록 조회는 0부터 하나씩 올라간다 — 두 번호가 겹치면 한쪽의 답을 다른 쪽이
 /// 가져가 서로 영영 기다린다. 실제로 부딪히려면 패널이 이 값만큼 폴더를 옮겨야 한다
-pub(super) const TREE_LIST_BASE: u64 = 1 << 40;
+/// 그 출처가 가리키는 패널을 찾아 준다 — 워크스페이스·패널이 모두 맞고, 그 패널이
+/// **지금도 그 연결을 보고 있어야** 한다.
+///
+/// **`PanelId`만으로는 못 가린다** — 워크스페이스마다 `0`부터 다시 매겨져 전역 유일하지
+/// 않은데 응답은 모든 워크스페이스를 대상으로 오기 때문이다.
+///
+/// **연결 검사를 여기 둔 이유**: 자리는 맞아도 그 사이 다른 사이트로 옮겨 갔을 수 있고,
+/// 그때 답을 받으면 남의 서버 목록을 그린다.
+///
+/// `ExplorerApp`의 메서드가 아니라 자유 함수인 것은 **시험이 부를 수 있게** 하기 위해서다 —
+/// 그 구조체는 `eframe::CreationContext`가 있어야 만들어져 단위 시험에서 세울 수 없다
+pub(super) fn list_target(
+    views: &mut HashMap<WorkspaceId, WorkspaceView>,
+    workspace: u32,
+    panel: u32,
+    conn: ConnectionId,
+) -> Option<&mut PanelState> {
+    views
+        .get_mut(&WorkspaceId(workspace))?
+        .panels
+        .get_mut(&PanelId(panel))
+        .filter(|panel| panel.active_conn() == Some(conn))
+}
 
 /// 트리에 보일 차례로 줄을 세운다 — **목록과 같은 규칙**이라야 화면이 두 벌로 갈리지 않는다.
 /// (`remote::tree_cache`는 `panel`을 모르므로 정렬은 이쪽에서 맞춰 넘긴다)
@@ -1579,22 +1608,5 @@ mod tests {
             Some(0o755)
         );
         assert_eq!(dialog, None, "확인 뒤에도 대화가 남았다");
-    }
-
-    #[test]
-    fn 조회_세대는_다른_조회와_번호가_겹치지_않는다() {
-        // 겹치면 한쪽의 답을 다른 쪽이 가져가 서로 영영 기다린다 (D8).
-        // 두 공간 사이의 간격이 한 실행에서 쓸 번호보다 훨씬 크다.
-        // **두 상수가 서로 다른 자식 모듈에 있다** — 트리 쪽은 이 파일이고
-        // 확인 쪽은 형제 모듈 `transfer_conflict`다. 그래서 그쪽만 경로를 명시해 견준다
-        use super::super::transfer_conflict::CONFLICT_LIST_BASE;
-        const { assert!(CONFLICT_LIST_BASE - TREE_LIST_BASE == 1 << 40) };
-        // 확인 번호는 기준값에 더해 보내고 답에서 다시 빼 되찾는다 — 그 왕복이 맞는지 본다
-        let 보낸_세대 = CONFLICT_LIST_BASE + 7;
-        assert_eq!(보낸_세대 - CONFLICT_LIST_BASE, 7);
-        assert!(
-            보낸_세대 > TREE_LIST_BASE + (1 << 39),
-            "트리 번호 공간과 겹친다"
-        );
     }
 }

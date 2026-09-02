@@ -175,7 +175,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
-    use crate::remote::connection::{ConnPhase, RetryPolicy};
+    use crate::remote::connection::{ConnPhase, ListSource, RetryPolicy};
     use crate::remote::testing::{FakeServer, FakeSession, fake_entry};
     use crate::remote::types::{RemotePath, SiteId};
 
@@ -251,8 +251,9 @@ mod tests {
         manager.send(
             id,
             ConnCommand::List {
-                generation: 1,
+                source: ListSource::Tree { seq: 1 },
                 path: RemotePath::root(),
+                quiet: false,
             },
         );
 

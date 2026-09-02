@@ -6,7 +6,7 @@
 //!
 //! 여기서 지키려는 것은 하나다: **한 연결이 막혀도 앱은 계속 돈다.** UI 스레드는 채널만
 //! 확인하므로(NFR-10), 응답 없는 서버는 그 연결의 워커 스레드 하나만 붙잡는다.
-use moa::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId};
+use moa::remote::connection::{ConnCommand, ConnEvent, ConnPhase, ConnectionId, ListSource};
 use moa::remote::manager::ConnectionManager;
 use moa::remote::testing::{FakeServer, FakeSession, fake_entry};
 use moa::remote::types::{RemoteEntry, RemotePath, SiteId, SiteRecord};
@@ -77,22 +77,25 @@ fn 응답_없는_연결이_있어도_나머지_연결은_계속_처리된다() {
     manager.send(
         막힌,
         ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::new("/"),
+            quiet: false,
         },
     );
     manager.send(
         첫째,
         ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::new("/pub"),
+            quiet: false,
         },
     );
     manager.send(
         둘째,
         ConnCommand::List {
-            generation: 1,
+            source: ListSource::Tree { seq: 1 },
             path: RemotePath::new("/var"),
+            quiet: false,
         },
     );
 
@@ -155,8 +158,9 @@ fn 만_항목_폴더를_조회해도_답이_돌아온다() {
     manager.send(
         conn,
         ConnCommand::List {
-            generation: 7,
+            source: ListSource::Tree { seq: 7 },
             path: RemotePath::new("/big"),
+            quiet: false,
         },
     );
 
@@ -181,8 +185,9 @@ fn 만_항목_폴더를_조회해도_답이_돌아온다() {
     manager.send(
         conn,
         ConnCommand::List {
-            generation: 8,
+            source: ListSource::Tree { seq: 8 },
             path: RemotePath::new("/small"),
+            quiet: false,
         },
     );
     let 이어서 = pump_until(
@@ -191,7 +196,7 @@ fn 만_항목_폴더를_조회해도_답이_돌아온다() {
         Duration::from_secs(5),
         |events| {
             events.iter().any(|(id, event)| {
-                *id == conn && matches!(event, ConnEvent::Listed { generation: 8, .. })
+                *id == conn && matches!(event, ConnEvent::Listed { source, .. } if *source == ListSource::Tree { seq: 8 })
             })
         },
     );
