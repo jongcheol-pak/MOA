@@ -1688,6 +1688,49 @@ fn insert_line_y(insert_at: usize, rows: &[egui::Rect]) -> Option<f32> {
     }
 }
 
+/// 목록의 한 줄 — 아이콘·이름. 클릭과 끌기를 함께 보므로 응답을 그대로 돌려준다 (`:396-404`)
+fn show_site_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    dot: egui::Color32,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), LIST_ROW_HEIGHT),
+        egui::Sense::click_and_drag(),
+    );
+    let text_left = paint_row_icon(ui, rect, dot);
+    let text = ui.painter().layout(
+        name.to_owned(),
+        egui::FontId::proportional(widgets::FORM_FONT_PX),
+        theme::TEXT,
+        (rect.right() - text_left - LIST_NAME_PAD_X * 2.0).max(0.0),
+    );
+    let color = if selected {
+        // 고른 줄은 이름 뒤에만 강조가 깔린다 — 행 전체가 아니다 (`:403`)
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(text_left, rect.center().y - text.size().y / 2.0),
+                text.size() + egui::vec2(LIST_NAME_PAD_X * 2.0, 0.0),
+            ),
+            0.0,
+            SELECTED_BG,
+        );
+        SELECTED_FG
+    } else {
+        theme::TEXT
+    };
+    ui.painter().galley(
+        egui::pos2(
+            text_left + LIST_NAME_PAD_X,
+            rect.center().y - text.size().y / 2.0,
+        ),
+        text,
+        color,
+    );
+    response
+}
+
 /// 우클릭 메뉴 팝업의 폭 — 가장 긴 라벨을 실제 글꼴로 재어 정한다 (`MENU_PAD_X` 주석)
 fn menu_width(ui: &egui::Ui, labels: &[&str]) -> f32 {
     let font = egui::FontId::proportional(widgets::FORM_FONT_PX);
@@ -1743,49 +1786,6 @@ fn show_row_menu(response: &egui::Response) -> Option<ListAction> {
         }
     });
     picked
-}
-
-/// 목록의 한 줄 — 아이콘·이름. 클릭과 끌기를 함께 보므로 응답을 그대로 돌려준다 (`:396-404`)
-fn show_site_row(
-    ui: &mut egui::Ui,
-    name: &str,
-    dot: egui::Color32,
-    selected: bool,
-) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), LIST_ROW_HEIGHT),
-        egui::Sense::click_and_drag(),
-    );
-    let text_left = paint_row_icon(ui, rect, dot);
-    let text = ui.painter().layout(
-        name.to_owned(),
-        egui::FontId::proportional(widgets::FORM_FONT_PX),
-        theme::TEXT,
-        (rect.right() - text_left - LIST_NAME_PAD_X * 2.0).max(0.0),
-    );
-    let color = if selected {
-        // 고른 줄은 이름 뒤에만 강조가 깔린다 — 행 전체가 아니다 (`:403`)
-        ui.painter().rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(text_left, rect.center().y - text.size().y / 2.0),
-                text.size() + egui::vec2(LIST_NAME_PAD_X * 2.0, 0.0),
-            ),
-            0.0,
-            SELECTED_BG,
-        );
-        SELECTED_FG
-    } else {
-        theme::TEXT
-    };
-    ui.painter().galley(
-        egui::pos2(
-            text_left + LIST_NAME_PAD_X,
-            rect.center().y - text.size().y / 2.0,
-        ),
-        text,
-        color,
-    );
-    response
 }
 
 /// 이름 바꾸는 중인 줄 — 편집이 끝났으면 `true` (Enter 또는 포커스를 잃었을 때).
