@@ -221,7 +221,7 @@ pub struct PanelState {
     list: FileListView,
     address: AddressBar,
     load: DirLoad,
-    /// 마지막 목록 요청이 **자동 재조회**였으면 그 세대 (FR-67) — 손으로 부른 조회면 `None`.
+    /// 마지막 목록 요청이 **자동 재조회**였으면 그 일련번호 (FR-67) — 손으로 부른 조회면 `None`.
     ///
     /// 그 실패를 화면 알림 없이 넘기는 데 쓴다(서버 로그에는 그대로 남는다 — D9)
     quiet_request: Option<u64>,
@@ -269,9 +269,9 @@ pub struct PanelState {
     /// 아직 조회를 청하지 않은 "직전에 보고 있던 곳" — `set_remote_path`가 세우고
     /// 곧이어 `request_remote_list`가 일련번호와 함께 `revert_at`으로 옮긴다
     pending_revert: Option<RemotePath>,
-    /// 되돌릴 자리 — `(그 조회의 세대, 돌아갈 곳, 옮겨 간 곳)`.
+    /// 되돌릴 자리 — `(그 조회의 일련번호, 돌아갈 곳, 옮겨 간 곳)`.
     ///
-    /// **요청 하나에 묶는다**(F-7 2라운드 B1·B2): 세대만 보고 되돌리면 ⓐ 이미 성공한 이동의
+    /// **요청 하나에 묶는다**(F-7 2라운드 B1·B2): 번호만 보고 되돌리면 ⓐ 이미 성공한 이동의
     /// 자리가 남아 나중의 새로 고침 실패가 옛 폴더로 되돌리고 ⓑ 같은 연결의 다른 패널·탭까지
     /// 함께 되돌아간다. 그래서 **성공하면 지우고**, 되돌릴 때는 지금 보고 있는 곳이
     /// `옮겨 간 곳` 그대로일 때만 손댄다
@@ -939,7 +939,7 @@ impl PanelState {
     pub fn set_remote_path(&mut self, target: RemotePath) {
         let mut moved = false;
         if let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source {
-            // 실패했을 때 돌아갈 자리를 남긴다 — 세대는 조회를 청할 때 붙는다 (F-7 리뷰 B2)
+            // 실패했을 때 돌아갈 자리를 남긴다 — 일련번호는 조회를 청할 때 붙는다 (F-7 리뷰 B2)
             self.pending_revert = Some(path.clone());
             moved = *path != target;
             *path = target;
