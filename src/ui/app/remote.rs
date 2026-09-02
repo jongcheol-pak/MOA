@@ -1296,7 +1296,11 @@ mod tests {
         panel
     }
 
-    /// 뷰 하나를 세우고 그 안에 패널들을 심는다 — 첫 패널은 `PanelId(0)`이다
+    /// 뷰 하나를 세우고 그 안에 패널들을 심는다.
+    ///
+    /// **`layout`은 갱신하지 않는다** — 생성자가 만든 리프 하나를 그대로 두고 `panels`만
+    /// 바꾸므로 둘이 어긋난 뷰가 된다. `list_target`이 `panels`만 보기 때문에 이 시험들에는
+    /// 영향이 없지만, **`layout`을 읽는 함수에는 이 헬퍼를 그대로 쓰면 안 된다**
     fn 뷰(패널들: Vec<(PanelId, PanelState)>) -> WorkspaceView {
         let mut view = WorkspaceView::new(std::path::PathBuf::from(r"C:\테스트"));
         view.panels.clear();
