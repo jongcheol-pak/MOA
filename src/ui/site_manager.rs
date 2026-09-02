@@ -1810,7 +1810,11 @@ fn show_row_menu(response: &egui::Response) -> Option<ListAction> {
 ///
 /// 활성 조건이 칸마다 다르다 — `새 사이트`·`가져오기`는 늘 누를 수 있고,
 /// **`내보내기`는 등록된 사이트가 없으면 잠긴다**(내보낼 것이 없다). 그 판정을 새로 적지
-/// 않고 `show_bottom_buttons`와 같은 `store.is_empty()`를 쓴다
+/// 않고 `show_bottom_buttons`와 같은 `store.is_empty()`를 쓴다.
+///
+/// **그 함수와 항목 목록을 공용 함수로 묶지는 않았다** — 그쪽은 칸 폭 계산과 비활성 글자색까지
+/// 얽힌 그리기 코드라, 목록만 떼어 내려면 그 그리기를 함께 끌고 와야 한다. 지금은 2회째라
+/// AGENTS 「실제 중복 3회」 문턱에도 못 미친다
 fn well_menu_items(store: &SiteStore) -> [(&'static str, BottomOutcome, bool); 3] {
     [
         (
