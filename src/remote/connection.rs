@@ -1509,8 +1509,8 @@ mod tests {
         server.set_entries("/", vec![fake_entry("a.txt", false)]);
         let 소리내어 = 상태_줄_수(&server, false);
         let 조용히 = 상태_줄_수(&server, true);
-        assert_eq!(소리내어, 2, "`List`는 시작·완료 두 줄을 남긴다");
-        assert_eq!(조용히, 0, "`ListQuiet`가 성공 기록을 남겼다");
+        assert_eq!(소리내어, 2, "`quiet: false`는 시작·완료 두 줄을 남긴다");
+        assert_eq!(조용히, 0, "`quiet: true`인데 성공 기록을 남겼다");
     }
 
     #[test]
