@@ -583,8 +583,15 @@ impl SiteManager {
         self.draft = Draft::default();
     }
 
-    /// 목록에서 사이트를 고른다 — 그 설정이 우측 폼으로 들어온다
+    /// 목록에서 사이트를 고른다 — 그 설정이 우측 폼으로 들어온다.
+    ///
+    /// **이미 고른 줄이면 아무것도 하지 않는다** — 여기서 초안을 다시 실으면 오른쪽 폼에
+    /// 고치던 것(비밀번호·포트 등)이 저장값으로 조용히 되돌아간다. 고른 줄을 다시 누르는
+    /// 길이 셋이다: 그냥 클릭, 더블클릭 이름 바꾸기의 첫 클릭, 우클릭 메뉴 (FR-27)
     fn select(&mut self, store: &SiteStore, id: SiteId) {
+        if self.selected == Some(id) {
+            return;
+        }
         if let Some(draft) = Draft::load(store, id) {
             self.selected = Some(id);
             self.draft = draft;
@@ -1057,6 +1064,12 @@ impl SiteManager {
                     // 적용하므로 고르지 않았던 줄을 우클릭해도 그 줄이 대상이 된다
                     if response.secondary_clicked() {
                         picked = Some(record.id);
+                        // **끌던 중 우클릭이면 끌기를 접는다** — egui는 버튼을 새로 누를 때
+                        // 「클릭이라기엔 너무 움직였다」 표시를 지우므로, 끄는 중에 2차 버튼을
+                        // 눌렀다 떼면 포인터 아래 줄에 클릭이 서서 메뉴가 뜬다. 끌기를 그대로
+                        // 두면 그 뒤 1차 버튼을 뗄 때 사용자가 확인한 적 없는 재정렬까지
+                        // 함께 들어간다
+                        self.drag = None;
                     }
                     if let Some(action) = show_row_menu(&response) {
                         row_action = Some(action);
@@ -1082,6 +1095,12 @@ impl SiteManager {
             });
         // **삽입선은 웰 안쪽(`rows`)에 긋는다** — 스크롤 영역의 콘텐츠 사각형은 줄 수만큼
         // 길어져 있어 그것을 폭으로 쓰면 선이 웰 밖으로 뻗는다
+        // 빈 자리 우클릭도 같다 — 끌던 줄을 마지막 줄 아래 빈 곳으로 가져가 우클릭하면
+        // 그 클릭은 이 바탕이 잡는다. 접는 것은 `finish_site_drag`보다 **먼저** 해야 한다
+        // (그 함수가 이 프레임의 재정렬을 확정한다)
+        if backdrop.secondary_clicked() {
+            self.drag = None;
+        }
         let dragged = self.finish_site_drag(&child, rows, &row_rects);
         let well_menu = show_well_menu(&backdrop, store).unwrap_or_default();
         ListOutcome {
@@ -2256,6 +2275,27 @@ mod tests {
         manager.apply_list_action(ListAction::StartRename, &mut store);
         assert_eq!(manager.selected, Some(둘째));
         assert_eq!(manager.renaming.as_deref(), Some("둘째"));
+    }
+
+    #[test]
+    fn 고른_줄을_다시_눌러도_고치던_초안이_남는다() {
+        // FR-27 — 고른 줄을 다시 누르는 길이 셋이다(클릭·더블클릭 첫 클릭·우클릭 메뉴).
+        // 그때마다 초안을 다시 실으면 오른쪽 폼에 적던 것이 저장값으로 되돌아간다
+        let (mut manager, mut store, id) = manager_with_site();
+        manager.draft.host = "deploy.test".to_owned();
+        manager.draft.password = "아직안누른비밀번호".to_owned();
+
+        manager.select(&store, id);
+
+        assert_eq!(manager.draft.host, "deploy.test");
+        assert_eq!(manager.draft.password, "아직안누른비밀번호");
+
+        // 다른 줄을 고르는 것은 종전대로 — 그 사이트의 설정이 새로 실린다
+        let 둘째 = store.add("스테이징");
+        manager.select(&store, 둘째);
+        assert_eq!(manager.selected, Some(둘째));
+        assert_eq!(manager.draft.host, "");
+        assert_eq!(manager.draft.password, "");
     }
 
     #[test]
