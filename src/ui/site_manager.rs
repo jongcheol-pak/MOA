@@ -761,6 +761,14 @@ impl SiteManager {
         if let Some(index) = shell.clicked.filter(|_| !asking) {
             let connect = index == CONNECT_BUTTON;
             outcome = match index {
+                // **`확인(O)`은 등록할 것이 없으면 그냥 닫는다** — 목록 조작(이름 바꾸기·
+                // 삭제·복제·차례)은 이미 `SiteStore`에 반영돼 있어, 이 버튼이 더 하는 일은
+                // 오른쪽 초안을 반영하는 것뿐이다. 그 초안이 없는데 오류를 내면 사용자는
+                // 지운 직후에 대화를 닫지 못한다.
+                //
+                // **`연결(C)`은 이 갈래에 넣지 않는다** — 연결은 대상을 요구하는 적극적
+                // 조작이라 붙을 곳이 없으면 알려야 한다
+                CONFIRM_BUTTON if self.nothing_to_register(store) => SiteManagerOutcome::Close,
                 // 연결·확인은 등록을 거쳐야 한다 — 값이 모자라면 `commit`이 오류를 남기고
                 // `None`을 주며, 그때는 대화를 그대로 둔다
                 CONNECT_BUTTON | CONFIRM_BUTTON => match self.commit(store) {
@@ -826,14 +834,7 @@ impl SiteManager {
             },
         );
         match shell.clicked {
-            Some(0) => {
-                store.remove(id);
-                self.pending_delete = None;
-                self.selected = None;
-                self.draft = Draft::default();
-                self.renaming = None;
-                self.rename_focus = false;
-            }
+            Some(0) => self.confirm_delete(id, store),
             Some(_) => self.pending_delete = None,
             None => {
                 if shell.should_close {
@@ -841,6 +842,35 @@ impl SiteManager {
                 }
             }
         }
+    }
+
+    /// 삭제를 확정한다 — 지운 뒤에는 **고른 사이트가 없고 초안도 비운다**.
+    ///
+    /// 지운 사이트의 설정이 오른쪽 폼에 남아 있으면 다음에 `확인(O)`을 누를 때 그것이
+    /// 되살아난다. 그리기와 나눠 두어 화면 없이 시험한다
+    fn confirm_delete(&mut self, id: SiteId, store: &mut SiteStore) {
+        store.remove(id);
+        self.pending_delete = None;
+        self.selected = None;
+        self.draft = Draft::default();
+        self.renaming = None;
+        self.rename_focus = false;
+    }
+
+    /// `확인(O)`이 등록할 것이 없는 상태인가 — 고른 사이트도 없고 초안도 손대지 않았다.
+    ///
+    /// **`selected == None`이 두 뜻을 겸하기 때문에 필요한 판정이다** — 「새 초안을 적는 중」
+    /// (`open_new`)과 「방금 지워 고른 것이 없다」(`confirm_delete`)가 같은 값으로 나타난다.
+    /// 그 둘을 가르지 않으면 사이트를 지운 직후의 `확인(O)`이 빈 초안을 등록하려 들어
+    /// 「호스트 주소를 입력해야…」 오류를 낸다(사용자 보고 2026-09-02).
+    ///
+    /// 초안을 **조금이라도 손댔으면** 등록 의도가 있는 것이라 이 판정에서 빠진다 — 그때는
+    /// 종전대로 `commit`이 호스트를 요구한다
+    fn nothing_to_register(&self, store: &SiteStore) -> bool {
+        self.selected
+            .filter(|id| store.get(*id).is_some())
+            .is_none()
+            && self.draft == Draft::default()
     }
 
     /// 헤더 — 제목과 닫기 버튼. 닫기를 눌렀으면 `true` (`:386-388`)
@@ -2519,6 +2549,77 @@ mod tests {
         let grid = manager.button_grid(column, manager.buttons_top(column));
         let width = SiteManager::button_width(grid);
         assert!((width * 3.0 + GRID_GAP * 2.0 - grid.width()).abs() < 0.01);
+    }
+
+    #[test]
+    fn 사이트를_지운_직후에는_확인이_등록할_것이_없다() {
+        // 사용자 보고(2026-09-02): `새 사이트`로 만든 항목을 지운 뒤 `확인(O)`을 누르면
+        // 「호스트 주소를 입력해야 등록할 수 있습니다.」가 뜨고 대화가 닫히지 않았다.
+        // 지운 직후 상태(`selected` 없음 + 초안 기본값)가 「새 초안을 적는 중」과
+        // 구분되지 않아 `commit`으로 넘어갔던 것이 원인이다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let mut store = SiteStore::new();
+        let 남길 = store.add("LG");
+        if let Some(site) = store.get_mut(남길) {
+            site.host = "example.test".to_owned();
+        }
+        let mut manager = SiteManager::new();
+        manager.open(&store, Some(남길));
+
+        // `새 사이트` → 그 항목을 지운다 (버튼과 우클릭 메뉴가 같은 길이다)
+        manager.apply_list_action(ListAction::New, &mut store);
+        let 지울 = manager.selected.expect("새 사이트가 골라진다");
+        manager.apply_list_action(ListAction::Delete, &mut store);
+        assert_eq!(
+            manager.pending_delete,
+            Some(지울),
+            "곧바로 지우지 않고 묻는다"
+        );
+        manager.confirm_delete(지울, &mut store);
+
+        assert_eq!(manager.selected, None, "지운 뒤에는 고른 사이트가 없다");
+        assert!(
+            manager.nothing_to_register(&store),
+            "지운 직후에는 `확인(O)`이 등록할 것이 없다 — 그냥 닫혀야 한다"
+        );
+        assert_eq!(manager.error, None, "지우기만 했는데 오류가 남았다");
+        // 남은 사이트는 그대로다
+        assert_eq!(store.sites().len(), 1);
+        assert_eq!(store.sites()[0].id, 남길);
+
+        // **왜 `확인(O)`이 `commit` 앞에서 갈라져야 하는가** — 이 상태를 그대로 넘기면
+        // 종전 그대로 오류가 난다. 이 단언이 그 기전을 고정한다
+        assert_eq!(manager.commit(&mut store), None);
+        assert_eq!(
+            manager.error.as_deref(),
+            Some("호스트 주소를 입력해야 등록할 수 있습니다.")
+        );
+    }
+
+    #[test]
+    fn 고를_것이_있거나_초안을_손댔으면_확인이_등록한다() {
+        // 위 판정이 너무 넓으면 정상 등록까지 삼킨다 — 두 경우 모두 `commit`으로 가야 한다
+        let mut store = SiteStore::new();
+        let id = store.add("배포 서버");
+        let mut manager = SiteManager::new();
+
+        manager.open(&store, Some(id));
+        assert!(
+            !manager.nothing_to_register(&store),
+            "고른 사이트가 있으면 그것을 갱신한다"
+        );
+
+        manager.open_new();
+        assert!(
+            manager.nothing_to_register(&store),
+            "빈 초안은 등록할 것이 없다"
+        );
+        manager.draft.host = "example.test".to_owned();
+        assert!(
+            !manager.nothing_to_register(&store),
+            "초안을 손댔으면 등록 의도가 있다"
+        );
     }
 
     #[test]
