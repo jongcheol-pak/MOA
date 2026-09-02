@@ -1288,6 +1288,113 @@ mod tests {
     use crate::remote::queue::{TransferItem, TransferState};
     use std::collections::HashSet;
 
+    /// 원격 탭 하나를 가진 패널 — 연결까지 붙인다
+    fn 원격_패널(conn: ConnectionId, path: &str) -> PanelState {
+        let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\테스트"));
+        panel.open_remote_tab_only(SiteId(1), RemotePath::new(path));
+        assert!(panel.attach_conn(conn), "원격 탭이어야 연결이 붙는다");
+        panel
+    }
+
+    /// 뷰 하나를 세우고 그 안에 패널들을 심는다 — 첫 패널은 `PanelId(0)`이다
+    fn 뷰(패널들: Vec<(PanelId, PanelState)>) -> WorkspaceView {
+        let mut view = WorkspaceView::new(std::path::PathBuf::from(r"C:\테스트"));
+        view.panels.clear();
+        for (id, panel) in 패널들 {
+            view.panels.insert(id, panel);
+        }
+        view
+    }
+
+    #[test]
+    fn 같은_워크스페이스의_두_패널은_서로의_답을_가져가지_않는다() {
+        // 흡수된 대장 항목 「원격 조회 요청에 패널 식별자」가 지적한 바로 그 자리 —
+        // 같은 연결을 나눠 쓰는 두 패널이 **같은 경로를 향해 같은 번호로** 대기해도
+        // 청한 쪽만 답을 받아야 한다. 종전에는 세대 번호만 봤고 그 번호가 패널마다
+        // 따로 세어져 겹쳤다
+        let conn = ConnectionId(1);
+        let mut views = HashMap::new();
+        views.insert(
+            WorkspaceId(0),
+            뷰(vec![
+                (PanelId(0), 원격_패널(conn, "/var/www")),
+                (PanelId(1), 원격_패널(conn, "/var/www")),
+            ]),
+        );
+
+        let 첫째 = list_target(&mut views, 0, 0, conn).map(|p| p as *const PanelState);
+        let 둘째 = list_target(&mut views, 0, 1, conn).map(|p| p as *const PanelState);
+        assert!(
+            첫째.is_some() && 둘째.is_some(),
+            "둘 다 찾을 수 있어야 한다"
+        );
+        assert_ne!(
+            첫째, 둘째,
+            "같은 패널을 두 번 돌려줬다 — 자리를 가리지 못한다"
+        );
+    }
+
+    #[test]
+    fn 다른_워크스페이스의_같은_패널_번호도_갈린다() {
+        // **`PanelId`는 전역 유일하지 않다** — `LayoutTree::new()`가 워크스페이스마다
+        // `PanelId(0)`부터 다시 매기는데 응답 라우팅은 모든 워크스페이스를 대상으로 온다.
+        // 패널 번호만 보면 이 둘이 같아 보여 한쪽의 답이 다른 쪽으로 간다
+        let conn = ConnectionId(1);
+        let mut views = HashMap::new();
+        views.insert(
+            WorkspaceId(0),
+            뷰(vec![(PanelId(0), 원격_패널(conn, "/var/www"))]),
+        );
+        views.insert(
+            WorkspaceId(1),
+            뷰(vec![(PanelId(0), 원격_패널(conn, "/var/www"))]),
+        );
+
+        let 앞 = list_target(&mut views, 0, 0, conn).map(|p| p as *const PanelState);
+        let 뒤 = list_target(&mut views, 1, 0, conn).map(|p| p as *const PanelState);
+        assert!(
+            앞.is_some() && 뒤.is_some(),
+            "두 워크스페이스 모두 찾을 수 있어야 한다"
+        );
+        assert_ne!(앞, 뒤, "워크스페이스가 다른데 같은 패널을 돌려줬다");
+    }
+
+    #[test]
+    fn 그_사이_다른_연결로_옮겨_갔으면_답을_주지_않는다() {
+        // 자리는 맞아도 그 패널이 다른 사이트를 보고 있으면 남의 서버 목록을 그리게 된다
+        let mut views = HashMap::new();
+        views.insert(
+            WorkspaceId(0),
+            뷰(vec![(PanelId(0), 원격_패널(ConnectionId(1), "/var/www"))]),
+        );
+
+        assert!(list_target(&mut views, 0, 0, ConnectionId(1)).is_some());
+        assert!(
+            list_target(&mut views, 0, 0, ConnectionId(2)).is_none(),
+            "다른 연결의 답을 이 패널이 받았다"
+        );
+    }
+
+    #[test]
+    fn 워크스페이스나_패널이_닫혔으면_조용히_버린다() {
+        // 답이 늦게 왔는데 그 사이 자리가 사라진 경우 — 패닉이 아니라 `None`이어야 한다
+        let conn = ConnectionId(1);
+        let mut views = HashMap::new();
+        views.insert(
+            WorkspaceId(0),
+            뷰(vec![(PanelId(0), 원격_패널(conn, "/var/www"))]),
+        );
+
+        assert!(
+            list_target(&mut views, 9, 0, conn).is_none(),
+            "없는 워크스페이스인데 무언가를 돌려줬다"
+        );
+        assert!(
+            list_target(&mut views, 0, 9, conn).is_none(),
+            "없는 패널인데 무언가를 돌려줬다"
+        );
+    }
+
     #[test]
     fn 원격_탭에서_잇는_것은_셋뿐이다() {
         // plan D5 — 원격에 **이미 있는 기능만** 잇는다
