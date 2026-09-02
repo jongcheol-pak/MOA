@@ -534,9 +534,8 @@ impl SiteManager {
     /// 사이트를 지정해 부른다: 고치러 온 사용자가 목록에서 그것을 다시 찾게 하지 않는다
     pub fn open(&mut self, store: &SiteStore, select: Option<SiteId>) {
         self.open_new();
-        let target = select
-            .filter(|id| store.get(*id).is_some())
-            .or_else(|| store.sites().first().map(|record| record.id));
+        let target =
+            existing_site(select, store).or_else(|| store.sites().first().map(|record| record.id));
         if let Some(id) = target {
             self.select(store, id);
         }
@@ -602,7 +601,7 @@ impl SiteManager {
             self.error = Some(crate::i18n::site_error_no_host().to_owned());
             return None;
         }
-        let id = match self.selected.filter(|id| store.get(*id).is_some()) {
+        let id = match existing_site(self.selected, store) {
             Some(id) => id,
             // 이름은 호스트로 잡는다 — 겹치면 `SiteStore`가 `(2)`를 붙인다
             None => store.add(self.draft.host.trim()),
@@ -766,9 +765,15 @@ impl SiteManager {
                 // 오른쪽 초안을 반영하는 것뿐이다. 그 초안이 없는데 오류를 내면 사용자는
                 // 지운 직후에 대화를 닫지 못한다.
                 //
-                // **`연결(C)`은 이 갈래에 넣지 않는다** — 연결은 대상을 요구하는 적극적
-                // 조작이라 붙을 곳이 없으면 알려야 한다
                 CONFIRM_BUTTON if self.nothing_to_register(store) => SiteManagerOutcome::Close,
+                // **`연결(C)`은 닫지 않고 알린다** — 연결은 대상을 요구하는 적극적 조작이라
+                // 조용히 닫으면 사용자는 연결이 왜 안 됐는지 알 수 없다. 다만 까닭을 정확히
+                // 적는다: 아래 `commit`으로 보내면 「호스트 주소를 입력해야 등록할 수
+                // 있습니다」가 뜨는데, 이 상태의 진짜 원인은 **고를 사이트가 없는 것**이다
+                CONNECT_BUTTON if self.nothing_to_register(store) => {
+                    self.error = Some(crate::i18n::site_error_no_selection().to_owned());
+                    SiteManagerOutcome::None
+                }
                 // 연결·확인은 등록을 거쳐야 한다 — 값이 모자라면 `commit`이 오류를 남기고
                 // `None`을 주며, 그때는 대화를 그대로 둔다
                 CONNECT_BUTTON | CONFIRM_BUTTON => match self.commit(store) {
@@ -867,10 +872,7 @@ impl SiteManager {
     /// 초안을 **조금이라도 손댔으면** 등록 의도가 있는 것이라 이 판정에서 빠진다 — 그때는
     /// 종전대로 `commit`이 호스트를 요구한다
     fn nothing_to_register(&self, store: &SiteStore) -> bool {
-        self.selected
-            .filter(|id| store.get(*id).is_some())
-            .is_none()
-            && self.draft == Draft::default()
+        existing_site(self.selected, store).is_none() && self.draft == Draft::default()
     }
 
     /// 헤더 — 제목과 닫기 버튼. 닫기를 눌렀으면 `true` (`:386-388`)
@@ -1717,6 +1719,15 @@ fn button_cell(ui: &mut egui::Ui, label: &str, enabled: bool, width: f32) -> boo
     })
     .inner
     .clicked()
+}
+
+/// 그 사이트가 아직 목록에 살아 있으면 그대로, 지워졌으면 `None`.
+///
+/// **세 자리가 같은 거르기를 한다** — 대화를 열 때(`open`), 등록할 대상을 정할
+/// 때(`commit`), 확정할 초안이 있는지 볼 때(`nothing_to_register`). 3회째라 AGENTS
+/// 「실제 중복 3회」 문턱이 찼다
+fn existing_site(id: Option<SiteId>, store: &SiteStore) -> Option<SiteId> {
+    id.filter(|id| store.get(*id).is_some())
 }
 
 /// 마우스 y가 줄들 사이 어디에 놓이는가 — `0..=rows.len()`.
@@ -2594,6 +2605,44 @@ mod tests {
         assert_eq!(
             manager.error.as_deref(),
             Some("호스트 주소를 입력해야 등록할 수 있습니다.")
+        );
+    }
+
+    #[test]
+    fn 고를_것이_없는데_연결을_누르면_까닭을_정확히_알린다() {
+        // spec 리뷰 M1 — `확인(O)`만 고치면 같은 상태에서 `연결(C)`이 「호스트 주소를
+        // 입력해야 등록할 수 있습니다」를 낸다. 그 문구는 원인을 잘못 알린다:
+        // 등록할 값이 모자란 것이 아니라 **붙을 사이트가 없는** 것이다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        assert_eq!(
+            crate::i18n::site_error_no_selection(),
+            "연결할 사이트를 목록에서 고르세요."
+        );
+        let store = SiteStore::new();
+        let mut manager = SiteManager::new();
+        manager.open_new();
+        assert!(manager.nothing_to_register(&store));
+        // `연결(C)`은 이 판정에서 닫지 않고 알린다 — 그 갈래가 서는지 값으로 고정한다
+        assert_ne!(
+            crate::i18n::site_error_no_selection(),
+            crate::i18n::site_error_no_host(),
+            "두 상황은 원인이 달라 문구도 달라야 한다"
+        );
+    }
+
+    #[test]
+    fn 살아_있는_사이트만_고른_것으로_본다() {
+        // quality 리뷰 m2 — 같은 거르기가 세 자리에 있어 공용 함수로 묶었다
+        let mut store = SiteStore::new();
+        let id = store.add("배포 서버");
+        assert_eq!(existing_site(Some(id), &store), Some(id));
+        assert_eq!(existing_site(None, &store), None);
+        store.remove(id);
+        assert_eq!(
+            existing_site(Some(id), &store),
+            None,
+            "지워진 id는 걸러진다"
         );
     }
 

@@ -430,6 +430,12 @@ strings! {
     site_transfer_mode_notice
         => "이미 연결된 서버입니다. 바꾼 전송 모드는 다음 연결부터 적용됩니다."
         / "Already connected. The new transfer mode applies from the next connection.";
+    /// 고를 사이트가 없는데 `연결(C)`을 눌렀을 때 (사용자 보고 2026-09-02) — 사이트를 지운
+    /// 직후가 그 상태다. **까닭을 정확히 적는다**: 등록할 값이 모자란 것이 아니라 붙을
+    /// 대상이 없는 것이라, 여기에 `site_error_no_host`를 쓰면 원인을 잘못 알린다
+    site_error_no_selection
+        => "연결할 사이트를 목록에서 고르세요."
+        / "Select a site from the list to connect.";
     /// 호스트를 비운 채 등록하려 할 때 — 무엇을 해야 하는지까지 알린다
     site_error_no_host
         => "호스트 주소를 입력해야 등록할 수 있습니다."
