@@ -763,8 +763,7 @@ impl SiteManager {
                 // **`확인(O)`은 등록할 것이 없으면 그냥 닫는다** — 목록 조작(이름 바꾸기·
                 // 삭제·복제·차례)은 이미 `SiteStore`에 반영돼 있어, 이 버튼이 더 하는 일은
                 // 오른쪽 초안을 반영하는 것뿐이다. 그 초안이 없는데 오류를 내면 사용자는
-                // 지운 직후에 대화를 닫지 못한다.
-                //
+                // 지운 직후에 대화를 닫지 못한다
                 CONFIRM_BUTTON if self.nothing_to_register(store) => SiteManagerOutcome::Close,
                 // **`연결(C)`은 닫지 않고 알린다** — 연결은 대상을 요구하는 적극적 조작이라
                 // 조용히 닫으면 사용자는 연결이 왜 안 됐는지 알 수 없다. 다만 까닭을 정확히
@@ -862,15 +861,19 @@ impl SiteManager {
         self.rename_focus = false;
     }
 
-    /// `확인(O)`이 등록할 것이 없는 상태인가 — 고른 사이트도 없고 초안도 손대지 않았다.
+    /// 다룰 사이트도 초안도 없는 상태인가 — 고른 사이트가 없고 초안도 손대지 않았다.
     ///
     /// **`selected == None`이 두 뜻을 겸하기 때문에 필요한 판정이다** — 「새 초안을 적는 중」
     /// (`open_new`)과 「방금 지워 고른 것이 없다」(`confirm_delete`)가 같은 값으로 나타난다.
     /// 그 둘을 가르지 않으면 사이트를 지운 직후의 `확인(O)`이 빈 초안을 등록하려 들어
     /// 「호스트 주소를 입력해야…」 오류를 낸다(사용자 보고 2026-09-02).
     ///
+    /// **바닥 버튼 둘이 이 판정을 나눠 쓰되 하는 일이 다르다** — 고칠 때 둘을 함께 본다:
+    /// `확인(O)`은 등록할 것이 없으니 그냥 닫고(`SiteManagerOutcome::Close`),
+    /// `연결(C)`은 붙을 대상이 없다고 알린다(`i18n::site_error_no_selection`, 대화는 열어 둔다).
+    ///
     /// 초안을 **조금이라도 손댔으면** 등록 의도가 있는 것이라 이 판정에서 빠진다 — 그때는
-    /// 종전대로 `commit`이 호스트를 요구한다
+    /// 두 버튼 모두 종전대로 `commit`으로 가고 그것이 호스트를 요구한다
     fn nothing_to_register(&self, store: &SiteStore) -> bool {
         existing_site(self.selected, store).is_none() && self.draft == Draft::default()
     }
@@ -2619,15 +2622,22 @@ mod tests {
             crate::i18n::site_error_no_selection(),
             "연결할 사이트를 목록에서 고르세요."
         );
-        let store = SiteStore::new();
+        let mut store = SiteStore::new();
         let mut manager = SiteManager::new();
         manager.open_new();
         assert!(manager.nothing_to_register(&store));
-        // `연결(C)`은 이 판정에서 닫지 않고 알린다 — 그 갈래가 서는지 값으로 고정한다
         assert_ne!(
             crate::i18n::site_error_no_selection(),
             crate::i18n::site_error_no_host(),
             "두 상황은 원인이 달라 문구도 달라야 한다"
+        );
+        // **왜 `연결(C)`도 `commit` 앞에서 갈라져야 하는가** — 가드 없이 그대로 넘기면
+        // 원인과 어긋난 문구(등록에 호스트가 필요하다)가 뜬다. 이 단언이 그 기전을 고정한다
+        assert_eq!(manager.commit(&mut store), None);
+        assert_eq!(
+            manager.error.as_deref(),
+            Some(crate::i18n::site_error_no_host()),
+            "가드가 없으면 「고를 사이트가 없다」가 아니라 「호스트가 없다」로 알린다"
         );
     }
 
