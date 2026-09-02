@@ -438,7 +438,8 @@ mod tests {
     fn 팝업_메뉴는_항목_스타일을_거친다() {
         // 규약: 팝업 목록을 여는 자리는 모두 `theme::menu_style`을 거치거나
         // `widgets::menu_row`로 그린다. **개수를 견주는 이유**는 한 파일에 팝업이 여럿인 곳
-        // (`sidebar.rs` 셋·`tabs.rs` 둘)에서 하나만 고쳐도 「있는지」만 보는 검사는 통과하기 때문이다
+        // (`sidebar.rs` 셋·`tabs.rs` 둘·`site_manager.rs` 둘)에서 하나만 고쳐도 「있는지」만
+        // 보는 검사는 통과하기 때문이다
         let ui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
         let mut sources = Vec::new();
         ui_sources(&ui_dir, &mut sources);

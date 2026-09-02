@@ -293,7 +293,7 @@ struct ListOutcome {
 ///
 /// `새 사이트`는 목록을 고치고 `내보내기`·`가져오기`는 파일을 주고받는다. 한 줄이 둘을
 /// 함께 내므로 값 하나에 담아 돌려준다(`BodyOutcome`이 이미 같은 형태다)
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct BottomOutcome {
     list: Option<ListAction>,
     exchange: Option<ExchangeAction>,
@@ -973,6 +973,16 @@ impl SiteManager {
         let mut row_rects = Vec::with_capacity(store.sites().len());
         // 편집기를 그리기 전에 빼 둔다 — 루프 안에서는 `renaming`을 빌리고 있어 함께 못 읽는다
         let focus = std::mem::take(&mut self.rename_focus);
+        // **빈 자리 메뉴의 바탕을 줄보다 **먼저** 등록한다** (FR-27) — egui는 같은 레이어에서
+        // **나중에 등록한 위젯을 위로** 본다(`hit_test.rs`의 *"In case of a tie, take the last
+        // one = the one on top"*). 그래서 줄이 있는 자리는 줄이 잡고, 줄이 없는 빈 자리에서만
+        // 이 바탕이 잡힌다. `ScrollArea`가 콘텐츠에 거는 배경 응답은 `Sense::DRAG`뿐이라
+        // 2차 버튼을 가로채지 않는다
+        let backdrop = child.interact(
+            rows,
+            child.id().with("사이트 목록 빈 자리"),
+            egui::Sense::click(),
+        );
         // **웰을 넘치면 스크롤한다** — 종전에는 `set_clip_rect`로 자르기만 해 넘친 사이트가
         // 아예 닿을 수 없었다(고를 수도, 끌어 옮길 수도 없었다). 사이드바와 같은 부품이다.
         //
@@ -1038,13 +1048,15 @@ impl SiteManager {
         // **삽입선은 웰 안쪽(`rows`)에 긋는다** — 스크롤 영역의 콘텐츠 사각형은 줄 수만큼
         // 길어져 있어 그것을 폭으로 쓰면 선이 웰 밖으로 뻗는다
         let dragged = self.finish_site_drag(&child, rows, &row_rects);
+        let well_menu = show_well_menu(&backdrop, store).unwrap_or_default();
         ListOutcome {
             picked,
             rename_done,
-            // 줄에서 나온 조작이 끌어 놓기를 이긴다 — 더블클릭은 임계를 못 넘어
-            // 재정렬이 서지 않으므로 둘이 한 프레임에 함께 날 일은 없다
-            action: row_action.or(dragged),
-            exchange: None,
+            // 빈 자리 메뉴가 줄 메뉴를 이기고, 줄에서 나온 조작이 끌어 놓기를 이긴다 —
+            // 포인터가 하나라 셋이 한 프레임에 함께 날 일은 없고(더블클릭은 임계를 못 넘어
+            // 재정렬이 서지 않는다), 겹치면 위에 뜬 팝업에서 고른 것을 택한다
+            action: well_menu.list.or(row_action).or(dragged),
+            exchange: well_menu.exchange,
         }
     }
 
@@ -1064,7 +1076,10 @@ impl SiteManager {
     ) -> Option<ListAction> {
         let drag = self.drag.as_ref()?;
         if !drag.active {
-            if ui.input(|i| !i.pointer.any_down()) {
+            // **1차 버튼만 본다** — `any_down()`은 `down` 배열을 통째로 훑어 **모든 버튼**을
+            // 보므로, 끌던 중 우클릭하면 왼쪽을 떼어도 이 가드가 서지 않아 미완 끌기가
+            // 남는다. 이 파일에 줄 우클릭 메뉴가 생기면서 그 조합이 실제로 닿게 됐다
+            if ui.input(|i| !i.pointer.button_down(egui::PointerButton::Primary)) {
                 self.drag = None;
             }
             return None;
@@ -1087,7 +1102,9 @@ impl SiteManager {
                 ui.painter().rect_filled(line, 0.0, theme::ACCENT);
             }
         }
-        if ui.input(|i| !i.pointer.any_down()) {
+        // 위 가드와 같은 이유로 1차 버튼만 본다 — 우클릭을 누른 채 놓으면 재정렬이
+        // 커밋되지 않고 삽입선만 남았다
+        if ui.input(|i| !i.pointer.button_down(egui::PointerButton::Primary)) {
             self.drag = None;
             return widgets::reorder_target(from, insert_at)
                 .map(|to| ListAction::Reorder(from, to));
@@ -1788,6 +1805,66 @@ fn show_row_menu(response: &egui::Response) -> Option<ListAction> {
     picked
 }
 
+/// 목록 웰의 빈 자리 우클릭 메뉴에 설 항목 — **아랫줄 버튼 세 칸과 같은 조작**이다
+/// (FR-27·FR-59).
+///
+/// 활성 조건이 칸마다 다르다 — `새 사이트`·`가져오기`는 늘 누를 수 있고,
+/// **`내보내기`는 등록된 사이트가 없으면 잠긴다**(내보낼 것이 없다). 그 판정을 새로 적지
+/// 않고 `show_bottom_buttons`와 같은 `store.is_empty()`를 쓴다
+fn well_menu_items(store: &SiteStore) -> [(&'static str, BottomOutcome, bool); 3] {
+    [
+        (
+            crate::i18n::site_new(),
+            BottomOutcome {
+                list: Some(ListAction::New),
+                exchange: None,
+            },
+            true,
+        ),
+        (
+            crate::i18n::site_export(),
+            BottomOutcome {
+                list: None,
+                exchange: Some(ExchangeAction::Export),
+            },
+            !store.is_empty(),
+        ),
+        (
+            crate::i18n::site_import(),
+            BottomOutcome {
+                list: None,
+                exchange: Some(ExchangeAction::Import),
+            },
+            true,
+        ),
+    ]
+}
+
+/// 빈 자리 우클릭 메뉴를 그린다 — 고른 조작을 돌려준다 (FR-27).
+///
+/// 목록을 읽기만 하므로 `&SiteStore`만 받는다 — `show_row_menu`와 같은 얼개다
+fn show_well_menu(response: &egui::Response, store: &SiteStore) -> Option<BottomOutcome> {
+    let mut picked = None;
+    egui::Popup::context_menu(response).show(|ui| {
+        theme::menu_style(ui);
+        let items = well_menu_items(store);
+        let labels: Vec<&str> = items.iter().map(|(label, ..)| *label).collect();
+        ui.set_width(menu_width(ui, &labels));
+        for (label, outcome, enabled) in items {
+            let button = egui::Button::new(egui::RichText::new(label).color(if enabled {
+                theme::TEXT
+            } else {
+                theme::TEXT_DIM
+            }));
+            if ui.add_enabled(enabled, button).clicked() {
+                picked = Some(outcome);
+                ui.close();
+            }
+        }
+    });
+    picked
+}
+
 /// 이름 바꾸는 중인 줄 — 편집이 끝났으면 `true` (Enter 또는 포커스를 잃었을 때).
 /// `focus`는 편집기가 처음 뜬 프레임에만 참이다
 fn show_rename_row(
@@ -2259,6 +2336,54 @@ mod tests {
                 ListAction::Duplicate
             ],
             "윗줄 버튼 세 칸과 같은 조작이다"
+        );
+    }
+
+    #[test]
+    fn 빈_자리_메뉴_세_줄은_아랫줄_버튼과_같은_조작이다() {
+        // FR-27·FR-59 — 빈 자리 메뉴도 아랫줄 버튼 세 칸과 같은 조작을 낸다
+        let _guard =
+            crate::i18n::LanguageGuard::lock(crate::app::settings::LanguageSetting::Korean);
+        let mut store = SiteStore::new();
+        store.add("배포 서버");
+        let items = well_menu_items(&store);
+        assert_eq!(
+            items.each_ref().map(|(label, ..)| *label),
+            ["새 사이트", "내보내기", "가져오기"]
+        );
+        assert_eq!(
+            items.each_ref().map(|(_, outcome, _)| *outcome),
+            [
+                BottomOutcome {
+                    list: Some(ListAction::New),
+                    exchange: None
+                },
+                BottomOutcome {
+                    list: None,
+                    exchange: Some(ExchangeAction::Export)
+                },
+                BottomOutcome {
+                    list: None,
+                    exchange: Some(ExchangeAction::Import)
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn 등록된_사이트가_없으면_내보내기_줄이_잠긴다() {
+        // 아랫줄 버튼과 같은 판정이다 — 내보낼 것이 없으면 눌러도 할 일이 없다
+        let mut store = SiteStore::new();
+        assert_eq!(
+            well_menu_items(&store).each_ref().map(|(_, _, on)| *on),
+            [true, false, true],
+            "사이트가 없으면 `내보내기`만 잠긴다"
+        );
+        store.add("배포 서버");
+        assert_eq!(
+            well_menu_items(&store).each_ref().map(|(_, _, on)| *on),
+            [true, true, true],
+            "사이트가 있으면 셋 다 열린다"
         );
     }
 
