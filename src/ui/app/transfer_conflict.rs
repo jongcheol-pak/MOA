@@ -11,7 +11,7 @@
 //! `poll_remote`가 `settle_conflict`를 부르고, 이쪽은 `site_connection`·`request_tree`를 쓴다.
 
 use super::ExplorerApp;
-use crate::remote::connection::{ConnCommand, ConnectionId, TransferDirection};
+use crate::remote::connection::{ConnCommand, ConnectionId, ListSource, TransferDirection};
 use crate::remote::transfer;
 use crate::remote::types::SiteId;
 use crate::ui::list_common::{self, ConflictChoice, DragItem, DropOutcome, DropTarget};
@@ -77,17 +77,17 @@ impl ExplorerApp {
                 let id = self.next_conflict;
                 self.next_conflict += 1;
                 self.pending_conflicts.push(ConflictCheck { id, drop });
-                // 조회 번호는 패널 목록·트리와 **다른 공간**에서 센다 — 같은 번호가 겹치면
-                // 한쪽의 답을 다른 쪽이 가져가 서로 영영 기다린다.
-                // **등록과 발송이 같은 값을 쓴다**: 한쪽만 기준값을 더하면 답이 와도 찾지 못해
-                // 그 전송이 대화도 못 뜨고 큐에도 못 들어간 채 사라진다
-                let generation = conflict_generation(id);
-                self.conflict_lists.insert(generation, (conn, names));
+                // **등록과 발송이 같은 확인 번호를 쓴다** — 종전에는 기준값을 더한 세대로
+                // 보내고 답에서 다시 빼 되찾았는데, 한쪽만 고쳐지면 답이 와도 찾지 못해
+                // 그 전송이 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다. 이제 출처가
+                // 확인 번호를 그대로 나르므로 더하고 뺄 자리가 없다
+                self.conflict_lists.insert(id, (conn, names));
                 self.manager.send(
                     conn,
                     ConnCommand::List {
-                        generation,
+                        source: ListSource::Conflict { id },
                         path: dir,
+                        quiet: false,
                     },
                 );
             }
@@ -157,15 +157,16 @@ impl ExplorerApp {
     pub(super) fn abandon_conflict_lists(&mut self, conn: ConnectionId) {
         // **그 연결로** 물어 둔 것만 거둔다 — 같은 사이트의 다른 연결에 물어 둔 확인은
         // 그대로 답을 기다린다(사이트 하나가 연결 셋을 쓴다 — FR-37)
+        // 키가 곧 확인 번호다 — 종전에는 기준값을 더한 세대라 여기서 다시 빼야 했다
         let abandoned: Vec<u64> = self
             .conflict_lists
             .iter()
             .filter(|(_, (asked, _))| *asked == conn)
-            .map(|(generation, _)| *generation)
+            .map(|(id, _)| *id)
             .collect();
-        for generation in abandoned {
-            self.conflict_lists.remove(&generation);
-            self.settle_conflict(conflict_id(generation), Vec::new());
+        for id in abandoned {
+            self.conflict_lists.remove(&id);
+            self.settle_conflict(id, Vec::new());
         }
     }
 
@@ -285,23 +286,6 @@ impl ExplorerApp {
             }
         }
     }
-}
-
-/// 같은 이름 확인 조회의 세대 기준값 (FR-55) — 패널 목록·트리와 번호 공간을 나눈다.
-///
-/// 세 번째 종류가 되면서 기준값도 셋이 됐다. 요청에 출처를 명시하는 `enum ListSource`로
-/// 바꾸는 것은 별도 작업으로 미뤘다(plan D8) — 연결·패널·트리 캐시까지 닿는 리팩터다
-pub(super) const CONFLICT_LIST_BASE: u64 = 2 << 40;
-
-/// 확인 번호 → 조회 세대. **등록·발송·조회가 모두 이 한 쌍만 쓴다** — 양쪽에서 손으로
-/// 더하고 빼면 한쪽만 고쳐졌을 때 답을 영영 찾지 못한다(실제로 그렇게 어긋났다)
-pub(super) fn conflict_generation(id: u64) -> u64 {
-    CONFLICT_LIST_BASE + id
-}
-
-/// 조회 세대 → 확인 번호 — 위의 역이다
-pub(super) fn conflict_id(generation: u64) -> u64 {
-    generation - CONFLICT_LIST_BASE
 }
 
 /// 고른 최상위 항목 중 **대상에 이미 있는 이름**들 (FR-55).
@@ -550,22 +534,22 @@ mod tests {
     }
 
     #[test]
-    fn 확인_번호와_조회_세대는_서로_되돌아온다() {
-        // 회귀 — 등록은 확인 번호로, 조회는 기준값을 더한 세대로 하는 바람에 답이 와도
-        // 찾지 못했다. 올리기가 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다 (완료 검증 B1)
+    fn 확인_번호는_출처가_그대로_실어_나른다() {
+        // 회귀 — 종전에는 등록을 확인 번호로, 발송을 기준값을 더한 세대로 하는 바람에
+        // 답이 와도 찾지 못했다(올리기가 대화도 못 뜨고 큐에도 못 들어간 채 사라졌다).
+        // 이제 출처가 그 번호를 그대로 나르므로 더하고 뺄 자리 자체가 없다
         for id in [0, 1, 7, 4096, u32::MAX as u64] {
-            let generation = conflict_generation(id);
-            assert_eq!(
-                conflict_id(generation),
-                id,
-                "세대에서 확인 번호를 되찾지 못했다"
-            );
-            assert!(
-                generation >= CONFLICT_LIST_BASE,
-                "확인 조회가 자기 번호 공간 밖으로 나갔다"
-            );
+            let ListSource::Conflict { id: 되찾은 } = (ListSource::Conflict { id }) else {
+                panic!("확인 출처가 다른 갈래로 바뀌었다");
+            };
+            assert_eq!(되찾은, id, "출처에서 확인 번호를 되찾지 못했다");
         }
-        // 서로 다른 확인은 서로 다른 세대를 쓴다 — 겹치면 한쪽 답을 다른 쪽이 가져간다
-        assert_ne!(conflict_generation(1), conflict_generation(2));
+        // 서로 다른 확인은 서로 다른 출처다 — 같으면 한쪽 답을 다른 쪽이 가져간다
+        assert_ne!(
+            ListSource::Conflict { id: 1 },
+            ListSource::Conflict { id: 2 }
+        );
+        // 갈래가 다르면 번호가 같아도 서로 다른 출처다 (종전의 번호 공간 분할이 하던 일)
+        assert_ne!(ListSource::Conflict { id: 7 }, ListSource::Tree { seq: 7 });
     }
 }

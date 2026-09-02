@@ -4,6 +4,8 @@
 
 use super::*;
 use crate::app::favorites::FavoriteEntry;
+use crate::app::layout::PanelId;
+use crate::app::workspace::WorkspaceId;
 use crate::remote::sites::SiteStore;
 use crate::remote::types::{RemotePath, SiteId};
 
@@ -728,7 +730,10 @@ fn 원격_탭에서는_로컬_전용_작업이_일어나지_않는다() {
     );
     // 연결이 없는 원격 탭에서는 목록 요청도 나가지 않는다
     let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
-    assert_eq!(panel.request_remote_list(&manager), None);
+    assert_eq!(
+        panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager),
+        None
+    );
 }
 
 #[test]
@@ -1077,8 +1082,8 @@ fn 남의_답이나_지난_위치의_목록은_받지_않는다() {
     panel.attach_conn(ConnectionId(1));
     let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
     // 연결이 죽어 있어도 세대는 올라간다 — 여기서는 세대·위치 판정만 본다
-    panel.request_remote_list(&manager);
-    let generation = panel.remote_generation;
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    let generation = panel.remote_seq;
 
     assert!(!panel.awaits_remote_list(generation + 1, &RemotePath::new("/var/www")));
     assert!(!panel.awaits_remote_list(generation, &RemotePath::new("/etc")));
@@ -2585,13 +2590,13 @@ fn 자동_재조회로_나간_요청만_조용한_것으로_표시된다() {
 
     // 세대는 요청을 세울 때 붙는다 — 이 하네스의 가짜 관리자는 실제로 보내지 못하므로
     // 반환값이 아니라 그 세대를 본다(같은 파일의 다른 원격 시험도 같은 방식이다)
-    panel.request_remote_list_quiet(&manager);
-    let 자동 = panel.remote_generation;
+    panel.request_remote_list_quiet(WorkspaceId(0), PanelId(0), &manager);
+    let 자동 = panel.remote_seq;
     assert!(panel.is_quiet_request(자동));
 
     // 손으로 부른 조회가 그 자리를 덮는다 — 옛 표시가 남아 알림을 삼키면 안 된다
-    panel.request_remote_list(&manager);
-    let 손으로 = panel.remote_generation;
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    let 손으로 = panel.remote_seq;
     assert!(
         !panel.is_quiet_request(손으로),
         "손으로 부른 조회가 조용하다"
@@ -2618,8 +2623,8 @@ fn 트리에서_고른_원격_폴더로_목록이_옮겨간다() {
 
     // 거둔 쪽이 그 위치로 조회를 보낸다 — 세대와 위치가 함께 맞아야 답을 받는다
     let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
-    panel.request_remote_list(&manager);
-    assert!(panel.awaits_remote_list(panel.remote_generation, &RemotePath::new("/var/www/html")));
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    assert!(panel.awaits_remote_list(panel.remote_seq, &RemotePath::new("/var/www/html")));
 
     // 상위 이동도 같은 길을 쓴다 — 옮기고 나서 아무도 다시 읽지 않던 자리였다
     let ctx = egui::Context::default();
@@ -2718,8 +2723,8 @@ fn 성공한_이동은_되돌릴_자리를_남기지_않는다() {
     let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
     let (mut panel, _) = remote_panel_in(TabPhase::Ok);
     panel.set_remote_path(RemotePath::new("/var/www/html"));
-    panel.request_remote_list(&manager);
-    let moved = panel.remote_generation;
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    let moved = panel.remote_seq;
     // 답이 도착해 이동이 섰다
     assert!(panel.apply_remote_listed(
         moved,
@@ -2729,8 +2734,8 @@ fn 성공한_이동은_되돌릴_자리를_남기지_않는다() {
     ));
 
     // 그 뒤의 새로 고침이 실패해도 경로는 그대로여야 한다
-    panel.request_remote_list(&manager);
-    let refreshed = panel.remote_generation;
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    let refreshed = panel.remote_seq;
     assert!(
         !panel.revert_remote_path(refreshed),
         "성공한 이동이 되돌려졌다"
@@ -2748,8 +2753,8 @@ fn 다른_요청의_실패는_경로를_건드리지_않는다() {
     let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
     let (mut panel, _) = remote_panel_in(TabPhase::Ok);
     panel.set_remote_path(RemotePath::new("/root"));
-    panel.request_remote_list(&manager);
-    let generation = panel.remote_generation;
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    let generation = panel.remote_seq;
 
     // 남의 세대로는 되돌지 않는다
     assert!(!panel.revert_remote_path(generation + 1));
@@ -2781,8 +2786,8 @@ fn 조회가_실패하면_옮기기를_무른다() {
     );
     let manager = ConnectionManager::new(std::sync::Arc::new(|| {}));
     panel.set_remote_path(RemotePath::new("/root"));
-    panel.request_remote_list(&manager);
-    let generation = panel.remote_generation;
+    panel.request_remote_list(WorkspaceId(0), PanelId(0), &manager);
+    let generation = panel.remote_seq;
 
     assert!(
         panel.revert_remote_path(generation),
@@ -2902,7 +2907,11 @@ fn 원격_폴더를_더블클릭하면_그_안으로_들어간다() {
     let ctx = egui::Context::default();
     let mut icons = IconCache::new();
     let (mut panel, _) = remote_panel_in(TabPhase::Ok);
-    let generation = panel.request_remote_list(&ConnectionManager::new(std::sync::Arc::new(|| {})));
+    let generation = panel.request_remote_list(
+        WorkspaceId(0),
+        PanelId(0),
+        &ConnectionManager::new(std::sync::Arc::new(|| {})),
+    );
     let _ = generation;
     panel.list.set_remote_entries(
         RemotePath::root(),

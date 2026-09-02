@@ -2012,7 +2012,7 @@ impl ExplorerApp {
             return;
         };
         if panel.is_remote() {
-            panel.request_remote_list(manager);
+            panel.request_remote_list(id, panel_id, manager);
         } else {
             panel.refresh(ctx);
         }
@@ -2459,7 +2459,7 @@ impl ExplorerApp {
             let sent = views
                 .get_mut(&workspace)
                 .and_then(|view| view.panels.get_mut(&id))
-                .and_then(|panel| panel.request_remote_list_quiet(manager))
+                .and_then(|panel| panel.request_remote_list_quiet(workspace, id, manager))
                 .is_some();
             // **보내지 못했으면 시각을 갱신하지 않는다** — 연결이 끊긴 탭은 다음 주기에 다시
             // 본다(자동 재연결은 하지 않는다 — 그것은 별개 기능이다)

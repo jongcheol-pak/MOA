@@ -8,6 +8,8 @@
 //!
 //! 워커 스레드에 맡기는 일(열거·만들기)은 `workers`가, 테스트는 `tests`가 든다.
 use crate::app::favorites::{FavoriteAction, FavoriteEntry};
+use crate::app::layout::PanelId;
+use crate::app::workspace::WorkspaceId;
 use crate::fs::create;
 use crate::fs::drives::DriveRow;
 use crate::fs::enumerate::{EnumOutcome, FileEntry};
@@ -16,7 +18,7 @@ use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
 use crate::panel::file_list::{ListRow, PARENT_ENTRY, SortKey};
 use crate::panel::tabs::{CloseOutcome, TabId, TabPhase, TabSource, TabState, TabsModel};
-use crate::remote::connection::{ConnCommand, ConnectionId};
+use crate::remote::connection::{ConnCommand, ConnectionId, ListSource};
 use crate::remote::manager::ConnectionManager;
 use crate::remote::types::{RemoteEntry, RemotePath, SiteId};
 use crate::remote::url::RemoteUrl;
@@ -219,7 +221,7 @@ pub struct PanelState {
     list: FileListView,
     address: AddressBar,
     load: DirLoad,
-    /// 마지막 목록 요청이 **자동 재조회**였으면 그 세대 (FR-67) — 손으로 부른 조회면 `None`.
+    /// 마지막 목록 요청이 **자동 재조회**였으면 그 일련번호 (FR-67) — 손으로 부른 조회면 `None`.
     ///
     /// 그 실패를 화면 알림 없이 넘기는 데 쓴다(서버 로그에는 그대로 남는다 — D9)
     quiet_request: Option<u64>,
@@ -265,11 +267,11 @@ pub struct PanelState {
     /// 원격 목록 우클릭 메뉴가 뜰 자리 — `None`이면 닫혀 있다 (FR-39)
     remote_menu_at: Option<egui::Pos2>,
     /// 아직 조회를 청하지 않은 "직전에 보고 있던 곳" — `set_remote_path`가 세우고
-    /// 곧이어 `request_remote_list`가 세대와 함께 `revert_at`으로 옮긴다
+    /// 곧이어 `request_remote_list`가 일련번호와 함께 `revert_at`으로 옮긴다
     pending_revert: Option<RemotePath>,
-    /// 되돌릴 자리 — `(그 조회의 세대, 돌아갈 곳, 옮겨 간 곳)`.
+    /// 되돌릴 자리 — `(그 조회의 일련번호, 돌아갈 곳, 옮겨 간 곳)`.
     ///
-    /// **요청 하나에 묶는다**(F-7 2라운드 B1·B2): 세대만 보고 되돌리면 ⓐ 이미 성공한 이동의
+    /// **요청 하나에 묶는다**(F-7 2라운드 B1·B2): 번호만 보고 되돌리면 ⓐ 이미 성공한 이동의
     /// 자리가 남아 나중의 새로 고침 실패가 옛 폴더로 되돌리고 ⓑ 같은 연결의 다른 패널·탭까지
     /// 함께 되돌아간다. 그래서 **성공하면 지우고**, 되돌릴 때는 지금 보고 있는 곳이
     /// `옮겨 간 곳` 그대로일 때만 손댄다
@@ -280,9 +282,12 @@ pub struct PanelState {
     /// 연결을 모르고, 명령을 보내는 쪽(`ConnectionManager`)은 앱이 쥐고 있다. 그 사이를
     /// 이 깃발이 잇는다(spec 리뷰 B1: 옮기기만 하고 아무도 다시 읽지 않던 자리)
     remote_dirty: bool,
-    /// 원격 목록 요청의 세대 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
-    /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다
-    remote_generation: u64,
+    /// 이 패널이 낸 원격 목록 요청의 일련번호 — 늦게 도착한 이전 요청의 결과를 버린다 (D7).
+    /// 로컬 열거의 `DirLoad`가 쓰는 것과 같은 기법이다.
+    ///
+    /// **패널마다 따로 센다** — 전역 유일하지 않으므로 어느 패널의 답인지는 이 번호가
+    /// 아니라 `ListSource::Panel`의 워크스페이스·패널 식별자가 가린다
+    remote_seq: u64,
     /// 끄는 동안 커서를 따라오는 그림의 대상 — 이 패널에서 시작한 끌기의 **첫 항목** (FR-38).
     ///
     /// 그림을 이 패널이 그리는 이유는 썸네일 텍스처(`thumb_textures`)를 패널이 쥐기 때문이다 —
@@ -340,7 +345,7 @@ impl PanelState {
             pending_revert: None,
             revert_at: None,
             remote_dirty: false,
-            remote_generation: 0,
+            remote_seq: 0,
             drag_preview: None,
             thumbs: ThumbnailCache::new(),
             thumb_textures: ThumbnailTextures::new(),
@@ -934,7 +939,7 @@ impl PanelState {
     pub fn set_remote_path(&mut self, target: RemotePath) {
         let mut moved = false;
         if let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source {
-            // 실패했을 때 돌아갈 자리를 남긴다 — 세대는 조회를 청할 때 붙는다 (F-7 리뷰 B2)
+            // 실패했을 때 돌아갈 자리를 남긴다 — 일련번호는 조회를 청할 때 붙는다 (F-7 리뷰 B2)
             self.pending_revert = Some(path.clone());
             moved = *path != target;
             *path = target;
@@ -1024,17 +1029,17 @@ impl PanelState {
         }
     }
 
-    /// 그 세대의 조회가 실패해 옮기기를 무른다 — 자리가 없거나 **다른 요청의 것**이면 그대로 둔다.
+    /// 그 일련번호의 조회가 실패해 옮기기를 무른다 — 자리가 없거나 **다른 요청의 것**이면 그대로 둔다.
     ///
     /// 지금 보고 있는 곳이 `옮겨 간 곳` 그대로일 때만 손댄다 — 그 사이 탭을 바꿨거나 다시
     /// 옮겼으면 이 되돌리기는 이미 과거의 것이다(F-7 2라운드 B2).
     /// 되돌린 뒤에는 **다시 읽지 않는다**(`remote_dirty`를 세우지 않는다) — 그 폴더의 목록은
     /// 이미 화면에 있고, 다시 청하면 실패한 조회와 성공한 조회가 번갈아 도는 고리가 된다
-    pub fn revert_remote_path(&mut self, generation: u64) -> bool {
+    pub fn revert_remote_path(&mut self, seq: u64) -> bool {
         let Some((waiting, previous, moved_to)) = self.revert_at.clone() else {
             return false;
         };
-        if waiting != generation {
+        if waiting != seq {
             return false;
         }
         let TabSource::Remote { path, .. } = &mut self.tabs.active_mut().source else {
@@ -1053,32 +1058,52 @@ impl PanelState {
         std::mem::take(&mut self.remote_dirty)
     }
 
-    /// 활성 원격 탭의 목록을 요청한다. 돌려주는 값은 이번 요청의 세대다.
+    /// 활성 원격 탭의 목록을 요청한다. 돌려주는 값은 이번 요청의 일련번호다.
     ///
     /// **연결이 없으면 아무것도 보내지 않는다**(plan Edge Case) — 아직 연결하지 않은 탭에서
-    /// 새로 고침을 눌러도 서버로 나가는 것이 없어야 한다
-    pub fn request_remote_list(&mut self, manager: &ConnectionManager) -> Option<u64> {
-        self.send_remote_list(manager, false)
+    /// 새로 고침을 눌러도 서버로 나가는 것이 없어야 한다.
+    ///
+    /// `workspace`·`panel`은 **이 패널이 자기 자리를 모르기 때문에** 밖에서 받는다 — 패널은
+    /// 뷰의 맵에 담겨 있을 뿐 자기 키를 들고 있지 않다. 필드로 심지 않는 이유는 세션 직렬화
+    /// 대상이 늘고 맵 키와 이중 관리가 되기 때문이다
+    pub fn request_remote_list(
+        &mut self,
+        workspace: WorkspaceId,
+        panel: PanelId,
+        manager: &ConnectionManager,
+    ) -> Option<u64> {
+        self.send_remote_list(workspace, panel, manager, false)
     }
 
-    /// 그 세대가 **자동 재조회로** 나간 것인가 (FR-67).
+    /// 그 일련번호가 **자동 재조회로** 나간 것인가 (FR-67).
     ///
     /// 그 실패는 화면 알림을 띄우지 않는다 — 사용자가 아무것도 누르지 않았는데 주기마다
     /// 배너가 뜨면, 로그만 조용하고 화면은 더 시끄러운 기능이 된다
-    pub fn is_quiet_request(&self, generation: u64) -> bool {
-        self.quiet_request == Some(generation)
+    pub fn is_quiet_request(&self, seq: u64) -> bool {
+        self.quiet_request == Some(seq)
     }
 
-    /// 자동 재조회용 목록 요청 (FR-67) — **성공 기록을 서버 로그에 남기지 않는다**(D9).
+    /// 자동 재조회용 목록 요청 (FR-67) — **성공 기록을 서버 로그에 남기지 않는다**.
     ///
-    /// 위 `request_remote_list`와 나란히 두는 이유: 기존 함수에 인자를 더하면 그것을 부르는
-    /// 열 군데가 함께 바뀐다. 조용한 갈래는 이 한 곳만 쓴다
-    pub fn request_remote_list_quiet(&mut self, manager: &ConnectionManager) -> Option<u64> {
-        self.send_remote_list(manager, true)
+    /// 위 `request_remote_list`와 나란히 두는 이유: 부르는 쪽에서 갈래를 고르는 편이
+    /// 매 호출부에 `quiet` 인자를 늘어놓는 것보다 읽기 쉽다. 조용한 갈래는 한 곳만 쓴다
+    pub fn request_remote_list_quiet(
+        &mut self,
+        workspace: WorkspaceId,
+        panel: PanelId,
+        manager: &ConnectionManager,
+    ) -> Option<u64> {
+        self.send_remote_list(workspace, panel, manager, true)
     }
 
-    /// 위 둘의 공통 몸통 — `quiet`면 `ConnCommand::ListQuiet`을 보낸다
-    fn send_remote_list(&mut self, manager: &ConnectionManager, quiet: bool) -> Option<u64> {
+    /// 위 둘의 공통 몸통 — `quiet`면 서버 로그에 성공 기록을 남기지 않게 청한다
+    fn send_remote_list(
+        &mut self,
+        workspace: WorkspaceId,
+        panel: PanelId,
+        manager: &ConnectionManager,
+        quiet: bool,
+    ) -> Option<u64> {
         let TabSource::Remote {
             conn: Some(conn),
             path,
@@ -1088,52 +1113,65 @@ impl PanelState {
             return None;
         };
         let (conn, path) = (*conn, path.clone());
-        self.remote_generation += 1;
-        let generation = self.remote_generation;
+        self.remote_seq += 1;
+        let seq = self.remote_seq;
         // 돌아갈 자리를 **이 요청에** 묶는다. 옮기기가 아닌 조회(새로 고침·작업 후 재조회)는
         // 돌아갈 곳이 없으므로 그 자리도 비운다 — 남겨 두면 그 실패가 엉뚱한 되돌리기를 부른다
         self.revert_at = self
             .pending_revert
             .take()
-            .map(|previous| (generation, previous, path.clone()));
+            .map(|previous| (seq, previous, path.clone()));
         // 마지막 요청이 어느 갈래였는지 기억한다 — 그 실패를 알릴지 가리는 데 쓴다.
         // 손으로 부른 조회가 그 자리를 덮으므로 옛 값이 남아 알림을 삼키지 않는다
-        self.quiet_request = quiet.then_some(generation);
-        let command = if quiet {
-            ConnCommand::ListQuiet { generation, path }
-        } else {
-            ConnCommand::List { generation, path }
+        self.quiet_request = quiet.then_some(seq);
+        let source = ListSource::Panel {
+            workspace: workspace.0,
+            panel: panel.0,
+            seq,
         };
-        manager.send(conn, command).then_some(generation)
+        manager
+            .send(
+                conn,
+                ConnCommand::List {
+                    source,
+                    path,
+                    quiet,
+                },
+            )
+            .then_some(seq)
     }
 
-    /// 이 패널이 그 목록 답을 기다리고 있는가 — 세대와 **보고 있는 위치**가 모두 맞아야 한다.
+    /// 이 패널이 그 목록 답을 기다리고 있는가 — 일련번호와 **보고 있는 위치**가 모두 맞아야 한다.
     ///
-    /// 세대만 보지 않는 이유: 세대 번호는 패널마다 따로 세어지므로, 한 연결을 두 패널이
-    /// 나눠 쓰면 우연히 겹쳐 남의 답을 제 목록으로 삼을 수 있다
-    pub fn awaits_remote_list(&self, generation: u64, path: &RemotePath) -> bool {
-        generation == self.remote_generation
-            && self.tabs.active().source.remote_path() == Some(path)
+    /// **어느 패널의 답인지는 이제 `ListSource::Panel`이 가린다** — 종전에 경로까지 본 것은
+    /// 번호가 패널마다 따로 세어져 겹쳤기 때문인데, 그 구분은 출처가 대신한다.
+    ///
+    /// **그런데도 경로를 계속 보는 이유는 따로 있다** — 번호는 요청을 *보낼 때* 오르는데
+    /// 경로는 그 *전에* 바뀐다(`set_remote_path`는 깃발만 세운다). 그 깃발을 거두는 길에
+    /// 활성 탭이 원격이 아니면 번호를 올리기 전에 빠져나가므로, 깃발만 소진되고 번호는
+    /// 그대로 남는다. 번호만 보면 그 상태에서 **이전 위치의 답을 새 위치에 그린다**
+    pub fn awaits_remote_list(&self, seq: u64, path: &RemotePath) -> bool {
+        seq == self.remote_seq && self.tabs.active().source.remote_path() == Some(path)
     }
 
     /// 워커가 돌려준 원격 목록을 반영한다.
     ///
-    /// 세대가 지금 것과 다르면 버린다(늦게 도착한 이전 폴더의 결과 — D7).
+    /// 일련번호가 지금 것과 다르면 버린다(늦게 도착한 이전 폴더의 결과 — D7).
     /// **`..`는 언제나 첫 줄에 하나만 둔다** — 서버가 주기도 하고 안 주기도 해서 목록이
     /// 서버마다 달라 보이면 안 된다
     pub fn apply_remote_listed(
         &mut self,
-        generation: u64,
+        seq: u64,
         path: &RemotePath,
         entries: Vec<RemoteEntry>,
         icons: &mut IconCache,
     ) -> bool {
-        if !self.awaits_remote_list(generation, path) {
+        if !self.awaits_remote_list(seq, path) {
             return false;
         }
         // 이 이동은 섰다 — 돌아갈 자리를 지운다. 남겨 두면 **나중의 무관한 조회 실패**가
         // 그 낡은 값으로 경로만 되돌린다(F-7 2라운드 B1)
-        if matches!(&self.revert_at, Some((waiting, _, _)) if *waiting == generation) {
+        if matches!(&self.revert_at, Some((waiting, _, _)) if *waiting == seq) {
             self.revert_at = None;
         }
         self.list
