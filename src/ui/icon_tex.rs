@@ -28,6 +28,19 @@ pub struct IconTextures {
     retries: HashMap<(isize, i32), u8>,
 }
 
+/// 아이콘·썸네일 텍스처 옵션 — **밉맵을 함께 만든다**.
+///
+/// 이 그림들은 늘 줄여 그린다(예: 256px 점보 아이콘 → 큰 아이콘 보기의 96px).
+/// 밉맵이 없으면 축소가 원본 텍셀 넷만 섞어 계단·모아레가 남는다(화면에서 "자글자글"하게
+/// 보이던 원인). 밉맵을 만들어 두면 셸이 그러듯 여러 단계를 거쳐 부드럽게 줄어든다.
+/// 실제로 만드는 것은 glow 백엔드다(`egui_glow`의 `generate_mipmap`) — 이 앱의 백엔드가 그것이다
+const IMAGE_TEXTURE: egui::TextureOptions = egui::TextureOptions {
+    magnification: egui::TextureFilter::Linear,
+    minification: egui::TextureFilter::Linear,
+    wrap_mode: egui::TextureWrapMode::ClampToEdge,
+    mipmap_mode: Some(egui::TextureFilter::Linear),
+};
+
 /// 한 프레임에 새로 올릴 썸네일 텍스처 수 상한.
 /// 256×256짜리라 아이콘보다 무겁다 — 한꺼번에 올리면 스크롤이 끊긴다
 const MAX_NEW_THUMBS_PER_FRAME: usize = 4;
@@ -116,11 +129,7 @@ impl IconTextures {
     ) {
         let handle = icon_to_image(himl, index).map(|img| {
             self.created_this_frame += 1;
-            ctx.load_texture(
-                format!("icon{}_{index}", key.0),
-                img,
-                egui::TextureOptions::LINEAR,
-            )
+            ctx.load_texture(format!("icon{}_{index}", key.0), img, IMAGE_TEXTURE)
         });
         if handle.is_some() {
             self.retries.remove(&key);
@@ -183,7 +192,7 @@ impl ThumbnailTextures {
         let handle = ctx.load_texture(
             format!("thumb{}", path.to_string_lossy()),
             color,
-            egui::TextureOptions::LINEAR,
+            IMAGE_TEXTURE,
         );
         self.created_this_frame += 1;
         self.by_path.insert(path.to_path_buf(), handle);

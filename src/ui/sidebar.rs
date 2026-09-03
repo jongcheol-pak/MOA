@@ -575,7 +575,9 @@ impl WorkspaceSidebar {
         );
 
         // 더블클릭이 연결이다 — 클릭은 고르기만 한다(잘못 눌러 연결이 열리지 않게)
-        if resp.double_clicked() {
+        // 트리플클릭도 함께 받는다 — 앞선 클릭에서 0.6초 안에 든 더블클릭을 egui가
+        // 트리플로 세어 `double_clicked()`가 서지 않는다 (`ui::list_grid`의 같은 자리 주석)
+        if resp.double_clicked() || resp.triple_clicked() {
             self.selected_site = Some(record.id);
             actions.push(SidebarAction::ConnectSite(record.id));
         } else if resp.clicked() {

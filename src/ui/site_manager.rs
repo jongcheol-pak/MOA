@@ -1056,7 +1056,10 @@ impl SiteManager {
                     // **더블클릭으로 이름을 바꾼다** (FR-27) — 첫 클릭이 위에서 이미 `picked`를
                     // 세웠고, `show`가 `picked`(→`select`)를 `action`보다 먼저 적용하므로
                     // 방금 고른 그 줄의 이름이 편집기로 열린다
-                    if response.double_clicked() {
+                    // 트리플클릭도 함께 받는다 — 앞선 클릭에서 0.6초 안에 든 더블클릭을
+                    // egui가 트리플로 세어 `double_clicked()`가 서지 않는다
+                    // (`ui::list_grid`의 같은 자리 주석)
+                    if response.double_clicked() || response.triple_clicked() {
                         row_action = Some(ListAction::StartRename);
                     }
                     // **우클릭한 줄을 함께 고른다** — 메뉴의 셋은 `apply_list_action`이

@@ -153,7 +153,9 @@ pub fn show_titlebar(
         ui.id().with("titlebar_drag"),
         egui::Sense::click_and_drag(),
     );
-    if drag.double_clicked() {
+    // 트리플클릭도 함께 받는다 — 앞선 클릭에서 0.6초 안에 든 더블클릭을 egui가 트리플로
+    // 세어 `double_clicked()`가 서지 않는다 (`ui::list_grid`의 같은 자리 주석)
+    if drag.double_clicked() || drag.triple_clicked() {
         outcome.window = Some(WindowRequest::ToggleMaximize);
     } else if drag.drag_started() {
         // 누른 것만으로는 끌지 않는다 — 포인터가 실제로 움직여 egui가 끌기로 판정한
@@ -1017,6 +1019,29 @@ mod tests {
         assert!(
             frames.contains(&Some(WindowRequest::ToggleMaximize)),
             "더블클릭이 최대화 토글로 이어지지 않았다: {frames:?}"
+        );
+    }
+
+    #[test]
+    fn 다른_자리를_누른_직후에도_더블클릭이_최대화를_토글한다() {
+        // egui는 앞선 클릭에서 0.6초 안에 든 더블클릭을 **트리플클릭**으로 센다
+        // (`max_double_click_delay`의 두 배). 앞선 클릭이 **다른 자리**면 이어지는 두 번째
+        // 클릭이 더블로 서지 못하고 세 번째가 트리플이 되어, 최대화가 통째로 죽는다
+        let ctx = egui::Context::default();
+        let 앞선 = egui::pos2(500.0, 18.0);
+        let frames = [
+            run_frame(&ctx, 0.0, vec![egui::Event::PointerMoved(앞선)]),
+            run_frame(&ctx, 0.05, vec![press(앞선, true)]),
+            run_frame(&ctx, 0.10, vec![press(앞선, false)]),
+            run_frame(&ctx, 0.15, vec![egui::Event::PointerMoved(DRAG_POS)]),
+            run_frame(&ctx, 0.20, vec![press(DRAG_POS, true)]),
+            run_frame(&ctx, 0.25, vec![press(DRAG_POS, false)]),
+            run_frame(&ctx, 0.30, vec![press(DRAG_POS, true)]),
+            run_frame(&ctx, 0.35, vec![press(DRAG_POS, false)]),
+        ];
+        assert!(
+            frames.contains(&Some(WindowRequest::ToggleMaximize)),
+            "앞선 클릭 뒤의 더블클릭이 최대화로 이어지지 않았다: {frames:?}"
         );
     }
 

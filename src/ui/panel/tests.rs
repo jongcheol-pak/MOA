@@ -3836,3 +3836,202 @@ fn 로컬_탭에서는_원격_대상_목록이_비어_있다() {
     let (panel, _ctx) = panel_with_local_rows(r"C:\테스트", vec![local_entry("a.txt", false)]);
     assert!(panel.selected_remote().is_empty());
 }
+
+// ── 앞선 클릭 직후의 더블클릭 (2026-09-03 사용자 보고) ──
+
+/// 패널을 여러 프레임에 걸쳐 그리는 하네스 — 더블클릭 판정은 프레임에 걸친 포인터
+/// 상태에서 나오므로 한 프레임짜리 `draw_once`로는 볼 수 없다
+struct 클릭하네스 {
+    panel: PanelState,
+    sites: SiteStore,
+    ctx: egui::Context,
+    icons: IconCache,
+    textures: crate::ui::icon_tex::IconTextures,
+    시계: f64,
+}
+
+impl 클릭하네스 {
+    /// 폴더 하나를 담은 로컬 패널
+    fn 폴더하나() -> 클릭하네스 {
+        let mut h = 클릭하네스 {
+            panel: PanelState::new(std::path::PathBuf::from(r"C:\")),
+            sites: SiteStore::new(),
+            ctx: egui::Context::default(),
+            icons: IconCache::new(),
+            textures: crate::ui::icon_tex::IconTextures::new(),
+            시계: 0.0,
+        };
+        let mut icons = IconCache::new();
+        h.panel.pending_dir = std::path::PathBuf::from(r"C:\테스트");
+        h.panel.pending_nav = PendingNav::None;
+        let mut 폴더 = batch(&["하위폴더"]);
+        폴더[0].is_dir = true;
+        h.panel.apply_enumerated(
+            EnumOutcome::Ok(폴더),
+            &mut icons,
+            &mut crate::panel::dir_cache::DirCache::new(),
+            &egui::Context::default(),
+        );
+        h
+    }
+
+    /// `간격`초만큼 시계를 밀고 한 프레임 그린다 — egui는 시간이 뒤로 가면 패닉한다
+    fn 프레임(&mut self, 간격: f64, events: Vec<egui::Event>) -> eframe::egui::FullOutput {
+        self.시계 += 간격;
+        let time = self.시계;
+        let tree = crate::remote::tree_cache::TreeCache::new();
+        let input = egui::RawInput {
+            time: Some(time),
+            events,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let panel = &mut self.panel;
+        let icons = &mut self.icons;
+        let textures = &mut self.textures;
+        let sites = &self.sites;
+        let mode = panel.view_mode();
+        self.ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let ctx = ui.ctx().clone();
+                textures.begin_frame();
+                panel.show(
+                    ui,
+                    &ctx,
+                    icons,
+                    textures,
+                    RemoteView {
+                        sites,
+                        connected: &[],
+                        tree: &tree,
+                    },
+                    PanelMenuState::for_panes(1, mode),
+                    crate::ui::tabs::TransferTargets::default(),
+                    &[],
+                    drive_rows(),
+                );
+            });
+        })
+    }
+
+    /// 그 자리를 한 번 누르고 뗀다
+    fn 클릭(&mut self, pos: egui::Pos2) {
+        self.프레임(0.02, vec![egui::Event::PointerMoved(pos)]);
+        self.프레임(0.02, vec![press_at(pos, true)]);
+        self.프레임(0.02, vec![press_at(pos, false)]);
+    }
+
+    /// 폴더 줄을 더블클릭하고 그때 정해진 이동 대상을 돌려준다
+    fn 폴더행_더블클릭(&mut self) -> std::path::PathBuf {
+        let out = self.프레임(0.02, Vec::new());
+        let (_, 자리) = drawn_text_positions(&out)
+            .into_iter()
+            .find(|(글, _)| 글 == "하위폴더")
+            .expect("폴더 줄이 그려지지 않았다");
+        let 행 = 자리 + egui::vec2(6.0, 6.0);
+        self.panel.pending_dir = std::path::PathBuf::new();
+        self.프레임(0.02, vec![egui::Event::PointerMoved(행)]);
+        self.프레임(0.05, vec![press_at(행, true)]);
+        self.프레임(0.05, vec![press_at(행, false)]);
+        self.프레임(0.05, vec![press_at(행, true)]);
+        self.프레임(0.05, vec![press_at(행, false)]);
+        self.panel.pending_dir.clone()
+    }
+}
+
+#[test]
+fn 다른_곳을_누른_직후에도_더블클릭이_폴더를_연다() {
+    // 사용자 보고(2026-09-03): 탭 줄 메뉴로 보기 모드를 바꾼 뒤로 목록을 더블클릭해도
+    // 아무 일도 일어나지 않았다. 원인은 보기 모드가 아니라 **직전 클릭**이다 —
+    // egui는 앞선 클릭에서 0.6초 안에 든 더블클릭을 **트리플클릭**으로 세고
+    // (`max_double_click_delay * 2`), 그러면 `double_clicked()`가 서지 않는다.
+    // 메뉴 항목을 고른 클릭이 바로 그 앞선 클릭이 되어, 이어지는 더블클릭이 통째로 죽었다
+    let mut h = 클릭하네스::폴더하나();
+    h.프레임(0.02, Vec::new());
+    h.클릭(egui::pos2(400.0, 300.0));
+    assert_eq!(
+        h.폴더행_더블클릭(),
+        std::path::PathBuf::from(r"C:\테스트\하위폴더"),
+        "앞선 클릭 뒤의 더블클릭이 폴더를 열지 못했다"
+    );
+}
+
+#[test]
+fn 앞선_클릭이_없어도_더블클릭이_폴더를_연다() {
+    // 위 시험의 짝 — 앞선 클릭이 없을 때는 종전대로 열린다(하네스가 옳다는 바탕)
+    let mut h = 클릭하네스::폴더하나();
+    h.프레임(0.02, Vec::new());
+    assert_eq!(
+        h.폴더행_더블클릭(),
+        std::path::PathBuf::from(r"C:\테스트\하위폴더"),
+        "앞선 클릭이 없는데도 더블클릭이 폴더를 열지 못했다"
+    );
+}
+
+// ── 격자 보기의 클릭 (2026-09-03 사용자 보고) ──
+
+#[test]
+fn 격자_보기에서도_더블클릭이_폴더를_연다() {
+    // 사용자 보고: 분할한 패널의 보기 모드를 아이콘 보기로 바꾼 뒤로 그 패널에서
+    // 선택도 열기도 되지 않았고 **앱을 다시 켜도 그대로였다**(보기 모드가 세션에 남는다).
+    // 원인은 빈 영역 위젯(`grid_bg`)이 스크롤 영역 전체를 차지한 채 **칸보다 나중에**
+    // 등록된 것이다 — egui는 겹친 위젯 중 나중 등록을 위로 보므로(hit_test
+    // "In tie, pick last = topmost") 배경이 모든 칸의 클릭을 가로챘다.
+    // 자세히 보기는 배경을 마지막 행 아래에만 걸어 멀쩡했다
+    let mut h = 클릭하네스::폴더하나();
+    h.panel
+        .set_view_mode(crate::ui::view_mode::ViewMode::LargeIcons);
+    h.프레임(0.02, Vec::new());
+    assert_eq!(
+        h.폴더행_더블클릭(),
+        std::path::PathBuf::from(r"C:\테스트\하위폴더"),
+        "격자 보기에서 더블클릭이 폴더를 열지 못했다"
+    );
+}
+
+#[test]
+fn 격자_보기에서_한_번_클릭이_항목을_고른다() {
+    // 같은 결함의 다른 얼굴 — 배경이 칸을 덮으면 선택도 함께 죽는다
+    let mut h = 클릭하네스::폴더하나();
+    h.panel
+        .set_view_mode(crate::ui::view_mode::ViewMode::LargeIcons);
+    let out = h.프레임(0.02, Vec::new());
+    let (_, 자리) = drawn_text_positions(&out)
+        .into_iter()
+        .find(|(글, _)| 글 == "하위폴더")
+        .expect("폴더 칸이 그려지지 않았다");
+    h.클릭(자리 + egui::vec2(6.0, 6.0));
+    h.프레임(0.02, Vec::new());
+    assert_eq!(
+        h.panel.selected_local().len(),
+        1,
+        "격자 보기에서 한 번 클릭이 항목을 고르지 못했다"
+    );
+}
+
+#[test]
+fn 격자_보기의_빈_영역_클릭은_선택을_푼다() {
+    // 등록 순서를 앞당긴 뒤에도 배경 자체는 제 일을 해야 한다 (자세히 보기와 같은 규칙)
+    let mut h = 클릭하네스::폴더하나();
+    h.panel
+        .set_view_mode(crate::ui::view_mode::ViewMode::LargeIcons);
+    let out = h.프레임(0.02, Vec::new());
+    let (_, 자리) = drawn_text_positions(&out)
+        .into_iter()
+        .find(|(글, _)| 글 == "하위폴더")
+        .expect("폴더 칸이 그려지지 않았다");
+    h.클릭(자리 + egui::vec2(6.0, 6.0));
+    h.프레임(0.02, Vec::new());
+    assert_eq!(h.panel.selected_local().len(), 1, "고르기가 되지 않았다");
+
+    // 항목이 없는 아래쪽 빈 자리를 누른다
+    h.클릭(egui::pos2(500.0, 550.0));
+    h.프레임(0.02, Vec::new());
+    assert!(
+        h.panel.selected_local().is_empty(),
+        "빈 영역을 눌러도 선택이 풀리지 않았다"
+    );
+}

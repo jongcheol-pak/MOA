@@ -118,6 +118,14 @@ pub fn show<R: ListRow>(
             content.y.max(viewport.height()),
         ));
         let origin = area.min.to_vec2();
+        // 항목 밖 빈 영역 클릭 — 선택 해제, 우클릭이면 폴더 배경 메뉴 (자세히 보기와 같은 규칙).
+        //
+        // **칸보다 먼저 등록한다.** egui는 겹친 위젯 중 **나중에 등록된 것**을 위로 보므로
+        // (`hit_test.rs` — "In tie, pick last = topmost"), 이 배경을 칸 뒤에 등록하면
+        // 칸 전체를 덮어 목록의 클릭·더블클릭이 통째로 죽는다(2026-09-03 사용자 보고 —
+        // 격자 보기로 바꾼 패널에서 선택도 열기도 되지 않았다. 자세히 보기는 배경을
+        // 마지막 행 **아래**에만 걸어 이 문제가 없었다)
+        let background = ui.interact(area, ui.id().with("grid_bg"), egui::Sense::click());
 
         let font = egui::TextStyle::Body.resolve(ui.style());
         // 입력칸 높이의 바탕 — 이름 한 줄이 차지하는 높이다
@@ -144,7 +152,12 @@ pub fn show<R: ListRow>(
             if resp.clicked() {
                 outcome.select_request = Some((index, ui.input(|i| i.modifiers)));
             }
-            if resp.double_clicked() {
+            // **세 번째 클릭까지 열기로 본다** — egui는 앞선 클릭에서 0.6초
+            // (`max_double_click_delay`의 두 배) 안에 든 더블클릭을 트리플클릭으로 세고,
+            // 그때는 `double_clicked()`가 서지 않는다(egui `input_state`의 클릭 수 계산).
+            // 메뉴 항목을 고른 직후처럼 바로 앞에 클릭이 있으면 이어지는 더블클릭이 죽는다.
+            // 파일 목록에 트리플클릭으로 하는 일은 따로 없어 둘을 같이 받아도 겹치지 않는다
+            if resp.double_clicked() || resp.triple_clicked() {
                 outcome.action = FileListAction::Open(index);
             }
             if resp.secondary_clicked()
@@ -174,7 +187,7 @@ pub fn show<R: ListRow>(
             // 썸네일은 파일만 — 폴더는 폴더 아이콘이 맞다
             let thumb = if wants_thumbnails && !entry.is_dir() {
                 let path = dir.join(entry.name());
-                let ready = thumbnails.get(&path).map(|tex| tex.id());
+                let ready = thumbnails.get(&path).map(CellArt::thumbnail);
                 // **텍스처가 이미 있어도 담는다** — 이 목록은 "요청 대상"이자 "지금 화면에
                 // 보인다"는 신호다. 없을 때만 담으면 텍스처가 올라간 뒤로는 최근 사용
                 // 갱신이 멈춰, 화면에 떠 있는 썸네일이 축출됐다 다시 만들어지길 반복한다
@@ -184,12 +197,12 @@ pub fn show<R: ListRow>(
                 None
             };
             // 준비된 썸네일이 있으면 그것을, 아니면 형식 아이콘을 그린다 (plan D7)
-            let texture = match thumb {
-                Some(id) => Some(id),
+            let art = match thumb {
+                Some(art) => Some(art),
                 None => {
                     let icon_index =
                         resolve_icon(dir, entry, index, icon_indices, icons, local_paths);
-                    textures.get(&ctx, himl, icon_index).map(|tex| tex.id())
+                    textures.get(&ctx, himl, icon_index).map(CellArt::icon)
                 }
             };
             draw_cell(
@@ -203,7 +216,7 @@ pub fn show<R: ListRow>(
                     cut,
                     editing,
                 },
-                texture,
+                art,
                 font.clone(),
             );
             // 이름 자리에 입력칸을 얹는다 — 칸을 다 그린 뒤라 위에 놓인다
@@ -228,15 +241,12 @@ pub fn show<R: ListRow>(
                 outcome.rename_end = Some(end);
             }
         }
-        area
+        background
     });
 
-    // 항목 밖 빈 영역 클릭 — 선택 해제, 우클릭이면 폴더 배경 메뉴 (자세히 보기와 같은 규칙)
-    let resp = ui.interact(
-        output.inner_rect,
-        ui.id().with("grid_bg"),
-        egui::Sense::click(),
-    );
+    // 빈 영역 응답은 **칸을 다 처리한 뒤** 본다 — 칸이 받은 클릭을 배경이 겹쳐 지우지
+    // 않도록 아래 가드가 그대로 필요하다(등록 순서만 앞당겼을 뿐이다)
+    let resp = output.inner;
     if outcome.select_request.is_none() && outcome.action == FileListAction::None {
         if resp.secondary_clicked()
             && let Some(pos) = resp.interact_pointer_pos()
@@ -271,6 +281,63 @@ fn resolve_icon<R: ListRow>(
     }
 }
 
+/// 칸에 그릴 그림 — 텍스처와 그 원본 픽셀 크기.
+///
+/// 크기를 함께 드는 이유는 **썸네일이 정사각형이 아니기 때문**이다. 셸은 비율을 지켜
+/// 만들어 주는데(`fs::thumbnail` — 1920×1080이면 256×144), 그것을 정사각형 아이콘 자리에
+/// 그대로 그리면 세로로 늘어난다. 형식 아이콘은 정사각형이라 이 계산을 거쳐도 결과가 같다
+#[derive(Clone, Copy)]
+struct CellArt {
+    id: egui::TextureId,
+    /// 원본 픽셀 크기 [가로, 세로]
+    size: [usize; 2],
+    /// 자리보다 작을 때 **늘려서라도 자리를 채울지**.
+    ///
+    /// 형식 아이콘은 늘린다 — 자리에 맞는 이미지 리스트를 얻지 못해 16px로 폴백했을 때
+    /// (`fs::icons::IconCache::himl_for`) 큰 칸이 텅 비어 보이면 안 되기 때문이다.
+    /// 썸네일은 늘리지 않는다: 작은 그림을 키우면 뭉개지기만 하고, 탐색기도 그렇게 한다
+    upscale: bool,
+}
+
+impl CellArt {
+    /// 형식 아이콘 — 자리를 채운다
+    fn icon(tex: &egui::TextureHandle) -> CellArt {
+        CellArt {
+            id: tex.id(),
+            size: tex.size(),
+            upscale: true,
+        }
+    }
+
+    /// 실제 미리보기 — 원본보다 크게 그리지 않는다 (FR-24)
+    fn thumbnail(tex: &egui::TextureHandle) -> CellArt {
+        CellArt {
+            id: tex.id(),
+            size: tex.size(),
+            upscale: false,
+        }
+    }
+
+    /// 아이콘 자리 안에 **비율을 지켜 맞춘** 사각형 (탐색기와 같은 규칙 — 늘리지 않고 넣는다).
+    /// 가로가 긴 그림은 자리 위아래가 남고, 세로가 긴 그림은 좌우가 남는다.
+    ///
+    /// `pixels_per_point`를 받는 이유는 **자리는 논리 좌표이고 그림 크기는 물리 픽셀**이기
+    /// 때문이다 — 늘리지 않는다는 것은 화면의 물리 픽셀 하나에 그림의 픽셀 하나를 얹는
+    /// 크기(배율 125%면 논리 좌표로 0.8배)를 넘기지 않는다는 뜻이다
+    fn fit(self, slot: egui::Rect, pixels_per_point: f32) -> egui::Rect {
+        let (w, h) = (self.size[0] as f32, self.size[1] as f32);
+        if w <= 0.0 || h <= 0.0 || pixels_per_point <= 0.0 {
+            return slot;
+        }
+        let mut scale = (slot.width() / w).min(slot.height() / h);
+        if !self.upscale {
+            // 물리 픽셀 1:1보다 크게 키우지 않는다
+            scale = scale.min(1.0 / pixels_per_point);
+        }
+        egui::Rect::from_center_size(slot.center(), egui::vec2(w * scale, h * scale))
+    }
+}
+
 /// 칸 하나에 그릴 항목.
 ///
 /// 낱개로 넘기면 그리기 함수의 인자가 계속 늘어난다 — 셋 다 "무엇을 그리나"에
@@ -296,13 +363,13 @@ fn draw_cell<R: ListRow>(
     cell: egui::Rect,
     mode: ViewMode,
     item: CellItem<'_, R>,
-    texture: Option<egui::TextureId>,
+    art: Option<CellArt>,
     font: egui::FontId,
 ) {
     let icon_px = mode.icon_px();
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     if matches!(mode, ViewMode::Tiles | ViewMode::Content) {
-        draw_multiline_cell(ui, cell, mode, item, texture, font);
+        draw_multiline_cell(ui, cell, mode, item, art, font);
         return;
     }
     // 형식 이름은 여러 줄 칸에서만 쓴다 — 위에서 이미 넘겼다
@@ -330,8 +397,9 @@ fn draw_cell<R: ListRow>(
             egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
             egui::Vec2::splat(icon_px),
         );
-        if let Some(id) = texture {
-            ui.painter().image(id, icon_rect, uv, tint);
+        if let Some(art) = art {
+            let drawn = art.fit(icon_rect, ui.ctx().pixels_per_point());
+            ui.painter().image(art.id, drawn, uv, tint);
         }
         let text_left = icon_rect.right() + ROW_ICON_GAP;
         let galley = elided_galley_rows(
@@ -355,8 +423,9 @@ fn draw_cell<R: ListRow>(
         egui::pos2(cell.center().x, cell.top() + CELL_PAD_TOP + icon_px / 2.0),
         egui::Vec2::splat(icon_px),
     );
-    if let Some(id) = texture {
-        ui.painter().image(id, icon_rect, uv, tint);
+    if let Some(art) = art {
+        let drawn = art.fit(icon_rect, ui.ctx().pixels_per_point());
+        ui.painter().image(art.id, drawn, uv, tint);
     }
     // 이름은 아이콘 아래, 두 줄까지 (plan 시각 속성 표)
     let text_width = (cell.width() - CELL_PAD_X * 2.0).max(0.0);
@@ -387,7 +456,7 @@ fn draw_multiline_cell<R: ListRow>(
     cell: egui::Rect,
     mode: ViewMode,
     item: CellItem<'_, R>,
-    texture: Option<egui::TextureId>,
+    art: Option<CellArt>,
     font: egui::FontId,
 ) {
     let CellItem {
@@ -412,10 +481,10 @@ fn draw_multiline_cell<R: ListRow>(
         egui::pos2(cell.left() + ROW_ICON_X, cell.center().y - icon_px / 2.0),
         egui::Vec2::splat(icon_px),
     );
-    if let Some(id) = texture {
+    if let Some(art) = art {
         ui.painter().image(
-            id,
-            icon_rect,
+            art.id,
+            art.fit(icon_rect, ui.ctx().pixels_per_point()),
             uv,
             cut_icon_tint(cut).unwrap_or_else(|| dim_if_hidden(egui::Color32::WHITE, dimmed)),
         );
@@ -623,6 +692,86 @@ mod tests {
             );
         });
         visible
+    }
+
+    /// 크기만 다르게 둔 썸네일 그림 — 텍스처 id는 이 판정에 쓰이지 않는다
+    fn thumb(width: usize, height: usize) -> CellArt {
+        CellArt {
+            id: egui::TextureId::default(),
+            size: [width, height],
+            upscale: false,
+        }
+    }
+
+    /// 같은 크기의 형식 아이콘 — 늘려서라도 자리를 채운다
+    fn icon_art(width: usize, height: usize) -> CellArt {
+        CellArt {
+            upscale: true,
+            ..thumb(width, height)
+        }
+    }
+
+    fn slot(size: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::Vec2::splat(size))
+    }
+
+    #[test]
+    fn 가로가_긴_썸네일은_늘리지_않고_자리_안에_넣는다() {
+        // 셸이 비율을 지켜 만든 썸네일(1920×1080 → 256×144)을 정사각형 아이콘 자리에
+        // 그대로 그리면 세로로 늘어난다 — 탐색기와 달라 보이던 원인
+        let slot = slot(96.0);
+        let drawn = thumb(256, 144).fit(slot, 1.0);
+        assert_eq!(drawn.width(), 96.0, "긴 쪽은 자리를 꽉 채운다");
+        assert_eq!(drawn.height(), 54.0, "짧은 쪽은 원본 비율을 지킨다");
+        assert_eq!(drawn.center(), slot.center(), "자리 가운데에 놓인다");
+    }
+
+    #[test]
+    fn 세로가_긴_썸네일도_같은_규칙을_따른다() {
+        let slot = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::Vec2::splat(48.0));
+        let drawn = thumb(60, 120).fit(slot, 1.0);
+        assert_eq!(drawn.height(), 48.0);
+        assert_eq!(drawn.width(), 24.0);
+        assert_eq!(drawn.center(), slot.center());
+    }
+
+    #[test]
+    fn 자리보다_작은_썸네일은_키우지_않는다() {
+        // 탐색기와 같은 규칙 — 작은 그림을 칸에 맞춰 늘리면 뭉개지기만 한다
+        let slot = slot(96.0);
+        let drawn = thumb(32, 32).fit(slot, 1.0);
+        assert_eq!(
+            drawn.size(),
+            egui::vec2(32.0, 32.0),
+            "원본 크기 그대로 놓는다"
+        );
+        assert_eq!(drawn.center(), slot.center());
+    }
+
+    #[test]
+    fn 확대_금지는_화면_배율을_따른다() {
+        // 자리는 논리 좌표, 그림 크기는 물리 픽셀이다 — 125% 배율에서 96px 그림은
+        // 물리 픽셀 1:1로 얹으면 논리 좌표 76.8이며 그보다 크게 그리지 않는다
+        let drawn = thumb(96, 96).fit(slot(96.0), 1.25);
+        assert_eq!(drawn.size(), egui::vec2(76.8, 76.8));
+    }
+
+    #[test]
+    fn 형식_아이콘은_작아도_자리를_채운다() {
+        // 크기별 이미지 리스트를 얻지 못해 16px로 폴백했을 때 큰 칸이 비어 보이면 안 된다
+        assert_eq!(icon_art(16, 16).fit(slot(96.0), 1.0), slot(96.0));
+    }
+
+    #[test]
+    fn 정사각형_아이콘은_자리를_그대로_채운다() {
+        // 형식 아이콘은 정사각형이라 이 계산을 거쳐도 종전과 같아야 한다
+        assert_eq!(icon_art(256, 256).fit(slot(96.0), 1.0), slot(96.0));
+    }
+
+    #[test]
+    fn 크기를_알_수_없으면_자리를_그대로_쓴다() {
+        // 0으로 나누지 않는다 — 변환이 어긋나 빈 크기가 와도 그리기는 계속돼야 한다
+        assert_eq!(thumb(0, 0).fit(slot(32.0), 1.0), slot(32.0));
     }
 
     #[test]

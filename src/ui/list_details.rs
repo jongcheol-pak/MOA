@@ -502,7 +502,12 @@ pub fn show<R: ListRow>(
             if resp.clicked() {
                 outcome.select_request = Some((index, ui.input(|i| i.modifiers)));
             }
-            if resp.double_clicked() {
+            // **세 번째 클릭까지 열기로 본다** — egui는 앞선 클릭에서 0.6초
+            // (`max_double_click_delay`의 두 배) 안에 든 더블클릭을 트리플클릭으로 세고,
+            // 그때는 `double_clicked()`가 서지 않는다(egui `input_state`의 클릭 수 계산).
+            // 메뉴 항목을 고른 직후처럼 바로 앞에 클릭이 있으면 이어지는 더블클릭이 죽는다.
+            // 파일 목록에 트리플클릭으로 하는 일은 따로 없어 둘을 같이 받아도 겹치지 않는다
+            if resp.double_clicked() || resp.triple_clicked() {
                 outcome.action = FileListAction::Open(index);
             }
             if resp.secondary_clicked()
