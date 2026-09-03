@@ -3,20 +3,26 @@
 //! 둘 다 **UI 스레드에서 부르면 안 되는 블로킹 I/O**라 같은 방식(워커 + 채널 + 다시 그리기 요청)으로
 //! 감싼다. 본체(`ui::panel`)의 자식 모듈이며, 상태를 들고 결과를 거두는 일만 한다.
 
-use crate::fs::enumerate::{EnumOutcome, enumerate_dir};
+use crate::fs::enumerate::{EnumChunk, EnumOutcome, enumerate_dir_batched};
 use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
+/// 한 번에 흘려보낼 항목 수 — 이만큼 모은 **뒤에도 더 있을 때만** 중간 결과가 나간다 (FR-69).
+///
+/// 이 수 이하인 폴더는 종전대로 한 번에 도착한다. 값을 키우면 첫 화면이 늦고, 줄이면
+/// 배치마다 도는 정렬·필터가 잦아진다 — 10만 항목 기준 50회 남짓이 되는 자리로 잡았다
+pub(super) const PARTIAL_BATCH: usize = 2000;
+
 /// 백그라운드 폴더 열거 상태.
 ///
-/// 기존 `fs::enumerate::spawn_enumerate`는 완료를 `PostMessageW`로 **HWND에 통지**해
-/// egui에서는 쓸 수 없다. 동기 `enumerate_dir`을 자체 워커로 감싸고 채널로 받는다.
-/// UI 스레드에서 직접 열거하면 10만 파일 폴더에서 창이 멈춘다(AGENTS: UI 스레드 블로킹 금지)
+/// 동기 열거를 자체 워커로 감싸고 **채널로 조각을 받는다**(`EnumChunk`) — UI 스레드에서
+/// 직접 열거하면 10만 파일 폴더에서 창이 멈춘다(AGENTS: UI 스레드 블로킹 금지).
+/// 완료를 창 메시지로 알리지 않고 채널만 쓰는 것은 egui 경로의 규칙이다(D7)
 pub(super) struct DirLoad {
     /// 늦게 도착한 이전 폴더의 결과를 버리기 위한 세대 번호
     generation: u64,
-    pending: Option<Receiver<(u64, EnumOutcome)>>,
+    pending: Option<Receiver<(u64, EnumChunk)>>,
 }
 
 impl DirLoad {
@@ -43,34 +49,54 @@ impl DirLoad {
         self.pending = Some(rx);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            // 임시 계측 (`crate::perf`) — **경로는 싣지 않고 개수와 소요만** 남긴다
+            // 임시 계측 (`crate::perf`) — **경로는 싣지 않고 개수와 소요만** 남긴다.
+            // 배치로 나뉘므로 **합계와 배치 횟수를 함께** 적는다(첫 화면이 언제 섰는지 읽히도록)
             let t_enum = std::time::Instant::now();
-            let outcome = enumerate_dir(&path);
+            let mut total = 0usize;
+            let mut batches = 0usize;
+            let mut d_first = None;
+            enumerate_dir_batched(&path, PARTIAL_BATCH, |chunk| {
+                match &chunk {
+                    EnumChunk::Partial(entries) => {
+                        total += entries.len();
+                        batches += 1;
+                        d_first.get_or_insert_with(|| t_enum.elapsed());
+                    }
+                    EnumChunk::Done(EnumOutcome::Ok(entries)) => total += entries.len(),
+                    EnumChunk::Done(_) => {}
+                }
+                // 수신부가 이미 버려졌으면(앱 종료·폴더 재이동) 전송 실패다 — 그러면 읽기를 멈춘다
+                let sent = tx.send((generation, chunk)).is_ok();
+                if sent {
+                    ctx.request_repaint();
+                }
+                sent
+            });
             let d_enum = t_enum.elapsed();
             crate::perf::log(|| {
-                let items_len = match &outcome {
-                    EnumOutcome::Ok(entries) => entries.len(),
-                    _ => 0,
-                };
+                let first = d_first.map_or(d_enum, |d| d);
                 format!(
-                    "enum items={items_len} | enumerate={:.1} (ms)",
+                    "enum items={total} batches={batches} | first={:.1} enumerate={:.1} (ms)",
+                    first.as_secs_f32() * 1000.0,
                     d_enum.as_secs_f32() * 1000.0
                 )
             });
-            // 수신부가 이미 버려졌으면(앱 종료·폴더 재이동) 전송 실패는 무해하다
-            let _ = tx.send((generation, outcome));
-            ctx.request_repaint();
         });
     }
 
-    /// 완료된 결과를 꺼낸다. 아직이면 `None`
-    pub(super) fn poll(&mut self) -> Option<EnumOutcome> {
+    /// 도착한 조각을 하나 꺼낸다. 아직이면 `None`.
+    ///
+    /// **`Done`을 꺼낸 뒤에야 대기가 끝난다** — 중간 조각(`Partial`)에서는 수신부를 그대로
+    /// 둬야 남은 배치가 이어서 온다. 부르는 쪽은 한 프레임에 채널이 빌 때까지 반복해 꺼낸다
+    pub(super) fn poll(&mut self) -> Option<EnumChunk> {
         let rx = self.pending.as_ref()?;
         match rx.try_recv() {
-            Ok((generation, outcome)) => {
-                self.pending = None;
+            Ok((generation, chunk)) => {
+                if matches!(chunk, EnumChunk::Done(_)) {
+                    self.pending = None;
+                }
                 // 폴더를 연달아 이동하면 이전 결과가 나중에 도착할 수 있다
-                (generation == self.generation).then_some(outcome)
+                (generation == self.generation).then_some(chunk)
             }
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {

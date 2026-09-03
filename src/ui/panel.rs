@@ -12,7 +12,7 @@ use crate::app::layout::PanelId;
 use crate::app::workspace::WorkspaceId;
 use crate::fs::create;
 use crate::fs::drives::DriveRow;
-use crate::fs::enumerate::{EnumOutcome, FileEntry};
+use crate::fs::enumerate::{EnumChunk, EnumOutcome, FileEntry};
 use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
@@ -235,6 +235,11 @@ pub struct PanelState {
     /// 열거가 성공하면 히스토리에 무엇을 할지.
     /// 커서 이동도 성공 후로 미뤄야 한다 — 먼저 옮기면 실패했을 때 화면과 히스토리가 어긋난다
     pending_nav: PendingNav,
+    /// 이번 요청이 **중간 조각을 한 번이라도 그렸는가** (FR-69).
+    ///
+    /// 참이면 완료 조각(`Done`)은 목록을 갈아 끼우지 않고 **잔여분만 이어 붙이고**,
+    /// 실패로 끝나도 이미 그린 것을 지우지 않는다. 커밋 시점도 첫 조각으로 앞당겨진다
+    streamed: bool,
     /// 열거 실패 사유 — 성공 시 빈 문자열
     status: String,
     /// 이번 프레임에 열어 본 드라이브와 그 결과 `(경로, 닿았는가)` (T6).
@@ -331,6 +336,7 @@ impl PanelState {
             load: DirLoad::new(),
             pending_dir: PathBuf::new(),
             pending_nav: PendingNav::None,
+            streamed: false,
             status: String::new(),
             observed_drive: None,
             blocked: None,
@@ -512,27 +518,33 @@ impl PanelState {
         }
         self.pending_dir = path.clone();
         self.pending_nav = nav;
+        self.streamed = false;
         self.status.clear();
         self.load.start(path, ctx);
     }
 
-    /// 워커 결과를 목록에 반영한다
+    /// 워커가 흘려보낸 조각을 목록에 반영한다.
+    ///
+    /// **그 프레임에 도착한 것을 모두 소비한다** — 하나씩만 꺼내면 배치 수만큼 프레임이 들어
+    /// 완주가 되레 늦어진다(10만 항목이면 50프레임)
     fn poll_load(&mut self, icons: &mut IconCache) {
-        let Some(outcome) = self.load.poll() else {
-            return;
-        };
-        // 임시 계측 (`crate::perf`) — 열거가 끝난 뒤 UI 스레드가 목록을 세우는 몫이다
-        // (`set_entries`의 확장자별 종류 조회가 여기 들어 있다)
-        let t_apply = std::time::Instant::now();
-        self.apply_enumerated(outcome, icons);
-        let d_apply = t_apply.elapsed();
-        crate::perf::log(|| {
-            let (dirs, files) = self.list.counts();
-            format!(
-                "apply dirs={dirs} files={files} | apply={:.1} (ms)",
-                d_apply.as_secs_f32() * 1000.0
-            )
-        });
+        while let Some(chunk) = self.load.poll() {
+            // 임시 계측 (`crate::perf`) — UI 스레드가 **배치 한 몫**을 목록에 세우는 시간이다
+            // (`set_entries`·`append_entries`의 확장자별 종류 조회가 여기 들어 있다)
+            let t_apply = std::time::Instant::now();
+            match chunk {
+                EnumChunk::Partial(entries) => self.apply_partial(entries, icons),
+                EnumChunk::Done(outcome) => self.apply_enumerated(outcome, icons),
+            }
+            let d_apply = t_apply.elapsed();
+            crate::perf::log(|| {
+                let (dirs, files) = self.list.counts();
+                format!(
+                    "apply dirs={dirs} files={files} | apply={:.1} (ms)",
+                    d_apply.as_secs_f32() * 1000.0
+                )
+            });
+        }
     }
 
     /// 탐색을 커밋한다 — 활성 탭의 경로·히스토리와 썸네일 세대를 새 폴더에 맞춘다.
@@ -560,6 +572,46 @@ impl PanelState {
         }
     }
 
+    /// 다 읽지 못한 폴더의 중간 몫을 반영한다 (FR-69).
+    ///
+    /// **첫 조각이 커밋 지점이다** — 그것이 도착했다는 것은 폴더를 열 수 있다는 뜻이므로,
+    /// 종전에 `Done`이 하던 일(경로·히스토리·감시 옮기기)을 여기서 한다. 그때
+    /// **`pending_dir`을 비우지 않고 clone해 넘기고 `pending_nav`만 내린다**(계획 D6) —
+    /// 비우면 뒤이어 오는 `Done`이 `mem::take`로 빈 경로를 커밋해 탭 경로가 망가진다.
+    /// `pending_nav`를 내려 두면 그 두 번째 커밋은 같은 경로의 재적용뿐이라 무해하다
+    fn apply_partial(&mut self, entries: Vec<FileEntry>, icons: &mut IconCache) {
+        // 활성 탭이 원격이면 이 결과는 남의 것이다 — `apply_enumerated`와 같은 가드다
+        if self.is_remote() {
+            self.abandon_local_load();
+            return;
+        }
+        if self.streamed {
+            self.list.append_entries(entries, icons);
+            return;
+        }
+        self.streamed = true;
+        let dir = self.pending_dir.clone();
+        self.commit_navigation(&dir);
+        self.pending_nav = PendingNav::None;
+        self.blocked = None;
+        // 열어 본 결과를 드라이브 상태에 올려보낸다 — 조각이 왔다는 것은 닿았다는 것이다
+        self.observed_drive = Some((dir.clone(), true));
+        self.watch(&dir);
+        let entries = with_local_parent_first(&dir, entries);
+        self.list.set_entries(dir, entries, icons);
+    }
+
+    /// 이미 그린 부분 목록을 **그대로 두고** 실패 사유만 알린다 (FR-69).
+    ///
+    /// `block_list`를 쓸 수 없다 — 그 함수는 목록을 `..` 한 줄만 남기고 갈아 끼우므로
+    /// 배치로 그려 둔 것을 지운다. 사유는 목록 자리가 아니라 상태 줄에 적는다
+    fn keep_partial(&mut self, reason: ListBlock) {
+        // 이 요청은 여기서 끝난다 — 비우지 않으면 `observed_drive`·`pending_name`이
+        // 끝난 요청의 경로를 계속 읽는다
+        self.pending_dir = PathBuf::new();
+        self.status = reason.hint().to_string();
+    }
+
     /// 열거 결과 하나를 상태에 반영한다.
     ///
     /// `poll_load`에서 갈라낸 이유는 **테스트가 이 경로를 실제로 지나게** 하기 위해서다 —
@@ -579,17 +631,36 @@ impl PanelState {
         // 권한 없음은 **닿은 것**이다 — 권한이 없을 뿐 드라이브에는 닿았다
         let reachable = matches!(outcome, EnumOutcome::Ok(_) | EnumOutcome::AccessDenied);
         self.observed_drive = Some((self.pending_dir.clone(), reachable));
+        // **배치를 흘리던 중 끊겼다** — 이미 그린 것을 지우지 않는다 (FR-69).
+        // 아래 `match`보다 앞에 두는 것은 `outcome`이 그 안에서 부분 이동되기 때문이다
+        if self.streamed && !matches!(outcome, EnumOutcome::Ok(_)) {
+            let reason = match outcome {
+                EnumOutcome::AccessDenied => ListBlock::AccessDenied,
+                EnumOutcome::Error { network: true } => ListBlock::NetworkUnavailable,
+                _ => ListBlock::OpenFailed,
+            };
+            self.keep_partial(reason);
+            self.pending_nav = PendingNav::None;
+            return;
+        }
         match outcome {
             EnumOutcome::Ok(entries) => {
-                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다
+                // 여기서 비로소 커밋한다 — 이 지점 전에는 화면이 이전 폴더를 유지한다.
+                // **배치로 이미 커밋했으면**(`streamed`) `pending_nav`가 `None`이라 이 재호출은
+                // 같은 경로의 `set_committed` 재적용뿐이다 — 히스토리는 한 번만 늘어난다(D6)
                 let dir = std::mem::take(&mut self.pending_dir);
                 self.commit_navigation(&dir);
                 self.blocked = None;
                 // 감시 대상도 이 시점에 맞춘다 — 읽어 낸 폴더만 감시한다
                 self.watch(&dir);
-                // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
-                let entries = with_local_parent_first(&dir, entries);
-                self.list.set_entries(dir, entries, icons);
+                if self.streamed {
+                    // 배치로 그린 목록에 **잔여분만** 이어 붙인다 — `..` 줄은 첫 조각이 이미 세웠다
+                    self.list.append_entries(entries, icons);
+                } else {
+                    // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
+                    let entries = with_local_parent_first(&dir, entries);
+                    self.list.set_entries(dir, entries, icons);
+                }
             }
             // 읽지 못했어도 **그 폴더로 옮긴다** (2026-08-16·2026-08-17 사용자 요청) —
             // 이전 목록을 그대로 두면 주소창·트리가 가리키는 곳과 목록이 갈린다. 사유는
@@ -879,6 +950,7 @@ impl PanelState {
         self.load.cancel();
         self.pending_dir = PathBuf::new();
         self.pending_nav = PendingNav::None;
+        self.streamed = false;
         self.status.clear();
     }
 

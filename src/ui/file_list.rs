@@ -324,6 +324,53 @@ impl FileListView {
         }
     }
 
+    /// 이미 세운 목록에 **다 읽지 못한 폴더의 다음 몫을 이어 붙인다** (FR-69).
+    ///
+    /// `set_entries`가 원본을 갈아 끼우는 것과 달리 이쪽은 **누적**이다 — 점진 표시 중에는
+    /// 앞서 그린 것을 지우면 안 된다. 붙인 뒤 `rebuild_visible`을 거치므로 정렬·필터·숨김
+    /// 규칙이 그대로 유지되고, 새 항목은 정렬 기준에 맞는 자리로 끼어든다.
+    ///
+    /// **선택은 이름으로 되살린다** — `rebuild_visible`이 선택을 비우므로, 그대로 두면 배치가
+    /// 도착할 때마다 사용자가 고르던 것이 사라진다(`set_entries`의 같은 규칙).
+    ///
+    /// 원격 목록에는 붙이지 않는다 — 배치 열거는 로컬 전용이다
+    pub fn append_entries(&mut self, entries: Vec<FileEntry>, icons: &mut IconCache) {
+        let ListModel::Local(_) = &self.all_entries else {
+            return;
+        };
+        let keep = self.selected_name_keys();
+        // 종류 문자열은 원본과 **같은 순서로** 이어 붙인다 — 짝이 어긋나면 필터가 엉뚱한 열을 준다
+        let added: Vec<String> = entries
+            .iter()
+            .map(|e| icons.type_name(&e.extension(), e.is_dir))
+            .collect();
+        self.all_type_names.extend(added);
+        if let ListModel::Local(rows) = &mut self.all_entries {
+            rows.extend(entries);
+        }
+        self.rebuild_visible();
+        self.selection = self.matching_selection(&keep);
+    }
+
+    /// 지금 그려져 있는 목록의 폴더 — **커밋된 경로와 다르다**.
+    ///
+    /// `PanelState::dir()`은 활성 탭이 커밋한 경로라 「옮기는 중」에는 목적지를 가리키지만,
+    /// 이 값은 **마지막으로 세운 목록의 폴더**다. 캐시 적중 판정(FR-68)이 이 차이를 쓴다
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// 걸러지지 않은 원본 항목 — **로컬 목록일 때만** 준다 (FR-68).
+    ///
+    /// 배치로 누적한 최종 목록이 남는 자리가 여기뿐이라, 캐시에 담으려면 이 통로가 필요하다.
+    /// 필터가 걸린 `model`이 아니라 원본을 주는 것은 캐시가 **폴더의 전부**를 담아야 하기 때문이다
+    pub fn entries(&self) -> Option<&[FileEntry]> {
+        match &self.all_entries {
+            ListModel::Local(rows) => Some(rows),
+            ListModel::Remote(_) => None,
+        }
+    }
+
     /// 목록을 비운다 — 아직 무엇을 보여 줄지 모르는 구간에서 **옛 항목이 남지 않게** 한다.
     ///
     /// 선택도 함께 지운다: 지우지 않으면 없는 항목을 고른 상태가 되어, 다음 목록이 도착했을 때
@@ -1610,6 +1657,66 @@ mod tests {
         assert!(v.selected_paths().is_empty());
         assert_eq!(v.counts(), (0, 0));
         assert_eq!(v.len(), 0);
+    }
+
+    #[test]
+    fn 이어_붙인_항목이_정렬_자리로_끼어든다() {
+        // FR-69 — 배치가 도착할 때마다 정렬 기준이 유지돼야 한다(순서가 뒤섞이지 않는다)
+        let mut icons = IconCache::new();
+        let mut v = FileListView::new();
+        v.set_entries(
+            PathBuf::from(r"C:\문서"),
+            vec![entry("a.txt", false, 0, 0), entry("c.txt", false, 0, 0)],
+            &mut icons,
+        );
+        v.append_entries(vec![entry("b.txt", false, 0, 0)], &mut icons);
+        let names: Vec<String> = (0..v.len())
+            .filter_map(|i| v.entry_at(i).map(|e| e.name_string()))
+            .collect();
+        assert_eq!(
+            names,
+            vec!["a.txt", "b.txt", "c.txt"],
+            "새 항목이 제자리로 가지 않았다"
+        );
+        assert_eq!(v.counts(), (0, 3));
+    }
+
+    #[test]
+    fn 이어_붙여도_고르던_항목이_남는다() {
+        // `rebuild_visible`이 선택을 비우므로, 되살리지 않으면 배치마다 선택이 사라진다
+        let mut icons = IconCache::new();
+        let mut v = FileListView::new();
+        v.set_entries(
+            PathBuf::from(r"C:\문서"),
+            vec![entry("a.txt", false, 0, 0), entry("c.txt", false, 0, 0)],
+            &mut icons,
+        );
+        v.select(1, egui::Modifiers::NONE); // c.txt
+        v.append_entries(vec![entry("b.txt", false, 0, 0)], &mut icons);
+        let picked: Vec<String> = v
+            .selected_paths()
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(picked, vec!["c.txt"], "이어 붙이면서 선택이 사라졌다");
+    }
+
+    #[test]
+    fn 원본_항목과_그린_폴더를_밖에서_읽을_수_있다() {
+        // FR-68 — 캐시에 담을 최종 목록과 적중 판정에 쓰는 폴더를 꺼내는 통로다
+        let mut icons = IconCache::new();
+        let mut v = FileListView::new();
+        assert_eq!(v.dir(), Path::new(""));
+        v.set_entries(
+            PathBuf::from(r"C:\문서"),
+            vec![entry("a.txt", false, 0, 0)],
+            &mut icons,
+        );
+        assert_eq!(v.dir(), Path::new(r"C:\문서"));
+        assert_eq!(v.entries().map(<[FileEntry]>::len), Some(1));
+        // 원격 목록으로 갈아 끼우면 로컬 원본이 없다 — 캐시에 담을 것도 없다
+        v.clear_entries();
+        assert!(v.entries().is_none());
     }
 
     #[test]

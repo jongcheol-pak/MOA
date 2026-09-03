@@ -341,6 +341,84 @@ fn commit_dir(panel: &mut PanelState, dir: &str, icons: &mut IconCache) {
     panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), icons);
 }
 
+/// 배치 하나를 만든다 — 이름만 다른 파일 항목
+fn batch(names: &[&str]) -> Vec<crate::fs::enumerate::FileEntry> {
+    names
+        .iter()
+        .map(|name| {
+            let mut wide: Vec<u16> = name.encode_utf16().collect();
+            wide.push(0);
+            crate::fs::enumerate::FileEntry {
+                name: wide,
+                is_dir: false,
+                size: 0,
+                modified: 0,
+                attributes: 0,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn 첫_배치가_커밋하고_완료_조각이_빈_경로를_덮어쓰지_않는다() {
+    // FR-69 + 계획 D6 — 이른 커밋은 `pending_dir`을 **비우지 않고 clone**해 넘긴다.
+    // 비우면 뒤이어 오는 `Done`의 `mem::take`가 빈 경로를 커밋해 탭 경로가 망가진다
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.pending_dir = std::path::PathBuf::from(r"C:\Docs");
+    panel.pending_nav = PendingNav::Push;
+
+    panel.apply_partial(batch(&["a.txt"]), &mut icons);
+    assert_eq!(
+        panel.dir(),
+        std::path::Path::new(r"C:\Docs"),
+        "첫 배치가 커밋하지 않았다"
+    );
+    // `..` 줄이 함께 서므로 항목은 2개다
+    assert_eq!(panel.list.len(), 2, "첫 배치가 그려지지 않았다");
+
+    panel.apply_enumerated(EnumOutcome::Ok(batch(&["b.txt"])), &mut icons);
+    assert_eq!(
+        panel.dir(),
+        std::path::Path::new(r"C:\Docs"),
+        "완료 조각이 빈 경로를 커밋했다"
+    );
+    // 잔여분만 이어 붙는다 — 갈아 끼우면 `..`+b 둘만 남는다
+    assert_eq!(panel.list.len(), 3, "완료 조각이 앞선 배치를 지웠다");
+}
+
+#[test]
+fn 배치를_흘리던_중_끊기면_그린_것을_지우지_않는다() {
+    // FR-69 — `block_list`는 목록을 `..` 한 줄만 남기고 갈아 끼운다. 그 길로 가면 안 된다
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.pending_dir = std::path::PathBuf::from(r"C:\Docs");
+    panel.pending_nav = PendingNav::None;
+
+    panel.apply_partial(batch(&["a.txt", "b.txt"]), &mut icons);
+    assert_eq!(panel.list.len(), 3);
+
+    panel.apply_enumerated(EnumOutcome::Error { network: true }, &mut icons);
+    assert_eq!(panel.list.len(), 3, "부분 목록이 지워졌다");
+    assert!(!panel.status.is_empty(), "사유가 상태 줄에 적히지 않았다");
+    assert!(
+        panel.pending_dir.as_os_str().is_empty(),
+        "끝난 요청의 경로가 남았다"
+    );
+}
+
+#[test]
+fn 조각이_없었으면_완료_조각이_종전대로_목록을_갈아_끼운다() {
+    // 임계 아래 폴더의 길 — `streamed`가 거짓이라 `set_entries` 전량 교체다
+    let mut icons = IconCache::new();
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
+    panel.pending_dir = std::path::PathBuf::from(r"C:\Docs");
+    panel.pending_nav = PendingNav::None;
+    panel.apply_enumerated(EnumOutcome::Ok(batch(&["a.txt", "b.txt"])), &mut icons);
+    assert_eq!(panel.dir(), std::path::Path::new(r"C:\Docs"));
+    assert_eq!(panel.list.len(), 3, "`..` + 항목 둘이어야 한다");
+}
+
 #[test]
 fn 폴더를_옮기면_썸네일을_놓는다() {
     // 이 해제는 `ThumbnailCache`의 세대를 올리는 유일한 지점이기도 하다 —
