@@ -2776,6 +2776,9 @@ impl eframe::App for ExplorerApp {
                 // **창이 본 `Ctrl+V`는 조건과 무관하게 프레임마다 거둔다** — 거두지 않으면
                 // 모달이 떠 있던 동안 눌린 것이 표시로 남아 모달을 닫는 순간 뒤늦게 나간다
                 let paste_pressed = crate::ui::shell_host::take_paste_pressed();
+                // 마우스 옆 버튼도 같은 이유로 프레임마다 거둔다 — 모달이 떠 있던 동안
+                // 눌린 것이 표시로 남아 뒤늦게 나가면 안 된다
+                let app_nav = crate::ui::shell_host::take_app_nav();
                 let shortcut_command = if self.pending_remove.is_some()
                     || self.pending_site_remove.is_some()
                     || self.hostkey.is_open()
@@ -2785,8 +2788,11 @@ impl eframe::App for ExplorerApp {
                 } else {
                     // 클립보드 키는 egui가 키 이벤트로 주지 않아 따로 받는다
                     // (`poll_clipboard_keys` 주석 — 2026-08-22 사용자 보고)
+                    // 마우스 옆 버튼(뒤로·앞으로)도 같은 자리에서 받는다 — 모달이 떠 있으면
+                    // 키와 마찬가지로 듣지 않는다
                     menu::poll_shortcuts(&ctx, self.key_owner)
                         .or_else(|| menu::poll_clipboard_keys(&ctx, self.key_owner, paste_pressed))
+                        .or_else(|| menu::poll_mouse_nav(&ctx, app_nav))
                 };
                 // 단축키·타이틀바 명령은 대상을 지정하지 않는다 — 활성 패널에 적용된다
                 for command in shortcut_command.into_iter().chain(titlebar_command) {

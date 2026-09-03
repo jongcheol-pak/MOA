@@ -9,6 +9,7 @@
 use crate::app::layout::{SplitDir, SplitPlace};
 use crate::remote::types::SiteId;
 use crate::ui::list_details::{ALL_COLUMNS, ColumnFlags, ColumnKind};
+use crate::ui::shell_host::AppNav;
 use crate::ui::theme;
 use crate::ui::view_mode::ViewMode;
 use eframe::egui;
@@ -508,6 +509,37 @@ pub fn poll_clipboard_keys(
     이벤트.or(paste_pressed.then_some(Command::ClipboardPaste))
 }
 
+/// 마우스 옆의 뒤로·앞으로 버튼을 명령으로 바꾼다.
+///
+/// **왜 `shortcut_table`이 아닌가**: 그 표는 키 조합만 담는다. 이 둘은 키가 아니라 포인터
+/// 입력이며, `WM_XBUTTONDOWN`의 XBUTTON1·XBUTTON2가 winit의 `MouseButton::Back`·`Forward`를
+/// 거쳐 `PointerButton::Extra1`·`Extra2`로 들어온다 — `consume_shortcut` 경로에 실리지 않는다.
+///
+/// **길이 둘이다**: 옆 버튼을 `WM_XBUTTONDOWN`으로 보내는 마우스는 egui까지 포인터 입력으로
+/// 오지만, **`WM_APPCOMMAND`(브라우저 뒤로·앞으로)로 보내는 마우스**는 egui에 아무것도 남기지
+/// 않아 창이 직접 받아 온다(`app_nav` — `ui::shell_host::take_app_nav`). 2026-09-03에 이 PC의
+/// 마우스가 뒤엣것임이 실측돼 두 길을 함께 둔다. **둘이 겹쳐 두 번 나가지 않는다** — winit이
+/// `WM_XBUTTONDOWN`을 처리하고 끝내므로 그 마우스에서는 `WM_APPCOMMAND`가 생기지 않는다.
+///
+/// **키 소유(`KeyOwner`)도 포커스도 보지 않는다**: 뒤로·앞으로는 고른 항목이 아니라 보고 있는
+/// 위치에 하는 일이라 어느 영역이 키를 쥐었는지와 무관하고, 주소창에 글자를 넣던 중에 눌러도
+/// 탐색기와 같이 그대로 듣는다. 대상은 활성 패널이며 `Alt+←`·`Alt+→`와 같은 길로 나간다
+pub fn poll_mouse_nav(ctx: &egui::Context, app_nav: Option<AppNav>) -> Option<Command> {
+    let 포인터 = ctx.input(|input| {
+        if input.pointer.button_pressed(egui::PointerButton::Extra1) {
+            Some(Command::Back)
+        } else if input.pointer.button_pressed(egui::PointerButton::Extra2) {
+            Some(Command::Forward)
+        } else {
+            None
+        }
+    });
+    포인터.or(app_nav.map(|nav| match nav {
+        AppNav::Back => Command::Back,
+        AppNav::Forward => Command::Forward,
+    }))
+}
+
 /// 팝업이 화면 밖으로 나가지 않게 시작점을 안으로 당긴다 (quality 리뷰 m1).
 ///
 /// 화면보다 큰 팝업이면 왼쪽·위쪽 모서리를 우선한다 — 아래가 잘려도 첫 줄은 보인다.
@@ -814,6 +846,60 @@ mod tests {
             got = poll_clipboard_keys(ui.ctx(), KeyOwner::FileList, false);
         });
         assert_eq!(got, None);
+    }
+
+    #[test]
+    fn 마우스_옆_버튼이_뒤로_앞으로가_된다() {
+        // `WM_XBUTTONDOWN`의 XBUTTON1·XBUTTON2가 winit·egui를 거쳐 `Extra1`·`Extra2`로 온다 —
+        // 탐색기에서 익힌 대로 앞의 것이 뒤로, 뒤의 것이 앞으로다
+        let 눌러_보기 = |button: Option<egui::PointerButton>| {
+            let ctx = egui::Context::default();
+            let mut input = egui::RawInput::default();
+            if let Some(button) = button {
+                input.events.push(egui::Event::PointerButton {
+                    pos: egui::pos2(10.0, 10.0),
+                    button,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let mut got = None;
+            let _ = ctx.run_ui(input, |ui| {
+                got = poll_mouse_nav(ui.ctx(), None);
+            });
+            got
+        };
+        assert_eq!(
+            눌러_보기(Some(egui::PointerButton::Extra1)),
+            Some(Command::Back)
+        );
+        assert_eq!(
+            눌러_보기(Some(egui::PointerButton::Extra2)),
+            Some(Command::Forward)
+        );
+        // 다른 버튼·아무 것도 안 누른 프레임은 아무 명령도 내지 않는다 —
+        // 왼쪽 클릭이 탐색을 일으키면 안 된다
+        assert_eq!(눌러_보기(Some(egui::PointerButton::Primary)), None);
+        assert_eq!(눌러_보기(Some(egui::PointerButton::Secondary)), None);
+        assert_eq!(눌러_보기(None), None);
+    }
+
+    #[test]
+    fn 창이_받은_옆_버튼도_같은_명령이_된다() {
+        // 2026-09-03 실측 — 이 PC의 마우스는 옆 버튼을 `WM_XBUTTONDOWN`이 아니라
+        // `WM_APPCOMMAND`(브라우저 뒤로·앞으로)로 보내 egui에는 아무것도 남지 않았다.
+        // 그래서 창이 직접 받아 온 것도 같은 명령으로 이어져야 한다
+        let 창이_본_것 = |nav: Option<AppNav>| {
+            let ctx = egui::Context::default();
+            let mut got = None;
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                got = poll_mouse_nav(ui.ctx(), nav);
+            });
+            got
+        };
+        assert_eq!(창이_본_것(Some(AppNav::Back)), Some(Command::Back));
+        assert_eq!(창이_본_것(Some(AppNav::Forward)), Some(Command::Forward));
+        assert_eq!(창이_본_것(None), None);
     }
 
     #[test]

@@ -16,7 +16,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_V}
 use windows::Win32::UI::Shell::{
     DefSubclassProc, SHELLEXECUTEINFOW, SetWindowSubclass, ShellExecuteExW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SW_SHOWNORMAL, WM_KEYDOWN};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, SW_SHOWNORMAL, WM_APPCOMMAND, WM_KEYDOWN,
+};
 use windows::core::{HSTRING, PCWSTR, w};
 
 /// 서브클래스 식별자 — 이 바이너리가 붙인 것임을 구분하는 임의의 상수
@@ -36,6 +38,9 @@ impl ShellHost {
             return None;
         };
         let hwnd = HWND(win32.hwnd.get() as *mut core::ffi::c_void);
+        // 창 프로시저가 화면을 깨울 통로 — `WM_APPCOMMAND`는 winit을 거치지 않아
+        // 이것이 없으면 표시만 남고 다음 프레임이 오지 않는다
+        let _ = REPAINT.set(cc.egui_ctx.clone());
         // 안전성: 방금 얻은 유효한 창 핸들에 표준 서브클래스 등록.
         // 창이 파괴되면 서브클래스도 함께 사라지므로 별도 해제는 필요 없다
         unsafe {
@@ -135,7 +140,38 @@ pub fn execute(path: &Path) {
     }
 }
 
+/// `WM_APPCOMMAND`의 명령 번호를 `lParam`에서 꺼낼 때 걸러 낼 자리
+/// (`GET_APPCOMMAND_LPARAM` — 상위 워드에서 장치 비트 `FAPPCOMMAND_MASK`를 뗀다)
+const APPCOMMAND_MASK: u16 = 0x0FFF;
+/// `APPCOMMAND_BROWSER_BACKWARD`
+const APPCOMMAND_BROWSER_BACKWARD: u16 = 1;
+/// `APPCOMMAND_BROWSER_FORWARD`
+const APPCOMMAND_BROWSER_FORWARD: u16 = 2;
+
+/// 마우스 옆 버튼이 가리키는 방향 — 창이 본 것을 다음 프레임이 명령으로 바꾼다
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppNav {
+    Back,
+    Forward,
+}
+
+/// 창 프로시저가 화면을 깨울 통로 (`ShellHost::new`가 채운다).
+///
+/// 트레이가 `OnceLock`에 통로를 두는 것과 같은 이유다 — 창은 하나뿐이라
+/// 프로세스 수명과 같은 자리에 두면 해제 시점 문제가 아예 없다
+static REPAINT: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+
 thread_local! {
+    /// 마우스 옆 버튼(뒤로·앞으로)이 눌렸다 — 다음 프레임이 거둬 간다.
+    ///
+    /// **egui를 거칠 수 없어 창에서 직접 받는다**: 마우스에 따라 옆 버튼이
+    /// `WM_XBUTTONDOWN`(→ egui `PointerButton::Extra1`·`Extra2`)이 아니라
+    /// **`WM_APPCOMMAND`(브라우저 뒤로·앞으로)**로 온다. winit은 그 메시지를 처리하지
+    /// 않고 egui `Key`에도 브라우저 키가 없어, 그런 마우스에서는 아무것도 도달하지
+    /// 않는다(2026-09-03 실측 — 같은 누름에 `WM_KEYDOWN vk=166/167`도 함께 왔지만
+    /// 그 키 역시 egui가 모른다). 탐색기가 옆 버튼을 받는 경로가 이것이다
+    static NAV_PRESSED: std::cell::Cell<Option<AppNav>> = const { std::cell::Cell::new(None) };
+
     /// `Ctrl+V`가 눌렸다 — 다음 프레임이 거둬 간다 (FR-12).
     ///
     /// **egui를 거칠 수 없어 창에서 직접 받는다**: `egui-winit`은 `Ctrl+V`를 가로채
@@ -150,6 +186,22 @@ thread_local! {
 /// `Ctrl+V`가 눌렸는지 거두고 표시를 내린다 — 프레임마다 한 번 부른다
 pub fn take_paste_pressed() -> bool {
     PASTE_PRESSED.replace(false)
+}
+
+/// 마우스 옆 버튼이 눌렸는지 거두고 표시를 내린다 — 프레임마다 한 번 부른다
+pub fn take_app_nav() -> Option<AppNav> {
+    NAV_PRESSED.replace(None)
+}
+
+/// `WM_APPCOMMAND`의 `lParam`에서 우리가 쓰는 두 명령을 가려낸다.
+///
+/// Win32 호출과 떼어 둔 이유는 이것만 시험할 수 있게 하기 위함이다
+fn app_nav_from_lparam(lparam: isize) -> Option<AppNav> {
+    match ((lparam >> 16) as u16) & APPCOMMAND_MASK {
+        APPCOMMAND_BROWSER_BACKWARD => Some(AppNav::Back),
+        APPCOMMAND_BROWSER_FORWARD => Some(AppNav::Forward),
+        _ => None,
+    }
 }
 
 /// 창 서브클래스 프로시저 — 메뉴 모달 중의 소유자 메시지를 셸에 전달한다.
@@ -170,6 +222,19 @@ unsafe extern "system" fn shell_menu_proc(
     if let Some(result) = forward_menu_msg(msg, wparam, lparam) {
         return result;
     }
+    // 마우스 옆 버튼이 `WM_APPCOMMAND`로 오는 경우 — **여기서 삼킨다**. 위의 `Ctrl+V`와
+    // 달리 넘겨 봐야 winit이 모르는 메시지이고, 넘기면 셸이 기본 처리로 다른 창에
+    // 되돌려 보낸다. 처리했음을 알리려면 TRUE를 돌려주어야 한다
+    if msg == WM_APPCOMMAND
+        && let Some(nav) = app_nav_from_lparam(lparam.0)
+    {
+        NAV_PRESSED.set(Some(nav));
+        // 이 메시지는 winit을 거치지 않아 스스로 화면을 깨워야 한다
+        if let Some(ctx) = REPAINT.get() {
+            ctx.request_repaint();
+        }
+        return LRESULT(1);
+    }
     // `Ctrl+V`만 여기서 본다 — **메시지를 삼키지 않고 표시만 남긴다**(아래에서 winit으로
     // 그대로 넘어간다). 다른 키는 egui가 정상으로 넘겨주므로 손대지 않는다
     if msg == WM_KEYDOWN && wparam.0 as u16 == VK_V.0 {
@@ -186,6 +251,21 @@ unsafe extern "system" fn shell_menu_proc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 브라우저_뒤로_앞으로만_가려낸다() {
+        // 2026-09-03 실측 — 옆 버튼이 `WM_APPCOMMAND cmd=1`(뒤로)·`cmd=2`(앞으로)로 왔다.
+        // 상위 워드에는 장치 비트(`FAPPCOMMAND_MOUSE` = 0x8000)가 함께 실려 있어
+        // 그것을 떼지 않으면 어느 명령인지 알아볼 수 없다
+        let 마우스가_보낸 = |cmd: u16| ((0x8000u32 | cmd as u32) << 16) as isize;
+        assert_eq!(app_nav_from_lparam(마우스가_보낸(1)), Some(AppNav::Back));
+        assert_eq!(app_nav_from_lparam(마우스가_보낸(2)), Some(AppNav::Forward));
+        // 키보드가 보낸 것(장치 비트 0)도 같은 자리에서 읽힌다
+        assert_eq!(app_nav_from_lparam(1 << 16), Some(AppNav::Back));
+        // 볼륨·미디어 등 다른 명령은 우리 것이 아니다 — 삼키지 않고 넘어가야 한다
+        assert_eq!(app_nav_from_lparam(마우스가_보낸(9)), None);
+        assert_eq!(app_nav_from_lparam(0), None);
+    }
 
     #[test]
     fn 물리_픽셀을_배율로_나눠_논리_pt로_옮긴다() {
