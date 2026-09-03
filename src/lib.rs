@@ -8,5 +8,7 @@ pub mod fs;
 /// `main.rs`에도 두면 같은 파일이 두 모듈로 컴파일돼 전역 현재 언어가 둘이 된다
 pub mod i18n;
 pub mod panel;
+/// 임시 성능 계측 — 일 때만 동작한다 (원인 규명 후 걷어낸다)
+pub mod perf;
 pub mod remote;
 pub mod ui;

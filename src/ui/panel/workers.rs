@@ -43,7 +43,20 @@ impl DirLoad {
         self.pending = Some(rx);
         let ctx = ctx.clone();
         std::thread::spawn(move || {
+            // 임시 계측 (`crate::perf`) — **경로는 싣지 않고 개수와 소요만** 남긴다
+            let t_enum = std::time::Instant::now();
             let outcome = enumerate_dir(&path);
+            let d_enum = t_enum.elapsed();
+            crate::perf::log(|| {
+                let items_len = match &outcome {
+                    EnumOutcome::Ok(entries) => entries.len(),
+                    _ => 0,
+                };
+                format!(
+                    "enum items={items_len} | enumerate={:.1} (ms)",
+                    d_enum.as_secs_f32() * 1000.0
+                )
+            });
             // 수신부가 이미 버려졌으면(앱 종료·폴더 재이동) 전송 실패는 무해하다
             let _ = tx.send((generation, outcome));
             ctx.request_repaint();

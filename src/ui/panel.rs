@@ -521,7 +521,18 @@ impl PanelState {
         let Some(outcome) = self.load.poll() else {
             return;
         };
+        // 임시 계측 (`crate::perf`) — 열거가 끝난 뒤 UI 스레드가 목록을 세우는 몫이다
+        // (`set_entries`의 확장자별 종류 조회가 여기 들어 있다)
+        let t_apply = std::time::Instant::now();
         self.apply_enumerated(outcome, icons);
+        let d_apply = t_apply.elapsed();
+        crate::perf::log(|| {
+            let (dirs, files) = self.list.counts();
+            format!(
+                "apply dirs={dirs} files={files} | apply={:.1} (ms)",
+                d_apply.as_secs_f32() * 1000.0
+            )
+        });
     }
 
     /// 탐색을 커밋한다 — 활성 탭의 경로·히스토리와 썸네일 세대를 새 폴더에 맞춘다.
