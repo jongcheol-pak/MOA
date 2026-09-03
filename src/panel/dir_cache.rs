@@ -181,4 +181,36 @@ mod tests {
         assert!(cache.get(&dir("사라진곳")).is_none());
         assert!(cache.order.is_empty(), "차례에 흔적이 남았다");
     }
+
+    #[test]
+    fn 다시_담은_폴더는_차례의_맨_뒤로_간다() {
+        // 덮어쓰기만으로는 부족하다 — 차례가 갱신되지 않으면 방금 다시 읽은 폴더가 먼저 빠진다
+        let mut cache = DirCache::new();
+        for index in 0..DirCache::MAX_DIRS {
+            cache.put(&dir(&index.to_string()), &rows(1));
+        }
+        cache.put(&dir("0"), &rows(2)); // 가장 오래된 것을 다시 담는다
+        cache.put(&dir("새것"), &rows(1));
+        assert!(cache.get(&dir("0")).is_some(), "다시 담은 폴더가 축출됐다");
+        assert!(
+            cache.get(&dir("1")).is_none(),
+            "그다음으로 오래된 것이 빠져야 한다"
+        );
+    }
+
+    #[test]
+    fn 담지_못한_폴더는_축출을_일으키지_않는다() {
+        // 상한을 넘는 폴더는 자리를 차지하지 않는다 — 그것 때문에 멀쩡한 캐시가 빠지면
+        // 큰 폴더를 한 번 지나가는 것만으로 담아 둔 것이 전부 사라진다
+        let mut cache = DirCache::new();
+        for index in 0..DirCache::MAX_DIRS {
+            cache.put(&dir(&index.to_string()), &rows(1));
+        }
+        cache.put(&dir("아주큰곳"), &rows(DirCache::MAX_ENTRIES + 1));
+        assert!(
+            cache.get(&dir("0")).is_some(),
+            "담기지도 않은 폴더가 축출을 일으켰다"
+        );
+        assert_eq!(cache.order.len(), DirCache::MAX_DIRS);
+    }
 }
