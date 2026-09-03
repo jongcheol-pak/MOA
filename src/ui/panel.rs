@@ -789,7 +789,7 @@ impl PanelState {
                 // **`pending_dir`을 여기서 비우지 않는다** — 되돌리기가 이미 직전 폴더로
                 // 새 열거를 걸었고 그 요청의 대상이 바로 그 값이다. 비우면 그 열거가
                 // 끝났을 때 `mem::take`가 빈 경로를 꺼내 그것으로 커밋한다
-                self.revert_optimistic(cache, ctx);
+                self.revert_optimistic(cache, icons, ctx);
                 self.status = reason;
             }
         }
@@ -811,7 +811,12 @@ impl PanelState {
     /// 히스토리와 탭 경로를 **그 자리에서** 되돌린다 — 다시 건 열거의 완료를 기다리면
     /// 그 사이 주소창·트리가 사라진 폴더를 가리키고, 되돌아간 폴더마저 읽히지 않으면
     /// 커밋이 없어 그대로 남는다
-    fn revert_optimistic(&mut self, cache: &mut DirCache, ctx: &egui::Context) -> bool {
+    fn revert_optimistic(
+        &mut self,
+        cache: &mut DirCache,
+        icons: &mut IconCache,
+        ctx: &egui::Context,
+    ) -> bool {
         let Some(optimistic) = self.optimistic.take() else {
             return false;
         };
@@ -822,6 +827,18 @@ impl PanelState {
         let tab = self.tabs.active_mut();
         tab.history = optimistic.history;
         tab.set_committed(optimistic.prev_dir.clone());
+        // **목록도 함께 되돌린다** — 경로만 되돌리면 되돌아간 폴더 이름 아래 사라진 폴더의
+        // 항목이 그대로 남아, 주소창·트리가 가리키는 곳과 목록이 갈린다(이 앱이 결함으로
+        // 못 박아 둔 형태다). 직전 폴더가 캐시에 있으면 그것을 세우고, 없으면 비워
+        // 자리표시가 서게 한 뒤 아래 재열거를 기다린다
+        match cache.get(&optimistic.prev_dir) {
+            Some(rows) => {
+                let rows = rows.to_vec();
+                self.list
+                    .set_entries(optimistic.prev_dir.clone(), rows, icons);
+            }
+            None => self.list.clear_entries(),
+        }
         // 다시 읽는다 — 이 호출이 세대를 올려 떠 있던 요청도 무효화한다
         self.start_load(optimistic.prev_dir, PendingNav::None, ctx);
         true

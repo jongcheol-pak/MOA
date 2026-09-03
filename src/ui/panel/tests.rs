@@ -584,6 +584,47 @@ fn 되돌린_뒤_다시_건_열거가_끝나도_빈_경로로_커밋되지_않�
 }
 
 #[test]
+fn 되돌릴_때_사라진_폴더의_목록을_남기지_않는다() {
+    // 경로·히스토리만 되돌리면 되돌아간 폴더 이름 아래 **사라진 폴더의 항목**이 그대로 남아
+    // 주소창·트리가 가리키는 곳과 목록이 갈린다 — 이 앱이 결함으로 못 박아 둔 형태다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let start = std::path::PathBuf::from(r"C:\남은곳");
+    let ghost = std::path::PathBuf::from(r"C:\지워진곳");
+    cache.put(&ghost, &batch(&["..", "유령.txt"]));
+
+    let mut panel = PanelState::new(start.clone());
+    panel.start_load(ghost.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    assert_eq!(panel.list.len(), 2, "캐시 목록이 서지 않았다");
+
+    panel.apply_enumerated(EnumOutcome::NotFound, &mut icons, &mut cache, &ctx);
+    assert_eq!(panel.dir(), start);
+    assert_eq!(panel.list.len(), 0, "사라진 폴더의 목록이 남았다");
+}
+
+#[test]
+fn 되돌릴_때_직전_폴더가_캐시에_있으면_그_목록이_즉시_선다() {
+    // 되돌아간 자리도 캐시가 있으면 자리표시 없이 바로 그린다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let start = std::path::PathBuf::from(r"C:\담긴곳");
+    let ghost = std::path::PathBuf::from(r"C:\없앤곳");
+    cache.put(&start, &batch(&["..", "a.txt", "b.txt"]));
+    cache.put(&ghost, &batch(&["..", "유령.txt"]));
+
+    let mut panel = PanelState::new(start.clone());
+    panel.start_load(ghost.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    panel.apply_enumerated(EnumOutcome::NotFound, &mut icons, &mut cache, &ctx);
+
+    assert_eq!(panel.dir(), start);
+    assert_eq!(
+        panel.list.len(),
+        3,
+        "되돌아간 폴더의 캐시 목록이 서지 않았다"
+    );
+}
+
+#[test]
 fn 캐시로_옮긴_뒤_실제_결과가_와도_히스토리는_한_번만_늘어난다() {
     // 계획 D6 — 이른 커밋이 히스토리를 쌓고, 뒤이어 오는 완료 조각은 `pending_nav`가
     // `None`이라 재적용뿐이어야 한다. 두 번 쌓이면 뒤로 가기를 두 번 눌러야 원래로 돌아간다
