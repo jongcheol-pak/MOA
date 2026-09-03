@@ -338,7 +338,12 @@ fn remote_screen_texts(phase: TabPhase) -> Vec<String> {
 fn commit_dir(panel: &mut PanelState, dir: &str, icons: &mut IconCache) {
     panel.pending_dir = std::path::PathBuf::from(dir);
     panel.pending_nav = PendingNav::None;
-    panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), icons);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(Vec::new()),
+        icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
 }
 
 /// 배치 하나를 만든다 — 이름만 다른 파일 항목
@@ -377,7 +382,12 @@ fn 첫_배치가_커밋하고_완료_조각이_빈_경로를_덮어쓰지_않는
     // `..` 줄이 함께 서므로 항목은 2개다
     assert_eq!(panel.list.len(), 2, "첫 배치가 그려지지 않았다");
 
-    panel.apply_enumerated(EnumOutcome::Ok(batch(&["b.txt"])), &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["b.txt"])),
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     assert_eq!(
         panel.dir(),
         std::path::Path::new(r"C:\Docs"),
@@ -398,7 +408,12 @@ fn 배치를_흘리던_중_끊기면_그린_것을_지우지_않는다() {
     panel.apply_partial(batch(&["a.txt", "b.txt"]), &mut icons);
     assert_eq!(panel.list.len(), 3);
 
-    panel.apply_enumerated(EnumOutcome::Error { network: true }, &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Error { network: true },
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     assert_eq!(panel.list.len(), 3, "부분 목록이 지워졌다");
     assert!(!panel.status.is_empty(), "사유가 상태 줄에 적히지 않았다");
     assert!(
@@ -414,9 +429,195 @@ fn 조각이_없었으면_완료_조각이_종전대로_목록을_갈아_끼운�
     let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
     panel.pending_dir = std::path::PathBuf::from(r"C:\Docs");
     panel.pending_nav = PendingNav::None;
-    panel.apply_enumerated(EnumOutcome::Ok(batch(&["a.txt", "b.txt"])), &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["a.txt", "b.txt"])),
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     assert_eq!(panel.dir(), std::path::Path::new(r"C:\Docs"));
     assert_eq!(panel.list.len(), 3, "`..` + 항목 둘이어야 한다");
+}
+
+/// 캐시 적중 시험 한 벌 — 목록 캐시·아이콘 캐시·컨텍스트를 함께 세운다
+fn cache_fixture() -> (egui::Context, IconCache, crate::panel::dir_cache::DirCache) {
+    (
+        egui::Context::default(),
+        IconCache::new(),
+        crate::panel::dir_cache::DirCache::new(),
+    )
+}
+
+#[test]
+fn 캐시가_있으면_그_자리에서_목록과_경로가_함께_옮겨간다() {
+    // FR-68 — 다시 들어간 폴더는 자리표시 없이 즉시 선다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let target = std::path::PathBuf::from(r"C:\캐시곳");
+    // 캐시에는 `..` 줄이 포함된 최종 목록이 담긴다(계획 D7)
+    cache.put(&target, &batch(&["..", "a.txt"]));
+
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\원래곳"));
+    panel.start_load(target.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+
+    assert_eq!(panel.dir(), target, "캐시가 있는데 커밋되지 않았다");
+    assert_eq!(panel.list.len(), 2, "`..`를 다시 붙여 목록이 늘었다");
+    assert!(panel.optimistic.is_some(), "되돌릴 자리를 챙기지 않았다");
+}
+
+#[test]
+fn 이미_그_폴더를_그리고_있으면_캐시를_쓰지_않는다() {
+    // F5·감시 갱신·숨김 토글이 같은 폴더를 다시 읽는 길 — 그 목적이 최신 상태 확인이다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let target = std::path::PathBuf::from(r"C:\보던곳");
+    cache.put(&target, &batch(&["a.txt"]));
+
+    let mut panel = PanelState::new(target.clone());
+    panel.pending_dir = target.clone();
+    panel.pending_nav = PendingNav::None;
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["a.txt", "b.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+    let before = panel.list.len();
+
+    panel.start_load(target.clone(), PendingNav::None, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    assert!(
+        panel.optimistic.is_none(),
+        "같은 폴더를 다시 읽는데 캐시를 썼다"
+    );
+    assert_eq!(panel.list.len(), before, "목록이 캐시로 덮였다");
+}
+
+#[test]
+fn 원격_탭을_거쳐_돌아와도_캐시가_적중한다() {
+    // 적중 판정을 `list.dir()`만으로 하면 이 경로가 샌다 — `clear_entries`가 그 필드를
+    // 갱신하지 않아 목록이 빈 채 폴더만 남고, 그러면 미적중으로 판정돼 자리표시가 뜬다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let target = std::path::PathBuf::from(r"C:\오갈곳");
+    cache.put(&target, &batch(&["..", "a.txt"]));
+
+    let mut panel = PanelState::new(target.clone());
+    panel.pending_dir = target.clone();
+    panel.pending_nav = PendingNav::None;
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["a.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+    // 원격 탭으로 옮겨 간 상태 — 목록은 비지만 그려 둔 폴더 이름은 남는다
+    panel.list.clear_entries();
+
+    panel.start_load(target.clone(), PendingNav::None, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    assert!(
+        panel.optimistic.is_some(),
+        "원격을 거쳐 돌아온 탭이 캐시를 타지 못했다"
+    );
+    assert_eq!(panel.list.len(), 2);
+}
+
+#[test]
+fn 캐시로_옮긴_폴더가_없으면_앞으로_가기_목록까지_되돌린다() {
+    // FR-68 — `History::push`가 앞으로 가기 목록을 자르므로 스냅샷 복원만이 되살린다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let start = std::path::PathBuf::from(r"C:\처음곳");
+    let mut panel = PanelState::new(start.clone());
+    panel
+        .tabs
+        .active_mut()
+        .history
+        .push(std::path::PathBuf::from(r"C:\뒤곳"));
+    panel.tabs.active_mut().history.back();
+    assert!(
+        panel.tabs.active().history.can_forward(),
+        "시험 전제를 잘못 세웠다"
+    );
+
+    let ghost = std::path::PathBuf::from(r"C:\사라진곳");
+    cache.put(&ghost, &batch(&["a.txt"]));
+    panel.start_load(ghost.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    assert_eq!(panel.dir(), ghost);
+    assert!(
+        !panel.tabs.active().history.can_forward(),
+        "push가 자르지 않았다"
+    );
+
+    panel.apply_enumerated(EnumOutcome::NotFound, &mut icons, &mut cache, &ctx);
+    assert_eq!(panel.dir(), start, "직전 폴더로 되돌아가지 않았다");
+    assert!(
+        panel.tabs.active().history.can_forward(),
+        "앞으로 가기 목록이 되살아나지 않았다"
+    );
+    assert!(cache.get(&ghost).is_none(), "없는 폴더의 캐시가 남았다");
+}
+
+#[test]
+fn 읽지_못한_폴더는_되돌리지_않되_캐시를_버린다() {
+    // 권한·네트워크 실패는 폴더가 실재하는 경우다 — 그 자리에 머물러 사유를 보이는 것이 종전 규칙
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let target = std::path::PathBuf::from(r"C:\막힌곳");
+    cache.put(&target, &batch(&["a.txt"]));
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\원래곳"));
+    panel.start_load(target.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+
+    panel.apply_enumerated(EnumOutcome::AccessDenied, &mut icons, &mut cache, &ctx);
+    assert_eq!(panel.dir(), target, "읽지 못했다고 되돌아갔다");
+    assert!(cache.get(&target).is_none(), "낡은 캐시가 남았다");
+}
+
+#[test]
+fn 확정된_목록만_캐시에_담긴다() {
+    // 중간 조각을 담으면 다음 재진입이 잘린 목록으로 즉시 선다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let target = std::path::PathBuf::from(r"C:\담을곳");
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\원래곳"));
+    panel.pending_dir = target.clone();
+    panel.pending_nav = PendingNav::None;
+
+    panel.apply_partial(batch(&["a.txt"]), &mut icons);
+    assert!(cache.get(&target).is_none(), "중간 조각이 캐시에 담겼다");
+
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["b.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+    // `..` + a + b
+    assert_eq!(cache.get(&target).map(<[_]>::len), Some(3));
+}
+
+#[test]
+fn 캐시로_그린_뒤_도착한_배치는_목록을_줄이지_않는다() {
+    // 캐시 임계(5000)와 배치 임계(2000) 사이 구간 — 두 기능에 함께 걸린다.
+    // 중간 조각을 그대로 반영하면 목록이 줄었다가 다시 늘어난다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let target = std::path::PathBuf::from(r"C:\겹치는곳");
+    cache.put(&target, &batch(&["..", "a.txt", "b.txt", "c.txt"]));
+    let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\원래곳"));
+    panel.start_load(target.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    assert_eq!(panel.list.len(), 4);
+
+    // 실제 열거의 첫 배치가 도착 — 그리지 않고 모아 둔다
+    panel.apply_partial(batch(&["a.txt", "b.txt"]), &mut icons);
+    assert_eq!(panel.list.len(), 4, "배치가 목록을 줄였다");
+
+    // 완료 조각에서 모아 둔 것과 잔여분을 합쳐 한 번에 갈아 끼운다
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["c.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+    assert_eq!(panel.list.len(), 4, "합쳐 넣은 목록이 어긋났다");
 }
 
 #[test]
@@ -768,6 +969,8 @@ fn 로컬_상위_이동을_더블클릭하면_위_폴더로_간다() {
     panel.apply_enumerated(
         EnumOutcome::Ok(vec![local_entry("Documents", true)]),
         &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
     );
 
     let names: Vec<String> = match panel.list.model() {
@@ -1443,7 +1646,12 @@ fn 권한이_없으면_그_폴더로_옮기고_목록_자리에_사유를_적는
     let denied = std::path::PathBuf::from(r"C:\Documents and Settings");
     panel.pending_dir = denied.clone();
     panel.pending_nav = PendingNav::Push;
-    panel.apply_enumerated(EnumOutcome::AccessDenied, &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::AccessDenied,
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
 
     assert_eq!(
         panel.tabs.active().source.local_path(),
@@ -1514,7 +1722,12 @@ fn panel_after_failure(
     let target = std::path::PathBuf::from(r"Z:\");
     panel.pending_dir = target.clone();
     panel.pending_nav = PendingNav::Push;
-    panel.apply_enumerated(outcome, icons);
+    panel.apply_enumerated(
+        outcome,
+        icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     (panel, target)
 }
 
@@ -2969,7 +3182,12 @@ fn 원격_탭을_여는_사이_도착한_로컬_열거는_버린다() {
     assert!(!panel.load.is_loading(), "원격 탭인데 `읽는 중…`이 남았다");
 
     // 이미 채널에 실려 있던 결과가 뒤늦게 도착해도 원격 탭은 그대로여야 한다
-    panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(Vec::new()),
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     assert!(panel.is_remote(), "원격 탭이 로컬 탭으로 둔갑했다");
     assert_eq!(
         panel.tabs.active().source.remote_path().map(|p| p.as_str()),
@@ -3077,6 +3295,8 @@ fn 목록이_있는_폴더에서_옮기는_중에는_이전_목록을_둔다() {
     panel.apply_enumerated(
         EnumOutcome::Ok(vec![local_entry("Documents", true)]),
         &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
     );
     panel.start_load(
         std::path::PathBuf::from(r"C:\Users\Public"),
@@ -3105,7 +3325,12 @@ fn 목록이_있는_폴더에서_옮기는_중에는_이전_목록을_둔다() {
 fn 다_읽고_나면_자리표시를_거둔다() {
     let mut icons = IconCache::new();
     let mut panel = PanelState::new(std::path::PathBuf::from(r"C:\Users"));
-    panel.apply_enumerated(EnumOutcome::Ok(Vec::new()), &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(Vec::new()),
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     assert!(
         !panel.shows_loading_placeholder(),
         "다 읽었는데 자리표시가 남았다"
@@ -3169,7 +3394,12 @@ fn observation_after(
     commit_dir(&mut panel, r"C:\Users", icons);
     panel.pending_dir = std::path::PathBuf::from(r"Z:\Docs");
     panel.pending_nav = PendingNav::Push;
-    panel.apply_enumerated(outcome, icons);
+    panel.apply_enumerated(
+        outcome,
+        icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     panel.observed_drive.clone()
 }
 
@@ -3217,7 +3447,12 @@ fn 관측은_한_번_올리면_비워진다() {
     panel.deferred_start = None;
     panel.pending_dir = std::path::PathBuf::from(r"Z:\");
     panel.pending_nav = PendingNav::Push;
-    panel.apply_enumerated(EnumOutcome::Error { network: true }, &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Error { network: true },
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     assert!(panel.observed_drive.is_some(), "관측이 세워지지 않았다");
 
     let _ = draw_once(&mut panel, &SiteStore::new());
@@ -3296,7 +3531,12 @@ fn panel_with_local_rows(dir: &str, rows: Vec<FileEntry>) -> (PanelState, egui::
     let mut panel = PanelState::new(std::path::PathBuf::from(dir));
     // 열거 결과가 도착한 것처럼 커밋시킨다 — 목록을 채우는 실제 경로를 그대로 지난다
     panel.start_load(std::path::PathBuf::from(dir), PendingNav::None, &ctx);
-    panel.apply_enumerated(EnumOutcome::Ok(rows), &mut icons);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(rows),
+        &mut icons,
+        &mut crate::panel::dir_cache::DirCache::new(),
+        &egui::Context::default(),
+    );
     (panel, ctx)
 }
 

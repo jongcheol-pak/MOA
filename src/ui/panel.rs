@@ -16,7 +16,9 @@ use crate::fs::enumerate::{EnumChunk, EnumOutcome, FileEntry};
 use crate::fs::icons::IconCache;
 use crate::fs::thumbnail::ThumbnailCache;
 use crate::fs::watcher::DirWatcher;
+use crate::panel::dir_cache::DirCache;
 use crate::panel::file_list::{ListRow, PARENT_ENTRY, SortKey};
+use crate::panel::history::History;
 use crate::panel::tabs::{CloseOutcome, TabId, TabPhase, TabSource, TabState, TabsModel};
 use crate::remote::connection::{ConnCommand, ConnectionId, ListSource};
 use crate::remote::manager::ConnectionManager;
@@ -94,6 +96,27 @@ enum PendingNav {
     Push,
     Back,
     Forward,
+}
+
+/// 캐시로 **먼저 옮겨 둔** 상태 — 실제 열거가 그 폴더를 열지 못하면 이것으로 되돌린다 (FR-68).
+///
+/// 되돌리기를 「히스토리 조작의 역연산」으로 할 수 없어 스냅샷을 든다 — `History::push`가
+/// 앞으로 가기 목록을 **잘라내므로** 잘린 항목은 어떤 역연산으로도 살아나지 않는다.
+///
+/// `target`을 함께 드는 것은 **그 폴더의 결과일 때만** 되돌리기가 발동하게 하기 위해서다 —
+/// 이 상태가 남은 채 무관한 폴더에서 `NotFound`가 나면 엉뚱한 곳으로 끌려간다
+struct OptimisticNav {
+    /// 캐시로 옮겨 간 폴더 — 도착한 결과가 이 폴더의 것일 때만 쓴다
+    target: PathBuf,
+    /// 옮기기 전에 보고 있던 폴더
+    prev_dir: PathBuf,
+    /// 옮기기 전 히스토리 전체
+    history: History,
+    /// 적중 중에 도착한 배치 — **그리지 않고 모아 둔다**.
+    ///
+    /// 이미 캐시로 전부 그린 화면에 중간 배치를 반영하면 목록이 줄었다가 다시 늘어난다.
+    /// 완료 조각이 오면 이 몫과 잔여분을 합쳐 한 번에 갈아 끼운다
+    buffered: Vec<FileEntry>,
 }
 
 /// 목록을 읽지 못한 사유 — 그 자리에 적을 말이 이것으로 갈린다 (2026-08-17 사용자 결정).
@@ -240,6 +263,8 @@ pub struct PanelState {
     /// 참이면 완료 조각(`Done`)은 목록을 갈아 끼우지 않고 **잔여분만 이어 붙이고**,
     /// 실패로 끝나도 이미 그린 것을 지우지 않는다. 커밋 시점도 첫 조각으로 앞당겨진다
     streamed: bool,
+    /// 캐시로 먼저 옮겨 둔 상태 — 되돌릴 것이 없으면 `None` (FR-68)
+    optimistic: Option<OptimisticNav>,
     /// 열거 실패 사유 — 성공 시 빈 문자열
     status: String,
     /// 이번 프레임에 열어 본 드라이브와 그 결과 `(경로, 닿았는가)` (T6).
@@ -337,6 +362,7 @@ impl PanelState {
             pending_dir: PathBuf::new(),
             pending_nav: PendingNav::None,
             streamed: false,
+            optimistic: None,
             status: String::new(),
             observed_drive: None,
             blocked: None,
@@ -450,12 +476,12 @@ impl PanelState {
     }
 
     /// 프레임마다 호출 — 지연 시작·열거 완료·변경 감시를 처리하고, 열거 중이면 다시 그리게 한다
-    pub fn poll(&mut self, ctx: &egui::Context, icons: &mut IconCache) {
+    pub fn poll(&mut self, ctx: &egui::Context, icons: &mut IconCache, cache: &mut DirCache) {
         if let Some(path) = self.deferred_start.take() {
             // 시작 경로는 이미 히스토리에 들어 있으므로 다시 쌓지 않는다
             self.start_load(path, PendingNav::None, ctx);
         }
-        self.poll_load(icons);
+        self.poll_load(ctx, icons, cache);
         self.poll_watch(ctx);
         self.poll_create(ctx);
         if let Some(delay) = self.poll_thumbnails(ctx) {
@@ -519,6 +545,8 @@ impl PanelState {
         self.pending_dir = path.clone();
         self.pending_nav = nav;
         self.streamed = false;
+        // 새 요청이 서므로 앞선 낙관적 이동은 되돌릴 대상이 아니다 (FR-68 — 해제 3지점 중 하나)
+        self.optimistic = None;
         self.status.clear();
         self.load.start(path, ctx);
     }
@@ -527,14 +555,15 @@ impl PanelState {
     ///
     /// **그 프레임에 도착한 것을 모두 소비한다** — 하나씩만 꺼내면 배치 수만큼 프레임이 들어
     /// 완주가 되레 늦어진다(10만 항목이면 50프레임)
-    fn poll_load(&mut self, icons: &mut IconCache) {
+    fn poll_load(&mut self, ctx: &egui::Context, icons: &mut IconCache, cache: &mut DirCache) {
+        self.try_cache_hit(icons, cache);
         while let Some(chunk) = self.load.poll() {
             // 임시 계측 (`crate::perf`) — UI 스레드가 **배치 한 몫**을 목록에 세우는 시간이다
             // (`set_entries`·`append_entries`의 확장자별 종류 조회가 여기 들어 있다)
             let t_apply = std::time::Instant::now();
             match chunk {
                 EnumChunk::Partial(entries) => self.apply_partial(entries, icons),
-                EnumChunk::Done(outcome) => self.apply_enumerated(outcome, icons),
+                EnumChunk::Done(outcome) => self.apply_enumerated(outcome, icons, cache, ctx),
             }
             let d_apply = t_apply.elapsed();
             crate::perf::log(|| {
@@ -572,6 +601,46 @@ impl PanelState {
         }
     }
 
+    /// 대기 중인 폴더가 캐시에 있으면 **먼저 그려 두고 옮긴다** (FR-68).
+    ///
+    /// 적중 판정은 네 가지를 함께 본다 — ⓐ 열거가 진행 중이고 ⓑ **그려져 있는 로컬 목록이
+    /// 그 폴더의 것이 아니며** ⓒ 원격 탭이 아니고 ⓓ 캐시에 있다.
+    ///
+    /// **ⓑ를 커밋된 경로(`dir()`)로 재지 않는다** — `reload_active_tab`이 활성 탭을 바꾼 **뒤**
+    /// 그 탭의 경로로 다시 읽으므로 그 순간 둘이 같아져 **탭 전환이 캐시를 못 탄다**.
+    /// 그리고 `list.dir()`만으로도 부족하다: `clear_entries`가 그 필드를 갱신하지 않아
+    /// 「로컬 A → 원격 탭 → 다시 A」에서 목록이 빈 채 폴더만 A로 남는다. 그래서
+    /// `entries()`가 로컬 목록을 주는지와 함께 본다.
+    ///
+    /// 같은 폴더를 다시 읽는 길(F5·감시 갱신·숨김 토글)은 ⓑ가 거짓이라 저절로 걸러진다
+    fn try_cache_hit(&mut self, icons: &mut IconCache, cache: &mut DirCache) {
+        if !self.load.is_loading() || self.is_remote() {
+            return;
+        }
+        if self.list.entries().is_some() && self.list.dir() == self.pending_dir {
+            return;
+        }
+        let Some(entries) = cache.get(&self.pending_dir) else {
+            return;
+        };
+        let entries = entries.to_vec();
+        let dir = self.pending_dir.clone();
+        // 되돌릴 자리를 먼저 챙긴다 — 커밋하고 나면 이전 폴더를 알 수 없다
+        self.optimistic = Some(OptimisticNav {
+            target: dir.clone(),
+            prev_dir: self.dir().to_path_buf(),
+            history: self.tabs.active().history.clone(),
+            buffered: Vec::new(),
+        });
+        // 이른 커밋 — `pending_dir`을 비우지 않고 `pending_nav`만 내린다 (계획 D6)
+        self.commit_navigation(&dir);
+        self.pending_nav = PendingNav::None;
+        self.blocked = None;
+        self.watch(&dir);
+        // 캐시는 `..` 줄이 포함된 최종 목록이다 — 다시 붙이지 않는다 (계획 D7)
+        self.list.set_entries(dir, entries, icons);
+    }
+
     /// 다 읽지 못한 폴더의 중간 몫을 반영한다 (FR-69).
     ///
     /// **첫 조각이 커밋 지점이다** — 그것이 도착했다는 것은 폴더를 열 수 있다는 뜻이므로,
@@ -583,6 +652,12 @@ impl PanelState {
         // 활성 탭이 원격이면 이 결과는 남의 것이다 — `apply_enumerated`와 같은 가드다
         if self.is_remote() {
             self.abandon_local_load();
+            return;
+        }
+        // 캐시로 이미 전부 그려 둔 화면에 중간 배치를 반영하면 목록이 줄었다가 다시 늘어난다 —
+        // 모아 두었다가 완료 조각에서 한 번에 갈아 끼운다 (FR-68·FR-69가 겹치는 구간)
+        if let Some(optimistic) = self.optimistic.as_mut() {
+            optimistic.buffered.extend(entries);
             return;
         }
         if self.streamed {
@@ -616,7 +691,13 @@ impl PanelState {
     ///
     /// `poll_load`에서 갈라낸 이유는 **테스트가 이 경로를 실제로 지나게** 하기 위해서다 —
     /// 판정 헬퍼만 직접 부르는 테스트는 호출부가 죽어도 통과한다(F-7 B1이 그렇게 새어나갔다)
-    fn apply_enumerated(&mut self, outcome: EnumOutcome, icons: &mut IconCache) {
+    fn apply_enumerated(
+        &mut self,
+        outcome: EnumOutcome,
+        icons: &mut IconCache,
+        cache: &mut DirCache,
+        ctx: &egui::Context,
+    ) {
         // **활성 탭이 원격이면 이 결과는 남의 것이다.** 열거를 걸어 둔 사이에 탭이 원격으로
         // 바뀔 수 있고(사이트 연결·탭 전환), 그대로 커밋하면 원격 탭이 로컬 탭으로 둔갑한다
         // (개발 빌드에서는 `TabState::set_committed`의 단언이 앱을 끝낸다).
@@ -640,6 +721,8 @@ impl PanelState {
                 _ => ListBlock::OpenFailed,
             };
             self.keep_partial(reason);
+            // 읽지 못한 폴더의 캐시는 버린다 — 두면 재진입마다 낡은 목록이 한 프레임 섰다가 지워진다
+            self.forget_optimistic(cache);
             self.pending_nav = PendingNav::None;
             self.streamed = false;
             return;
@@ -654,29 +737,59 @@ impl PanelState {
                 self.blocked = None;
                 // 감시 대상도 이 시점에 맞춘다 — 읽어 낸 폴더만 감시한다
                 self.watch(&dir);
-                if self.streamed {
-                    // 배치로 그린 목록에 **잔여분만** 이어 붙인다 — `..` 줄은 첫 조각이 이미 세웠다
-                    self.list.append_entries(entries, icons);
-                } else {
-                    // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
-                    let entries = with_local_parent_first(&dir, entries);
-                    self.list.set_entries(dir, entries, icons);
+                match self.optimistic.take() {
+                    // 캐시로 그려 둔 화면을 실제 결과로 **한 번에** 갈아 끼운다 —
+                    // 모아 둔 배치와 잔여분을 합쳐야 목록이 잘리지 않는다
+                    Some(optimistic) if optimistic.target == dir => {
+                        let mut all = optimistic.buffered;
+                        all.extend(entries);
+                        let entries = with_local_parent_first(&dir, all);
+                        self.list.set_entries(dir.clone(), entries, icons);
+                    }
+                    _ if self.streamed => {
+                        // 배치로 그린 목록에 **잔여분만** 이어 붙인다 — `..` 줄은 첫 조각이 이미 세웠다
+                        self.list.append_entries(entries, icons);
+                    }
+                    _ => {
+                        // 첫 줄은 상위 이동(`..`)이다 — 원격 목록과 같은 자리에서 같은 조작이 되게 한다
+                        let entries = with_local_parent_first(&dir, entries);
+                        self.list.set_entries(dir.clone(), entries, icons);
+                    }
+                }
+                // **확정된 목록만** 담는다 (FR-68) — 중간 조각을 담으면 다음 재진입이
+                // 잘린 목록으로 즉시 선다. `..` 줄이 포함된 형태 그대로다(계획 D7)
+                if let Some(rows) = self.list.entries() {
+                    cache.put(&dir, rows);
                 }
             }
             // 읽지 못했어도 **그 폴더로 옮긴다** (2026-08-16·2026-08-17 사용자 요청) —
             // 이전 목록을 그대로 두면 주소창·트리가 가리키는 곳과 목록이 갈린다. 사유는
             // 상태 줄이 아니라 빈 목록 자리에 적는다 — 올라갈 곳이 있으면 `..` 줄만
             // 남고, 드라이브 뿌리에는 그 줄도 없다(`with_local_parent_first`)
-            EnumOutcome::AccessDenied => self.block_list(ListBlock::AccessDenied, icons),
-            EnumOutcome::Error { network: true } => {
-                self.block_list(ListBlock::NetworkUnavailable, icons)
+            // 읽지 못한 폴더는 **되돌리지 않되 캐시를 버린다** — 그 폴더는 실재하므로
+            // 그 자리에 머물러 사유를 보이고, 낡은 목록만 다음 진입에서 서지 않게 한다
+            EnumOutcome::AccessDenied => {
+                self.forget_optimistic(cache);
+                self.block_list(ListBlock::AccessDenied, icons);
             }
-            EnumOutcome::Error { network: false } => self.block_list(ListBlock::OpenFailed, icons),
+            EnumOutcome::Error { network: true } => {
+                self.forget_optimistic(cache);
+                self.block_list(ListBlock::NetworkUnavailable, icons);
+            }
+            EnumOutcome::Error { network: false } => {
+                self.forget_optimistic(cache);
+                self.block_list(ListBlock::OpenFailed, icons);
+            }
             // **찾을 수 없는 폴더만** 현 위치를 지킨다 (2026-08-17 사용자 결정) —
             // 실재하지 않는 곳에는 옮길 자리가 없어, 그리로 주소창을 옮기면 `..`말고는
             // 할 수 있는 것이 없는 화면이 된다. 사유는 종전대로 상태 줄에 적는다
             EnumOutcome::NotFound => {
-                self.status = crate::i18n::dynamic::open_not_found(&self.pending_name());
+                let reason = crate::i18n::dynamic::open_not_found(&self.pending_name());
+                // 캐시를 믿고 이미 옮겨 갔는데 그 폴더가 없다 — 옮긴 자리를 되돌린다
+                if self.revert_optimistic(cache, ctx) {
+                    self.pending_dir = PathBuf::new();
+                }
+                self.status = reason;
             }
         }
         self.pending_nav = PendingNav::None;
@@ -684,6 +797,43 @@ impl PanelState {
         // 남겨 두면 다음 탐색이 시작되기 전까지 참으로 남아, 그 사이에 이 값을 보는 코드가
         // 생기면 「아직 흘리는 중」으로 오판한다
         self.streamed = false;
+        // 낙관적 이동도 이 결과로 매듭지어졌다 — 남겨 두면 **무관한 폴더의** `NotFound`가
+        // 옛 스냅샷으로 히스토리를 되감는다 (해제 3지점 중 마지막)
+        self.optimistic = None;
+    }
+
+    /// 캐시로 옮겨 간 폴더가 실은 없었다 — 옮긴 자리를 되돌린다 (FR-68). 되돌렸으면 `true`.
+    ///
+    /// **그 폴더의 결과일 때만** 발동한다(`target` 대조) — 이 상태가 남은 채 무관한 폴더에서
+    /// `NotFound`가 나면 엉뚱한 곳으로 끌려간다.
+    ///
+    /// 히스토리와 탭 경로를 **그 자리에서** 되돌린다 — 다시 건 열거의 완료를 기다리면
+    /// 그 사이 주소창·트리가 사라진 폴더를 가리키고, 되돌아간 폴더마저 읽히지 않으면
+    /// 커밋이 없어 그대로 남는다
+    fn revert_optimistic(&mut self, cache: &mut DirCache, ctx: &egui::Context) -> bool {
+        let Some(optimistic) = self.optimistic.take() else {
+            return false;
+        };
+        if optimistic.target != self.pending_dir {
+            return false;
+        }
+        cache.invalidate(&optimistic.target);
+        let tab = self.tabs.active_mut();
+        tab.history = optimistic.history;
+        tab.set_committed(optimistic.prev_dir.clone());
+        // 다시 읽는다 — 이 호출이 세대를 올려 떠 있던 요청도 무효화한다
+        self.start_load(optimistic.prev_dir, PendingNav::None, ctx);
+        true
+    }
+
+    /// 낙관적으로 옮겨 간 폴더를 읽지 못했다 — **되돌리지는 않고** 그 캐시만 버린다.
+    ///
+    /// 권한·네트워크 실패는 폴더가 실재하는 경우라 그 자리에 머무는 것이 종전 규칙이고,
+    /// 낡은 목록만 남겨 두면 재진입마다 그것이 한 프레임 섰다가 사유 화면으로 지워진다
+    fn forget_optimistic(&mut self, cache: &mut DirCache) {
+        if let Some(optimistic) = self.optimistic.take() {
+            cache.invalidate(&optimistic.target);
+        }
     }
 
     /// 읽지 못한 폴더로 옮기고 목록 자리에 사유를 적을 상태를 세운다.
@@ -956,6 +1106,7 @@ impl PanelState {
         self.pending_dir = PathBuf::new();
         self.pending_nav = PendingNav::None;
         self.streamed = false;
+        self.optimistic = None;
         self.status.clear();
     }
 
