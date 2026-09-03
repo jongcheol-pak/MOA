@@ -1,7 +1,12 @@
 //! 탐색 히스토리 — 탭당 독립 (순수 로직, 단위테스트 대상. plan D9)
 use std::path::{Path, PathBuf};
 
-/// 브라우저식 히스토리: 커서 뒤를 절단하며 push, back/forward로 이동
+/// 브라우저식 히스토리: 커서 뒤를 절단하며 push, back/forward로 이동.
+///
+/// **복제할 수 있다** — 낙관적으로 옮긴 뒤 되돌려야 할 때 통째로 스냅샷해 둔다(FR-68).
+/// 조작을 역연산으로 되돌릴 수는 없다: `push`가 **앞으로 가기 목록을 잘라내므로**
+/// 잘린 항목은 어떤 역연산으로도 복원되지 않는다. 담는 것이 경로 몇 개뿐이라 복제가 싸다
+#[derive(Clone)]
 pub struct History {
     items: Vec<PathBuf>,
     /// 현재 위치 (items가 비어있지 않으면 항상 유효 인덱스)
@@ -146,5 +151,27 @@ mod tests {
         h.back(); // 삭제됐다고 가정해도 항목 유지
         assert_eq!(h.current(), p("C:\\살아있다"));
         assert!(h.can_forward());
+    }
+
+    #[test]
+    fn 스냅샷으로_되돌리면_앞으로_가기_목록까지_살아난다() {
+        // FR-68 — 낙관적으로 옮긴 뒤 그 폴더가 없으면 되돌려야 하는데, `push`가
+        // **앞으로 가기 목록을 잘라내므로**(truncate) 조작 역연산으로는 복원되지 않는다.
+        // 통째 스냅샷만이 잘린 항목을 되살린다
+        let mut h = History::new(p(r"C:\a"));
+        h.push(p(r"C:\b"));
+        h.back();
+        assert!(h.can_forward(), "되돌리기 전 상태를 잘못 세웠다");
+
+        let snapshot = h.clone();
+        // 낙관적 이동 — 여기서 `C:\b`가 잘린다
+        h.push(p(r"C:\c"));
+        assert!(!h.can_forward(), "push가 앞으로 가기 목록을 자르지 않았다");
+
+        // 열어 보니 없는 폴더였다 — 스냅샷으로 되돌린다
+        h = snapshot;
+        assert_eq!(h.current(), p(r"C:\a"));
+        assert!(h.can_forward(), "앞으로 가기 목록이 되살아나지 않았다");
+        assert_eq!(h.peek_forward(), Some(p(r"C:\b").as_path()));
     }
 }

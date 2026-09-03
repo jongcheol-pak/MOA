@@ -1,21 +1,16 @@
 //! 디렉터리 열거 — 워커 스레드에서 수행, UI 스레드는 절대 블로킹하지 않는다 (plan D5)
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::path::Path;
 use windows::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_BAD_NET_NAME, ERROR_BAD_NETPATH, ERROR_DEV_NOT_EXIST,
     ERROR_FILE_NOT_FOUND, ERROR_NETNAME_DELETED, ERROR_NETWORK_UNREACHABLE, ERROR_NO_MORE_FILES,
-    ERROR_NO_NET_OR_BAD_PATH, ERROR_PATH_NOT_FOUND, ERROR_REM_NOT_LIST, ERROR_UNEXP_NET_ERR, HWND,
-    LPARAM, WIN32_ERROR, WPARAM,
+    ERROR_NO_NET_OR_BAD_PATH, ERROR_PATH_NOT_FOUND, ERROR_REM_NOT_LIST, ERROR_UNEXP_NET_ERR,
+    WIN32_ERROR,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic,
     FindExSearchNameMatch, FindFirstFileExW, FindNextFileW, WIN32_FIND_DATAW,
 };
-use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use windows::core::HSTRING;
-
-/// 열거 완료를 패널 창에 알리는 메시지 (lparam·wparam 미사용 — 데이터는 채널로)
-pub const WM_APP_ENUM_DONE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 
 /// 목록 항목 — 이름은 UTF-16(널 종단) 원본 유지 (정렬 API·표시 공용, 변환 손실 없음)
 #[derive(Clone, Debug)]
@@ -50,6 +45,21 @@ impl FileEntry {
             _ => String::new(),
         }
     }
+}
+
+/// 열거가 흘려보내는 한 조각 (FR-69).
+///
+/// **`Done(Ok(..))`의 페이로드는 「잔여분」이지 전량이 아니다** — 앞서 `Partial`로 보낸 것을
+/// 워커가 다시 들고 있으면 10만 항목에서 메모리가 두 배가 된다. 받는 쪽은 `Partial`이
+/// 한 번이라도 있었으면 누적하고, 없었으면 종전대로 전량 교체한다(`ui::panel`).
+///
+/// `Done(Err)` 계열(`AccessDenied`·`NotFound`·`Error`)에는 페이로드가 없다
+#[derive(Debug)]
+pub enum EnumChunk {
+    /// 아직 다 읽지 않았다 — 지금까지 모은 몫
+    Partial(Vec<FileEntry>),
+    /// 다 읽었거나 실패했다. `Ok`의 항목은 **마지막 `Partial` 이후의 잔여분**이다
+    Done(EnumOutcome),
 }
 
 /// 열거 결과
@@ -90,45 +100,35 @@ fn is_network_error(code: WIN32_ERROR) -> bool {
     )
 }
 
-pub struct EnumResult {
-    pub generation: u64,
-    pub outcome: EnumOutcome,
-}
-
-/// HWND를 워커 스레드로 넘기기 위한 래퍼.
-/// 안전성: HWND는 값 타입 핸들이며 PostMessageW는 어느 스레드에서도 호출 가능하다
-struct HwndSend(isize);
-unsafe impl Send for HwndSend {}
-
-/// 백그라운드 열거 시작 — 완료 시 채널로 결과 전송 후 WM_APP_ENUM_DONE 통지
-pub fn spawn_enumerate(path: PathBuf, generation: u64, tx: Sender<EnumResult>, notify: HWND) {
-    let notify = HwndSend(notify.0 as isize);
-    std::thread::spawn(move || {
-        let outcome = enumerate_dir(&path);
-        // 수신 측(패널)이 먼저 파괴됐으면 send 실패 — 무해하게 종료
-        if tx
-            .send(EnumResult {
-                generation,
-                outcome,
-            })
-            .is_ok()
-        {
-            // 안전성: PostMessageW는 스레드 간 안전. 창이 이미 파괴됐으면 실패만 반환
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(notify.0 as *mut core::ffi::c_void)),
-                    WM_APP_ENUM_DONE,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            }
-        }
-    });
-}
-
 /// 디렉터리 1단계 열거 (동기 — 워커 스레드에서 호출).
 /// 긴 경로(260+) 지원을 위해 `\\?\` 접두를 사용한다 (NFR-5)
 pub fn enumerate_dir(path: &Path) -> EnumOutcome {
+    // 상한을 최대로 주면 `Partial`이 한 번도 나가지 않아 종전과 같은 「한 번에 전부」가 된다
+    let mut done = None;
+    enumerate_dir_batched(path, usize::MAX, |chunk| {
+        if let EnumChunk::Done(outcome) = chunk {
+            done = Some(outcome);
+        }
+        true
+    });
+    // `Done`은 어느 갈래로 끝나든 반드시 한 번 나간다 — 이 기본값에 닿는 길은 없다
+    done.unwrap_or(EnumOutcome::Error { network: false })
+}
+
+/// 디렉터리 1단계 열거 — **다 읽기 전에 중간 결과를 흘려보낸다** (FR-69, 워커 스레드에서 호출).
+///
+/// `batch_size`개를 모은 **뒤에도 항목이 더 있을 때만** 그 몫을 `Partial`로 보낸다. 그래서
+/// 항목이 `batch_size` 이하인 폴더에서는 `Partial`이 한 번도 나가지 않고 `Done` 하나로 끝나
+/// **임계 아래에서는 동작이 종전과 완전히 같다**. `Done`이 싣는 것은 마지막 `Partial` 이후의
+/// **잔여분**이다.
+///
+/// `on_chunk`가 `false`를 돌려주면(받는 쪽이 사라졌다) 그 자리에서 멈춘다 — 아무도 기다리지
+/// 않는 폴더를 끝까지 읽을 이유가 없다. 그때는 `Done`을 보내지 않는다
+pub fn enumerate_dir_batched(
+    path: &Path,
+    batch_size: usize,
+    mut on_chunk: impl FnMut(EnumChunk) -> bool,
+) {
     let pattern = to_extended_pattern(path);
     let pattern_h = HSTRING::from(pattern.as_str());
     let mut data = WIN32_FIND_DATAW::default();
@@ -146,13 +146,15 @@ pub fn enumerate_dir(path: &Path) -> EnumOutcome {
             Ok(h) => h,
             Err(e) => {
                 let code = WIN32_ERROR(e.code().0 as u32 & 0xffff);
-                return match code {
+                let outcome = match code {
                     ERROR_ACCESS_DENIED => EnumOutcome::AccessDenied,
                     ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => EnumOutcome::NotFound,
                     _ => EnumOutcome::Error {
                         network: is_network_error(code),
                     },
                 };
+                on_chunk(EnumChunk::Done(outcome));
+                return;
             }
         };
 
@@ -163,13 +165,25 @@ pub fn enumerate_dir(path: &Path) -> EnumOutcome {
             if let Err(e) = FindNextFileW(handle, &mut data) {
                 let _ = FindClose(handle);
                 let code = WIN32_ERROR(e.code().0 as u32 & 0xffff);
-                if code == ERROR_NO_MORE_FILES {
-                    return EnumOutcome::Ok(entries);
-                }
-                // 읽는 **중에** 끊기는 경우도 있다 — 여기도 같은 판정을 거친다
-                return EnumOutcome::Error {
-                    network: is_network_error(code),
+                let outcome = if code == ERROR_NO_MORE_FILES {
+                    EnumOutcome::Ok(entries)
+                } else {
+                    // 읽는 **중에** 끊기는 경우도 있다 — 여기도 같은 판정을 거친다
+                    EnumOutcome::Error {
+                        network: is_network_error(code),
+                    }
                 };
+                on_chunk(EnumChunk::Done(outcome));
+                return;
+            }
+            // **다음 항목이 있음을 확인한 뒤에** 흘려보낸다 — 여기서 재지 않고 담자마자 재면
+            // 항목이 딱 `batch_size`인 폴더도 `Partial`을 한 번 내보내게 된다
+            if entries.len() >= batch_size {
+                let batch = std::mem::take(&mut entries);
+                if !on_chunk(EnumChunk::Partial(batch)) {
+                    let _ = FindClose(handle);
+                    return;
+                }
             }
         }
     }
@@ -222,6 +236,7 @@ fn to_extended_pattern(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
     use windows::core::PCWSTR;
 
@@ -439,5 +454,96 @@ mod tests {
         assert_eq!(mk("no_ext", false).extension(), "");
         assert_eq!(mk(".gitignore", false).extension(), "");
         assert_eq!(mk("dir.name", true).extension(), "");
+    }
+
+    /// 배치 열거 시험용 — 조각을 모아 `(중간 배치들, 완료 결과)`로 돌려준다
+    fn collect_chunks(dir: &Path, batch: usize) -> (Vec<Vec<FileEntry>>, Option<EnumOutcome>) {
+        let mut partials = Vec::new();
+        let mut done = None;
+        enumerate_dir_batched(dir, batch, |chunk| {
+            match chunk {
+                EnumChunk::Partial(entries) => partials.push(entries),
+                EnumChunk::Done(outcome) => done = Some(outcome),
+            }
+            true
+        });
+        (partials, done)
+    }
+
+    fn make_files(dir: &Path, count: usize) {
+        for index in 0..count {
+            std::fs::write(dir.join(format!("f{index:05}.txt")), b"x").unwrap();
+        }
+    }
+
+    #[test]
+    fn 임계_이하면_중간_조각이_한_번도_나가지_않는다() {
+        // FR-69의 핵심 계약 — 작은 폴더에서는 동작이 종전과 완전히 같아야 한다
+        let dir = make_temp_dir("batch_small");
+        make_files(&dir, 5);
+        let (partials, done) = collect_chunks(&dir, 10);
+        assert!(partials.is_empty(), "임계 아래인데 중간 조각이 나갔다");
+        let Some(EnumOutcome::Ok(entries)) = done else {
+            panic!("완료 조각이 없다");
+        };
+        assert_eq!(entries.len(), 5);
+    }
+
+    #[test]
+    fn 항목_수가_임계와_같으면_중간_조각이_나가지_않는다() {
+        // 경계값 — 담자마자 재면 여기서 조각이 한 번 새어 나간다.
+        // **다음 항목이 있음을 확인한 뒤에** 흘려보내야 이 시험이 통과한다
+        let dir = make_temp_dir("batch_exact");
+        make_files(&dir, 4);
+        let (partials, done) = collect_chunks(&dir, 4);
+        assert!(partials.is_empty(), "항목 수가 임계와 같은데 조각이 나갔다");
+        let Some(EnumOutcome::Ok(entries)) = done else {
+            panic!("완료 조각이 없다");
+        };
+        assert_eq!(entries.len(), 4);
+    }
+
+    #[test]
+    fn 임계를_넘으면_조각으로_나뉘고_합계가_보존된다() {
+        let dir = make_temp_dir("batch_many");
+        make_files(&dir, 10);
+        let (partials, done) = collect_chunks(&dir, 3);
+        assert!(!partials.is_empty(), "임계를 넘었는데 조각이 없다");
+        // 완료 조각은 **잔여분만** 싣는다 — 전량을 다시 실으면 메모리가 두 배가 된다
+        let Some(EnumOutcome::Ok(rest)) = done else {
+            panic!("완료 조각이 없다");
+        };
+        let sum: usize = partials.iter().map(Vec::len).sum::<usize>() + rest.len();
+        assert_eq!(sum, 10, "조각 합계가 전체와 다르다");
+        for batch in &partials {
+            assert_eq!(batch.len(), 3, "중간 조각은 임계만큼 담긴다");
+        }
+    }
+
+    #[test]
+    fn 받는_쪽이_멈추라면_완료_조각을_보내지_않는다() {
+        // 수신부가 사라진 폴더를 끝까지 읽을 이유가 없다
+        let dir = make_temp_dir("batch_stop");
+        make_files(&dir, 10);
+        let mut seen = 0;
+        let mut done_seen = false;
+        enumerate_dir_batched(&dir, 3, |chunk| {
+            match chunk {
+                EnumChunk::Partial(_) => seen += 1,
+                EnumChunk::Done(_) => done_seen = true,
+            }
+            false
+        });
+        assert_eq!(seen, 1, "첫 조각에서 멈춰야 한다");
+        assert!(!done_seen, "멈춘 뒤에는 완료 조각을 보내지 않는다");
+    }
+
+    #[test]
+    fn 없는_폴더는_배치_경로에서도_같은_사유로_끝난다() {
+        let dir = make_temp_dir("batch_ghost");
+        let ghost = dir.join("없는폴더");
+        let (partials, done) = collect_chunks(&ghost, 3);
+        assert!(partials.is_empty());
+        assert!(matches!(done, Some(EnumOutcome::NotFound)));
     }
 }

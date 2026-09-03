@@ -12,6 +12,7 @@ use crate::app::settings::{
 };
 use crate::app::workspace::{WorkspaceId, WorkspaceList};
 use crate::fs::icons::IconCache;
+use crate::panel::dir_cache::DirCache;
 use crate::panel::tabs::{TabId, TabSource};
 use crate::remote::connection::{ConnectionId, TransferDirection};
 use crate::remote::log::LogBuffer;
@@ -516,6 +517,11 @@ pub struct ExplorerApp {
     korean_font: bool,
     /// 아이콘 캐시 — 앱 전역 공유 (패널마다 두면 같은 아이콘을 중복 보관하게 된다)
     icons: IconCache,
+    /// 폴더 목록 캐시 — 앱 전역 1벌 (FR-68).
+    ///
+    /// 패널마다 두면 메모리가 패널·워크스페이스 수만큼 곱해지고, 탭·패널을 옮겨 다닐 때
+    /// 적중하지 않는다. 전달 방식은 `icons`와 같다 — 프레임마다 `poll`에 빌려준다
+    dir_cache: DirCache,
     textures: IconTextures,
     /// 타이틀바 왼쪽에 그릴 앱 아이콘 — 시작할 때 한 번 올린다.
     /// 읽지 못하면 `None`(그 자리를 비워 두고 나머지는 그대로 그린다)
@@ -772,6 +778,7 @@ impl ExplorerApp {
             shell,
             korean_font,
             icons,
+            dir_cache: DirCache::new(),
             textures: IconTextures::new(),
             app_icon: app_icon::load_texture(&cc.egui_ctx, APP_ICON_TEXTURE_PX),
             workspaces: WorkspaceList::new(),
@@ -2654,7 +2661,7 @@ impl eframe::App for ExplorerApp {
         if let Some(view) = self.views.get_mut(&id) {
             // 패널은 서로 독립이라 각자 자기 열거 결과만 처리한다
             for panel in view.panels.values_mut() {
-                panel.poll(ctx, &mut self.icons);
+                panel.poll(ctx, &mut self.icons, &mut self.dir_cache);
             }
         }
         self.sync_subtitle();

@@ -897,14 +897,23 @@ impl ExplorerApp {
         let Some(shell) = self.shell.as_ref() else {
             return;
         };
+        // 임시 계측 (`crate::perf`) — 어느 단계가 느린지 가르기 위한 것이며 `MOA_PERF_LOG`를
+        // 켜지 않으면 `Instant` 몇 개를 잡는 것 말고는 아무 일도 하지 않는다
+        let t_open = std::time::Instant::now();
         let Some(menu) = shell.open_menu(&request.folder, &request.items) else {
             return;
         };
+        let d_open = t_open.elapsed();
         // 셸이 준 원래 목록 — **아이콘 캐시가 이것과 1:1로 정렬된다**. 아래에서 줄을
         // 고르고 재정렬해도 그림은 이 자리(`origin`)로 찾는다
+        let t_model = std::time::Instant::now();
         let items = menu.model();
+        let d_model = t_model.elapsed();
+        let t_icons = std::time::Instant::now();
         let icons = shell_context_menu::MenuIcons::build(ctx, &items);
+        let d_icons = t_icons.elapsed();
         let background = request.items.is_empty();
+        let sel_count = request.items.len();
 
         // 앱이 세우는 줄의 대상과 활성 여부는 **메뉴를 열 때 한 번** 정한다 — 매 프레임
         // 다시 재면 즐겨찾기 목록을 프레임마다 훑게 된다
@@ -923,7 +932,9 @@ impl ExplorerApp {
             new_tab_target(&request.items, &request.dirs).map(std::path::Path::to_path_buf);
         // **클립보드는 메뉴를 열 때 한 번만 본다**(D8-1) — 매 프레임 재면 COM을 프레임마다
         // 문다. 담긴 것이 파일이 아니면 `None`이라 그 줄이 흐려진다
+        let t_clip = std::time::Instant::now();
         let paste_enabled = crate::fs::clipboard::take().is_some();
+        let d_clip = t_clip.elapsed();
         let mut app_rows = vec![
             (
                 shell_context_menu::AppMenuItem::AddFavorite,
@@ -943,6 +954,7 @@ impl ExplorerApp {
         } else {
             self.upload_menu_targets()
         };
+        let t_arrange = std::time::Instant::now();
         let arranged = arrange(
             &items,
             |id| menu.verb(id),
@@ -950,6 +962,21 @@ impl ExplorerApp {
             &app_rows,
             !uploads.is_empty(),
         );
+        let d_arrange = t_arrange.elapsed();
+        // **경로·파일 이름은 싣지 않는다** — 이 기록은 그대로 밖으로 나갈 수 있다
+        crate::perf::log(|| {
+            let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+            format!(
+                "menu sel={sel_count} rows={} | open={:.1} model={:.1} icons={:.1} clip={:.1} arrange={:.1} | total={:.1} (ms)",
+                items.len(),
+                ms(d_open),
+                ms(d_model),
+                ms(d_icons),
+                ms(d_clip),
+                ms(d_arrange),
+                ms(d_open + d_model + d_icons + d_clip + d_arrange),
+            )
+        });
         self.shell_menu = Some(OpenShellMenu {
             menu,
             uploads,
