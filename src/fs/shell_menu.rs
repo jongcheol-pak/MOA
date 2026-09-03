@@ -177,7 +177,7 @@ impl ShellMenu {
     /// 맨 위 단계의 줄들을 읽는다
     pub fn model(&self) -> Vec<ShellMenuItem> {
         // 안전성: `open`이 만든 유효한 HMENU를 읽기만 한다
-        unsafe { read_menu(self.menu, &self.context_menu) }
+        unsafe { read_menu(self.menu, Some(&self.context_menu)) }
     }
 
     /// 하위 메뉴를 펼친다 — **읽기 전에 셸에게 채워 달라고 먼저 묻는다**.
@@ -203,7 +203,7 @@ impl ShellMenu {
             } else if let Some(cm2) = &self.owner_draw.0 {
                 let _ = cm2.HandleMenuMsg(WM_INITMENUPOPUP, wparam, lparam);
             }
-            read_menu(submenu, &self.context_menu)
+            read_menu(submenu, Some(&self.context_menu))
         }
     }
 
@@ -253,7 +253,7 @@ impl Drop for ShellMenu {
 /// 안전성: 유효한 HMENU에만 부른다. 읽어 온 문자열 버퍼는 이 함수가 소유한다
 unsafe fn read_menu(
     menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
-    cm: &IContextMenu,
+    cm: Option<&IContextMenu>,
 ) -> Vec<ShellMenuItem> {
     // 안전성: 위 주석 참조
     unsafe {
@@ -284,11 +284,17 @@ unsafe fn read_menu(
                 out.push(separator_row());
             }
 
+            // **하위 메뉴 손잡이를 글자보다 먼저 챙긴다** — `read_label`이 같은 구조체로
+            // 다시 물으면서 `MIIM_SUBMENU`를 빼는데, `GetMenuItemInfoW`는 그때 `hSubMenu`를
+            // 남겨 두지 않고 **널로 덮는다**(2026-09-03 실측: 그 필드만 그렇고 id·종류·상태·
+            // 비트맵은 그대로다). 뒤에서 읽으면 하위 메뉴가 통째로 사라져 `새로 만들기`가
+            // 화살표 없는 줄이 되고, 눌러도 자리표시자 verb라 아무 일도 일어나지 않았다
+            let hsubmenu = info.hSubMenu;
             let raw = read_label(menu, index as u32, &mut info);
             let raw = match raw {
                 Some(text) if !text.is_empty() => text,
                 // 글자를 읽지 못했다 — verb 이름이라도 있으면 그것으로 대신한다
-                _ => match verb_of(cm, info.wID) {
+                _ => match cm.and_then(|cm| verb_of(cm, info.wID)) {
                     Some(name) => name,
                     None => continue,
                 },
@@ -309,8 +315,8 @@ unsafe fn read_menu(
                 checked: info.fState & MFS_CHECKED
                     != windows::Win32::UI::WindowsAndMessaging::MENU_ITEM_STATE(0),
                 separator: false,
-                submenu: (!info.hSubMenu.is_invalid()).then_some(SubmenuHandle {
-                    menu: info.hSubMenu.0 as isize,
+                submenu: (!hsubmenu.is_invalid()).then_some(SubmenuHandle {
+                    menu: hsubmenu.0 as isize,
                     index: index as u32,
                 }),
             });
@@ -561,6 +567,45 @@ unsafe fn background_menu(owner: HWND, folder: &Path) -> Result<IContextMenu> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-09-03 사용자 보고 — "메뉴에서 새로 만들기가 동작하지 않는다".
+    ///
+    /// `read_label`이 같은 `MENUITEMINFOW`로 다시 물으면서 `MIIM_SUBMENU`를 빼는데,
+    /// `GetMenuItemInfoW`는 그때 `hSubMenu`를 널로 덮는다. 그 뒤에 읽으면 하위 메뉴가
+    /// 전부 사라져 `새로 만들기`가 화살표 없는 줄이 됐다.
+    ///
+    /// **COM 없이 도는 시험이다** — HMENU만 손으로 세우고 `read_menu`에 `None`을 준다
+    #[test]
+    fn 하위_메뉴는_글자를_읽은_뒤에도_남는다() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            AppendMenuW, DestroyMenu, MF_POPUP, MF_STRING,
+        };
+        // 안전성: 이 시험이 만든 메뉴만 다루고 끝에서 지운다
+        unsafe {
+            let Ok(submenu) = CreatePopupMenu() else {
+                return;
+            };
+            let _ = AppendMenuW(submenu, MF_STRING, 2, windows::core::w!("자식"));
+            let Ok(menu) = CreatePopupMenu() else {
+                let _ = DestroyMenu(submenu);
+                return;
+            };
+            let _ = AppendMenuW(
+                menu,
+                MF_POPUP,
+                submenu.0 as usize,
+                windows::core::w!("부모(&P)"),
+            );
+            let rows = read_menu(menu, None);
+            let _ = DestroyMenu(menu);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].label, "부모(P)");
+            assert!(
+                rows[0].submenu.is_some(),
+                "글자를 읽은 뒤에도 하위 메뉴 손잡이가 남아야 한다"
+            );
+        }
+    }
 
     #[test]
     fn 액셀러레이터_표시를_떼고_단축키를_가른다() {
