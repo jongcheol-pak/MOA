@@ -2,6 +2,7 @@
 //!
 //! 화면은 `ui`가 그린다.
 pub mod address_bar;
+pub mod dir_cache;
 pub mod file_list;
 pub mod history;
 pub mod tabs;
