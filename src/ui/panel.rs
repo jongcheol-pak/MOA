@@ -785,10 +785,11 @@ impl PanelState {
             // 할 수 있는 것이 없는 화면이 된다. 사유는 종전대로 상태 줄에 적는다
             EnumOutcome::NotFound => {
                 let reason = crate::i18n::dynamic::open_not_found(&self.pending_name());
-                // 캐시를 믿고 이미 옮겨 갔는데 그 폴더가 없다 — 옮긴 자리를 되돌린다
-                if self.revert_optimistic(cache, ctx) {
-                    self.pending_dir = PathBuf::new();
-                }
+                // 캐시를 믿고 이미 옮겨 갔는데 그 폴더가 없다 — 옮긴 자리를 되돌린다.
+                // **`pending_dir`을 여기서 비우지 않는다** — 되돌리기가 이미 직전 폴더로
+                // 새 열거를 걸었고 그 요청의 대상이 바로 그 값이다. 비우면 그 열거가
+                // 끝났을 때 `mem::take`가 빈 경로를 꺼내 그것으로 커밋한다
+                self.revert_optimistic(cache, ctx);
                 self.status = reason;
             }
         }

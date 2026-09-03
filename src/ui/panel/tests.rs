@@ -558,6 +558,97 @@ fn 캐시로_옮긴_폴더가_없으면_앞으로_가기_목록까지_되돌린�
 }
 
 #[test]
+fn 되돌린_뒤_다시_건_열거가_끝나도_빈_경로로_커밋되지_않는다() {
+    // 되돌리기는 직전 폴더로 **새 열거를 건다** — 그 요청의 대상이 `pending_dir`인데
+    // 되돌린 직후 그것을 비우면, 그 열거가 끝났을 때 `mem::take`가 빈 경로를 꺼내
+    // 방금 되돌려 놓은 커밋을 덮는다(리뷰가 잡은 결함의 회귀 시험)
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let start = std::path::PathBuf::from(r"C:\돌아갈곳");
+    let ghost = std::path::PathBuf::from(r"C:\없어진곳");
+    cache.put(&ghost, &batch(&["a.txt"]));
+
+    let mut panel = PanelState::new(start.clone());
+    panel.start_load(ghost.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    panel.apply_enumerated(EnumOutcome::NotFound, &mut icons, &mut cache, &ctx);
+    assert_eq!(panel.dir(), start, "되돌아가지 않았다");
+
+    // 되돌리기가 건 열거가 성공해 도착한다
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["x.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+    assert_eq!(panel.dir(), start, "재열거 완료가 빈 경로를 커밋했다");
+}
+
+#[test]
+fn 캐시로_옮긴_뒤_실제_결과가_와도_히스토리는_한_번만_늘어난다() {
+    // 계획 D6 — 이른 커밋이 히스토리를 쌓고, 뒤이어 오는 완료 조각은 `pending_nav`가
+    // `None`이라 재적용뿐이어야 한다. 두 번 쌓이면 뒤로 가기를 두 번 눌러야 원래로 돌아간다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let start = std::path::PathBuf::from(r"C:\처음곳");
+    let target = std::path::PathBuf::from(r"C:\옮길곳");
+    cache.put(&target, &batch(&["..", "a.txt"]));
+
+    let mut panel = PanelState::new(start.clone());
+    panel.start_load(target.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["a.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+
+    let history = &mut panel.tabs.active_mut().history;
+    assert_eq!(
+        history.back().map(std::path::Path::to_path_buf),
+        Some(start),
+        "뒤로 한 번에 처음 자리로 돌아가지 않았다"
+    );
+    assert!(!history.can_back(), "히스토리에 같은 이동이 두 번 쌓였다");
+}
+
+#[test]
+fn 캐시_적중이_끝난_뒤에는_무관한_폴더의_없음이_히스토리를_되감지_않는다() {
+    // `optimistic`을 결과 갈래 끝에서 내리지 않으면, 그 상태가 남아 **나중에 다른 폴더가**
+    // 없을 때 옛 스냅샷으로 되감긴다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let start = std::path::PathBuf::from(r"C:\맨처음곳");
+    let target = std::path::PathBuf::from(r"C:\거쳐간곳");
+    cache.put(&target, &batch(&["..", "a.txt"]));
+
+    let mut panel = PanelState::new(start.clone());
+    panel.start_load(target.clone(), PendingNav::Push, &ctx);
+    panel.try_cache_hit(&mut icons, &mut cache);
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["a.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+    assert!(
+        panel.optimistic.is_none(),
+        "결과를 받고도 낙관 상태가 남았다"
+    );
+
+    // 이제 캐시와 무관한 폴더로 가려는데 그것이 없다 — 제자리를 지켜야 한다
+    panel.start_load(
+        std::path::PathBuf::from(r"C:\생판다른곳"),
+        PendingNav::Push,
+        &ctx,
+    );
+    panel.apply_enumerated(EnumOutcome::NotFound, &mut icons, &mut cache, &ctx);
+    assert_eq!(
+        panel.dir(),
+        target,
+        "무관한 폴더의 없음이 옛 스냅샷으로 되감았다"
+    );
+}
+
+#[test]
 fn 읽지_못한_폴더는_되돌리지_않되_캐시를_버린다() {
     // 권한·네트워크 실패는 폴더가 실재하는 경우다 — 그 자리에 머물러 사유를 보이는 것이 종전 규칙
     let (ctx, mut icons, mut cache) = cache_fixture();
