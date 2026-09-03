@@ -352,25 +352,6 @@ impl FileListView {
         self.selection = self.matching_selection(&keep);
     }
 
-    /// 지금 그려져 있는 목록의 폴더 — **커밋된 경로와 다르다**.
-    ///
-    /// `PanelState::dir()`은 활성 탭이 커밋한 경로라 「옮기는 중」에는 목적지를 가리키지만,
-    /// 이 값은 **마지막으로 세운 목록의 폴더**다. 캐시 적중 판정(FR-68)이 이 차이를 쓴다
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// 걸러지지 않은 원본 항목 — **로컬 목록일 때만** 준다 (FR-68).
-    ///
-    /// 배치로 누적한 최종 목록이 남는 자리가 여기뿐이라, 캐시에 담으려면 이 통로가 필요하다.
-    /// 필터가 걸린 `model`이 아니라 원본을 주는 것은 캐시가 **폴더의 전부**를 담아야 하기 때문이다
-    pub fn entries(&self) -> Option<&[FileEntry]> {
-        match &self.all_entries {
-            ListModel::Local(rows) => Some(rows),
-            ListModel::Remote(_) => None,
-        }
-    }
-
     /// 목록을 비운다 — 아직 무엇을 보여 줄지 모르는 구간에서 **옛 항목이 남지 않게** 한다.
     ///
     /// 선택도 함께 지운다: 지우지 않으면 없는 항목을 고른 상태가 되어, 다음 목록이 도착했을 때
@@ -1699,24 +1680,6 @@ mod tests {
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .collect();
         assert_eq!(picked, vec!["c.txt"], "이어 붙이면서 선택이 사라졌다");
-    }
-
-    #[test]
-    fn 원본_항목과_그린_폴더를_밖에서_읽을_수_있다() {
-        // FR-68 — 캐시에 담을 최종 목록과 적중 판정에 쓰는 폴더를 꺼내는 통로다
-        let mut icons = IconCache::new();
-        let mut v = FileListView::new();
-        assert_eq!(v.dir(), Path::new(""));
-        v.set_entries(
-            PathBuf::from(r"C:\문서"),
-            vec![entry("a.txt", false, 0, 0)],
-            &mut icons,
-        );
-        assert_eq!(v.dir(), Path::new(r"C:\문서"));
-        assert_eq!(v.entries().map(<[FileEntry]>::len), Some(1));
-        // 원격 목록으로 갈아 끼우면 로컬 원본이 없다 — 캐시에 담을 것도 없다
-        v.clear_entries();
-        assert!(v.entries().is_none());
     }
 
     #[test]

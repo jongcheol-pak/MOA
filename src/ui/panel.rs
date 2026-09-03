@@ -641,6 +641,7 @@ impl PanelState {
             };
             self.keep_partial(reason);
             self.pending_nav = PendingNav::None;
+            self.streamed = false;
             return;
         }
         match outcome {
@@ -679,6 +680,10 @@ impl PanelState {
             }
         }
         self.pending_nav = PendingNav::None;
+        // 이 요청의 조각은 여기서 끝났다 — 깃발을 내려 수명을 「이번 요청 동안」으로 못 박는다.
+        // 남겨 두면 다음 탐색이 시작되기 전까지 참으로 남아, 그 사이에 이 값을 보는 코드가
+        // 생기면 「아직 흘리는 중」으로 오판한다
+        self.streamed = false;
     }
 
     /// 읽지 못한 폴더로 옮기고 목록 자리에 사유를 적을 상태를 세운다.
