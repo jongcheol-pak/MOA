@@ -1,21 +1,16 @@
 //! 디렉터리 열거 — 워커 스레드에서 수행, UI 스레드는 절대 블로킹하지 않는다 (plan D5)
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::path::Path;
 use windows::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_BAD_NET_NAME, ERROR_BAD_NETPATH, ERROR_DEV_NOT_EXIST,
     ERROR_FILE_NOT_FOUND, ERROR_NETNAME_DELETED, ERROR_NETWORK_UNREACHABLE, ERROR_NO_MORE_FILES,
-    ERROR_NO_NET_OR_BAD_PATH, ERROR_PATH_NOT_FOUND, ERROR_REM_NOT_LIST, ERROR_UNEXP_NET_ERR, HWND,
-    LPARAM, WIN32_ERROR, WPARAM,
+    ERROR_NO_NET_OR_BAD_PATH, ERROR_PATH_NOT_FOUND, ERROR_REM_NOT_LIST, ERROR_UNEXP_NET_ERR,
+    WIN32_ERROR,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic,
     FindExSearchNameMatch, FindFirstFileExW, FindNextFileW, WIN32_FIND_DATAW,
 };
-use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use windows::core::HSTRING;
-
-/// 열거 완료를 패널 창에 알리는 메시지 (lparam·wparam 미사용 — 데이터는 채널로)
-pub const WM_APP_ENUM_DONE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 
 /// 목록 항목 — 이름은 UTF-16(널 종단) 원본 유지 (정렬 API·표시 공용, 변환 손실 없음)
 #[derive(Clone, Debug)]
@@ -103,42 +98,6 @@ fn is_network_error(code: WIN32_ERROR) -> bool {
             | ERROR_NO_NET_OR_BAD_PATH // 1203 — 네트워크가 없거나 경로가 틀림
             | ERROR_NETWORK_UNREACHABLE // 1231 — 네트워크에 닿을 수 없음
     )
-}
-
-pub struct EnumResult {
-    pub generation: u64,
-    pub outcome: EnumOutcome,
-}
-
-/// HWND를 워커 스레드로 넘기기 위한 래퍼.
-/// 안전성: HWND는 값 타입 핸들이며 PostMessageW는 어느 스레드에서도 호출 가능하다
-struct HwndSend(isize);
-unsafe impl Send for HwndSend {}
-
-/// 백그라운드 열거 시작 — 완료 시 채널로 결과 전송 후 WM_APP_ENUM_DONE 통지
-pub fn spawn_enumerate(path: PathBuf, generation: u64, tx: Sender<EnumResult>, notify: HWND) {
-    let notify = HwndSend(notify.0 as isize);
-    std::thread::spawn(move || {
-        let outcome = enumerate_dir(&path);
-        // 수신 측(패널)이 먼저 파괴됐으면 send 실패 — 무해하게 종료
-        if tx
-            .send(EnumResult {
-                generation,
-                outcome,
-            })
-            .is_ok()
-        {
-            // 안전성: PostMessageW는 스레드 간 안전. 창이 이미 파괴됐으면 실패만 반환
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(notify.0 as *mut core::ffi::c_void)),
-                    WM_APP_ENUM_DONE,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
-            }
-        }
-    });
 }
 
 /// 디렉터리 1단계 열거 (동기 — 워커 스레드에서 호출).
@@ -277,6 +236,7 @@ fn to_extended_pattern(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
     use windows::core::PCWSTR;
 

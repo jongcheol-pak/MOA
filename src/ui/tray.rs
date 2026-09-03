@@ -27,7 +27,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, w};
 
-/// 트레이가 창에 보내는 메시지 — **`WM_APP + 1`은 `fs::enumerate`가 이미 쓴다**
+/// 트레이가 창에 보내는 메시지.
+///
+/// **`WM_APP + 1`을 비워 두고 `+ 2`를 쓴다** — 종전에 `fs::enumerate`가 그 번호로 열거 완료를
+/// 알렸다(egui로 옮기며 채널만 쓰게 되어 사라졌다). 번호를 당겨 쓰면 옛 판으로 만든 창이
+/// 남아 있는 환경에서 서로의 메시지를 읽는다
 pub const TRAY_CALLBACK: u32 = WM_APP + 2;
 /// 아이콘 식별자 — 이 앱은 아이콘을 하나만 둔다
 const TRAY_ICON_ID: u32 = 1;
@@ -354,8 +358,8 @@ mod tests {
 
     #[test]
     fn 콜백_메시지_번호가_기존_것과_겹치지_않는다() {
-        // `fs::enumerate`가 `WM_APP + 1`을 쓴다 — 겹치면 폴더 열거 완료가 트레이 조작으로 읽힌다
-        assert_ne!(TRAY_CALLBACK, crate::fs::enumerate::WM_APP_ENUM_DONE);
+        // 겹치면 폴더 변경 통지가 트레이 조작으로 읽힌다 — `fs::watcher`가 `WM_APP + 9`를 쓴다
+        assert_ne!(TRAY_CALLBACK, crate::fs::watcher::WM_APP_DIR_CHANGED);
         assert_eq!(TRAY_CALLBACK, WM_APP + 2);
     }
 
@@ -379,12 +383,12 @@ mod tests {
 
     #[test]
     fn 깨우기_메시지가_다른_메시지와_겹치지_않는다() {
-        // 겹치면 중복 실행 알림이 트레이 조작이나 폴더 열거 완료로 읽힌다
+        // 겹치면 중복 실행 알림이 트레이 조작이나 폴더 변경 통지로 읽힌다
         let wake = crate::app::single_instance::wake_message();
         assert_ne!(wake, 0);
         assert_ne!(wake, TRAY_CALLBACK);
         assert_ne!(wake, taskbar_created_message());
-        assert_ne!(wake, crate::fs::enumerate::WM_APP_ENUM_DONE);
+        assert_ne!(wake, crate::fs::watcher::WM_APP_DIR_CHANGED);
     }
 
     #[test]
