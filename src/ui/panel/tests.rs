@@ -493,6 +493,44 @@ fn 이미_그_폴더를_그리고_있으면_캐시를_쓰지_않는다() {
 }
 
 #[test]
+fn 탭을_전환해_같은_경로를_다시_읽어도_캐시가_적중한다() {
+    // `reload_active_tab`은 활성 탭을 **바꾼 뒤** 그 탭의 committed 경로로 다시 읽는다 —
+    // 그 순간 `pending_dir == dir()`이 된다. 적중 판정을 커밋된 경로로 재면 이 길이 새고,
+    // 그러면 캐시가 가장 잦은 경로(탭 전환)를 놓친다
+    let (ctx, mut icons, mut cache) = cache_fixture();
+    let other = std::path::PathBuf::from(r"C:\다른탭곳");
+    let target = std::path::PathBuf::from(r"C:\돌아올곳");
+    cache.put(&target, &batch(&["..", "a.txt"]));
+
+    // 지금 그려져 있는 것은 다른 폴더의 목록이다
+    let mut panel = PanelState::new(other.clone());
+    panel.pending_dir = other.clone();
+    panel.pending_nav = PendingNav::None;
+    panel.apply_enumerated(
+        EnumOutcome::Ok(batch(&["b.txt", "c.txt", "d.txt"])),
+        &mut icons,
+        &mut cache,
+        &ctx,
+    );
+
+    // 탭이 바뀌어 그 탭의 경로가 커밋된 뒤, 같은 경로로 다시 읽는다
+    panel.tabs.active_mut().set_committed(target.clone());
+    panel.start_load(target.clone(), PendingNav::None, &ctx);
+    assert_eq!(
+        panel.dir(),
+        target,
+        "시험 전제 — 커밋된 경로와 대기 경로가 같다"
+    );
+
+    panel.try_cache_hit(&mut icons, &mut cache);
+    assert!(
+        panel.optimistic.is_some(),
+        "탭 전환 경로가 캐시를 타지 못했다"
+    );
+    assert_eq!(panel.list.len(), 2, "캐시 목록이 서지 않았다");
+}
+
+#[test]
 fn 원격_탭을_거쳐_돌아와도_캐시가_적중한다() {
     // 적중 판정을 `list.dir()`만으로 하면 이 경로가 샌다 — `clear_entries`가 그 필드를
     // 갱신하지 않아 목록이 빈 채 폴더만 남고, 그러면 미적중으로 판정돼 자리표시가 뜬다

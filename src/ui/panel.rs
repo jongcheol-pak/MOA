@@ -561,15 +561,24 @@ impl PanelState {
             // 임시 계측 (`crate::perf`) — UI 스레드가 **배치 한 몫**을 목록에 세우는 시간이다
             // (`set_entries`·`append_entries`의 확장자별 종류 조회가 여기 들어 있다)
             let t_apply = std::time::Instant::now();
-            match chunk {
-                EnumChunk::Partial(entries) => self.apply_partial(entries, icons),
-                EnumChunk::Done(outcome) => self.apply_enumerated(outcome, icons, cache, ctx),
-            }
+            // 어느 조각을 반영했는지 로그에 싣는다 — 누적 개수만 적으면 그 줄이 배치 한 몫인지
+            // 마지막 확정인지 읽히지 않는다(이 로그로 개선 효과를 실측한다)
+            let kind = match chunk {
+                EnumChunk::Partial(entries) => {
+                    let added = entries.len();
+                    self.apply_partial(entries, icons);
+                    format!("partial+{added}")
+                }
+                EnumChunk::Done(outcome) => {
+                    self.apply_enumerated(outcome, icons, cache, ctx);
+                    "done".to_string()
+                }
+            };
             let d_apply = t_apply.elapsed();
             crate::perf::log(|| {
                 let (dirs, files) = self.list.counts();
                 format!(
-                    "apply dirs={dirs} files={files} | apply={:.1} (ms)",
+                    "apply {kind} dirs={dirs} files={files} | apply={:.1} (ms)",
                     d_apply.as_secs_f32() * 1000.0
                 )
             });
@@ -679,7 +688,11 @@ impl PanelState {
     /// 이미 그린 부분 목록을 **그대로 두고** 실패 사유만 알린다 (FR-69).
     ///
     /// `block_list`를 쓸 수 없다 — 그 함수는 목록을 `..` 한 줄만 남기고 갈아 끼우므로
-    /// 배치로 그려 둔 것을 지운다. 사유는 목록 자리가 아니라 상태 줄에 적는다
+    /// 배치로 그려 둔 것을 지운다. 사유는 목록 자리가 아니라 상태 줄에 적는다.
+    ///
+    /// **감시도 놓지 않는다** — `block_list`는 「읽지 못한 폴더는 감시하지 않는다」(FR-6)를
+    /// 지키려 감시를 끊지만, 이쪽은 **부분이라도 읽힌 폴더**라 그것이 바뀌면 다시 읽어
+    /// 마저 채울 수 있다. 이 갈래가 FR-6의 예외임은 FR-69 문면에 적혀 있다
     fn keep_partial(&mut self, reason: ListBlock) {
         // 이 요청은 여기서 끝난다 — 비우지 않으면 `observed_drive`·`pending_name`이
         // 끝난 요청의 경로를 계속 읽는다
