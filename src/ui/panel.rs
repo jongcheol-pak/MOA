@@ -816,17 +816,30 @@ impl PanelState {
         cache: &mut DirCache,
         icons: &mut IconCache,
         ctx: &egui::Context,
-    ) -> bool {
-        let Some(optimistic) = self.optimistic.take() else {
-            return false;
-        };
-        if optimistic.target != self.pending_dir {
-            return false;
+    ) {
+        // **대상을 먼저 견주고 꺼낸다** — 먼저 꺼내면 대상이 다를 때 그 상태가 되돌려지지도,
+        // 캐시가 무효화되지도 않은 채 조용히 사라진다. 지금은 `start_load`가 매번 이 값을
+        // 내려 대상이 어긋날 길이 없지만, 순서가 거꾸로면 나중에 그 길이 생겼을 때 유실이 된다
+        if self
+            .optimistic
+            .as_ref()
+            .is_none_or(|it| it.target != self.pending_dir)
+        {
+            return;
         }
+        let Some(optimistic) = self.optimistic.take() else {
+            return;
+        };
         cache.invalidate(&optimistic.target);
         let tab = self.tabs.active_mut();
         tab.history = optimistic.history;
         tab.set_committed(optimistic.prev_dir.clone());
+        // `commit_navigation`을 거치지 않는 길이라 **썸네일 폴더도 직접 맞춘다** — 그 함수가
+        // 유일한 동기화 지점이라, 빼먹으면 사라진 폴더를 가리킨 채 남아 그 사이에 같은 곳으로
+        // 다시 들어가면 「같은 폴더」로 오판해 캐시를 놓지 않는다 (NFR-9)
+        if self.thumbs.set_folder(&optimistic.prev_dir) {
+            self.thumb_textures.clear();
+        }
         // **목록도 함께 되돌린다** — 경로만 되돌리면 되돌아간 폴더 이름 아래 사라진 폴더의
         // 항목이 그대로 남아, 주소창·트리가 가리키는 곳과 목록이 갈린다(이 앱이 결함으로
         // 못 박아 둔 형태다). 직전 폴더가 캐시에 있으면 그것을 세우고, 없으면 비워
@@ -841,7 +854,6 @@ impl PanelState {
         }
         // 다시 읽는다 — 이 호출이 세대를 올려 떠 있던 요청도 무효화한다
         self.start_load(optimistic.prev_dir, PendingNav::None, ctx);
-        true
     }
 
     /// 낙관적으로 옮겨 간 폴더를 읽지 못했다 — **되돌리지는 않고** 그 캐시만 버린다.
